@@ -1,0 +1,87 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,900&family=Manrope:wght@400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 32 45% 94%;
+    --foreground: 25 26% 11%;
+    --card: 36 48% 98%;
+    --card-foreground: 25 26% 11%;
+    --popover: 36 48% 98%;
+    --popover-foreground: 25 26% 11%;
+    --primary: 27 48% 48%;
+    --primary-foreground: 35 60% 96%;
+    --secondary: 35 34% 86%;
+    --secondary-foreground: 25 26% 16%;
+    --muted: 33 30% 88%;
+    --muted-foreground: 27 15% 42%;
+    --accent: 166 29% 28%;
+    --accent-foreground: 38 52% 94%;
+    --destructive: 6 71% 48%;
+    --destructive-foreground: 35 60% 96%;
+    --border: 30 25% 79%;
+    --input: 30 25% 79%;
+    --ring: 27 48% 48%;
+    --radius: 1.25rem;
+    --font-sans: 'Manrope', system-ui, -apple-system, sans-serif;
+    --font-display: 'Fraunces', Georgia, serif;
+  }
+}
+
+@layer base {
+  * { border-color: hsl(var(--border)); }
+  html { background: #f3eadf; }
+  body {
+    min-height: 100vh;
+    font-family: var(--font-sans);
+    color: hsl(var(--foreground));
+    background:
+      radial-gradient(circle at 8% 10%, rgba(181, 123, 70, 0.18), transparent 28%),
+      radial-gradient(circle at 88% 5%, rgba(34, 84, 77, 0.13), transparent 26%),
+      linear-gradient(135deg, #fffaf3 0%, #f1e3d1 46%, #e5c7a1 100%);
+    background-attachment: fixed;
+  }
+  ::selection { background: #b57942; color: #fffaf3; }
+}
+
+@layer components {
+  .mp-shell-panel {
+    border: 1px solid rgba(255, 255, 255, 0.62);
+    background: rgba(255, 250, 243, 0.72);
+    box-shadow: 0 28px 80px rgba(79, 57, 39, 0.12);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .mp-dark-panel {
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: #211b16;
+    box-shadow: 0 28px 80px rgba(33, 27, 22, 0.22);
+  }
+
+  .mp-card {
+    border: 1px solid rgba(122, 91, 60, 0.14);
+    background: rgba(255, 250, 243, 0.78);
+    box-shadow: 0 18px 45px rgba(79, 57, 39, 0.08);
+  }
+
+  .mp-display { font-family: var(--font-display); }
+
+  .custom-scrollbar::-webkit-scrollbar { width: 10px; height: 10px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(122, 91, 60, 0.32); border-radius: 999px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+}
+
+/* Backward-compatible aliases while pages are being migrated. */
+.glass, .glass-card {
+  border: 1px solid rgba(122, 91, 60, 0.14);
+  background: rgba(255, 250, 243, 0.78);
+  box-shadow: 0 18px 45px rgba(79, 57, 39, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line { stroke: rgba(87, 63, 41, 0.10); }

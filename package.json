@@ -1,0 +1,30 @@
+{
+  "name": "marble-park",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspaces --if-present",
+    "build:api": "npm run build --workspace=apps/api",
+    "build:web": "npm run build --workspace=apps/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace=apps/api",
+    "db:push": "npm run db:push --workspace=apps/api",
+    "db:seed": "npm run db:seed --workspace=apps/api",
+    "catalogue:import": "npm run catalogue:import --workspace=apps/api",
+    "catalogue:images": "node scripts/extract-catalogue-images.mjs",
+    "catalogue:images:highres": "node scripts/remap-catalogue-images-highres.mjs",
+    "smoke:intent-order": "node scripts/e2e-lead-intent-order-smoke.mjs",
+    "system:upgrade": "node scripts/upgrade-retail-os.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.3.3"
+  }
+}

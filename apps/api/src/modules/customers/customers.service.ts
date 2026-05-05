@@ -1,0 +1,125 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+
+export interface CreateCustomerInput {
+  name: string;
+  companyName?: string;
+  email?: string;
+  phone?: string;
+  gstNo?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  architect?: string;
+  designer?: string;
+  notes?: string;
+  tags?: any;
+}
+
+export interface UpdateCustomerInput {
+  name?: string;
+  companyName?: string;
+  email?: string;
+  phone?: string;
+  gstNo?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  architect?: string;
+  designer?: string;
+  notes?: string;
+  tags?: any;
+}
+
+@Injectable()
+export class CustomersService {
+  constructor(private prisma: PrismaService) {}
+
+  async findAll(args?: { search?: string }): Promise<any[]> {
+    const where = args?.search
+      ? {
+          OR: [
+            { name: { contains: args.search, mode: 'insensitive' as const } },
+            { email: { contains: args.search, mode: 'insensitive' as const } },
+            { mobile: { contains: args.search, mode: 'insensitive' as const } },
+            { city: { contains: args.search, mode: 'insensitive' as const } },
+          ],
+        }
+      : {};
+    const customers = await this.prisma.customer.findMany({
+      where,
+      orderBy: { name: 'asc' },
+    });
+    return customers.map((customer) => this.toApiCustomer(customer));
+  }
+
+  async findById(id: string): Promise<any> {
+    const customer = await this.prisma.customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException('Customer not found');
+    return this.toApiCustomer(customer);
+  }
+
+  async create(data: CreateCustomerInput): Promise<any> {
+    const customer = await this.prisma.customer.create({
+      data: this.toDbCustomer(data, true) as any,
+    });
+    return this.toApiCustomer(customer);
+  }
+
+  async update(id: string, data: UpdateCustomerInput): Promise<any> {
+    await this.findById(id);
+    const customer = await this.prisma.customer.update({
+      where: { id },
+      data: this.toDbCustomer(data, false) as any,
+    });
+    return this.toApiCustomer(customer);
+  }
+
+  async delete(id: string) {
+    await this.findById(id);
+    return this.prisma.customer.delete({ where: { id } });
+  }
+
+  private toApiCustomer(customer: any) {
+    return {
+      ...customer,
+      companyName: customer.name,
+      phone: customer.mobile,
+      address: customer.siteAddress,
+      architect: customer.architectName,
+      state: customer.state || '',
+      designer: customer.designerName || '',
+    };
+  }
+
+  private toDbCustomer(data: CreateCustomerInput | UpdateCustomerInput, creating: boolean) {
+    const mapped: any = {};
+    if (data.name !== undefined || data.companyName !== undefined) {
+      mapped.name = data.name || data.companyName;
+    }
+    if (data.email !== undefined) mapped.email = data.email;
+    if (data.phone !== undefined || (data as any).mobile !== undefined) {
+      mapped.mobile = data.phone || (data as any).mobile;
+    }
+    if (data.city !== undefined) mapped.city = data.city;
+    if (data.state !== undefined) mapped.state = data.state;
+    if (data.gstNo !== undefined) mapped.gstNo = data.gstNo;
+    if (data.designer !== undefined) mapped.designerName = data.designer;
+    if (data.notes !== undefined) mapped.notes = data.notes;
+    if (data.tags !== undefined) mapped.tags = typeof data.tags === 'string' ? data.tags.split(',').map((tag) => tag.trim()).filter(Boolean) : data.tags;
+    if (data.address !== undefined) mapped.siteAddress = data.address;
+    if (data.architect !== undefined) mapped.architectName = data.architect;
+    if (creating) {
+      mapped.id = require('ulid').ulid();
+      mapped.name = mapped.name || 'Walk-in Customer';
+      mapped.mobile = mapped.mobile || '';
+      mapped.siteAddress = mapped.siteAddress || '';
+      mapped.city = mapped.city || '';
+      mapped.tags = mapped.tags || [];
+      mapped.updatedAt = new Date();
+    } else {
+      mapped.updatedAt = new Date();
+    }
+    return mapped;
+  }
+}

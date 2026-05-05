@@ -1,0 +1,439 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Activity {
+  id        String   @id
+  lead      Lead?    @relation(fields: [leadId], references: [id])
+  leadId    String?
+  quote     Quote?   @relation(fields: [quoteId], references: [id])
+  quoteId   String?
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  type      String
+  message   String
+  createdAt DateTime @default(now())
+}
+
+model AppSetting {
+  id                        String   @id
+  canonicalAppUrl           String
+  quotePrefix               String
+  challanPrefix             String
+  approvalDiscountThreshold Float
+  companyName               String
+  supportPhone              String
+  supportEmail              String
+  updatedAt                 DateTime
+}
+
+model AuditEvent {
+  id          String   @id
+  actorUserId String
+  action      String
+  entityType  String
+  entityId    String
+  summary     String
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId])
+  @@index([createdAt(sort: Desc)])
+  @@index([entityType, entityId], map: "AuditEvent_entity_idx")
+}
+
+model CatalogReviewTask {
+  id              String   @id
+  sourceFileId    String
+  pageNumber      Int?
+  detectedSku     String?
+  detectedName    String?
+  extractedText   String?
+  imagePath       String?
+  imageUrl        String?
+  mappedProductId String?
+  confidence      Float?
+  raw             Json?
+  status          String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
+}
+
+model Customer {
+  id               String            @id
+  name             String
+  mobile           String
+  email            String?
+  gstNo            String?
+  architectName    String?
+  designerName     String?
+  siteAddress      String
+  city             String
+  state            String?
+  notes            String?
+  tags             Json              @default("[]")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime
+  leads            Lead[]
+  quotes           Quote[]
+  dispatchJobs     DispatchJob[]
+  dispatchChallans DispatchChallan[]
+}
+
+model DispatchChallan {
+  id              String       @id
+  challanNumber   String       @unique
+  quote           Quote        @relation(fields: [quoteId], references: [id])
+  quoteId         String
+  dispatchJob     DispatchJob  @relation(fields: [dispatchJobId], references: [id])
+  dispatchJobId   String
+  customer        Customer     @relation(fields: [customerId], references: [id])
+  customerId      String
+  status          String
+  createdAt       DateTime     @default(now())
+  packedAt        DateTime?
+  dispatchedAt    DateTime?
+  deliveredAt     DateTime?
+  vehicleNumber   String?
+  driverName      String?
+  transporterName String?
+  contactPhone    String
+  siteAddress     String
+  remarks         String
+  lines           Json
+  proof           Json?
+  updatedAt       DateTime
+}
+
+model DispatchJob {
+  id               String            @id
+  quote            Quote             @relation(fields: [quoteId], references: [id])
+  quoteId          String            @unique
+  customer         Customer          @relation(fields: [customerId], references: [id])
+  customerId       String
+  siteAddress      String
+  status           String
+  dueDate          DateTime
+  owner            User              @relation(fields: [ownerId], references: [id])
+  ownerId          String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime
+  dispatchChallans DispatchChallan[]
+}
+
+model FollowUpTask {
+  id        String   @id
+  lead      Lead     @relation(fields: [leadId], references: [id])
+  leadId    String
+  owner     User     @relation(fields: [ownerId], references: [id])
+  ownerId   String
+  dueAt     DateTime
+  status    String
+  notes     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+}
+
+model ImportBatch {
+  id           String   @id
+  sourceFileId String
+  brand        String
+  rowCount     Int
+  status       String
+  summary      Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+}
+
+model ImportRow {
+  id              String   @id
+  sourceFileId    String
+  importBatchId   String
+  brand           String
+  range           String?
+  categoryCode    String?
+  sku             String?
+  description     String
+  newMrp          Float
+  raw             Json
+  normalized      Json?
+  mappedProductId String?
+  status          String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
+}
+
+model InventoryBalance {
+  id        String   @id
+  product   Product  @relation(fields: [productId], references: [id])
+  productId String   @unique
+  onHand    Int
+  reserved  Int
+  available Int
+  damaged   Int
+  hold      Int
+  updatedAt DateTime
+}
+
+model InventoryInwardBatch {
+  id              String   @id
+  referenceNumber String   @unique
+  supplierName    String
+  remarks         String
+  createdAt       DateTime @default(now())
+  createdBy       String
+  attachmentNames Json
+  lines           Json
+}
+
+model InventoryMovement {
+  id               String   @id
+  productId        String
+  type             String
+  quantity         Int
+  reason           String
+  relatedQuoteId   String?
+  relatedChallanId String?
+  createdAt        DateTime @default(now())
+  createdBy        String
+}
+
+model Lead {
+  id            String         @id
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  customerId    String
+  title         String
+  source        String
+  owner         User           @relation(fields: [ownerId], references: [id])
+  ownerId       String
+  stage         String
+  expectedValue Float
+  createdAt     DateTime       @default(now())
+  lastContactAt DateTime
+  nextActionAt  DateTime
+  notes         String
+  updatedAt     DateTime
+  activities    Activity[]
+  quotes        Quote[]
+  followUps     FollowUpTask[]
+}
+
+model LeadIntent {
+  id             String   @id
+  leadId         String
+  customerId     String
+  ownerId        String
+  createdBy      String
+  status         String
+  intentType     String
+  source         String
+  notes          String
+  followUpReason String?
+  rows           Json
+  quoteId        String?
+  salesOrderId   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime
+
+  @@index([leadId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+}
+
+model PasswordResetToken {
+  id        String    @id
+  token     String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model ProductCategory {
+  id          String   @id
+  name        String   @unique
+  code        String?
+  description String?
+  status      String   @default("active")
+  sortOrder   Int      @default(0)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model ProductBrand {
+  id          String   @id
+  name        String   @unique
+  code        String?
+  description String?
+  status      String   @default("active")
+  sortOrder   Int      @default(0)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model ProductFinish {
+  id          String   @id
+  name        String   @unique
+  code        String?
+  description String?
+  status      String   @default("active")
+  sortOrder   Int      @default(0)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model Product {
+  id          String            @id
+  sku         String            @unique
+  name        String
+  category    String
+  brand       String
+  finish      String
+  dimensions  String
+  unit        String
+  tags        Json
+  sellPrice   Float
+  floorPrice  Float
+  taxClass    String
+  status      String
+  media       Json
+  sourceRefs  Json
+  description String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime
+  balances    InventoryBalance?
+  reservations Reservation[]
+}
+
+model Quote {
+  id              String            @id
+  quoteNumber     String            @unique
+  lead            Lead              @relation(fields: [leadId], references: [id])
+  leadId          String
+  customer        Customer          @relation(fields: [customerId], references: [id])
+  customerId      String
+  owner           User              @relation(fields: [ownerId], references: [id])
+  ownerId         String
+  title           String
+  status          String
+  approvalStatus  String
+  discountPercent Float
+  projectName     String
+  createdAt       DateTime          @default(now())
+  validUntil      DateTime
+  sentAt          DateTime?
+  confirmedAt     DateTime?
+  coverImage      String
+  notes           String
+  lines           Json
+  versions        Json
+  approval        Json?
+  updatedAt       DateTime
+  activities      Activity[]
+  reservations    Reservation[]
+  dispatchJobs    DispatchJob?
+  dispatchChallan DispatchChallan[]
+}
+
+model Reservation {
+  id        String   @id
+  quote     Quote    @relation(fields: [quoteId], references: [id])
+  quoteId   String
+  product   Product  @relation(fields: [productId], references: [id])
+  productId String
+  quantity  Int
+  status    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+}
+
+model Session {
+  id        String   @id
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model SalesOrder {
+  id            String   @id
+  orderNumber   String   @unique
+  quoteId       String   @unique
+  leadId        String
+  customerId    String
+  ownerId       String
+  status        String
+  paymentMode   String
+  paymentStatus String
+  advanceAmount Float
+  totalAmount   Float
+  lines         Json
+  notes         String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+
+  @@index([leadId])
+  @@index([customerId])
+  @@index([ownerId])
+  @@index([paymentMode])
+  @@index([createdAt(sort: Desc)])
+}
+
+model SourceFile {
+  id         String   @id
+  kind       String
+  name       String
+  path       String   @unique
+  uploadedBy String
+  status     String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime
+}
+
+model User {
+  id           String         @id
+  name         String
+  email        String         @unique
+  passwordHash String
+  role         String
+  phone        String
+  active       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  leads        Lead[]
+  quotes       Quote[]
+  activities   Activity[]
+  followUps    FollowUpTask[]
+  dispatchJobs DispatchJob[]
+}
+
+model Vendor {
+  id            String   @id
+  name          String
+  phone         String?
+  email         String?
+  gstNo         String?
+  address       String?
+  city          String?
+  state         String?
+  contactPerson String?
+  category      String?
+  status        String   @default("active")
+  notes         String?
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+
+  @@index([name])
+  @@index([status])
+}
