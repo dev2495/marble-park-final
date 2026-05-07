@@ -43,15 +43,17 @@ export default function QuoteBuilderPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [success, setSuccess] = useState('');
   const [savedQuote, setSavedQuote] = useState<any>(null);
+  const [displayMode, setDisplayMode] = useState<'priced' | 'selection'>('priced');
   const { data: customerData } = useQuery(GET_CUSTOMERS);
   const { data: searchData, loading: searching } = useQuery(SEARCH_PRODUCTS, { variables: { query: searchQuery }, skip: searchQuery.length < 2 });
   const [createQuote, { loading: saving }] = useMutation(CREATE_QUOTE);
 
   const addProduct = (product: any) => {
-    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, productId: product.id, name: product.name, sku: product.sku, qty: 1, price: product.sellPrice || 0, unit: product.unit || 'PC', category: product.category, brand: product.brand, media: product.media }]);
+    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, area: 'General Selection', productId: product.id, name: product.name, sku: product.sku, qty: 1, price: product.sellPrice || 0, unit: product.unit || 'PC', category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
     setSearchQuery('');
   };
   const updateQty = (id: string, qty: number) => setLines((current) => current.map((line) => line.id === id ? { ...line, qty } : line));
+  const updateLine = (id: string, patch: any) => setLines((current) => current.map((line) => line.id === id ? { ...line, ...patch } : line));
   const removeLine = (id: string) => setLines((current) => current.filter((line) => line.id !== id));
   const subtotal = lines.reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.price || 0), 0);
   const tax = subtotal * 0.18;
@@ -73,6 +75,8 @@ export default function QuoteBuilderPage() {
           ownerId,
           projectName: projectTitle,
           title: projectTitle || 'Retail product quotation',
+          displayMode,
+          quoteMeta: JSON.stringify({ remarks: 'Prepared from quote studio.', showBrandLogos: true }),
           lines: JSON.stringify(lines.map(({ id, ...line }) => ({ ...line, total: Number(line.qty || 0) * Number(line.price || 0) }))),
         },
       },
@@ -113,6 +117,13 @@ export default function QuoteBuilderPage() {
               <span className="text-xs font-black uppercase tracking-widest text-[#8b6b4c]">Project / site</span>
               <Input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="e.g. Patel Residence bathroom package" className="h-[3.25rem]" />
             </label>
+            <label className="block space-y-2">
+              <span className="text-xs font-black uppercase tracking-widest text-[#8b6b4c]">PDF type</span>
+              <select value={displayMode} onChange={(event) => setDisplayMode(event.target.value as any)} className="h-[3.25rem] w-full rounded-2xl border border-[#7a5b3c]/18 bg-white px-4 text-sm font-bold text-[#211b16] outline-none focus:border-[#b57942]/45 focus:ring-4 focus:ring-[#b57942]/10">
+                <option value="priced">Show prices - quotation</option>
+                <option value="selection">Hide prices - selection summary</option>
+              </select>
+            </label>
           </div>
 
           <div className="relative mt-6">
@@ -141,7 +152,7 @@ export default function QuoteBuilderPage() {
               <tbody className="divide-y divide-[#7a5b3c]/10">
                 {lines.map((line) => (
                   <tr key={line.id}>
-                    <td className="px-4 py-4"><div className="flex items-center gap-4"><ProductImageFrame src={productImage(line.media)} alt={line.name} className="h-24 w-28 shrink-0 rounded-[1.35rem]" imageClassName="p-1.5" /><div><p className="font-black">{line.name}</p><p className="text-[10px] font-black uppercase tracking-wider text-[#8b6b4c]">{line.sku} · {line.unit}</p></div></div></td>
+                    <td className="px-4 py-4"><div className="flex items-center gap-4"><ProductImageFrame src={line.quoteImage || productImage(line.media)} alt={line.name} className="h-24 w-28 shrink-0 rounded-[1.35rem]" imageClassName="p-1.5" /><div className="min-w-0 space-y-2"><input value={line.area || ''} onChange={(event)=>updateLine(line.id,{area:event.target.value})} placeholder="Area / room" className="h-8 w-full rounded-xl border border-[#7a5b3c]/15 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-[#b57942]" /><p className="font-black">{line.name}</p><p className="text-[10px] font-black uppercase tracking-wider text-[#8b6b4c]">{line.sku} · {line.unit}</p><input value={line.quoteImage || ''} onChange={(event)=>updateLine(line.id,{quoteImage:event.target.value})} placeholder="Optional quote photo URL" className="h-8 w-full rounded-xl border border-[#7a5b3c]/15 bg-white px-3 text-[10px] font-bold" /></div></div></td>
                     <td className="px-4 py-4 text-center"><input type="number" value={line.qty} min={0} onChange={(event) => updateQty(line.id, Number(event.target.value) || 0)} className="h-10 w-20 rounded-xl border border-[#7a5b3c]/18 bg-white text-center text-sm font-black outline-none focus:ring-4 focus:ring-[#b57942]/10" /></td>
                     <td className="px-4 py-4 text-right font-black">{money(line.price)}</td>
                     <td className="px-4 py-4 text-right font-black text-[#24544d]">{money(line.qty * line.price)}</td>

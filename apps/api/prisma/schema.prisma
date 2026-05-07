@@ -246,6 +246,26 @@ model LeadIntent {
   @@index([createdAt(sort: Desc)])
 }
 
+model Notification {
+  id           String    @id
+  title        String
+  message      String
+  type         String
+  entityType   String?
+  entityId     String?
+  href         String?
+  targetUserId String?
+  targetRole   String?
+  metadata     Json      @default("{}")
+  readAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([targetUserId])
+  @@index([targetRole])
+  @@index([readAt])
+  @@index([createdAt(sort: Desc)])
+}
+
 model PasswordResetToken {
   id        String    @id
   token     String    @unique
@@ -327,6 +347,7 @@ model Quote {
   status          String
   approvalStatus  String
   discountPercent Float
+  displayMode     String            @default("priced")
   projectName     String
   createdAt       DateTime          @default(now())
   validUntil      DateTime
@@ -336,6 +357,7 @@ model Quote {
   notes           String
   lines           Json
   versions        Json
+  quoteMeta       Json              @default("{}")
   approval        Json?
   updatedAt       DateTime
   activities      Activity[]

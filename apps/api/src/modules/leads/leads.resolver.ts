@@ -204,9 +204,10 @@ export class LeadsResolver {
     @Args('intentId') intentId: string,
     @Context() ctx: GraphqlRequestContext,
     @Args('note', { nullable: true }) note?: string,
+    @Args('displayMode', { nullable: true }) displayMode?: string,
   ) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
-    return this.leads.generateQuoteFromIntent(intentId, user.id, note);
+    return this.leads.generateQuoteFromIntent(intentId, user.id, note, displayMode);
   }
 
   @Mutation(() => LeadOutput)

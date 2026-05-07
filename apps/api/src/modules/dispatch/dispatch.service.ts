@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
 
 export interface CreateDispatchJobInput {
@@ -35,7 +36,7 @@ export interface CreateChallanInput {
 
 @Injectable()
 export class DispatchService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private notifications: NotificationsService) {}
 
   async findAllJobs(args?: { status?: string; customerId?: string }): Promise<any[]> {
     const where: any = {};
@@ -142,6 +143,16 @@ export class DispatchService {
       where: { id: dispatchJobId },
       data: { status: 'packed', updatedAt: new Date() },
     }).catch(() => {});
+    await this.notifications.create({
+      title: 'Partial challan created',
+      message: `${challan.challanNumber} created for ${job.customer?.name || 'customer'}. Dispatch only listed rows.`,
+      type: 'challan_created',
+      entityType: 'DispatchChallan',
+      entityId: challan.id,
+      href: '/dashboard/dispatch',
+      targetUserId: job.quote?.ownerId,
+      metadata: { dispatchJobId, quoteId: challan.quoteId },
+    });
     return challan;
   }
 
@@ -168,11 +179,43 @@ export class DispatchService {
           where: { id: challan.dispatchJobId },
           data: { status: 'dispatched', updatedAt: new Date() },
         }).catch(() => null);
+        const job = await tx.dispatchJob.findUnique({ where: { id: challan.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
+        if (job?.quote?.ownerId) {
+          await tx.notification.create({
+            data: {
+              id: ulid(),
+              title: 'Items dispatched',
+              message: `${challan.challanNumber} has been dispatched for ${job.customer?.name || 'customer'}.`,
+              type: 'dispatch_dispatched',
+              entityType: 'DispatchChallan',
+              entityId: challan.id,
+              href: `/dashboard/leads/${job.quote.leadId}`,
+              targetUserId: job.quote.ownerId,
+              metadata: { quoteId: challan.quoteId },
+            },
+          }).catch(() => null);
+        }
       } else if (status === 'delivered') {
         await tx.dispatchJob.update({
           where: { id: challan.dispatchJobId },
           data: { status: 'delivered', updatedAt: new Date() },
         }).catch(() => null);
+        const job = await tx.dispatchJob.findUnique({ where: { id: challan.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
+        if (job?.quote?.ownerId) {
+          await tx.notification.create({
+            data: {
+              id: ulid(),
+              title: 'Delivery completed',
+              message: `${challan.challanNumber} has been marked delivered for ${job.customer?.name || 'customer'}.`,
+              type: 'dispatch_delivered',
+              entityType: 'DispatchChallan',
+              entityId: challan.id,
+              href: `/dashboard/leads/${job.quote.leadId}`,
+              targetUserId: job.quote.ownerId,
+              metadata: { quoteId: challan.quoteId },
+            },
+          }).catch(() => null);
+        }
       }
 
       return updated;

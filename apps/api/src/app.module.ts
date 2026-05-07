@@ -15,6 +15,7 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { ImportsModule } from './modules/imports/imports.module';
 import { ProductsModule } from './modules/products/products.module';
 import { SystemModule } from './modules/system/system.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 import { SearchModule } from './modules/search/search.module';
 
@@ -41,6 +42,7 @@ import { SearchModule } from './modules/search/search.module';
     ImportsModule,
     SearchModule,
     SystemModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}

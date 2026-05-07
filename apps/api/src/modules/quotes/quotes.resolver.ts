@@ -25,6 +25,9 @@ export class QuoteOutput {
   discountPercent?: number;
 
   @Field({ nullable: true })
+  displayMode?: string;
+
+  @Field({ nullable: true })
   projectName?: string;
 
   @Field(() => Date, { nullable: true })
@@ -44,6 +47,9 @@ export class QuoteOutput {
 
   @Field(() => GraphQLJSON, { nullable: true })
   lines?: any;
+
+  @Field(() => GraphQLJSON, { nullable: true })
+  quoteMeta?: any;
 
   @Field(() => GraphQLJSON, { nullable: true })
   customer?: any;
@@ -83,6 +89,12 @@ export class CreateQuoteInput {
 
   @Field(() => String, { nullable: true })
   lines?: string;
+
+  @Field(() => String, { nullable: true })
+  displayMode?: string;
+
+  @Field(() => String, { nullable: true })
+  quoteMeta?: string;
 }
 
 @InputType()
@@ -104,6 +116,12 @@ export class UpdateQuoteInput {
 
   @Field(() => Number, { nullable: true })
   discountPercent?: number;
+
+  @Field(() => String, { nullable: true })
+  displayMode?: string;
+
+  @Field(() => String, { nullable: true })
+  quoteMeta?: string;
 }
 
 @InputType()

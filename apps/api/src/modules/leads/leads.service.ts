@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotesService } from '../quotes/quotes.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
 
 export interface CreateLeadInput {
@@ -30,7 +31,7 @@ const LEAD_STAGES = ['new', 'contacted', 'qualified', 'proposal', 'quoted', 'neg
 
 @Injectable()
 export class LeadsService {
-  constructor(private prisma: PrismaService, private quotes: QuotesService) {}
+  constructor(private prisma: PrismaService, private quotes: QuotesService, private notifications: NotificationsService) {}
 
   async findAll(args?: { ownerId?: string; stage?: string; search?: string }): Promise<any[]> {
     const where: any = {};
@@ -102,6 +103,19 @@ export class LeadsService {
             userId: createdBy,
             type: 'intent_created',
             message: `Lead intent captured with ${intentRows.length} row(s).`,
+          },
+        }).catch(() => null);
+        await tx.notification.create({
+          data: {
+            id: ulid(),
+            title: 'New lead intent submitted',
+            message: `${lead.title} has ${intentRows.length} selection row(s) waiting for office quote generation.`,
+            type: 'intent_submitted',
+            entityType: 'LeadIntent',
+            entityId: lead.id,
+            href: '/dashboard/intents',
+            targetRole: 'office_staff',
+            metadata: { leadId: lead.id, rowCount: intentRows.length },
           },
         }).catch(() => null);
       }
@@ -196,6 +210,16 @@ export class LeadsService {
         message: `New ${intent.intentType} intent captured${input.followUpReason ? ` after ${input.followUpReason}` : ''}.`,
       },
     }).catch(() => null);
+    await this.notifications.create({
+      title: 'Follow-up intent submitted',
+      message: `${lead.title} has a new ${intent.intentType} intent ready for office quote generation.`,
+      type: 'intent_submitted',
+      entityType: 'LeadIntent',
+      entityId: intent.id,
+      href: '/dashboard/intents',
+      targetRole: 'office_staff',
+      metadata: { leadId: lead.id, followUpReason: input.followUpReason || '' },
+    });
     await this.prisma.lead.update({
       where: { id: lead.id },
       data: { stage: 'proposal', nextActionAt: new Date(Date.now() + 86400000), updatedAt: new Date() },
@@ -203,7 +227,7 @@ export class LeadsService {
     return intent;
   }
 
-  async generateQuoteFromIntent(intentId: string, createdBy: string, note?: string) {
+  async generateQuoteFromIntent(intentId: string, createdBy: string, note?: string, displayMode?: string) {
     const intent = await this.prisma.leadIntent.findUnique({ where: { id: intentId } });
     if (!intent) throw new NotFoundException('Lead intent not found');
     if (intent.quoteId) throw new Error('This intent already has a quote');
@@ -218,6 +242,12 @@ export class LeadsService {
       projectName: lead.title,
       notes: note || intent.notes || 'Generated from product intent.',
       lines,
+      displayMode: String(displayMode || '').toLowerCase() === 'selection' ? 'selection' : 'priced',
+      quoteMeta: {
+        preparedBy: createdBy,
+        areas: Array.from(new Set(lines.map((line) => line.area || 'General Selection'))),
+        remarks: note || intent.notes || '',
+      },
     } as any);
     const pdfUrl = `/api/pdf/quote/${quote.id}`;
     await this.prisma.leadIntent.update({
@@ -249,6 +279,28 @@ export class LeadsService {
         message: `Office generated ${quote.quoteNumber}. PDF: ${pdfUrl}`,
       },
     }).catch(() => null);
+    await this.notifications.createMany([
+      {
+        title: 'Quote PDF generated',
+        message: `${quote.quoteNumber} is ready from office. Share the PDF and continue follow-up.`,
+        type: 'quote_generated',
+        entityType: 'Quote',
+        entityId: quote.id,
+        href: `/dashboard/leads/${intent.leadId}`,
+        targetUserId: intent.ownerId,
+        metadata: { pdfUrl, intentId: intent.id, displayMode: quote.displayMode },
+      },
+      {
+        title: 'Owner approval requested',
+        message: `${quote.quoteNumber} was generated from an intent and needs approval before customer confirmation.`,
+        type: 'approval',
+        entityType: 'Quote',
+        entityId: quote.id,
+        href: '/dashboard/approvals',
+        targetRole: 'owner',
+        metadata: { intentId: intent.id },
+      },
+    ]);
     return { intentId: intent.id, quote, pdfUrl };
   }
 
@@ -312,6 +364,7 @@ export class LeadsService {
           pcsPerBox: Number(row.pcsPerBox || 0),
           qty: Number(row.qty || row.quantity || 0),
           price: Number(row.price || row.sellPrice || 0),
+          area: row.area || row.room || 'General Selection',
           source: 'tile-intent',
         });
         continue;
@@ -331,6 +384,8 @@ export class LeadsService {
         price: Number(row.price || row.sellPrice || product?.sellPrice || 0),
         sellPrice: Number(row.price || row.sellPrice || product?.sellPrice || 0),
         media: product?.media || row.media || {},
+        area: row.area || row.room || 'General Selection',
+        quoteImage: row.quoteImage || row.customImageUrl || '',
         source: product ? 'inventory-or-catalogue' : 'manual-intent',
       });
     }

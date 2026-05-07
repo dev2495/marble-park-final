@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
 
 @Injectable()
 export class ImportsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private notifications: NotificationsService) {}
 
   async processExcelImport(filePath: string, uploadedBy = 'system'): Promise<any> {
     const ExcelJS = require('exceljs');
@@ -199,6 +200,28 @@ export class ImportsService {
         metadata: { rowCount: batch.rowCount, brand: batch.brand },
       },
     }).catch(() => {});
+    await this.notifications.createMany([
+      {
+        title: 'Catalogue import needs approval',
+        message: `${batch.brand || 'Import batch'} has ${batch.rowCount} row(s) ready for owner approval.`,
+        type: 'approval',
+        entityType: 'ImportBatch',
+        entityId: importBatchId,
+        href: '/dashboard/approvals',
+        targetRole: 'owner',
+        metadata: { rowCount: batch.rowCount, brand: batch.brand },
+      },
+      {
+        title: 'Catalogue import needs approval',
+        message: `${batch.brand || 'Import batch'} has ${batch.rowCount} row(s) ready for admin approval.`,
+        type: 'approval',
+        entityType: 'ImportBatch',
+        entityId: importBatchId,
+        href: '/dashboard/approvals',
+        targetRole: 'admin',
+        metadata: { rowCount: batch.rowCount, brand: batch.brand },
+      },
+    ]);
     return batch;
   }
 

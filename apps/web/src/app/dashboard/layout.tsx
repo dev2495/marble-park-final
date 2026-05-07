@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useQuery, gql } from '@apollo/client';
+import { gql, useMutation, useQuery } from '@apollo/client';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Bath, Bell, Boxes, Briefcase, ClipboardCheck, FileSpreadsheet, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield, Truck, Users, UserCog } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,19 @@ const SEARCH_QUERY = gql`
       leads
       quotes
     }
+  }
+`;
+
+const NOTIFICATIONS_QUERY = gql`
+  query NotificationsBell {
+    unreadNotificationCount
+    notifications(take: 8)
+  }
+`;
+
+const MARK_NOTIFICATION_READ = gql`
+  mutation MarkNotificationRead($id: ID!) {
+    markNotificationRead(id: $id)
   }
 `;
 
@@ -81,6 +94,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [roleOverride, setRoleOverride] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showResults, setShowResults] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -101,6 +115,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     variables: { query: searchQuery },
     skip: searchQuery.length < 2,
   });
+  const { data: notificationData, refetch: refetchNotifications } = useQuery(NOTIFICATIONS_QUERY, {
+    skip: !user,
+    pollInterval: 30000,
+  });
+  const [markNotificationRead] = useMutation(MARK_NOTIFICATION_READ, { onCompleted: () => refetchNotifications() });
 
   const handleLogout = () => {
     localStorage.removeItem('auth_token');
@@ -229,10 +248,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   </div>
                 )}
 
-                <Button variant="outline" size="icon" className="relative rounded-2xl bg-white/70">
-                  <Bell className="h-5 w-5 text-[#5f4b3b]" />
-                  <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#b57942]" />
-                </Button>
+                <div className="relative">
+                  <Button variant="outline" size="icon" className="relative rounded-2xl bg-white/70" onClick={() => setShowNotifications((current) => !current)}>
+                    <Bell className="h-5 w-5 text-[#5f4b3b]" />
+                    {Number(notificationData?.unreadNotificationCount || 0) > 0 && <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[#b57942] px-1 text-[10px] font-black text-white">{notificationData.unreadNotificationCount}</span>}
+                  </Button>
+                  <AnimatePresence>
+                    {showNotifications && (
+                      <motion.div initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} className="absolute right-0 top-full z-50 mt-3 w-[22rem] overflow-hidden rounded-[1.75rem] border border-[#7a5b3c]/12 bg-[#fffaf3] p-3 shadow-2xl">
+                        <div className="flex items-center justify-between px-2 py-1">
+                          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#8b6b4c]">Notifications</p>
+                          <Link href="/dashboard" onClick={() => setShowNotifications(false)} className="text-xs font-black text-[#b57942]">Command</Link>
+                        </div>
+                        <div className="mt-2 max-h-96 space-y-2 overflow-y-auto custom-scrollbar">
+                          {(notificationData?.notifications || []).map((notification: any) => (
+                            <button key={notification.id} onClick={async () => { await markNotificationRead({ variables: { id: notification.id } }); if (notification.href) router.push(notification.href); setShowNotifications(false); }} className={`w-full rounded-2xl p-3 text-left transition hover:bg-[#ead7c0]/65 ${notification.readAt ? 'bg-white/50' : 'bg-white shadow-sm'}`}>
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-sm font-black text-[#211b16]">{notification.title}</p>
+                                {!notification.readAt && <span className="mt-1 h-2 w-2 rounded-full bg-[#b57942]" />}
+                              </div>
+                              <p className="mt-1 line-clamp-3 text-xs font-bold leading-5 text-[#7d6b5c]">{notification.message}</p>
+                              <p className="mt-2 text-[10px] font-black uppercase tracking-wider text-[#a7907c]">{notification.type} · {new Date(notification.createdAt).toLocaleString()}</p>
+                            </button>
+                          ))}
+                          {!notificationData?.notifications?.length && <p className="rounded-2xl bg-white/60 p-4 text-sm font-bold text-[#8b6b4c]">No notifications yet.</p>}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               </div>
             </div>
 

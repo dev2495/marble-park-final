@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
 
 export interface CreateQuoteInput {
@@ -12,6 +13,8 @@ export interface CreateQuoteInput {
   notes?: string;
   lines?: any[];
   discountPercent?: number;
+  displayMode?: string;
+  quoteMeta?: any;
 }
 
 export interface UpdateQuoteInput {
@@ -21,6 +24,8 @@ export interface UpdateQuoteInput {
   notes?: string;
   lines?: any[];
   discountPercent?: number;
+  displayMode?: string;
+  quoteMeta?: any;
 }
 
 export interface CreateSalesOrderInput {
@@ -39,7 +44,7 @@ const quoteInclude = {
 
 @Injectable()
 export class QuotesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private notifications: NotificationsService) {}
 
   async findAll(args?: { leadId?: string; customerId?: string; ownerId?: string; status?: string }): Promise<any[]> {
     const where: any = {};
@@ -65,7 +70,7 @@ export class QuotesService {
   }
 
   async create(data: CreateQuoteInput): Promise<any> {
-    const quoteNumber = await this.generateQuoteNumber();
+    let quoteNumber = await this.generateQuoteNumber();
     const ownerId = data.ownerId || (await this.prisma.user.findFirst({
       where: { active: true, role: { in: ['sales', 'owner', 'admin'] } as any },
       orderBy: { createdAt: 'asc' },
@@ -96,37 +101,75 @@ export class QuotesService {
     }
     
     const normalizedLines = this.normalizeLines(data.lines);
+    const displayMode = this.normalizeDisplayMode(data.displayMode);
+    const quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, normalizedLines);
     const availabilityIssues = await this.getAvailabilityIssues(normalizedLines);
-    const created = await this.prisma.quote.create({
-      data: {
-        id: ulid(),
-        ...data,
-        customerId,
-        ownerId,
-        leadId,
-        lines: normalizedLines,
-        quoteNumber,
-        status: 'pending_approval',
-        approvalStatus: 'pending',
-        discountPercent: data.discountPercent || 0,
-        projectName: data.projectName || '',
-        title: data.title || 'Retail quotation',
-        validUntil: data.validUntil || this.defaultValidUntil(),
-        coverImage: '',
-        notes: data.notes || '',
-        versions: [],
-        approval: {
-          requestedAt: new Date().toISOString(),
-          reason: 'owner_quote_approval_required',
-          availabilityIssues,
-          discountPercent: data.discountPercent || 0,
-          total: this.getLinesTotal(normalizedLines),
-        },
-        updatedAt: new Date(),
-      },
-      include: quoteInclude,
-    } as any) as any;
+    let created: any = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) quoteNumber = await this.generateQuoteNumber();
+      try {
+        created = await this.prisma.quote.create({
+          data: {
+            id: ulid(),
+            ...data,
+            customerId,
+            ownerId,
+            leadId,
+            lines: normalizedLines,
+            quoteNumber,
+            status: 'pending_approval',
+            approvalStatus: 'pending',
+            discountPercent: data.discountPercent || 0,
+            displayMode,
+            projectName: data.projectName || '',
+            title: data.title || 'Retail quotation',
+            validUntil: data.validUntil || this.defaultValidUntil(),
+            coverImage: '',
+            notes: data.notes || '',
+            versions: [],
+            quoteMeta,
+            approval: {
+              requestedAt: new Date().toISOString(),
+              reason: 'owner_quote_approval_required',
+              availabilityIssues,
+              discountPercent: data.discountPercent || 0,
+              total: this.getLinesTotal(normalizedLines),
+              displayMode,
+            },
+            updatedAt: new Date(),
+          },
+          include: quoteInclude,
+        } as any) as any;
+        break;
+      } catch (error: any) {
+        if (error?.code === 'P2002' && attempt < 4) continue;
+        throw error;
+      }
+    }
+    if (!created) throw new BadRequestException('Could not allocate quote number');
     await this.audit(created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId });
+    await this.notifications.createMany([
+      {
+        title: 'Quote needs approval',
+        message: `${created.quoteNumber} is waiting for owner approval for ${created.customer?.name || 'customer'}.`,
+        type: 'approval',
+        entityType: 'Quote',
+        entityId: created.id,
+        href: `/dashboard/approvals?quote=${created.id}`,
+        targetRole: 'owner',
+        metadata: { quoteNumber: created.quoteNumber, displayMode },
+      },
+      {
+        title: 'Quote needs approval',
+        message: `${created.quoteNumber} is waiting for admin approval for ${created.customer?.name || 'customer'}.`,
+        type: 'approval',
+        entityType: 'Quote',
+        entityId: created.id,
+        href: `/dashboard/approvals?quote=${created.id}`,
+        targetRole: 'admin',
+        metadata: { quoteNumber: created.quoteNumber, displayMode },
+      },
+    ]);
     return created;
   }
 
@@ -137,6 +180,7 @@ export class QuotesService {
     if (data.discountPercent !== undefined || data.lines !== undefined) {
       const lines = data.lines !== undefined ? this.normalizeLines(data.lines) : this.normalizeLines((await this.findById(id)).lines);
       updateData.lines = data.lines !== undefined ? lines : undefined;
+      updateData.quoteMeta = data.quoteMeta !== undefined ? this.normalizeQuoteMeta(data.quoteMeta, lines) : undefined;
       updateData.approvalStatus = 'pending';
       updateData.status = 'pending_approval';
       updateData.approval = {
@@ -147,6 +191,8 @@ export class QuotesService {
         total: this.getLinesTotal(lines),
       };
     }
+    if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
+    if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, this.normalizeLines((await this.findById(id)).lines));
     
     const updated = await this.prisma.quote.update({
       where: { id },
@@ -154,6 +200,17 @@ export class QuotesService {
       include: quoteInclude,
     } as any) as any;
     await this.audit(updated.ownerId, 'quote.update', id, `Updated ${updated.quoteNumber}`, updateData);
+    if (updated.approvalStatus === 'pending') {
+      await this.notifications.create({
+        title: 'Quote changed',
+        message: `${updated.quoteNumber} was changed and needs owner re-approval.`,
+        type: 'approval',
+        entityType: 'Quote',
+        entityId: updated.id,
+        href: `/dashboard/approvals?quote=${updated.id}`,
+        targetRole: 'owner',
+      });
+    }
     return updated;
   }
 
@@ -194,6 +251,16 @@ export class QuotesService {
       include: quoteInclude,
     } as any) as any;
     await this.audit(sent.ownerId, 'quote.send', id, `Sent ${sent.quoteNumber}`, {});
+    await this.notifications.create({
+      title: 'Quote PDF ready for follow-up',
+      message: `${sent.quoteNumber} has been marked sent. Continue customer follow-up from CRM.`,
+      type: 'quote_sent',
+      entityType: 'Quote',
+      entityId: sent.id,
+      href: `/dashboard/leads/${sent.leadId}`,
+      targetUserId: sent.ownerId,
+      metadata: { pdfUrl: `/api/pdf/quote/${sent.id}` },
+    });
     return sent;
   }
 
@@ -241,6 +308,19 @@ export class QuotesService {
           metadata: {},
         },
       });
+      await tx.notification.create({
+        data: {
+          id: ulid(),
+          title: 'Dispatch job opened',
+          message: `${quote.quoteNumber} is confirmed and ready for dispatch planning.`,
+          type: 'dispatch_ready',
+          entityType: 'Quote',
+          entityId: quote.id,
+          href: '/dashboard/dispatch',
+          targetRole: 'dispatch_ops',
+          metadata: { quoteNumber: quote.quoteNumber },
+        },
+      }).catch(() => null);
       return confirmed;
     });
   }
@@ -321,6 +401,43 @@ export class QuotesService {
           message: `${salesOrder.orderNumber} created as ${paymentMode.toUpperCase()} order (${paymentStatus}).`,
         },
       }).catch(() => null);
+      await tx.notification.createMany({
+        data: [
+          {
+            id: ulid(),
+            title: 'Sales order created',
+            message: `${salesOrder.orderNumber} created from ${quote.quoteNumber}. Payment: ${paymentMode.toUpperCase()} ${paymentStatus}.`,
+            type: 'sales_order_created',
+            entityType: 'SalesOrder',
+            entityId: salesOrder.id,
+            href: '/dashboard/orders',
+            targetRole: 'owner',
+            metadata: { quoteId: quote.id, paymentMode, paymentStatus, totalAmount },
+          },
+          {
+            id: ulid(),
+            title: 'Sales order ready for dispatch',
+            message: `${salesOrder.orderNumber} is ready. Dispatch only in-stock rows; backorders remain blocked until inward.`,
+            type: 'dispatch_ready',
+            entityType: 'SalesOrder',
+            entityId: salesOrder.id,
+            href: '/dashboard/dispatch',
+            targetRole: 'dispatch_ops',
+            metadata: { quoteId: quote.id },
+          },
+          {
+            id: ulid(),
+            title: 'Customer order confirmed',
+            message: `${salesOrder.orderNumber} is live. Track stocked and pending inward items from this lead.`,
+            type: 'sales_order_created',
+            entityType: 'SalesOrder',
+            entityId: salesOrder.id,
+            href: `/dashboard/leads/${quote.leadId}`,
+            targetUserId: quote.ownerId,
+            metadata: { quoteId: quote.id },
+          },
+        ],
+      }).catch(() => null);
       return salesOrder;
     });
   }
@@ -372,12 +489,23 @@ export class QuotesService {
           approvedAt: new Date().toISOString(),
           note: note || '',
           previousStatus: quote.status,
+          displayMode: quote.displayMode,
         },
         updatedAt: new Date(),
       },
       include: quoteInclude,
     } as any) as any;
     await this.audit(approvedByUserId, 'quote.approve', id, `Approved ${approved.quoteNumber}`, { note });
+    await this.notifications.create({
+      title: 'Quote approved',
+      message: `${approved.quoteNumber} is approved. Sales can send PDF and office can convert to sales order after confirmation.`,
+      type: 'quote_approved',
+      entityType: 'Quote',
+      entityId: approved.id,
+      href: `/dashboard/quotes/${approved.id}`,
+      targetUserId: approved.ownerId,
+      metadata: { pdfUrl: `/api/pdf/quote/${approved.id}` },
+    });
     return approved;
   }
 
@@ -389,6 +517,8 @@ export class QuotesService {
       version: versions.length + 1,
       lines: quote.lines,
       discountPercent: quote.discountPercent,
+      displayMode: quote.displayMode,
+      quoteMeta: quote.quoteMeta,
       createdAt: new Date().toISOString(),
     };
     
@@ -427,7 +557,31 @@ export class QuotesService {
         return [];
       }
     }
-    return lines;
+    return Array.isArray(lines) ? lines.map((line) => ({
+      ...line,
+      area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
+      quoteImage: line.quoteImage || line.customImageUrl || '',
+    })) : [];
+  }
+
+  private normalizeDisplayMode(value?: string) {
+    return String(value || '').toLowerCase() === 'selection' ? 'selection' : 'priced';
+  }
+
+  private normalizeQuoteMeta(meta: any, lines: any[]) {
+    const parsed = typeof meta === 'string'
+      ? (() => { try { return JSON.parse(meta); } catch { return {}; } })()
+      : (meta || {});
+    const areas = Array.from(new Set(this.normalizeLines(lines).map((line: any) => String(line.area || 'General Selection'))));
+    return {
+      preparedBy: parsed.preparedBy || '',
+      showBrandLogos: parsed.showBrandLogos !== false,
+      terms: parsed.terms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, civil work and unloading are excluded unless mentioned.',
+      bankDetails: parsed.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.',
+      remarks: parsed.remarks || '',
+      areas,
+      ...parsed,
+    };
   }
 
   private getLinesTotal(lines: any) {

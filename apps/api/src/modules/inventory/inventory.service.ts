@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
 
 export interface CreateInventoryInput {
@@ -15,7 +16,7 @@ export interface UpdateInventoryInput {
 
 @Injectable()
 export class InventoryService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private notifications: NotificationsService) {}
 
   async findAll(args?: { productId?: string; search?: string; take?: number }): Promise<any[]> {
     const where: any = {};
@@ -195,6 +196,28 @@ export class InventoryService {
           updatedAt: new Date(),
         },
       }).catch(() => null);
+      await this.notifications.createMany([
+        {
+          title: 'Backorder item is in store',
+          message: `${balance.product?.sku || 'Item'} has arrived for ${quote.quoteNumber}. Inform the customer and prepare pending dispatch.`,
+          type: 'stock_ready',
+          entityType: 'Quote',
+          entityId: quote.id,
+          href: `/dashboard/leads/${quote.leadId}`,
+          targetUserId: quote.ownerId,
+          metadata: { productId, quoteId: quote.id },
+        },
+        {
+          title: 'Pending dispatch item arrived',
+          message: `${balance.product?.sku || 'Item'} is now inwarded. Dispatch can create a partial challan for the remaining quantity.`,
+          type: 'stock_ready',
+          entityType: 'Quote',
+          entityId: quote.id,
+          href: '/dashboard/dispatch',
+          targetRole: 'dispatch_ops',
+          metadata: { productId, quoteId: quote.id },
+        },
+      ]);
     }
   }
 }
