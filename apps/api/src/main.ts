@@ -5,6 +5,12 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const express = require('express');
+  const fs = require('fs');
+  const path = require('path');
+  const importImageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
+  fs.mkdirSync(importImageDir, { recursive: true });
+  app.use('/catalogue-images/imports', express.static(importImageDir));
 
   const configuredOrigins = process.env.CORS_ORIGIN?.split(',')
     .map((origin) => origin.trim())

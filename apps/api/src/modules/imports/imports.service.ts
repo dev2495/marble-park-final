@@ -52,8 +52,13 @@ export class ImportsService {
     const pdfData = await parser.getText();
     await parser.destroy();
     
-    // AI Fallback logic: chunk text and send to OpenAI for structured JSON extraction
-    // Try AI Extraction first, then Heuristic Fallback
+    const heuristicRows = this.extractPdfProductRows(pdfData.text, filePath);
+    if (heuristicRows.length > 0) {
+      return this.stageRows(heuristicRows, filePath, uploadedBy, 'pdf-heuristic', true);
+    }
+
+    // AI fallback is intentionally second. Most price catalogues have a repeatable
+    // SKU/description/MRP structure, and deterministic extraction avoids stale or partial AI output.
     try {
       const { OpenAI } = require('openai');
       if (!process.env.OPENAI_API_KEY) throw new Error('NO_API_KEY');
@@ -70,38 +75,97 @@ export class ImportsService {
       const structuredItems = JSON.parse(completion.choices[0].message?.content || "[]");
       return this.stageRows(structuredItems, filePath, uploadedBy, 'pdf-ai', true);
     } catch (apiError) {
-       console.log("AI extraction unavailable, switching to heuristic extraction...");
-       return this.heuristicPdfExtraction(pdfData.text, filePath, uploadedBy);
+       return { source: "PDF-Extraction-Failed", totalFound: 0, textLength: pdfData.text.length };
     }
   }
 
-  private async heuristicPdfExtraction(text: string, filePath: string, uploadedBy: string): Promise<any> {
+  private extractPdfProductRows(text: string, filePath: string): any[] {
     const normalizedText = text.replace(/\u0000/g, ' ').replace(/[ \t]+/g, ' ');
     const lines = normalizedText.split('\n').map((line) => line.trim()).filter(Boolean);
     const items: any[] = [];
-    
-    const codeRegex = /^([A-Z]{2,4}-[A-Z0-9-]{3,20}|[0-9]{3,6}\s?[A-Z]{0,4}(?:\s?[A-Z]{1,3})?)$/;
+    const seen = new Set<string>();
+    const brand = this.detectBrandFromPdf(filePath, normalizedText);
+    let currentCategory = this.guessPdfCategory(filePath, '', 'Catalogue Products');
+
     for (let index = 0; index < lines.length; index += 1) {
-      const codeMatch = lines[index].match(codeRegex);
-      if (!codeMatch) continue;
-      const sku = codeMatch[1].replace(/\s+/g, '-').replace(/-$/, '');
-      const window = lines.slice(index + 1, Math.min(index + 10, lines.length));
-      const mrpLineIndex = window.findIndex((line) => /MRP/i.test(line) && /[0-9][0-9,]{2,}/.test(line));
+      const line = lines[index];
+      const headingCategory = this.guessPdfCategory(filePath, line);
+      if (headingCategory) currentCategory = headingCategory;
+      if (!this.isLikelyCatalogueSku(line)) continue;
+
+      const sku = line.replace(/\s+/g, '').replace(/-$/, '').toUpperCase();
+      if (seen.has(sku)) continue;
+      const window = lines.slice(index + 1, Math.min(index + 8, lines.length));
+      const mrpLineIndex = window.findIndex((candidate) => /MRP/i.test(candidate) && this.extractPrice(candidate) > 0);
       if (mrpLineIndex === -1) continue;
-      const descriptionLines = window.slice(0, mrpLineIndex).filter((line) => !/^Size|^Flow|^MRP/i.test(line));
-      const priceMatch = window[mrpLineIndex].match(/([0-9][0-9,]{2,})/);
-      const price = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, '')) : 0;
-      const name = descriptionLines.join(' ').replace(/[●`:-]+/g, ' ').trim();
+      const descriptionLines = window
+        .slice(0, mrpLineIndex)
+        .filter((candidate) => !this.isLikelyCatalogueSku(candidate))
+        .filter((candidate) => !/^(Size|Flow|MRP|Page|Note|Image|Description|Qty|Total)\b/i.test(candidate))
+        .filter((candidate) => !/^-- \d+ of \d+ --$/.test(candidate));
+      const price = this.extractPrice(window[mrpLineIndex]);
+      const name = (descriptionLines[0] || '').replace(/[●`:-]+/g, ' ').trim();
+      const range = (descriptionLines[1] || '').replace(/[●`:-]+/g, ' ').trim();
       if (sku && name && price > 0) {
-        items.push({ SKU: `PDF-${sku}`, name, Category: 'Catalogue Products', Brand: 'Imported PDF', MRP: price });
+        seen.add(sku);
+        items.push({
+          SKU: sku,
+          name,
+          Category: currentCategory || this.guessPdfCategory(filePath, name, 'Catalogue Products'),
+          Brand: brand,
+          Finish: this.guessFinish(`${name} ${range}`),
+          Range: range,
+          MRP: price,
+          Description: [name, range].filter(Boolean).join(' - '),
+        });
       }
     }
 
-    if (items.length === 0) {
-      return { source: "Heuristic-Failed", totalFound: 0, textLength: text.length };
-    }
+    return items;
+  }
 
-    return this.stageRows(items, filePath, uploadedBy, 'pdf-heuristic', true);
+  private isLikelyCatalogueSku(line: string) {
+    const value = String(line || '').trim().replace(/\s+/g, '');
+    if (!/^(?=.{5,32}$)(?=.*\d)(?=.*[A-Z])[A-Z0-9][A-Z0-9-]*[A-Z0-9]$/.test(value)) return false;
+    if (/^(PAGE|MRP|PRICE|TOTAL|QTY|SKU|CODE)$/i.test(value)) return false;
+    return true;
+  }
+
+  private extractPrice(line: string) {
+    const match = String(line || '').match(/(?:MRP|PRICE|RS\.?|₹|`)?\s*([0-9]{1,3}(?:,[0-9]{2,3})+|[0-9]{4,})(?:\.\d+)?/i);
+    return match ? Number(match[1].replace(/,/g, '')) : 0;
+  }
+
+  private detectBrandFromPdf(filePath: string, text: string) {
+    const source = `${filePath} ${text.slice(0, 2000)}`.toLowerCase();
+    if (source.includes('american standard')) return 'American Standard';
+    if (source.includes('hansgrohe')) return 'Hansgrohe';
+    if (source.includes('grohe')) return 'Grohe';
+    if (source.includes('hindware')) return 'Hindware';
+    if (source.includes('aquant')) return 'Aquant';
+    return 'Imported PDF';
+  }
+
+  private guessPdfCategory(filePath: string, line: string, fallback?: string) {
+    const source = `${filePath} ${line}`.toLowerCase();
+    if (/tile|tiles/.test(source)) return 'Tiles';
+    if (/toilet|wc|closet|cistern|bidet|urinal/.test(source)) return 'Sanitaryware';
+    if (/basin|wash basin|counter top|pedestal/.test(source)) return 'Basins';
+    if (/thermostat|shower|faucet|mixer|tap|spout|diverter|bath area|kitchen area/.test(source)) return 'Faucets & Showers';
+    if (/sink/.test(source)) return 'Sinks';
+    if (/accessor|rack|holder|robe hook|soap|towel/.test(source)) return 'Accessories';
+    if (/bathtub|bath tub/.test(source)) return 'Bathtubs';
+    return fallback;
+  }
+
+  private guessFinish(text: string) {
+    const value = String(text || '').toLowerCase();
+    if (/\b(cp|chrome)\b/.test(value)) return 'Chrome';
+    if (/\b(wh|white)\b/.test(value)) return 'White';
+    if (/matte black|\bmb\b|black/.test(value)) return 'Matte Black';
+    if (/gold|cool sunrise|sunrise/.test(value)) return 'Gold';
+    if (/steel|stainless|ss\b/.test(value)) return 'Stainless Steel';
+    return 'Standard';
   }
 
   async listBatches() {
@@ -310,7 +374,8 @@ export class ImportsService {
       const crypto = require('crypto');
       const { PNG } = require('pngjs');
       const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-      const publicDir = path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
+      const publicDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
+      const publicBaseUrl = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '');
       fs.mkdirSync(publicDir, { recursive: true });
       const bytes = new Uint8Array(fs.readFileSync(filePath));
       const pdf = await pdfjs.getDocument({ data: bytes }).promise;
@@ -325,12 +390,17 @@ export class ImportsService {
           const args = operatorList.argsArray[opIndex];
           if (fn !== pdfjs.OPS.paintImageXObject && fn !== pdfjs.OPS.paintInlineImageXObject) continue;
           const imageId = args?.[0];
-          const image = typeof imageId === 'string'
-            ? await new Promise<any>((resolve, reject) => {
-                const timer = setTimeout(() => reject(new Error('image extract timeout')), 5000);
-                page.objs.get(imageId, (img: any) => { clearTimeout(timer); resolve(img); });
-              })
-            : imageId;
+          let image: any;
+          try {
+            image = typeof imageId === 'string'
+              ? await new Promise<any>((resolve, reject) => {
+                  const timer = setTimeout(() => reject(new Error('image extract timeout')), 5000);
+                  page.objs.get(imageId, (img: any) => { clearTimeout(timer); resolve(img); });
+                })
+              : imageId;
+          } catch {
+            continue;
+          }
           if (!image?.data || image.width < 250 || image.height < 180) continue;
           const png = new PNG({ width: image.width, height: image.height });
           const source = image.data;
@@ -355,7 +425,7 @@ export class ImportsService {
               sourceFileId,
               pageNumber,
               imagePath: path.join(publicDir, fileName),
-              imageUrl: `/catalogue-images/imports/${fileName}`,
+              imageUrl: `${publicBaseUrl}/catalogue-images/imports/${fileName}`,
               status: 'needs_mapping',
               confidence: 0.5,
               raw: { width: image.width, height: image.height, hash },
@@ -373,16 +443,18 @@ export class ImportsService {
   }
 
   private normalizeProductRow(data: any) {
+    const pick = (...keys: string[]) => keys.map((key) => data[key]).find((value) => value !== undefined && value !== null && value !== '');
+    const price = pick('MRP', 'Price', 'SELL PRICE', 'Sell Price', 'mrp', 'MRP INR', 'MRP(INR)', 'List Price', 'Amount');
     return {
-      sku: data['SKU'] || data['sku'] || data['Code'] || data['PRODUCT CODE'],
-      name: data['PRODUCT DESCRIPTION'] || data['Description'] || data['Product'] || data['name'],
-      category: data['Category'] || data['CATEGORY'] || 'Uncategorized',
-      brand: data['Brand'] || data['BRAND'] || 'Unknown',
-      finish: data['Finish'] || data['FINISH'] || '',
-      dimensions: data['Dimensions'] || data['DIMENSIONS'] || '',
-      sellPrice: parseFloat(data['MRP'] || data['Price'] || data['SELL PRICE'] || data['mrp'] || 0),
-      description: data['Description'] || data['PRODUCT DESCRIPTION'] || '',
-      range: data['Range'] || data['RANGE'] || '',
+      sku: pick('SKU', 'sku', 'Code', 'PRODUCT CODE', 'Product Code', 'Item Code', 'Article No', 'Model No'),
+      name: pick('PRODUCT DESCRIPTION', 'Description', 'Product', 'Product Name', 'Item Name', 'name'),
+      category: pick('Category', 'CATEGORY', 'Product Category') || 'Uncategorized',
+      brand: pick('Brand', 'BRAND', 'Make') || 'Unknown',
+      finish: pick('Finish', 'FINISH', 'Color', 'Colour') || '',
+      dimensions: pick('Dimensions', 'DIMENSIONS', 'Size') || '',
+      sellPrice: parseFloat(String(price || 0).replace(/,/g, '')),
+      description: pick('Description', 'PRODUCT DESCRIPTION', 'Long Description') || '',
+      range: pick('Range', 'RANGE', 'Series', 'Collection') || '',
     };
   }
 
