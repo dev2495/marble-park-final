@@ -5,7 +5,11 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bath, Bell, Boxes, Briefcase, ClipboardCheck, FileSpreadsheet, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield, Truck, Users, UserCog } from 'lucide-react';
+import {
+  Bath, Bell, Boxes, Briefcase, ChevronLeft, ChevronRight, ClipboardCheck, FileSpreadsheet,
+  LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
+  Truck, Users, UserCog,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -32,21 +36,41 @@ const MARK_NOTIFICATION_READ = gql`
   }
 `;
 
-const navItems = [
-  { name: 'Command', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
-  { name: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck, roles: ['admin', 'owner'] },
-  { name: 'Catalogue', href: '/dashboard/products', icon: Bath, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'office_staff'] },
-  { name: 'Sales Desk', href: '/dashboard/sales', icon: Briefcase, roles: ['admin', 'owner', 'sales_manager', 'sales'] },
-  { name: 'Intents', href: '/dashboard/intents', icon: ListChecks, roles: ['admin', 'owner', 'sales_manager', 'office_staff'] },
-  { name: 'Orders', href: '/dashboard/orders', icon: Receipt, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops'] },
-  { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes, roles: ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff'] },
-  { name: 'Quotes', href: '/dashboard/quotes', icon: FileSpreadsheet, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
-  { name: 'CRM', href: '/dashboard/leads', icon: PackageSearch, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
-  { name: 'Customers', href: '/dashboard/customers', icon: Users, roles: ['admin', 'owner', 'sales_manager', 'sales', 'dispatch_ops', 'office_staff'] },
-  { name: 'Dispatch', href: '/dashboard/dispatch', icon: Truck, roles: ['admin', 'owner', 'dispatch_ops', 'sales_manager', 'office_staff'] },
-  { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: ['admin', 'owner'] },
-  { name: 'Master Data', href: '/dashboard/master-data', icon: Settings, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'] },
-  { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'owner'] },
+const navSections: Array<{ title: string; items: Array<{ name: string; href: string; icon: any; roles: string[] }> }> = [
+  {
+    title: 'Operate',
+    items: [
+      { name: 'Command Center', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
+      { name: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck, roles: ['admin', 'owner'] },
+      { name: 'Sales Desk', href: '/dashboard/sales', icon: Briefcase, roles: ['admin', 'owner', 'sales_manager', 'sales'] },
+    ],
+  },
+  {
+    title: 'Pipeline',
+    items: [
+      { name: 'Leads', href: '/dashboard/leads', icon: PackageSearch, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
+      { name: 'Intents', href: '/dashboard/intents', icon: ListChecks, roles: ['admin', 'owner', 'sales_manager', 'office_staff'] },
+      { name: 'Quotes', href: '/dashboard/quotes', icon: FileSpreadsheet, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
+      { name: 'Orders', href: '/dashboard/orders', icon: Receipt, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops'] },
+    ],
+  },
+  {
+    title: 'Stock',
+    items: [
+      { name: 'Catalogue', href: '/dashboard/products', icon: Bath, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'office_staff'] },
+      { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes, roles: ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff'] },
+      { name: 'Dispatch', href: '/dashboard/dispatch', icon: Truck, roles: ['admin', 'owner', 'dispatch_ops', 'sales_manager', 'office_staff'] },
+    ],
+  },
+  {
+    title: 'People & Data',
+    items: [
+      { name: 'Customers', href: '/dashboard/customers', icon: Users, roles: ['admin', 'owner', 'sales_manager', 'sales', 'dispatch_ops', 'office_staff'] },
+      { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: ['admin', 'owner'] },
+      { name: 'Master Data', href: '/dashboard/master-data', icon: Settings, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'] },
+      { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'owner'] },
+    ],
+  },
 ];
 
 const roleOptions = [
@@ -60,7 +84,7 @@ const roleOptions = [
 ];
 
 const pageTitles: Record<string, string> = {
-  '/dashboard': 'Command',
+  '/dashboard': 'Command Center',
   '/dashboard/products': 'Catalogue',
   '/dashboard/inventory': 'Inventory',
   '/dashboard/inventory/inwards': 'Inwards',
@@ -95,6 +119,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [searchQuery, setSearchQuery] = useState('');
   const [showResults, setShowResults] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  // Persistent collapse state. Default = expanded. A true collapse hides labels;
+  // there's no more "hover-to-peek" trick — operators found it disorienting
+  // because labels stayed clipped under the icon when the cursor wasn't
+  // exactly on the rail.
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -105,11 +134,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const stored = localStorage.getItem('user');
     if (stored) setUser(JSON.parse(stored));
     setRoleOverride(localStorage.getItem('role_override') || '');
+    const savedCollapsed = localStorage.getItem('mp_sidebar_collapsed');
+    if (savedCollapsed === '1') setCollapsed(true);
   }, [router]);
 
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('mp_sidebar_collapsed', next ? '1' : '0');
+      return next;
+    });
+  };
+
   const effectiveRole = user?.role === 'admin' && roleOverride ? roleOverride : user?.role || 'owner';
-  const visibleNavItems = navItems.filter((item) => item.roles.includes(effectiveRole));
-  const isNavActive = (href: string) => href === '/dashboard' ? pathname === '/dashboard' : pathname === href || pathname.startsWith(`${href}/`);
+  const visibleSections = navSections
+    .map((section) => ({ ...section, items: section.items.filter((item) => item.roles.includes(effectiveRole)) }))
+    .filter((section) => section.items.length > 0);
+  const isNavActive = (href: string) =>
+    href === '/dashboard' ? pathname === '/dashboard' : pathname === href || pathname.startsWith(`${href}/`);
 
   const { data: searchResults, loading: searching } = useQuery(SEARCH_QUERY, {
     variables: { query: searchQuery },
@@ -128,175 +170,276 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     window.location.href = '/login';
   };
 
+  const sidebarWidth = collapsed ? 'w-[4.5rem]' : 'w-[16rem]';
+
   return (
-    <div className="min-h-screen w-full text-[var(--t2)]">
+    <div className="min-h-screen w-full bg-[var(--bg)] text-[var(--ink-2)]">
+      {/* Sidebar — light surface, collapsible. */}
       <aside
         aria-label="Primary workspace navigation"
-        className="group/sidebar fixed inset-y-0 left-0 z-50 hidden w-[5.75rem] p-3 transition-[width] duration-300 ease-out hover:w-80 focus-within:w-80 lg:block"
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-[var(--line)] bg-white transition-[width] duration-200 ease-out lg:flex',
+          sidebarWidth,
+        )}
       >
-        <div className="mp-dark-panel flex h-full flex-col overflow-hidden rounded-[2rem] p-3 text-white transition-all duration-300">
-          <div className="relative flex items-center justify-center p-3 transition-all duration-300 group-hover/sidebar:justify-start group-hover/sidebar:gap-4 group-focus-within/sidebar:justify-start group-focus-within/sidebar:gap-4">
-            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-white text-xl font-black text-[var(--brand-700)] shadow-2xl">MP</div>
-            <div className="w-0 min-w-0 overflow-hidden opacity-0 transition-all duration-300 group-hover/sidebar:w-44 group-hover/sidebar:opacity-100 group-focus-within/sidebar:w-44 group-focus-within/sidebar:opacity-100">
-              <h1 className="font-display text-2xl font-black tracking-tight">Marble Park</h1>
-              <p className="mt-1 text-[10px] font-black uppercase tracking-[0.24em] text-[var(--brand-200)]">Retail Ops</p>
+        {/* Brand */}
+        <div className={cn('flex items-center gap-3 border-b border-[var(--line)] px-4', collapsed ? 'h-16 justify-center px-2' : 'h-16')}>
+          <Link href="/dashboard" className="flex items-center gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--brand-600)] text-sm font-bold text-white">MP</div>
+            {!collapsed ? (
+              <div className="min-w-0">
+                <div className="truncate font-display text-lg font-bold leading-tight text-[var(--ink)]">Marble Park</div>
+                <div className="truncate text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--ink-4)]">Retail Ops</div>
+              </div>
+            ) : null}
+          </Link>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto py-3 custom-scrollbar">
+          {visibleSections.map((section) => (
+            <div key={section.title} className="px-3 pb-4">
+              {!collapsed ? (
+                <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">{section.title}</p>
+              ) : (
+                <div className="mx-2 mb-1.5 h-px bg-[var(--line)]" aria-hidden />
+              )}
+              <ul className="space-y-0.5">
+                {section.items.map((item) => {
+                  const active = isNavActive(item.href);
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        title={item.name}
+                        className={cn(
+                          'group flex h-9 items-center gap-3 rounded-md px-2.5 text-sm font-medium transition-colors',
+                          collapsed ? 'justify-center' : '',
+                          active
+                            ? 'bg-[var(--brand-50)] text-[var(--brand-700)]'
+                            : 'text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]',
+                        )}
+                      >
+                        <item.icon
+                          className={cn('h-[18px] w-[18px] shrink-0', active ? 'text-[var(--brand-600)]' : 'text-[var(--ink-4)] group-hover:text-[var(--ink-2)]')}
+                          strokeWidth={1.6}
+                        />
+                        {!collapsed ? <span className="truncate">{item.name}</span> : null}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
+
+        {/* Footer: user + collapse + logout */}
+        <div className="border-t border-[var(--line)] p-3">
+          <div className={cn('flex items-center gap-3', collapsed ? 'justify-center' : '')}>
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--bg-soft)] text-sm font-semibold text-[var(--ink-2)]">
+              {(user?.name?.[0] || 'M').toUpperCase()}
+            </div>
+            {!collapsed ? (
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-[var(--ink)]">{user?.name || 'Marble Park User'}</p>
+                <p className="truncate text-[11px] font-medium capitalize text-[var(--ink-4)]">{effectiveRole.replace('_', ' ')}</p>
+              </div>
+            ) : null}
+          </div>
+          <div className={cn('mt-3 flex gap-1.5', collapsed ? 'flex-col items-center' : '')}>
+            <button
+              onClick={toggleCollapsed}
+              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className="grid h-9 w-9 place-items-center rounded-md text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]"
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </button>
+            <button
+              onClick={handleLogout}
+              title="Sign out"
+              className={cn(
+                'flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]',
+                collapsed ? 'w-9' : 'flex-1 px-3',
+              )}
+            >
+              <LogOut className="h-4 w-4" />
+              {!collapsed ? <span>Sign out</span> : null}
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <main
+        className={cn('min-w-0 transition-[padding] duration-200 ease-out', collapsed ? 'lg:pl-[4.5rem]' : 'lg:pl-[16rem]')}
+      >
+        {/* Topbar */}
+        <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+          <div className="flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h1 className="truncate text-base font-semibold text-[var(--ink)] lg:text-lg">
+                  {pageTitles[pathname] || pageTitles[pathname.replace(/\/[^/]+$/, '')] || 'Workspace'}
+                </h1>
+              </div>
+              <Link href="/dashboard" className="grid h-9 w-9 place-items-center rounded-md bg-[var(--brand-600)] text-xs font-bold text-white lg:hidden">MP</Link>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative min-w-0 flex-1 lg:w-[26rem] lg:flex-none">
+                <div className={cn('flex h-9 items-center rounded-md border bg-white px-3 transition-colors', showResults ? 'border-[var(--brand-400)]' : 'border-[var(--line)]')}>
+                  <Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" />
+                  <input
+                    value={searchQuery}
+                    onChange={(event) => {
+                      setSearchQuery(event.target.value);
+                      setShowResults(event.target.value.length > 1);
+                    }}
+                    onFocus={() => setShowResults(searchQuery.length > 1)}
+                    onBlur={() => setTimeout(() => setShowResults(false), 180)}
+                    placeholder="Search SKU, customer, lead, quote…"
+                    className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)]"
+                  />
+                  {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--brand-600)]" /> : null}
+                </div>
+
+                <AnimatePresence>
+                  {showResults && searchQuery.length >= 2 ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 6 }}
+                      transition={{ duration: 0.16 }}
+                      className="absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[var(--line)] bg-white p-1 shadow-lg-soft lg:w-[26rem]"
+                    >
+                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">Products</div>
+                      <div className="max-h-80 overflow-y-auto custom-scrollbar">
+                        {searchResults?.globalSearch?.products?.length ? (
+                          searchResults.globalSearch.products.map((product: any) => (
+                            <button
+                              key={product.id}
+                              onClick={() => router.push(`/dashboard/products?sku=${product.sku}`)}
+                              className="flex w-full items-center justify-between gap-3 rounded-md p-2.5 text-left transition-colors hover:bg-[var(--bg-soft)]"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium text-[var(--ink)]">{product.name}</p>
+                                <p className="truncate text-[11px] font-medium text-[var(--ink-4)]">
+                                  <span className="mp-mono">{product.sku}</span> · {product.brand}
+                                </p>
+                              </div>
+                              <span className="shrink-0 text-sm font-semibold text-[var(--ink)]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
+                            </button>
+                          ))
+                        ) : (
+                          <p className="p-3 text-sm text-[var(--ink-4)]">No matches.</p>
+                        )}
+                      </div>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+
+              {user?.role === 'admin' ? (
+                <div className="hidden h-9 items-center gap-1.5 rounded-md border border-[var(--line)] bg-white px-2 text-xs font-medium text-[var(--ink-2)] lg:flex">
+                  <Shield className="h-3.5 w-3.5 text-[var(--brand-600)]" />
+                  <select
+                    value={effectiveRole}
+                    onChange={(event) => {
+                      localStorage.setItem('role_override', event.target.value);
+                      setRoleOverride(event.target.value);
+                      window.location.href = '/dashboard';
+                    }}
+                    className="bg-transparent text-xs font-medium outline-none"
+                    aria-label="Role preview"
+                  >
+                    {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                  </select>
+                </div>
+              ) : null}
+
+              <div className="relative">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="relative h-9 w-9 rounded-md border-[var(--line)] hover:bg-[var(--bg-soft)]"
+                  onClick={() => setShowNotifications((current) => !current)}
+                  aria-label="Notifications"
+                >
+                  <Bell className="h-4 w-4 text-[var(--ink-2)]" />
+                  {Number(notificationData?.unreadNotificationCount || 0) > 0 ? (
+                    <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[var(--danger)] px-1 text-[10px] font-semibold text-white">
+                      {notificationData.unreadNotificationCount}
+                    </span>
+                  ) : null}
+                </Button>
+                <AnimatePresence>
+                  {showNotifications ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 6 }}
+                      transition={{ duration: 0.16 }}
+                      className="absolute right-0 top-full z-50 mt-2 w-[22rem] overflow-hidden rounded-md border border-[var(--line)] bg-white p-2 shadow-lg-soft"
+                    >
+                      <div className="flex items-center justify-between px-2 py-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">Notifications</p>
+                        <Link href="/dashboard" onClick={() => setShowNotifications(false)} className="text-xs font-medium text-[var(--brand-700)] hover:underline">Open</Link>
+                      </div>
+                      <div className="mt-1 max-h-96 space-y-1 overflow-y-auto custom-scrollbar">
+                        {(notificationData?.notifications || []).length ? (notificationData?.notifications || []).map((notification: any) => (
+                          <button
+                            key={notification.id}
+                            onClick={async () => {
+                              await markNotificationRead({ variables: { id: notification.id } });
+                              if (notification.href) router.push(notification.href);
+                              setShowNotifications(false);
+                            }}
+                            className={cn(
+                              'w-full rounded-md p-2.5 text-left transition-colors hover:bg-[var(--bg-soft)]',
+                              !notification.readAt ? 'bg-[var(--brand-50)]' : '',
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="text-sm font-semibold text-[var(--ink)]">{notification.title}</p>
+                              {!notification.readAt ? <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--brand-600)]" /> : null}
+                            </div>
+                            <p className="mt-0.5 line-clamp-2 text-xs text-[var(--ink-3)]">{notification.message}</p>
+                            <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[var(--ink-5)]">
+                              {notification.type} · {new Date(notification.createdAt).toLocaleString()}
+                            </p>
+                          </button>
+                        )) : <p className="p-3 text-sm text-[var(--ink-4)]">No notifications yet.</p>}
+                      </div>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
             </div>
           </div>
 
-          <nav className="relative mt-5 flex-1 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
-            {visibleNavItems.map((item) => {
+          {/* Mobile nav strip */}
+          <nav className="flex gap-1 overflow-x-auto border-t border-[var(--line)] px-4 py-2 lg:hidden">
+            {visibleSections.flatMap((s) => s.items).map((item) => {
               const active = isNavActive(item.href);
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  title={item.name}
                   className={cn(
-                    'group relative flex min-h-14 items-center justify-center rounded-2xl px-0 py-4 text-sm font-bold transition-all group-hover/sidebar:justify-start group-hover/sidebar:gap-4 group-hover/sidebar:px-4 group-focus-within/sidebar:justify-start group-focus-within/sidebar:gap-4 group-focus-within/sidebar:px-4',
-                    active ? 'bg-white text-[var(--brand-700)] shadow-xl' : 'text-[#d9cbbd] hover:bg-white/10 hover:text-white'
+                    'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium',
+                    active ? 'bg-[var(--brand-600)] text-white' : 'bg-[var(--bg-soft)] text-[var(--ink-2)]',
                   )}
                 >
-                  <item.icon className={cn('h-5 w-5', active ? 'text-[var(--brand-600)]' : 'text-[#a89b90] group-hover:text-[var(--brand-200)]')} strokeWidth={1.7} />
-                  <span className="w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-300 group-hover/sidebar:w-40 group-hover/sidebar:opacity-100 group-focus-within/sidebar:w-40 group-focus-within/sidebar:opacity-100">{item.name}</span>
-                  {active && <motion.span layoutId="mp-active-nav" className="absolute right-2 h-2 w-2 rounded-full bg-[var(--brand-500)] transition-all group-hover/sidebar:right-3 group-focus-within/sidebar:right-3" />}
+                  <item.icon className="h-3.5 w-3.5" />
+                  {item.name}
                 </Link>
               );
             })}
           </nav>
+        </header>
 
-          <div className="relative mx-auto w-14 space-y-3 rounded-[1.75rem] border border-white/10 bg-white/[0.08] p-3 backdrop-blur transition-all duration-300 group-hover/sidebar:mx-0 group-hover/sidebar:w-full group-focus-within/sidebar:mx-0 group-focus-within/sidebar:w-full">
-            <div className="flex items-center justify-center transition-all duration-300 group-hover/sidebar:justify-start group-hover/sidebar:gap-3 group-focus-within/sidebar:justify-start group-focus-within/sidebar:gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--brand-200)] font-black text-[var(--brand-900)]">{user?.name?.[0] || 'M'}</div>
-              <div className="w-0 min-w-0 flex-1 overflow-hidden opacity-0 transition-all duration-300 group-hover/sidebar:w-40 group-hover/sidebar:opacity-100 group-focus-within/sidebar:w-40 group-focus-within/sidebar:opacity-100">
-                <p className="truncate text-sm font-bold text-white">{user?.name || 'Marble Park User'}</p>
-                <p className="text-[10px] font-black uppercase tracking-wider text-[var(--brand-200)]">{effectiveRole}</p>
-              </div>
-            </div>
-            <Button onClick={handleLogout} variant="ghost" title="Sign out" className="h-11 w-full justify-center rounded-2xl px-0 text-[var(--brand-200)] hover:bg-white/10 hover:text-white group-hover/sidebar:justify-start group-hover/sidebar:px-4 group-focus-within/sidebar:justify-start group-focus-within/sidebar:px-4">
-              <LogOut className="h-4 w-4 group-hover/sidebar:mr-3 group-focus-within/sidebar:mr-3" />
-              <span className="w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-300 group-hover/sidebar:w-20 group-hover/sidebar:opacity-100 group-focus-within/sidebar:w-20 group-focus-within/sidebar:opacity-100">Sign out</span>
-            </Button>
-          </div>
-        </div>
-      </aside>
-
-      <main className="min-w-0 p-3 lg:p-4 lg:pl-[5.75rem]">
-        <div className="mp-shell-panel min-h-[calc(100vh-1.5rem)] overflow-hidden rounded-[2.25rem] lg:min-h-[calc(100vh-2rem)]">
-          <header className="sticky top-0 z-40 border-b border-[var(--bs)] bg-white/85 px-4 py-4 backdrop-blur-2xl lg:px-7">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--brand-700)]">Retail command center</p>
-                  <h2 className="mt-1 font-display text-3xl font-black tracking-[-0.04em] text-[var(--t1)] lg:text-4xl">{pageTitles[pathname] || pageTitles[pathname.replace(/\/[^/]+$/, '')] || 'Workspace'}</h2>
-                </div>
-                <Link href="/dashboard" className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--brand-700)] text-sm font-black text-white shadow-xl lg:hidden">MP</Link>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="relative min-w-0 flex-1 xl:w-[34rem] xl:flex-none">
-                  <div className={cn('flex h-[3.25rem] items-center rounded-2xl border px-4 transition-all', showResults ? 'border-[var(--brand-400)] bg-white shadow-md-soft' : 'border-[var(--b)] bg-white/80')}>
-                    <Search className="mr-3 h-5 w-5 text-[var(--t3)]" />
-                    <input
-                      value={searchQuery}
-                      onChange={(event) => {
-                        setSearchQuery(event.target.value);
-                        setShowResults(event.target.value.length > 1);
-                      }}
-                      onFocus={() => setShowResults(searchQuery.length > 1)}
-                      onBlur={() => setTimeout(() => setShowResults(false), 180)}
-                      placeholder="Search SKU, customer, lead, quote..."
-                      className="w-full bg-transparent text-sm font-medium text-[var(--t1)] outline-none placeholder:text-[var(--t4)]"
-                    />
-                    {searching && <span className="h-2 w-2 animate-ping rounded-full bg-[var(--brand-600)]" />}
-                  </div>
-
-                  <AnimatePresence>
-                    {showResults && searchQuery.length >= 2 && (
-                      <motion.div initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} className="absolute right-0 top-full z-50 mt-3 w-full overflow-hidden rounded-[1.75rem] border border-[var(--b)] bg-white p-3 shadow-lg-soft xl:w-[34rem]">
-                        <div className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--t3)]">Products</div>
-                        <div className="mt-2 max-h-80 space-y-1 overflow-y-auto custom-scrollbar">
-                          {searchResults?.globalSearch?.products?.length ? searchResults.globalSearch.products.map((product: any) => (
-                            <button key={product.id} onClick={() => router.push(`/dashboard/products?sku=${product.sku}`)} className="flex w-full items-center justify-between rounded-2xl p-3 text-left transition hover:bg-[var(--brand-50)]">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-bold text-[var(--t1)]">{product.name}</p>
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--t3)]">{product.sku} · {product.brand}</p>
-                              </div>
-                              <span className="ml-3 shrink-0 text-sm font-black text-[var(--emerald-700)]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
-                            </button>
-                          )) : <p className="p-3 text-sm font-medium text-[var(--t3)]">No product matches.</p>}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-
-                {user?.role === 'admin' && (
-                  <div className="hidden items-center gap-2 rounded-2xl border border-[var(--b)] bg-white px-3 py-2 xl:flex">
-                    <Shield className="h-4 w-4 text-[var(--brand-600)]" />
-                    <select
-                      value={effectiveRole}
-                      onChange={(event) => {
-                        localStorage.setItem('role_override', event.target.value);
-                        setRoleOverride(event.target.value);
-                        window.location.href = '/dashboard';
-                      }}
-                      className="bg-transparent text-xs font-bold uppercase tracking-wider text-[var(--t1)] outline-none"
-                    >
-                      {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
-                    </select>
-                  </div>
-                )}
-
-                <div className="relative">
-                  <Button variant="outline" size="icon" className="relative rounded-2xl border-[var(--b)] bg-white hover:bg-[var(--brand-50)]" onClick={() => setShowNotifications((current) => !current)}>
-                    <Bell className="h-5 w-5 text-[var(--t2)]" />
-                    {Number(notificationData?.unreadNotificationCount || 0) > 0 && <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--rose-500)] px-1 text-[10px] font-black text-white">{notificationData.unreadNotificationCount}</span>}
-                  </Button>
-                  <AnimatePresence>
-                    {showNotifications && (
-                      <motion.div initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} className="absolute right-0 top-full z-50 mt-3 w-[22rem] overflow-hidden rounded-[1.75rem] border border-[var(--b)] bg-white p-3 shadow-lg-soft">
-                        <div className="flex items-center justify-between px-2 py-1">
-                          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--t3)]">Notifications</p>
-                          <Link href="/dashboard" onClick={() => setShowNotifications(false)} className="text-xs font-bold text-[var(--brand-700)]">Command</Link>
-                        </div>
-                        <div className="mt-2 max-h-96 space-y-2 overflow-y-auto custom-scrollbar">
-                          {(notificationData?.notifications || []).map((notification: any) => (
-                            <button key={notification.id} onClick={async () => { await markNotificationRead({ variables: { id: notification.id } }); if (notification.href) router.push(notification.href); setShowNotifications(false); }} className={`w-full rounded-2xl p-3 text-left transition hover:bg-[var(--brand-50)] ${notification.readAt ? 'bg-white' : 'bg-[var(--brand-50)] shadow-sm-soft'}`}>
-                              <div className="flex items-start justify-between gap-3">
-                                <p className="text-sm font-bold text-[var(--t1)]">{notification.title}</p>
-                                {!notification.readAt && <span className="mt-1 h-2 w-2 rounded-full bg-[var(--brand-600)]" />}
-                              </div>
-                              <p className="mt-1 line-clamp-3 text-xs font-medium leading-5 text-[var(--t3)]">{notification.message}</p>
-                              <p className="mt-2 text-[10px] font-bold uppercase tracking-wider text-[var(--t4)]">{notification.type} · {new Date(notification.createdAt).toLocaleString()}</p>
-                            </button>
-                          ))}
-                          {!notificationData?.notifications?.length && <p className="rounded-2xl bg-[var(--canvas-tint)] p-4 text-sm font-medium text-[var(--t3)]">No notifications yet.</p>}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-            </div>
-
-            <nav className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
-              {visibleNavItems.map((item) => {
-                const active = isNavActive(item.href);
-                return (
-                  <Link key={item.href} href={item.href} className={cn('whitespace-nowrap rounded-2xl px-4 py-2 text-xs font-bold', active ? 'bg-[var(--brand-700)] text-white' : 'bg-white text-[var(--t2)] border border-[var(--b)]')}>
-                    {item.name}
-                  </Link>
-                );
-              })}
-            </nav>
-          </header>
-
-          <div className="relative min-h-[calc(100vh-7rem)] overflow-y-auto p-4 custom-scrollbar lg:p-7">
-            <div className="pointer-events-none absolute right-0 top-0 h-80 w-80 rounded-full bg-[var(--brand-400)]/10 blur-3xl" />
-            <div className="pointer-events-none absolute bottom-0 left-0 h-80 w-80 rounded-full bg-[var(--indigo-500)]/10 blur-3xl" />
-            <div className="relative">{children}</div>
-          </div>
-        </div>
+        <div className="px-4 py-6 lg:px-8 lg:py-8">{children}</div>
       </main>
     </div>
   );

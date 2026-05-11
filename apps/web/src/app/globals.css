@@ -54,6 +54,23 @@
     --t3: #6f6258;          /* body muted */
     --t4: #a89b90;          /* placeholder, meta */
 
+    /* ─── Quiet layout aliases ─── */
+    --bg:           #fbf8f3;
+    --bg-soft:      #f3eadf;
+    --surface:      #ffffff;
+    --ink:          var(--t1);
+    --ink-2:        var(--t2);
+    --ink-3:        var(--t3);
+    --ink-4:        #88766a;
+    --ink-5:        var(--t4);
+    --line:         var(--b);
+    --line-strong:  var(--bx);
+    --line-soft:    var(--bs);
+    --success-bg:   var(--emerald-50);
+    --warning-bg:   var(--amber-50);
+    --danger-bg:    var(--rose-50);
+    --info-bg:      var(--sky-50);
+
     /* ─── Borders ─── */
     --bs: #f0e6dc;          /* subtlest hairline */
     --b:  #e9ded2;          /* default border */
@@ -150,9 +167,9 @@
     font-family: var(--f-ui);
     color: var(--t2);
     background:
-      radial-gradient(circle at 8%  10%, rgba(59,130,246,0.10), transparent 28%),
-      radial-gradient(circle at 88% 5%,  rgba(99,102,241,0.08), transparent 26%),
-      linear-gradient(135deg, #f7f2ea 0%, #efe4d6 50%, #f6eadb 100%);
+      radial-gradient(circle at 8%  10%, rgba(176,118,67,0.10), transparent 28%),
+      radial-gradient(circle at 88% 5%,  rgba(224,189,131,0.14), transparent 26%),
+      linear-gradient(135deg, #fbf8f3 0%, #f7f2ea 52%, #f3eadf 100%);
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
