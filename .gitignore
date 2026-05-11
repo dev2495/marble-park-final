@@ -39,3 +39,6 @@ data folder n sample/
 apps/web/public/catalogue-images/extracted/
 apps/web/public/catalogue-images/imports/
 apps/web/public/catalogue-images/manual/
+
+# Local AI worktrees
+.claude/
