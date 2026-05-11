@@ -24,6 +24,7 @@ async function main() {
 
   const passwordHash = await bcrypt.hash('password123', 10);
   const users = await Promise.all([
+    prisma.user.create({ data: { id: ulid(), email: 'admin@marblepark.com', passwordHash, name: 'Marble Park Admin', role: 'admin', phone: '9820098199', active: true } }),
     prisma.user.create({ data: { id: ulid(), email: 'owner@marblepark.com', passwordHash, name: 'Aditya Mehta', role: 'owner', phone: '9820098200', active: true } }),
     prisma.user.create({ data: { id: ulid(), email: 'manager@marblepark.com', passwordHash, name: 'Nisha Shah', role: 'sales_manager', phone: '9820098201', active: true } }),
     prisma.user.create({ data: { id: ulid(), email: 'sales@marblepark.com', passwordHash, name: 'Rajesh Sharma', role: 'sales', phone: '9810098100', active: true } }),
@@ -31,7 +32,7 @@ async function main() {
     prisma.user.create({ data: { id: ulid(), email: 'dispatch@marblepark.com', passwordHash, name: 'Imran Dispatch', role: 'dispatch_ops', phone: '9810098102', active: true } }),
     prisma.user.create({ data: { id: ulid(), email: 'office@marblepark.com', passwordHash, name: 'Pooja Office', role: 'office_staff', phone: '9810098103', active: true } }),
   ]);
-  const sales = users[2];
+  const sales = users.find((user: any) => user.email === 'sales@marblepark.com')!;
 
   const products = [
     { sku: 'GRO-23571003', name: 'Grohe Eurostyle Basin Mixer', category: 'Faucets', brand: 'Grohe', finish: 'Chrome', dimensions: 'Single lever, 1/2 inch', unit: 'PC', sellPrice: 8950, floorPrice: 8050, description: 'Premium CP basin mixer imported from Grohe CP catalogue with quote-ready pricing.' },
