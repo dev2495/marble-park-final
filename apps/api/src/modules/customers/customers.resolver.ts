@@ -2,6 +2,7 @@ import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Cont
 import { CustomersService } from './customers.service';
 import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { GraphQLJSON } from 'graphql-scalars';
 
 @ObjectType()
 export class CustomerOutput {
@@ -85,6 +86,9 @@ export class CreateCustomerInput {
 
   @Field(() => String, { nullable: true })
   tags?: string;
+
+  @Field(() => Boolean, { nullable: true, description: 'Bypass duplicate-customer guard. Owners/admins only.' })
+  forceCreate?: boolean;
 }
 
 @InputType()
@@ -147,8 +151,27 @@ export class CustomersResolver {
 
   @Mutation(() => CustomerOutput)
   async createCustomer(@Args('input') input: CreateCustomerInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    // Only owners/admins may force-create past the duplicate guard.
+    const sanitized = { ...input };
+    if (sanitized.forceCreate && !['admin', 'owner'].includes(user.role)) {
+      sanitized.forceCreate = false;
+    }
+    return this.customers.create(sanitized as any);
+  }
+
+  @Query(() => [GraphQLJSON], { name: 'customerDuplicateCandidates', description: 'Probe for existing customers that look like duplicates of the provided fields.' })
+  async customerDuplicateCandidates(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('gstNo', { nullable: true }) gstNo?: string,
+    @Args('email', { nullable: true }) email?: string,
+    @Args('phone', { nullable: true }) phone?: string,
+    @Args('name', { nullable: true }) name?: string,
+    @Args('city', { nullable: true }) city?: string,
+    @Args('excludeId', { nullable: true }) excludeId?: string,
+  ) {
     await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
-    return this.customers.create(input as any);
+    return this.customers.findDuplicateCandidates({ gstNo, email, phone, name, city, excludeId });
   }
 
   @Mutation(() => CustomerOutput)

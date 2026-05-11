@@ -26,6 +26,7 @@ export interface UpdateQuoteInput {
   discountPercent?: number;
   displayMode?: string;
   quoteMeta?: any;
+  coverImage?: string;
 }
 
 export interface CreateSalesOrderInput {
@@ -36,6 +37,12 @@ export interface CreateSalesOrderInput {
 }
 
 const QUOTE_STATUSES = ['draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'confirmed', 'won', 'lost', 'expired'];
+
+// Eager-include retained ONLY for endpoints that legitimately need the embedded
+// objects in a single round-trip (e.g. internal services that don't go through
+// the GraphQL resolver layer where DataLoaders kick in). Resolver-driven reads
+// should rely on per-field DataLoader resolution and pass `quoteInclude: false`
+// (or use `findRaw`) so we don't double-fetch.
 const quoteInclude = {
   customer: true,
   lead: true,
@@ -46,21 +53,39 @@ const quoteInclude = {
 export class QuotesService {
   constructor(private prisma: PrismaService, private notifications: NotificationsService) {}
 
+  /**
+   * GraphQL-facing list. Returns BARE rows (no relations eagerly joined) so
+   * the resolver can fan relations through DataLoader and avoid the classic
+   * 1 + 2N (`customer`, `owner` per row) hit pattern when listing 100s of quotes.
+   */
   async findAll(args?: { leadId?: string; customerId?: string; ownerId?: string; status?: string }): Promise<any[]> {
     const where: any = {};
     if (args?.leadId) where.leadId = args.leadId;
     if (args?.customerId) where.customerId = args.customerId;
     if (args?.ownerId) where.ownerId = args.ownerId;
     if (args?.status) where.status = args.status;
-    
+
     return this.prisma.quote.findMany({
       where,
-      include: quoteInclude,
       orderBy: { createdAt: 'desc' },
     } as any) as any;
   }
 
+  /**
+   * GraphQL-facing single read — bare row, relations fetched via DataLoader.
+   */
   async findById(id: string): Promise<any> {
+    const quote = await this.prisma.quote.findUnique({ where: { id } } as any) as any;
+    if (!quote) throw new NotFoundException('Quote not found');
+    return quote;
+  }
+
+  /**
+   * Internal-only loader that DOES eager-include relations. Use sparingly
+   * (notification builders, sales-order conversion) where the relation is
+   * accessed once and DataLoader infrastructure is unavailable.
+   */
+  async findByIdWithRelations(id: string): Promise<any> {
     const quote = await this.prisma.quote.findUnique({
       where: { id },
       include: quoteInclude,
@@ -70,7 +95,6 @@ export class QuotesService {
   }
 
   async create(data: CreateQuoteInput): Promise<any> {
-    let quoteNumber = await this.generateQuoteNumber();
     const ownerId = data.ownerId || (await this.prisma.user.findFirst({
       where: { active: true, role: { in: ['sales', 'owner', 'admin'] } as any },
       orderBy: { createdAt: 'asc' },
@@ -80,73 +104,83 @@ export class QuotesService {
     const customerId = data.customerId;
     if (!customerId) throw new BadRequestException('A customer is required');
 
-    let leadId = data.leadId;
-    if (!leadId) {
-      const lead = await this.prisma.lead.create({
-        data: {
-          id: ulid(),
-          customerId,
-          ownerId,
-          title: data.projectName || data.title || 'Retail quote opportunity',
-          source: 'Quote desk',
-          stage: 'quoted',
-          expectedValue: this.getLinesTotal(data.lines),
-          lastContactAt: new Date(),
-          nextActionAt: new Date(Date.now() + 86400000 * 2),
-          notes: 'Auto-created from quote builder.',
-          updatedAt: new Date(),
-        },
-      });
-      leadId = lead.id;
-    }
-    
     const normalizedLines = this.normalizeLines(data.lines);
     const displayMode = this.normalizeDisplayMode(data.displayMode);
     const quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, normalizedLines);
     const availabilityIssues = await this.getAvailabilityIssues(normalizedLines);
+
+    // Atomic boundary: lead-autocreate + quote insert + (reservation pre-allocation
+    // for fully-available lines) all succeed or roll back together. Quote-number
+    // collisions retry inside the loop with a fresh transaction so partial state
+    // can never leak between attempts.
     let created: any = null;
+    let lastError: any = null;
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      if (attempt > 0) quoteNumber = await this.generateQuoteNumber();
+      const quoteNumber = await this.generateQuoteNumber();
       try {
-        created = await this.prisma.quote.create({
-          data: {
-            id: ulid(),
-            ...data,
-            customerId,
-            ownerId,
-            leadId,
-            lines: normalizedLines,
-            quoteNumber,
-            status: 'pending_approval',
-            approvalStatus: 'pending',
-            discountPercent: data.discountPercent || 0,
-            displayMode,
-            projectName: data.projectName || '',
-            title: data.title || 'Retail quotation',
-            validUntil: data.validUntil || this.defaultValidUntil(),
-            coverImage: '',
-            notes: data.notes || '',
-            versions: [],
-            quoteMeta,
-            approval: {
-              requestedAt: new Date().toISOString(),
-              reason: 'owner_quote_approval_required',
-              availabilityIssues,
+        created = await this.prisma.$transaction(async (tx) => {
+          let leadId = data.leadId;
+          if (!leadId) {
+            const lead = await tx.lead.create({
+              data: {
+                id: ulid(),
+                customerId,
+                ownerId,
+                title: data.projectName || data.title || 'Retail quote opportunity',
+                source: 'Quote desk',
+                stage: 'quoted',
+                expectedValue: this.getLinesTotal(data.lines),
+                lastContactAt: new Date(),
+                nextActionAt: new Date(Date.now() + 86400000 * 2),
+                notes: 'Auto-created from quote builder.',
+                updatedAt: new Date(),
+              },
+            });
+            leadId = lead.id;
+          }
+
+          const quote = await tx.quote.create({
+            data: {
+              id: ulid(),
+              ...data,
+              customerId,
+              ownerId,
+              leadId,
+              lines: normalizedLines,
+              quoteNumber,
+              status: 'pending_approval',
+              approvalStatus: 'pending',
               discountPercent: data.discountPercent || 0,
-              total: this.getLinesTotal(normalizedLines),
               displayMode,
+              projectName: data.projectName || '',
+              title: data.title || 'Retail quotation',
+              validUntil: data.validUntil || this.defaultValidUntil(),
+              coverImage: '',
+              notes: data.notes || '',
+              versions: [],
+              quoteMeta,
+              approval: {
+                requestedAt: new Date().toISOString(),
+                reason: 'owner_quote_approval_required',
+                availabilityIssues,
+                discountPercent: data.discountPercent || 0,
+                total: this.getLinesTotal(normalizedLines),
+                displayMode,
+              },
+              updatedAt: new Date(),
             },
-            updatedAt: new Date(),
-          },
-          include: quoteInclude,
-        } as any) as any;
+            include: quoteInclude,
+          } as any) as any;
+          return quote;
+        }, { timeout: 15000 });
         break;
       } catch (error: any) {
+        lastError = error;
         if (error?.code === 'P2002' && attempt < 4) continue;
         throw error;
       }
     }
-    if (!created) throw new BadRequestException('Could not allocate quote number');
+    if (!created) throw new BadRequestException(lastError?.message || 'Could not allocate quote number');
     await this.audit(created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId });
     await this.notifications.createMany([
       {
@@ -218,25 +252,40 @@ export class QuotesService {
     if (!QUOTE_STATUSES.includes(status)) {
       throw new BadRequestException(`Invalid status: ${status}`);
     }
-    
+
     await this.findById(id);
-    
+
     const updateData: any = { status };
     if (status === 'sent') {
       updateData.sentAt = new Date();
     } else if (status === 'confirmed') {
       updateData.confirmedAt = new Date();
     }
-    
-    const updated = await this.prisma.quote.update({
-      where: { id },
-      data: updateData,
-      include: quoteInclude,
-    } as any) as any;
-    if (['lost', 'expired'].includes(status)) {
-      await this.releaseReservations(id, `Quote marked ${status}`);
-    }
-    await this.audit(updated.ownerId, 'quote.status', id, `Quote status changed to ${status}`, { status });
+
+    // Status flip + reservation release + audit must be atomic so we never
+    // leave reservations dangling against a lost/expired quote.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.quote.update({
+        where: { id },
+        data: updateData,
+        include: quoteInclude,
+      } as any) as any;
+      if (['lost', 'expired'].includes(status)) {
+        await this.releaseReservationsTx(tx, id, `Quote marked ${status}`);
+      }
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(),
+          actorUserId: next.ownerId,
+          action: 'quote.status',
+          entityType: 'Quote',
+          entityId: id,
+          summary: `Quote status changed to ${status}`,
+          metadata: { status },
+        },
+      }).catch(() => null);
+      return next;
+    }, { timeout: 15000 });
     return updated;
   }
 
@@ -265,7 +314,9 @@ export class QuotesService {
   }
 
   async confirmQuote(id: string) {
-    const quote = await this.findById(id);
+    // Use the with-relations variant: we need `customer.siteAddress` to seed the
+    // dispatch job. DataLoader is not available in service-layer code paths.
+    const quote = await this.findByIdWithRelations(id);
     if (quote.approvalStatus === 'pending') {
       throw new BadRequestException('Quote needs approval before confirmation');
     }
@@ -326,7 +377,8 @@ export class QuotesService {
   }
 
   async createSalesOrderFromQuote(input: CreateSalesOrderInput, actorUserId: string) {
-    const quote = await this.findById(input.quoteId);
+    // Same as confirmQuote: needs `customer.siteAddress`.
+    const quote = await this.findByIdWithRelations(input.quoteId);
     if (quote.approvalStatus === 'pending') {
       throw new BadRequestException('Quote needs owner approval before sales order conversion');
     }
@@ -531,7 +583,15 @@ export class QuotesService {
 
   async delete(id: string) {
     await this.findById(id);
-    return this.prisma.quote.delete({ where: { id } });
+    // Release reservations and remove dependent rows in one tx so we never
+    // leave orphan reservations / activities pointing at a deleted quote.
+    return this.prisma.$transaction(async (tx) => {
+      await this.releaseReservationsTx(tx, id, 'Quote deleted');
+      await tx.reservation.deleteMany({ where: { quoteId: id } });
+      await tx.activity.deleteMany({ where: { quoteId: id } });
+      await tx.leadIntent.updateMany({ where: { quoteId: id }, data: { quoteId: null, status: 'pending_quote', updatedAt: new Date() } }).catch(() => null);
+      return tx.quote.delete({ where: { id } });
+    }, { timeout: 15000 });
   }
 
   private async generateQuoteNumber(): Promise<string> {
@@ -594,6 +654,12 @@ export class QuotesService {
 
   private async createReservationsForQuote(tx: any, quote: any) {
     const lines = this.normalizeLines(quote.lines);
+
+    // Idempotency guard: if reservations for this quote already exist (e.g. a
+    // concurrent confirm just wrote them) bail out instead of double-deducting.
+    const existing = await tx.reservation.count({ where: { quoteId: quote.id } });
+    if (existing > 0) return;
+
     for (const line of lines) {
       const productId = line.productId;
       const quantity = Number(line.qty || line.quantity || 0);
@@ -636,6 +702,38 @@ export class QuotesService {
     }
   }
 
+  private async releaseReservationsTx(tx: any, quoteId: string, reason: string) {
+    const reservations = await tx.reservation.findMany({ where: { quoteId, status: 'reserved' } });
+    for (const reservation of reservations) {
+      const balance = await tx.inventoryBalance.findUnique({ where: { productId: reservation.productId } });
+      if (balance) {
+        await tx.inventoryBalance.update({
+          where: { productId: reservation.productId },
+          data: {
+            reserved: Math.max(0, Number(balance.reserved || 0) - reservation.quantity),
+            available: Number(balance.available || 0) + reservation.quantity,
+            updatedAt: new Date(),
+          },
+        });
+      }
+      await tx.reservation.update({
+        where: { id: reservation.id },
+        data: { status: 'released', updatedAt: new Date() },
+      });
+      await tx.inventoryMovement.create({
+        data: {
+          id: ulid(),
+          productId: reservation.productId,
+          type: 'release',
+          quantity: reservation.quantity,
+          reason,
+          relatedQuoteId: quoteId,
+          createdBy: 'system',
+        },
+      });
+    }
+  }
+
   private async getAvailabilityIssues(lines: any[]) {
     const issues: any[] = [];
     for (const line of this.normalizeLines(lines)) {
@@ -660,37 +758,9 @@ export class QuotesService {
   }
 
   private async releaseReservations(quoteId: string, reason: string) {
-    const reservations = await this.prisma.reservation.findMany({ where: { quoteId, status: 'reserved' } });
     await this.prisma.$transaction(async (tx) => {
-      for (const reservation of reservations) {
-        const balance = await tx.inventoryBalance.findUnique({ where: { productId: reservation.productId } });
-        if (balance) {
-          await tx.inventoryBalance.update({
-            where: { productId: reservation.productId },
-            data: {
-              reserved: Math.max(0, Number(balance.reserved || 0) - reservation.quantity),
-              available: Number(balance.available || 0) + reservation.quantity,
-              updatedAt: new Date(),
-            },
-          });
-        }
-        await tx.reservation.update({
-          where: { id: reservation.id },
-          data: { status: 'released', updatedAt: new Date() },
-        });
-        await tx.inventoryMovement.create({
-          data: {
-            id: ulid(),
-            productId: reservation.productId,
-            type: 'release',
-            quantity: reservation.quantity,
-            reason,
-            relatedQuoteId: quoteId,
-            createdBy: 'system',
-          },
-        });
-      }
-    });
+      await this.releaseReservationsTx(tx, quoteId, reason);
+    }, { timeout: 15000 });
   }
 
   private rangeWhere(range?: string) {

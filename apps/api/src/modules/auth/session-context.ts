@@ -1,10 +1,12 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import type { AppDataLoaders } from '../common/dataloaders';
 
 export type GraphqlRequestContext = {
   req?: {
     headers?: Record<string, string | string[] | undefined>;
   };
+  loaders?: AppDataLoaders;
 };
 
 export type SessionUser = {

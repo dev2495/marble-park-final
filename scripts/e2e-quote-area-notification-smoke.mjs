@@ -32,7 +32,7 @@ async function main() {
   const backorder = await product(admin.token, skuB, 'Area Smoke Backorder Shower', 11600);
   await gql(`mutation($input: CreateInventoryInput!) { createInventory(input: $input) { id onHand available } }`, { input: { productId: stocked.id, onHand: 2 } }, admin.token);
 
-  const customer = (await gql(`mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`, { input: { name: 'Area Quote Notification Customer', phone: '9777777777', email: `${skuA.toLowerCase()}@example.com`, city: 'Ahmedabad', address: 'Area smoke site' } }, admin.token)).createCustomer;
+  const customer = (await gql(`mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`, { input: { name: `Area Quote Notification Customer ${skuA}`, phone: '9777777777', email: `${skuA.toLowerCase()}@example.com`, city: 'Ahmedabad', address: 'Area smoke site', forceCreate: true } }, admin.token)).createCustomer;
   const initialRows = [{ area: 'Master Bath', type: 'product', productId: stocked.id, sku: stocked.sku, name: stocked.name, category: stocked.category, brand: stocked.brand, qty: 1, unit: 'PC', price: stocked.sellPrice }];
   const lead = (await gql(`mutation($input: CreateLeadInput!) { createLead(input: $input) { id stage owner customer } }`, { input: { customerId: customer.id, ownerId: sales.user.id, title: 'Area-wise multi quote smoke lead', source: 'Showroom', notes: 'Smoke with multiple quotes', intentNotes: 'Initial priced master bath selection', intentRows: JSON.stringify(initialRows) } }, admin.token)).createLead;
 

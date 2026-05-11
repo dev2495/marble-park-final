@@ -107,6 +107,7 @@ async function main() {
   const readyRows = pdfRows.filter((row) => row.status === 'pending');
   assert(readyRows.length >= Math.min(50, pdfRows.length), `PDF rows should mostly be ready after inferred brand/category/finish, ready=${readyRows.length}, rows=${pdfRows.length}`);
   assert(readyRows.some((row) => row.brand === 'American Standard'), 'PDF import should infer American Standard brand');
+  assert((pdfImport.rowsWithImages || 0) > 0, `PDF import should map product images, got rowsWithImages=${pdfImport.rowsWithImages || 0}`);
   await gql(`mutation($id: String!) { submitImportBatchForApproval(importBatchId: $id) { result } }`, { id: pdfImport.importBatchId }, inventory.token);
   await gql(`mutation($id: String!, $note: String) { approveImportBatch(importBatchId: $id, note: $note) { result } }`, { id: pdfImport.importBatchId, note: 'Readiness PDF extraction approval' }, owner.token);
 
@@ -119,7 +120,7 @@ async function main() {
     manualSku: product.sku,
     inventoryAvailable: inventoryBalance.available,
     excel: { batch: excelImport.importBatchId, applied: excelApply.applied },
-    pdf: { batch: pdfImport.importBatchId, extracted: pdfImport.total, imageTasks: pdfImport.imageTasks, readyRows: readyRows.length },
+    pdf: { batch: pdfImport.importBatchId, extracted: pdfImport.total, rowsWithImages: pdfImport.rowsWithImages, orphansCreated: pdfImport.orphansCreated, readyRows: readyRows.length },
     ports: { api: API, web: WEB },
   }, null, 2));
 }

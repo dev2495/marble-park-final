@@ -7,7 +7,7 @@ services:
     repo: https://github.com/dev2495/marble-park-final
     branch: main
     buildCommand: npm ci && npm run db:generate && npm run build:api
-    startCommand: npm run start --workspace=apps/api
+    startCommand: npm run db:migrate:deploy --workspace=apps/api && npm run start --workspace=apps/api
     envVars:
       - key: NODE_ENV
         value: production

@@ -1,4 +1,4 @@
-import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int, Context } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int, Context, ResolveField, Parent } from '@nestjs/graphql';
 import { InventoryService } from './inventory.service';
 import { ProductOutput } from '../products/products.resolver';
 import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
@@ -33,6 +33,15 @@ export class InventoryOutput {
   @Field(() => Number)
   damaged!: number;
 
+  @Field(() => Number, { defaultValue: 5 })
+  lowStockThreshold!: number;
+
+  @Field(() => Number, { nullable: true })
+  reorderPoint?: number | null;
+
+  @Field(() => Boolean, { description: 'True when available <= lowStockThreshold (or reorderPoint when set).' })
+  isLowStock!: boolean;
+
   @Field(() => ProductOutput, { nullable: true })
   product?: any;
 
@@ -50,14 +59,39 @@ export class UpdateInventoryInput {
 
   @Field(() => Number, { nullable: true })
   damaged?: number;
+
+  @Field(() => Number, { nullable: true, description: 'Below or equal => low-stock alert. 0 disables.' })
+  lowStockThreshold?: number;
+
+  @Field(() => Number, { nullable: true, description: 'Hard reorder point (overrides lowStockThreshold for purchasing).' })
+  reorderPoint?: number;
 }
 
-@Resolver()
+@Resolver(() => InventoryOutput)
 export class InventoryResolver {
   constructor(
     private inventory: InventoryService,
     private prisma: PrismaService,
   ) {}
+
+  /**
+   * Computed flag for the low-stock dashboard. Logic:
+   *   - reorderPoint set & available <= reorderPoint -> true
+   *   - else lowStockThreshold > 0 & available <= lowStockThreshold -> true
+   * Resolved at the field level so callers can query it without an extra
+   * round-trip and the threshold field is always returned alongside.
+   */
+  @ResolveField('isLowStock', () => Boolean)
+  resolveIsLowStock(@Parent() balance: any): boolean {
+    const available = Number(balance?.available || 0);
+    const reorder = balance?.reorderPoint;
+    if (reorder !== undefined && reorder !== null && Number(reorder) >= 0) {
+      return available <= Number(reorder);
+    }
+    const threshold = Number(balance?.lowStockThreshold ?? 5);
+    if (threshold <= 0) return false;
+    return available <= threshold;
+  }
 
   @Query(() => [InventoryOutput])
   async inventoryBalances(
@@ -68,6 +102,20 @@ export class InventoryResolver {
   ) {
     await requireSession(this.prisma, ctx);
     return this.inventory.findAll({ productId, search, take });
+  }
+
+  /**
+   * Low-stock list for the inventory dashboard / purchasing alerts.
+   * Returns balances where available <= COALESCE(reorderPoint, lowStockThreshold)
+   * and the threshold is positive.
+   */
+  @Query(() => [InventoryOutput])
+  async lowStockBalances(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.inventory.findLowStock(take || 100);
   }
 
   @Query(() => InventoryOutput)

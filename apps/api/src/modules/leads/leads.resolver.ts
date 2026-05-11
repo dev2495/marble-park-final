@@ -1,8 +1,9 @@
-import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context, ResolveField, Parent } from '@nestjs/graphql';
 import { LeadsService } from './leads.service';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, isPrivileged, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { loadOrNull } from '../common/dataloaders';
 
 @ObjectType()
 export class LeadOutput {
@@ -26,6 +27,13 @@ export class LeadOutput {
 
   @Field(() => Date, { nullable: true })
   nextActionAt?: Date;
+
+  // FKs exposed for DataLoader-driven field resolution.
+  @Field({ nullable: true })
+  customerId?: string;
+
+  @Field({ nullable: true })
+  ownerId?: string;
 
   @Field(() => GraphQLJSON, { nullable: true })
   customer?: any;
@@ -121,12 +129,28 @@ export class CreateLeadIntentInput {
   followUpReason?: string;
 }
 
-@Resolver()
+@Resolver(() => LeadOutput)
 export class LeadsResolver {
   constructor(
     private leads: LeadsService,
     private prisma: PrismaService,
   ) {}
+
+  // ----- DataLoader-backed field resolvers -----
+
+  @ResolveField('customer', () => GraphQLJSON, { nullable: true })
+  async resolveCustomer(@Parent() lead: any, @Context() ctx: GraphqlRequestContext) {
+    if (lead?.customer) return lead.customer;
+    if (!ctx.loaders) return null;
+    return loadOrNull(ctx.loaders.customerById, lead?.customerId);
+  }
+
+  @ResolveField('owner', () => GraphQLJSON, { nullable: true })
+  async resolveOwner(@Parent() lead: any, @Context() ctx: GraphqlRequestContext) {
+    if (lead?.owner) return lead.owner;
+    if (!ctx.loaders) return null;
+    return loadOrNull(ctx.loaders.userById, lead?.ownerId);
+  }
 
   @Query(() => [LeadOutput], { name: 'leads' })
   async getLeads(

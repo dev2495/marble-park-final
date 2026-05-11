@@ -6,11 +6,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, CheckCircle, Download, ImagePlus, Save, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ProductImageFrame } from '@/components/product-image-frame';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const QUOTE_DETAIL = gql`
   query QuoteDetail($id: ID!) {
     quote(id: $id) {
-      id quoteNumber title projectName status approvalStatus discountPercent displayMode createdAt validUntil sentAt confirmedAt notes lines quoteMeta customer owner lead approval
+      id quoteNumber title projectName status approvalStatus discountPercent displayMode createdAt validUntil sentAt confirmedAt notes lines quoteMeta customer owner lead approval coverImage
     }
   }
 `;
@@ -57,11 +58,16 @@ export default function QuoteDetailPage({ params }: { params: { id: string } }) 
   const [terms, setTerms] = useState('');
   const [bankDetails, setBankDetails] = useState('');
   const [discountPercent, setDiscountPercent] = useState('0');
-  const { data, loading, refetch } = useQuery(QUOTE_DETAIL, { variables: { id: params.id } });
-  const [updateQuote, { loading: savingQuote }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
-  const [sendQuote, { loading: sending }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
-  const [confirmQuote, { loading: confirming }] = useMutation(CONFIRM_QUOTE, { onCompleted: () => refetch() });
-  const [createSalesOrder, { loading: creatingOrder }] = useMutation(CREATE_SALES_ORDER, { onCompleted: (result) => { setOrderMessage(`Sales order ${result.createSalesOrderFromQuote.orderNumber} created.`); refetch(); }, onError: (error) => setOrderMessage(error.message) });
+  const [coverImage, setCoverImage] = useState('');
+  const [tagline, setTagline] = useState('');
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [coverError, setCoverError] = useState<string | null>(null);
+  const { data, loading, error, refetch } = useQuery(QUOTE_DETAIL, { variables: { id: params.id } });
+  const [updateQuote, { loading: savingQuote, error: updateError }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
+  const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
+  const [confirmQuote, { loading: confirming, error: confirmError }] = useMutation(CONFIRM_QUOTE, { onCompleted: () => refetch() });
+  const [createSalesOrder, { loading: creatingOrder, error: createOrderError }] = useMutation(CREATE_SALES_ORDER, { onCompleted: (result) => { setOrderMessage(`Sales order ${result.createSalesOrderFromQuote.orderNumber} created.`); refetch(); }, onError: (error) => setOrderMessage(error.message) });
+  const mutationError = updateError || sendError || confirmError || createOrderError;
   const quote = data?.quote;
 
   useEffect(() => {
@@ -73,7 +79,28 @@ export default function QuoteDetailPage({ params }: { params: { id: string } }) 
     setTerms(meta.terms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.');
     setBankDetails(meta.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.');
     setDiscountPercent(String(quote.discountPercent || 0));
+    setCoverImage(quote.coverImage || meta.coverImage || '');
+    setTagline(meta.tagline || '');
   }, [quote]);
+
+  async function handleCoverUpload(file: File | null) {
+    if (!file) return;
+    setCoverError(null);
+    setUploadingCover(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('scope', 'product-image');
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!res.ok || !json.publicUrl) throw new Error(json.error || 'Upload failed');
+      setCoverImage(json.publicUrl);
+    } catch (err) {
+      setCoverError((err as any)?.message || 'Upload failed');
+    } finally {
+      setUploadingCover(false);
+    }
+  }
 
   const subtotal = useMemo(() => editLines.reduce((sum, line) => sum + lineRate(line).amount, 0), [editLines]);
   const quoteDiscount = subtotal * (Number(discountPercent || 0) / 100);
@@ -83,12 +110,26 @@ export default function QuoteDetailPage({ params }: { params: { id: string } }) 
   const grouped = groupLines(editLines);
 
   const updateLine = (index: number, patch: any) => setEditLines((current) => current.map((line, idx) => idx === index ? { ...line, ...patch } : line));
-  const saveQuote = () => updateQuote({ variables: { id: quote.id, input: { displayMode, discountPercent: Number(discountPercent || 0), lines: JSON.stringify(editLines), quoteMeta: JSON.stringify({ remarks, terms, bankDetails, showBrandLogos: true }) } } });
+  const saveQuote = () => updateQuote({
+    variables: {
+      id: quote.id,
+      input: {
+        displayMode,
+        discountPercent: Number(discountPercent || 0),
+        lines: JSON.stringify(editLines),
+        coverImage: coverImage || undefined,
+        quoteMeta: JSON.stringify({ remarks, terms, bankDetails, showBrandLogos: true, coverImage, tagline }),
+      },
+    },
+  });
 
-  if (loading) return <div className="mp-card rounded-[2rem] p-10 text-center font-bold text-[#8b6b4c]">Loading quote...</div>;
+  if (loading && !quote) return <div role="status" aria-live="polite" className="mp-card rounded-[2rem] p-10 text-center font-bold text-[#8b6b4c]">Loading quote...</div>;
+  if (error && !quote) return <div className="mp-card rounded-[2rem] p-6"><QueryErrorBanner error={error} onRetry={() => refetch()} /></div>;
   if (!quote) return <div className="mp-card rounded-[2rem] p-10 text-center font-bold text-[#8b6b4c]">Quote not found.</div>;
 
   return <div className="space-y-6 pb-10">
+    {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+    {mutationError ? <QueryErrorBanner error={mutationError} /> : null}
     <section className="relative overflow-hidden rounded-[2.25rem] bg-[#211b16] p-7 text-white shadow-2xl shadow-[#211b16]/15">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(181,123,66,0.45),transparent_28%),radial-gradient(circle_at_86%_35%,rgba(36,84,77,0.45),transparent_30%)]" />
       <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
@@ -106,6 +147,48 @@ export default function QuoteDetailPage({ params }: { params: { id: string } }) 
         </div>
       </div>
     </section>
+
+    {displayMode === 'selection' ? (
+      <section className="mp-card rounded-[2rem] p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+          <div className="lg:w-1/2 space-y-3">
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#8b6b4c]">PDF cover (selection layout)</p>
+            <div className="flex items-center gap-3">
+              <div className="grid h-24 w-40 place-items-center overflow-hidden rounded-2xl border border-[#7a5b3c]/15 bg-[#ead7c0]/40">
+                {coverImage ? (
+                  <img src={coverImage} alt="Quote cover preview" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="px-3 text-center text-xs font-bold text-[#8b6b4c]">No cover image yet</span>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-2xl bg-[#211b16] px-4 py-2 text-xs font-black text-white">
+                  <ImagePlus className="h-4 w-4" />
+                  {uploadingCover ? 'Uploading…' : (coverImage ? 'Replace cover' : 'Upload cover')}
+                  <input type="file" accept="image/*" className="hidden" onChange={(event) => handleCoverUpload(event.target.files?.[0] ?? null)} />
+                </label>
+                {coverImage ? (
+                  <button type="button" onClick={() => setCoverImage('')} className="text-xs font-bold text-[#b57942] underline">Remove cover</button>
+                ) : null}
+              </div>
+            </div>
+            {coverError ? <p role="alert" className="rounded-xl bg-red-50 p-2 text-xs font-bold text-red-700">{coverError}</p> : null}
+          </div>
+          <div className="lg:w-1/2 space-y-3">
+            <label className="block space-y-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-[#8b6b4c]">Tagline (printed at top of cover)</span>
+              <input
+                value={tagline}
+                onChange={(event) => setTagline(event.target.value)}
+                placeholder="Below Are The Best Quoted Rates, For The Material You Have Selected For Your Prestegious Project."
+                className="h-11 w-full rounded-2xl border border-[#7a5b3c]/15 bg-white px-4 text-sm font-bold text-[#211b16]"
+              />
+            </label>
+            <p className="text-xs font-bold leading-5 text-[#8b6b4c]">Selection layout puts the cover image, tagline, client/architect ribbon and per-area "Utilize / Size / Design Name" cards on the PDF — ideal for tile selections shared with architects.</p>
+          </div>
+        </div>
+      </section>
+    ) : null}
 
     <section className="grid gap-5 xl:grid-cols-[1fr_0.42fr]">
       <div className="space-y-5">

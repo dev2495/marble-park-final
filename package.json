@@ -16,6 +16,8 @@
     "lint": "npm run lint --workspaces --if-present",
     "db:generate": "npm run db:generate --workspace=apps/api",
     "db:push": "npm run db:push --workspace=apps/api",
+    "db:migrate:dev": "npm run db:migrate:dev --workspace=apps/api",
+    "db:migrate:deploy": "npm run db:migrate:deploy --workspace=apps/api",
     "db:seed": "npm run db:seed --workspace=apps/api",
     "catalogue:import": "npm run catalogue:import --workspace=apps/api",
     "catalogue:images": "node scripts/extract-catalogue-images.mjs",

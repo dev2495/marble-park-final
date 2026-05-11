@@ -5,6 +5,7 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import Link from 'next/link';
 import { FileSpreadsheet, ListChecks, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const INTENTS = gql`query IntentDesk($status: String) { leadIntents(status: $status) }`;
 const GENERATE = gql`mutation GenerateQuoteFromIntent($intentId: String!, $note: String, $displayMode: String) { generateQuoteFromIntent(intentId: $intentId, note: $note, displayMode: $displayMode) }`;
@@ -14,11 +15,13 @@ function rowsTotal(rows: any[]) { return (Array.isArray(rows) ? rows : []).reduc
 
 export default function IntentDeskPage() {
   const [displayModeByIntent, setDisplayModeByIntent] = useState<Record<string, string>>({});
-  const { data, loading, refetch } = useQuery(INTENTS, { variables: { status: 'pending_quote' } });
-  const [generate, { loading: generating }] = useMutation(GENERATE, { onCompleted: () => refetch() });
+  const { data, loading, error, refetch } = useQuery(INTENTS, { variables: { status: 'pending_quote' } });
+  const [generate, { loading: generating, error: generateError }] = useMutation(GENERATE, { onCompleted: () => refetch() });
   const intents = data?.leadIntents || [];
 
   return <div className="space-y-6 pb-10">
+    {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+    {generateError ? <QueryErrorBanner error={generateError} /> : null}
     <section className="rounded-[2.25rem] bg-[#211b16] p-7 text-white shadow-2xl shadow-[#211b16]/15">
       <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#e8c39b]">Office intent desk</p>
       <h1 className="mt-3 text-5xl font-black tracking-[-0.055em]">Convert sales intent into quote-ready proposals.</h1>

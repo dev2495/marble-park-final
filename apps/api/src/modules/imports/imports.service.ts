@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
+import * as path from 'node:path';
+import { extractCataloguePdf, ExtractedRow } from './extractors/pdf-catalogue-extractor';
 
 @Injectable()
 export class ImportsService {
@@ -37,46 +39,210 @@ export class ImportsService {
     return this.stageRows(rows, filePath, uploadedBy, 'excel');
   }
 
+  /**
+   * PDF catalogue import. Uses the coordinate-aware extractor that pairs
+   * each detected SKU with the *spatially nearest* image on the same page,
+   * so each ImportRow lands with a real product photo rather than a random
+   * asset from a hash bucket. Falls back to plain heuristic line scanning
+   * only if pdfjs cannot open the file.
+   */
   async processPdfImport(filePath: string, uploadedBy = 'system'): Promise<any> {
+    const imageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../web/public/catalogue-images/imports');
+    const publicBase = `${String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '')}/catalogue-images/imports`;
+    try {
+      const result = await extractCataloguePdf({
+        filePath,
+        imageOutputDir: imageDir,
+        publicBaseUrl: publicBase,
+      });
+      if (result.rows.length > 0) {
+        return this.stageExtractedRows(result, filePath, uploadedBy);
+      }
+    } catch (err) {
+      // Spatial extractor failed (corrupt PDF, password-protected, etc.).
+      // Fall through to the legacy heuristic so the user still gets *some*
+      // import suggestions instead of an empty batch.
+      // eslint-disable-next-line no-console
+      console.warn('[imports] spatial extractor failed; falling back to text-heuristic:', (err as any)?.message);
+    }
+
+    // Fallback path: pdf-parse (text-only, no images). Useful for poorly
+    // structured catalogues or images-only PDFs the spatial pass can't crack.
     let PDFParse;
     try {
-      PDFParse = require('pdf-parse').PDFParse;
-    } catch (e) {
-      console.warn("pdf-parse not found, AI fallback requires text extraction layer.");
-      throw new Error("PDF processing requires pdf-parse to be available");
+      // pdf-parse 2.x uses a class export; older versions are a default function.
+      const mod = require('pdf-parse');
+      PDFParse = mod.PDFParse || mod.default || mod;
+    } catch {
+      return { source: 'PDF-Extraction-Failed', reason: 'pdf-parse-not-available', totalFound: 0 };
     }
 
     const fs = require('fs');
     const dataBuffer = fs.readFileSync(filePath);
-    const parser = new PDFParse({ data: dataBuffer });
-    const pdfData = await parser.getText();
-    await parser.destroy();
-    
-    const heuristicRows = this.extractPdfProductRows(pdfData.text, filePath);
+    let text = '';
+    try {
+      if (typeof PDFParse === 'function' && PDFParse.prototype) {
+        const parser = new PDFParse({ data: dataBuffer });
+        const pdfData = await parser.getText();
+        await parser.destroy?.();
+        text = pdfData.text;
+      } else {
+        const pdfData = await PDFParse(dataBuffer);
+        text = pdfData.text;
+      }
+    } catch (err) {
+      return { source: 'PDF-Extraction-Failed', reason: (err as any)?.message || 'parse-error', totalFound: 0 };
+    }
+    const heuristicRows = this.extractPdfProductRows(text, filePath);
     if (heuristicRows.length > 0) {
       return this.stageRows(heuristicRows, filePath, uploadedBy, 'pdf-heuristic', true);
     }
+    return { source: 'PDF-Extraction-Failed', totalFound: 0, textLength: text.length };
+  }
 
-    // AI fallback is intentionally second. Most price catalogues have a repeatable
-    // SKU/description/MRP structure, and deterministic extraction avoids stale or partial AI output.
-    try {
-      const { OpenAI } = require('openai');
-      if (!process.env.OPENAI_API_KEY) throw new Error('NO_API_KEY');
-      
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [
-          { role: "system", content: "Extract a product catalog array from the text. Return ONLY valid JSON array with keys: SKU, name, category, brand, mrp." },
-          { role: "user", content: pdfData.text.substring(0, 8000) }
-        ]
+  /**
+   * Stage the spatially-extracted rows into ImportBatch + ImportRow + image
+   * review tasks for orphan images. The schema is intentionally compatible
+   * with the existing approval / apply pipeline (`processProductRow`), so
+   * approved rows will land in the products table via the same apply path.
+   */
+  private async stageExtractedRows(
+    result: { filePath: string; brand: string; rows: ExtractedRow[]; orphanImages: any[]; totalPages: number; scannedPages: number },
+    filePath: string,
+    uploadedBy: string,
+  ) {
+    const sourceFile = await this.prisma.sourceFile.upsert({
+      where: { path: filePath },
+      update: {
+        status: 'parsed',
+        updatedAt: new Date(),
+        metadata: { kind: 'pdf-spatial', rowCount: result.rows.length, orphanImages: result.orphanImages.length },
+      },
+      create: {
+        id: ulid(),
+        kind: 'pdf-spatial',
+        name: path.basename(filePath),
+        path: filePath,
+        uploadedBy,
+        status: 'parsed',
+        metadata: { rowCount: result.rows.length, orphanImages: result.orphanImages.length },
+        updatedAt: new Date(),
+      },
+    });
+
+    const avgConfidence = result.rows.length
+      ? Number((result.rows.reduce((s, r) => s + r.confidence, 0) / result.rows.length).toFixed(3))
+      : 0;
+
+    const batch = await this.prisma.importBatch.create({
+      data: {
+        id: ulid(),
+        sourceFileId: sourceFile.id,
+        brand: result.brand,
+        rowCount: result.rows.length,
+        status: 'pending_review',
+        summary: {
+          kind: 'pdf-spatial',
+          scannedPages: result.scannedPages,
+          totalPages: result.totalPages,
+          averageConfidence: avgConfidence,
+          orphanImages: result.orphanImages.length,
+          rowsWithImages: result.rows.filter((r) => !!r.imageUrl).length,
+        },
+        updatedAt: new Date(),
+      },
+    });
+
+    let needsReview = 0;
+    let ready = 0;
+    for (const row of result.rows) {
+      const normalized = {
+        sku: row.sku,
+        name: row.name,
+        brand: row.brand,
+        category: row.category,
+        finish: row.finish || 'Standard',
+        range: row.series,
+        sellPrice: row.mrp,
+        mediaPrimary: row.imageUrl || null,
+        mediaWidth: row.imageWidth,
+        mediaHeight: row.imageHeight,
+        confidence: row.confidence,
+        page: row.pageNumber,
+      };
+      const status = this.hasRequiredImportMasters(normalized) ? 'pending' : 'needs_review';
+      if (status === 'pending') ready += 1; else needsReview += 1;
+      await this.prisma.importRow.create({
+        data: {
+          id: ulid(),
+          sourceFileId: sourceFile.id,
+          importBatchId: batch.id,
+          brand: row.brand,
+          range: row.series ?? null,
+          categoryCode: row.category,
+          sku: row.sku,
+          description: row.name,
+          newMrp: row.mrp,
+          raw: { rawText: row.rawText, pageNumber: row.pageNumber, imageDistance: row.imageDistance, confidence: row.confidence },
+          normalized,
+          status,
+          updatedAt: new Date(),
+        },
       });
-
-      const structuredItems = JSON.parse(completion.choices[0].message?.content || "[]");
-      return this.stageRows(structuredItems, filePath, uploadedBy, 'pdf-ai', true);
-    } catch (apiError) {
-       return { source: "PDF-Extraction-Failed", totalFound: 0, textLength: pdfData.text.length };
     }
+
+    let orphansCreated = 0;
+    for (const orphan of result.orphanImages) {
+      try {
+        await this.prisma.catalogReviewTask.create({
+          data: {
+            id: ulid(),
+            sourceFileId: sourceFile.id,
+            pageNumber: orphan.pageNumber,
+            imagePath: orphan.imagePath,
+            imageUrl: orphan.imageUrl,
+            status: 'needs_mapping',
+            confidence: 0.3,
+            raw: { width: orphan.width, height: orphan.height, hash: orphan.hash },
+            updatedAt: new Date(),
+          },
+        });
+        orphansCreated += 1;
+      } catch {
+        // ignore individual orphan failures
+      }
+    }
+
+    await this.prisma.importBatch.update({
+      where: { id: batch.id },
+      data: {
+        summary: {
+          kind: 'pdf-spatial',
+          scannedPages: result.scannedPages,
+          totalPages: result.totalPages,
+          averageConfidence: avgConfidence,
+          orphanImages: result.orphanImages.length,
+          rowsWithImages: result.rows.filter((r) => !!r.imageUrl).length,
+          needsReview,
+          ready,
+          orphansCreated,
+        },
+        updatedAt: new Date(),
+      },
+    });
+
+    return {
+      source: 'pdf-spatial',
+      importBatchId: batch.id,
+      total: result.rows.length,
+      staged: result.rows.length,
+      needsReview,
+      ready,
+      rowsWithImages: result.rows.filter((r) => !!r.imageUrl).length,
+      orphansCreated,
+      averageConfidence: avgConfidence,
+      status: 'pending_review',
+    };
   }
 
   private extractPdfProductRows(text: string, filePath: string): any[] {
@@ -500,12 +666,23 @@ export class ImportsService {
       throw new Error('SKU and Name are required');
     }
 
+    // Spatial-extractor rows carry the resolved image URL directly. Pass it
+    // through into product.media so approved rows land with an image
+    // attached on day one.
+    const mediaPrimary = data.mediaPrimary || data['Image'] || null;
+    const media = mediaPrimary
+      ? { primary: mediaPrimary, gallery: [mediaPrimary], source: 'pdf-spatial' }
+      : {};
+
     const existing = await this.prisma.product.findUnique({ where: { sku } });
 
     if (existing) {
+      // Don't clobber an existing curated image with a (lower-quality) auto-extracted one.
+      const existingMedia: any = existing.media || {};
+      const mergedMedia = existingMedia.primary ? existingMedia : media;
       return this.prisma.product.update({
         where: { sku },
-        data: { sellPrice },
+        data: { sellPrice, media: mergedMedia, updatedAt: new Date() },
       });
     } else {
       await this.ensureProductMasters(category, brand, finish);
@@ -522,11 +699,11 @@ export class ImportsService {
           unit: 'PC',
           status: 'active',
           tags: {},
-          media: {},
-          sourceRefs: {},
+          media,
+          sourceRefs: { extractedFrom: data.page ? `page-${data.page}` : 'pdf-import' },
           floorPrice: sellPrice * 0.9,
           taxClass: 'STANDARD',
-          description: data['Description'] || data['PRODUCT DESCRIPTION'] || '',
+          description: data['Description'] || data['PRODUCT DESCRIPTION'] || data.rawText?.join(' · ') || '',
           updatedAt: new Date(),
         } as any,
       });

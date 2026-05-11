@@ -7,6 +7,7 @@ import { motion } from 'framer-motion';
 import { AlertTriangle, Boxes, PackagePlus, Search, ShieldCheck, Warehouse } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const GET_INVENTORY = gql`
   query InventoryBalances($search: String, $take: Int) {
@@ -28,14 +29,32 @@ const GET_DASHBOARD = gql`
   }
 `;
 
+const GET_LOW_STOCK = gql`
+  query LowStockBalances($take: Int) {
+    lowStockBalances(take: $take) {
+      id
+      onHand
+      available
+      reserved
+      lowStockThreshold
+      reorderPoint
+      isLowStock
+      product { id sku name brand category sellPrice media }
+      updatedAt
+    }
+  }
+`;
+
 function money(value: number) {
   return `₹${Math.round(value || 0).toLocaleString('en-IN')}`;
 }
 
 export default function InventoryPage() {
   const [search, setSearch] = useState('');
-  const { data, loading } = useQuery(GET_INVENTORY, { variables: { search: search || undefined, take: 180 } });
-  const { data: dashboardData } = useQuery(GET_DASHBOARD);
+  const { data, loading, error, refetch } = useQuery(GET_INVENTORY, { variables: { search: search || undefined, take: 180 } });
+  const { data: dashboardData, error: dashboardError } = useQuery(GET_DASHBOARD);
+  const { data: lowStockData, error: lowStockError } = useQuery(GET_LOW_STOCK, { variables: { take: 24 } });
+  const lowStockRows: any[] = lowStockData?.lowStockBalances || [];
   const balances = data?.inventoryBalances || [];
   const dashboard = dashboardData?.inventoryDashboard?.summary || {};
 
@@ -70,11 +89,54 @@ export default function InventoryPage() {
         </div>
       </section>
 
+      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {dashboardError ? <QueryErrorBanner error={dashboardError} /> : null}
+      {lowStockError ? <QueryErrorBanner error={lowStockError} /> : null}
+
+      {lowStockRows.length > 0 ? (
+        <section className="mp-card rounded-[2rem] border border-red-200/70 bg-red-50/60 p-5">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.26em] text-red-700">Low-stock alerts</p>
+              <h2 className="mt-2 text-2xl font-black text-[#211b16]">{lowStockRows.length} SKU{lowStockRows.length === 1 ? '' : 's'} need re-ordering</h2>
+              <p className="mt-1 text-sm font-bold text-[#7d6b5c]">Available stock has dropped to or below each product's threshold (or explicit reorder point if set).</p>
+            </div>
+          </div>
+          <div className="mt-4 overflow-x-auto custom-scrollbar">
+            <table className="w-full min-w-[760px] text-left">
+              <thead className="text-[10px] font-black uppercase tracking-widest text-red-800/80">
+                <tr>
+                  <th className="px-3 py-2">Product</th>
+                  <th className="px-3 py-2 text-center">Available</th>
+                  <th className="px-3 py-2 text-center">Threshold</th>
+                  <th className="px-3 py-2 text-center">Reorder pt.</th>
+                  <th className="px-3 py-2 text-right">Last updated</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-red-200/60">
+                {lowStockRows.map((row: any) => (
+                  <tr key={row.id} className="text-sm">
+                    <td className="px-3 py-2">
+                      <div className="font-black text-[#211b16]">{row.product?.name}</div>
+                      <div className="text-[10px] font-black uppercase tracking-wider text-[#8b6b4c]">{row.product?.sku} · {row.product?.brand}</div>
+                    </td>
+                    <td className="px-3 py-2 text-center"><span className="rounded-full bg-red-200/80 px-3 py-1 text-sm font-black text-red-900">{row.available}</span></td>
+                    <td className="px-3 py-2 text-center font-black text-[#7a4f2e]">{row.lowStockThreshold}</td>
+                    <td className="px-3 py-2 text-center font-black text-[#7a4f2e]">{row.reorderPoint ?? '—'}</td>
+                    <td className="px-3 py-2 text-right text-xs font-bold text-[#8b6b4c]">{row.updatedAt ? new Date(row.updatedAt).toLocaleDateString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
       <section className="mp-card rounded-[2rem] p-4 lg:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="relative max-w-xl flex-1">
             <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8b6b4c]" />
-            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search inventory by SKU, brand or product..." className="h-[3.25rem] pl-12" />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search inventory by SKU, brand or product..." aria-label="Search inventory" className="h-[3.25rem] pl-12" />
           </div>
           <p className="text-sm font-bold text-[#7d6b5c]">Showing {balances.length.toLocaleString('en-IN')} rows</p>
         </div>

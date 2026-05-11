@@ -12,6 +12,8 @@ export interface UpdateInventoryInput {
   onHand?: number;
   reserved?: number;
   damaged?: number;
+  lowStockThreshold?: number;
+  reorderPoint?: number | null;
 }
 
 @Injectable()
@@ -53,6 +55,28 @@ export class InventoryService {
       where: { productId },
       include: { product: true },
     } as any) as any;
+  }
+
+  /**
+   * Low-stock list. Implemented as a raw SQL clause because Prisma can't
+   * compare two columns (e.g. `available <= lowStockThreshold`) in a regular
+   * findMany. We then re-hydrate the products via a single batched fetch.
+   */
+  async findLowStock(take = 100): Promise<any[]> {
+    const limit = Math.max(1, Math.min(500, Number(take) || 100));
+    const rows = (await (this.prisma as any).$queryRawUnsafe(
+      `SELECT * FROM "InventoryBalance"
+        WHERE ("available" <= COALESCE("reorderPoint", "lowStockThreshold"))
+          AND COALESCE("reorderPoint", "lowStockThreshold") > 0
+        ORDER BY ("available"::float / NULLIF(COALESCE("reorderPoint", "lowStockThreshold"), 0)) ASC,
+                 "available" ASC
+        LIMIT ${limit}`,
+    )) as any[];
+    if (!rows.length) return [];
+    const productIds = Array.from(new Set(rows.map((r) => r.productId)));
+    const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
+    const byId = new Map(products.map((p) => [p.id, p] as const));
+    return rows.map((row) => ({ ...row, product: byId.get(row.productId) || null }));
   }
 
   async create(data: CreateInventoryInput): Promise<any> {

@@ -5,6 +5,7 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import { useState } from 'react';
 import { CheckCircle2, Database, FileImage, FileSpreadsheet, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const APPROVALS = gql`
   query OwnerApprovals {
@@ -22,16 +23,19 @@ function money(value: number) { return `₹${Math.round(value || 0).toLocaleStri
 
 export default function ApprovalsPage() {
   const [tab, setTab] = useState<'quotes'|'imports'|'images'>('quotes');
-  const { data, loading, refetch } = useQuery(APPROVALS);
-  const [approveQuote, { loading: approvingQuote }] = useMutation(APPROVE_QUOTE, { onCompleted: () => refetch() });
-  const [approveImport, { loading: approvingImport }] = useMutation(APPROVE_IMPORT, { onCompleted: () => refetch() });
-  const [approveCatalog, { loading: approvingCatalog }] = useMutation(APPROVE_CATALOG, { onCompleted: () => refetch() });
+  const { data, loading, error, refetch } = useQuery(APPROVALS);
+  const [approveQuote, { loading: approvingQuote, error: approveQuoteError }] = useMutation(APPROVE_QUOTE, { onCompleted: () => refetch() });
+  const [approveImport, { loading: approvingImport, error: approveImportError }] = useMutation(APPROVE_IMPORT, { onCompleted: () => refetch() });
+  const [approveCatalog, { loading: approvingCatalog, error: approveCatalogError }] = useMutation(APPROVE_CATALOG, { onCompleted: () => refetch() });
+  const mutationError = approveQuoteError || approveImportError || approveCatalogError;
   const quotes = data?.quotes || [];
   const imports = (data?.importBatches || []).filter((batch: any) => batch.status === 'pending_approval');
   const catalogTasks = data?.catalogReviewTasks || [];
   const totalPending = quotes.length + imports.length + catalogTasks.length;
 
   return <div className="space-y-6 pb-10">
+    {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+    {mutationError ? <QueryErrorBanner error={mutationError} /> : null}
     <section className="rounded-[2.25rem] bg-[#211b16] p-7 text-white shadow-2xl shadow-[#211b16]/15"><p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#e8c39b]">Owner approval desk</p><h1 className="mt-3 text-5xl font-black tracking-[-0.055em]">All approvals, separated by workflow.</h1><p className="mt-4 max-w-2xl text-sm font-semibold leading-6 text-[#d9c4a9]">Quote approvals, catalogue imports and extracted image mappings live here only for admin and owner.</p></section>
     <section className="grid gap-4 md:grid-cols-4">{[['Total pending', totalPending], ['Quotes', quotes.length], ['Imports', imports.length], ['Images', catalogTasks.length]].map(([label, value]) => <div key={label} className="mp-card rounded-[2rem] p-5"><p className="text-[10px] font-black uppercase tracking-widest text-[#8b6b4c]">{label}</p><p className="mt-2 text-3xl font-black text-[#211b16]">{loading ? '...' : value}</p></div>)}</section>
     <section className="mp-card flex flex-wrap gap-2 rounded-[2rem] p-3">{[['quotes','Quote approvals',quotes.length,FileSpreadsheet],['imports','Import approvals',imports.length,Database],['images','Image approvals',catalogTasks.length,FileImage]].map(([id,label,count,Icon]: any)=><button key={id} onClick={()=>setTab(id)} className={`flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-black ${tab===id?'bg-[#211b16] text-white':'bg-white/70 text-[#5f4b3b]'}`}><Icon className="h-4 w-4"/>{label}<span className="rounded-full bg-[#ead7c0] px-2 py-0.5 text-[10px] text-[#7a4f2e]">{count}</span></button>)}</section>

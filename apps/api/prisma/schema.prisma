@@ -18,6 +18,12 @@ model Activity {
   type      String
   message   String
   createdAt DateTime @default(now())
+
+  @@index([leadId])
+  @@index([quoteId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt(sort: Desc)])
 }
 
 model AppSetting {
@@ -83,6 +89,11 @@ model Customer {
   quotes           Quote[]
   dispatchJobs     DispatchJob[]
   dispatchChallans DispatchChallan[]
+
+  @@index([name])
+  @@index([mobile])
+  @@index([email])
+  @@index([gstNo])
 }
 
 model DispatchChallan {
@@ -108,6 +119,12 @@ model DispatchChallan {
   lines           Json
   proof           Json?
   updatedAt       DateTime
+
+  @@index([quoteId])
+  @@index([dispatchJobId])
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
 }
 
 model DispatchJob {
@@ -124,6 +141,11 @@ model DispatchJob {
   createdAt        DateTime          @default(now())
   updatedAt        DateTime
   dispatchChallans DispatchChallan[]
+
+  @@index([customerId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([dueDate])
 }
 
 model FollowUpTask {
@@ -137,6 +159,11 @@ model FollowUpTask {
   notes     String
   createdAt DateTime @default(now())
   updatedAt DateTime
+
+  @@index([leadId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([dueAt])
 }
 
 model ImportBatch {
@@ -169,15 +196,22 @@ model ImportRow {
 }
 
 model InventoryBalance {
-  id        String   @id
-  product   Product  @relation(fields: [productId], references: [id])
-  productId String   @unique
-  onHand    Int
-  reserved  Int
-  available Int
-  damaged   Int
-  hold      Int
-  updatedAt DateTime
+  id                 String   @id
+  product            Product  @relation(fields: [productId], references: [id])
+  productId          String   @unique
+  onHand             Int
+  reserved           Int
+  available          Int
+  damaged            Int
+  hold               Int
+  /// When `available` drops at or below this number the product is flagged as
+  /// "low stock" on dashboards. 0 disables the alert. Default = 5 covers
+  /// "almost empty" for retail showrooms; sales managers override per SKU.
+  lowStockThreshold  Int      @default(5)
+  /// Optional explicit reorder point. If non-null and `available` <= this,
+  /// the product is flagged for purchase planning.
+  reorderPoint       Int?
+  updatedAt          DateTime
 }
 
 model InventoryInwardBatch {
@@ -201,6 +235,12 @@ model InventoryMovement {
   relatedChallanId String?
   createdAt        DateTime @default(now())
   createdBy        String
+
+  @@index([productId])
+  @@index([type])
+  @@index([relatedQuoteId])
+  @@index([relatedChallanId])
+  @@index([createdAt(sort: Desc)])
 }
 
 model Lead {
@@ -221,6 +261,12 @@ model Lead {
   activities    Activity[]
   quotes        Quote[]
   followUps     FollowUpTask[]
+
+  @@index([customerId])
+  @@index([ownerId])
+  @@index([stage])
+  @@index([nextActionAt])
+  @@index([createdAt(sort: Desc)])
 }
 
 model LeadIntent {
@@ -273,6 +319,9 @@ model PasswordResetToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model ProductCategory {
@@ -332,6 +381,12 @@ model Product {
   updatedAt   DateTime
   balances    InventoryBalance?
   reservations Reservation[]
+
+  @@index([brand])
+  @@index([category])
+  @@index([finish])
+  @@index([status])
+  @@index([name])
 }
 
 model Quote {
@@ -364,6 +419,14 @@ model Quote {
   reservations    Reservation[]
   dispatchJobs    DispatchJob?
   dispatchChallan DispatchChallan[]
+
+  @@index([leadId])
+  @@index([customerId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([approvalStatus])
+  @@index([validUntil])
+  @@index([createdAt(sort: Desc)])
 }
 
 model Reservation {
@@ -376,6 +439,11 @@ model Reservation {
   status    String
   createdAt DateTime @default(now())
   updatedAt DateTime
+
+  @@index([quoteId, status])
+  @@index([productId, status])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
 }
 
 model Session {
@@ -384,6 +452,9 @@ model Session {
   userId    String
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model SalesOrder {

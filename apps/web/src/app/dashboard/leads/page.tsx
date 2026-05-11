@@ -4,6 +4,7 @@ import { gql, useQuery } from '@apollo/client';
 import { motion } from 'framer-motion';
 import { CalendarClock, Mail, Phone, PlusCircle } from 'lucide-react';
 import Link from 'next/link';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const GET_LEADS = gql`
   query Leads {
@@ -34,7 +35,7 @@ function currency(value?: number) {
 }
 
 export default function LeadsPipelinePage() {
-  const { data, loading } = useQuery(GET_LEADS);
+  const { data, loading, error, refetch } = useQuery(GET_LEADS);
   const leads = data?.leads || [];
 
   return (
@@ -49,6 +50,8 @@ export default function LeadsPipelinePage() {
           <PlusCircle className="h-5 w-5" /> Add lead
         </Link>
       </section>
+
+      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       <div className="flex-1 overflow-x-auto pb-4 custom-scrollbar">
         <div className="flex h-full min-w-max gap-4">

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowUpRight, Bath, FileSpreadsheet, PackageCheck, ShieldCheck, Truck, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const DASHBOARD = gql`
   query Dashboard($salesOwnerId: String!) {
@@ -68,7 +69,7 @@ export default function DashboardPage() {
     }
   }, []);
 
-  const { data, loading } = useQuery(DASHBOARD, { variables: { salesOwnerId: user?.id || '' }, skip: !ready || !user?.id });
+  const { data, loading, error, refetch } = useQuery(DASHBOARD, { variables: { salesOwnerId: user?.id || '' }, skip: !ready || !user?.id });
   const stats = data?.ownerDashboard?.stats || {};
   const productStats = data?.productStats || {};
   const userPerformance = data?.ownerDashboard?.userPerformance || [];
@@ -111,6 +112,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-7 pb-10">
+      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       <section className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
         <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} className="relative overflow-hidden rounded-[2.25rem] bg-[#211b16] p-8 text-white shadow-2xl shadow-[#211b16]/18">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(181,123,66,0.42),transparent_32%),radial-gradient(circle_at_92%_20%,rgba(36,84,77,0.45),transparent_28%)]" />

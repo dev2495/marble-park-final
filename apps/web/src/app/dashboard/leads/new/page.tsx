@@ -7,6 +7,7 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import { ArrowLeft, ListPlus, PlusCircle, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const CUSTOMERS = gql`query LeadCustomers { customers { id name mobile city siteAddress } }`;
 const MASTER = gql`query LeadIntentMaster($search: String) { productCategories products(search: $search, take: 25) { id sku name category brand finish unit sellPrice media } }`;
@@ -20,8 +21,8 @@ export default function NewLeadPage() {
   const [productSearch, setProductSearch] = useState('');
   const [rows, setRows] = useState<any[]>([{ ...blankRow }]);
   const [form, setForm] = useState({ customerId: '', title: '', source: 'Walk-in', stage: 'new', expectedValue: '0', notes: '', nextActionAt: '', intentNotes: '' });
-  const { data } = useQuery(CUSTOMERS);
-  const { data: masterData } = useQuery(MASTER, { variables: { search: productSearch || undefined } });
+  const { data, error: customersError } = useQuery(CUSTOMERS);
+  const { data: masterData, error: masterError } = useQuery(MASTER, { variables: { search: productSearch || undefined } });
   const [createLead, { loading, error }] = useMutation(CREATE_LEAD, { onCompleted: (result) => router.push(`/dashboard/leads/${result.createLead.id}`) });
 
   useEffect(() => { try { setUser(JSON.parse(localStorage.getItem('user') || 'null')); } catch {} }, []);
@@ -42,6 +43,8 @@ export default function NewLeadPage() {
   };
 
   return <div className="mx-auto max-w-7xl space-y-6 pb-10">
+    {customersError ? <QueryErrorBanner error={customersError} /> : null}
+    {masterError ? <QueryErrorBanner error={masterError} /> : null}
     <section className="relative overflow-hidden rounded-[2.25rem] bg-[#211b16] p-7 text-white shadow-2xl shadow-[#211b16]/15"><div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(181,123,66,0.46),transparent_30%),radial-gradient(circle_at_92%_28%,rgba(36,84,77,0.45),transparent_28%)]" /><div className="relative"><Link href="/dashboard/sales" className="inline-flex items-center gap-2 text-sm font-black text-[#e8c39b]"><ArrowLeft className="h-4 w-4" /> Sales desk</Link><p className="mt-6 text-[10px] font-black uppercase tracking-[0.28em] text-[#e8c39b]">CRM intake with product intent</p><h1 className="mt-2 max-w-4xl text-5xl font-black leading-[0.95] tracking-[-0.055em]">Open the lead with exact buying intent, not loose notes.</h1><p className="mt-4 max-w-3xl text-sm font-semibold leading-6 text-[#d9c4a9]">For normal categories, pick catalogue/inventory products. For tiles, capture tile code, size, UOM box/pcs and pcs per box because every tile design is not maintained as a photo SKU.</p></div></section>
 
     <form onSubmit={submit} className="grid gap-6 xl:grid-cols-[0.72fr_1.28fr]">

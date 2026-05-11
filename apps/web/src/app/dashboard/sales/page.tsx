@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { ArrowUpRight, CalendarClock, CheckCircle, FileSpreadsheet, PhoneCall, Plus, ShoppingBag, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const SALES_DESK = gql`
   query SalesDesk($ownerId: String!) {
@@ -34,8 +35,8 @@ export default function SalesDeskPage() {
     try { setUser(JSON.parse(localStorage.getItem('user') || 'null')); } finally { setReady(true); }
   }, []);
 
-  const { data, loading, refetch } = useQuery(SALES_DESK, { variables: { ownerId: user?.id || '' }, skip: !ready || !user?.id });
-  const [updateStage] = useMutation(UPDATE_STAGE, { onCompleted: () => refetch() });
+  const { data, loading, error, refetch } = useQuery(SALES_DESK, { variables: { ownerId: user?.id || '' }, skip: !ready || !user?.id });
+  const [updateStage, { error: stageError }] = useMutation(UPDATE_STAGE, { onCompleted: () => refetch() });
   const leads = data?.leads || [];
   const quotes = data?.quotes || [];
   const stats = data?.salesDashboard?.stats || {};
@@ -45,6 +46,8 @@ export default function SalesDeskPage() {
 
   return (
     <div className="space-y-6 pb-10">
+      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {stageError ? <QueryErrorBanner error={stageError} /> : null}
       <section className="relative overflow-hidden rounded-[2.25rem] bg-[#211b16] p-7 text-white shadow-2xl shadow-[#211b16]/15">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(181,123,66,0.46),transparent_30%),radial-gradient(circle_at_92%_28%,rgba(36,84,77,0.45),transparent_28%)]" />
         <div className="relative flex flex-col justify-between gap-7 xl:flex-row xl:items-end">

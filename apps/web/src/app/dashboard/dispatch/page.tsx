@@ -5,6 +5,7 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import { motion } from 'framer-motion';
 import { CheckCircle, Clock, FileText, MapPin, Package, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const GET_DISPATCH_DATA = gql`
   query GetDispatchData {
@@ -24,9 +25,9 @@ const columns = [
 
 export default function DispatchPage() {
   const [dispatchQty, setDispatchQty] = useState<Record<string, number>>({});
-  const { data, loading } = useQuery(GET_DISPATCH_DATA);
-  const [createChallan, { loading: creating }] = useMutation(CREATE_CHALLAN, { refetchQueries: [{ query: GET_DISPATCH_DATA }] });
-  const [updateChallan, { loading: updating }] = useMutation(UPDATE_CHALLAN, { refetchQueries: [{ query: GET_DISPATCH_DATA }] });
+  const { data, loading, error, refetch } = useQuery(GET_DISPATCH_DATA);
+  const [createChallan, { loading: creating, error: createError }] = useMutation(CREATE_CHALLAN, { refetchQueries: [{ query: GET_DISPATCH_DATA }] });
+  const [updateChallan, { loading: updating, error: updateError }] = useMutation(UPDATE_CHALLAN, { refetchQueries: [{ query: GET_DISPATCH_DATA }] });
   const jobs = data?.dispatchJobs || [];
   const challans = data?.dispatchChallans || [];
 
@@ -38,6 +39,9 @@ export default function DispatchPage() {
 
   return (
     <div className="space-y-7 pb-10">
+      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {createError ? <QueryErrorBanner error={createError} /> : null}
+      {updateError ? <QueryErrorBanner error={updateError} /> : null}
       <section className="rounded-[2.25rem] bg-[#211b16] p-7 text-white shadow-2xl shadow-[#211b16]/15">
         <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
           <div>

@@ -1,8 +1,9 @@
-import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context, ResolveField, Parent } from '@nestjs/graphql';
 import { QuotesService } from './quotes.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { GraphqlRequestContext, isPrivileged, requireRoles, requireSession } from '../auth/session-context';
 import { GraphQLJSON } from 'graphql-scalars';
+import { loadOrNull } from '../common/dataloaders';
 
 @ObjectType()
 export class QuoteOutput {
@@ -44,6 +45,20 @@ export class QuoteOutput {
 
   @Field({ nullable: true })
   notes?: string;
+
+  @Field({ nullable: true })
+  coverImage?: string;
+
+  // Foreign keys are exposed so resolveField below can hydrate the related
+  // objects via DataLoader. Plain row payloads from QuotesService include them.
+  @Field({ nullable: true })
+  customerId?: string;
+
+  @Field({ nullable: true })
+  ownerId?: string;
+
+  @Field({ nullable: true })
+  leadId?: string;
 
   @Field(() => GraphQLJSON, { nullable: true })
   lines?: any;
@@ -122,6 +137,9 @@ export class UpdateQuoteInput {
 
   @Field(() => String, { nullable: true })
   quoteMeta?: string;
+
+  @Field(() => String, { nullable: true, description: 'Hero image shown on the PDF cover page (URL or /uploaded path)' })
+  coverImage?: string;
 }
 
 @InputType()
@@ -139,12 +157,40 @@ export class CreateSalesOrderInput {
   notes?: string;
 }
 
-@Resolver()
+@Resolver(() => QuoteOutput)
 export class QuotesResolver {
   constructor(
     private quotes: QuotesService,
     private prisma: PrismaService,
   ) {}
+
+  // ----- DataLoader-backed field resolvers -----
+  // For a list of N quotes, GraphQL would otherwise issue N findUnique() per
+  // relation field. The loader collapses them into one batched findMany() per
+  // relation per request.
+
+  @ResolveField('customer', () => GraphQLJSON, { nullable: true })
+  async resolveCustomer(@Parent() quote: any, @Context() ctx: GraphqlRequestContext) {
+    // If the row already carries a populated `customer` (e.g. mutation responses
+    // that did `include: quoteInclude`), just pass it through.
+    if (quote?.customer) return quote.customer;
+    if (!ctx.loaders) return null;
+    return loadOrNull(ctx.loaders.customerById, quote?.customerId);
+  }
+
+  @ResolveField('owner', () => GraphQLJSON, { nullable: true })
+  async resolveOwner(@Parent() quote: any, @Context() ctx: GraphqlRequestContext) {
+    if (quote?.owner) return quote.owner;
+    if (!ctx.loaders) return null;
+    return loadOrNull(ctx.loaders.userById, quote?.ownerId);
+  }
+
+  @ResolveField('lead', () => GraphQLJSON, { nullable: true })
+  async resolveLead(@Parent() quote: any, @Context() ctx: GraphqlRequestContext) {
+    if (quote?.lead) return quote.lead;
+    if (!ctx.loaders) return null;
+    return loadOrNull(ctx.loaders.leadById, quote?.leadId);
+  }
 
   @Query(() => [QuoteOutput], { name: 'quotes' })
   getQuotes(

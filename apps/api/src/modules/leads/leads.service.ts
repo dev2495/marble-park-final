@@ -33,6 +33,11 @@ const LEAD_STAGES = ['new', 'contacted', 'qualified', 'proposal', 'quoted', 'neg
 export class LeadsService {
   constructor(private prisma: PrismaService, private quotes: QuotesService, private notifications: NotificationsService) {}
 
+  /**
+   * GraphQL-facing list. Returns BARE rows; resolver fans relations through
+   * DataLoader so listing 100 leads triggers 1 findMany + 1 batched
+   * Customer/User load instead of 1 + 100 + 100 selects.
+   */
   async findAll(args?: { ownerId?: string; stage?: string; search?: string }): Promise<any[]> {
     const where: any = {};
     if (args?.ownerId) where.ownerId = args.ownerId;
@@ -45,11 +50,17 @@ export class LeadsService {
     }
     return this.prisma.lead.findMany({
       where,
-      include: { customer: true, owner: true },
       orderBy: { createdAt: 'desc' },
     } as any) as any;
   }
 
+  /**
+   * Single-lead read for the detail page. We DO eager-include the deep
+   * relations (quotes, followUps, activities) here because they're rendered
+   * on the same screen and don't benefit from DataLoader (they're 1:N from a
+   * single lead). Customer + owner could go via DataLoader; we keep them
+   * eager here to keep the detail-page payload self-contained.
+   */
   async findById(id: string): Promise<any> {
     const lead = await this.prisma.lead.findUnique({
       where: { id },

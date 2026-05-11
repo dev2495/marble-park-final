@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { Download, Eye, FileSpreadsheet, Plus, Send, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { QueryErrorBanner } from '@/components/query-state';
 
 const QUOTES = gql`
   query QuotesRegister($ownerId: String) {
@@ -60,9 +61,9 @@ export default function QuotesRegisterPage() {
   }, []);
 
   const ownerId = user?.role === 'sales' ? user.id : undefined;
-  const { data, loading, refetch } = useQuery(QUOTES, { variables: { ownerId }, skip: !ready });
-  const [sendQuote, { loading: sending }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
-  const [confirmQuote, { loading: confirming }] = useMutation(CONFIRM_QUOTE, { onCompleted: () => refetch() });
+  const { data, loading, error, refetch } = useQuery(QUOTES, { variables: { ownerId }, skip: !ready });
+  const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
+  const [confirmQuote, { loading: confirming, error: confirmError }] = useMutation(CONFIRM_QUOTE, { onCompleted: () => refetch() });
 
   const quotes = useMemo(() => {
     const rows = data?.quotes || [];
@@ -124,13 +125,19 @@ export default function QuotesRegisterPage() {
         </div>
       </section>
 
+      {error ? (
+        <QueryErrorBanner error={error} onRetry={() => refetch()} />
+      ) : null}
+      {sendError ? <QueryErrorBanner error={sendError} /> : null}
+      {confirmError ? <QueryErrorBanner error={confirmError} /> : null}
+
       <section className="overflow-hidden rounded-[2rem] border border-[#7a5b3c]/10 bg-[#fffaf3]/80 shadow-xl shadow-[#6b4f38]/8">
         <div className="hidden grid-cols-[1.2fr_1fr_0.72fr_0.55fr_1.25fr] gap-4 border-b border-[#7a5b3c]/10 bg-[#ead7c0]/75 px-5 py-4 text-[10px] font-black uppercase tracking-widest text-[#6e563f] lg:grid">
           <div>Quote</div><div>Customer</div><div>Status</div><div className="text-right">Value</div><div className="text-right">Actions</div>
         </div>
         <div className="divide-y divide-[#7a5b3c]/10">
-          {loading && <div className="p-10 text-center text-sm font-bold text-[#8b6b4c]">Loading quotes...</div>}
-          {!loading && quotes.length === 0 && <div className="p-10 text-center text-sm font-bold text-[#8b6b4c]">No quotes in this filter.</div>}
+          {loading && <div className="p-10 text-center text-sm font-bold text-[#8b6b4c]" role="status" aria-live="polite">Loading quotes...</div>}
+          {!loading && !error && quotes.length === 0 && <div className="p-10 text-center text-sm font-bold text-[#8b6b4c]">No quotes in this filter.</div>}
           {quotes.map((quote: any) => {
             const value = quoteTotal(quote.lines);
             const pdfHref = `/api/pdf/quote/${quote.id}`;

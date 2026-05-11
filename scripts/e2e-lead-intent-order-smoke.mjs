@@ -77,6 +77,7 @@ async function main() {
         city: 'Ahmedabad',
         address: 'E2E Intent Site',
         notes: 'Intent/order smoke customer',
+        forceCreate: true,
       },
     },
     admin.token,

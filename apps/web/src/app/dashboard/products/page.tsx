@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bath, Boxes, Grid3X3, Image as ImageIcon, PackageSearch, Search, ShieldCheck, Sparkles, Tag, Wrench, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { QueryErrorBanner } from '@/components/query-state';
 import { ProductImageFrame } from '@/components/product-image-frame';
 
 const GET_PRODUCTS = gql`
@@ -137,9 +138,9 @@ export default function ProductsPage() {
   const [galleryProduct, setGalleryProduct] = useState<any>(null);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [portalReady, setPortalReady] = useState(false);
-  const { data, loading } = useQuery(GET_PRODUCTS, { variables: { search, category: category || undefined, take: 180 } });
-  const { data: categoriesData } = useQuery(GET_CATEGORIES);
-  const { data: statsData } = useQuery(GET_PRODUCT_STATS);
+  const { data, loading, error, refetch } = useQuery(GET_PRODUCTS, { variables: { search, category: category || undefined, take: 180 } });
+  const { data: categoriesData, error: categoriesError } = useQuery(GET_CATEGORIES);
+  const { data: statsData, error: statsError } = useQuery(GET_PRODUCT_STATS);
 
   const products = data?.products?.length ? data.products : fallbackProducts;
   const stats = statsData?.productStats;
@@ -151,8 +152,10 @@ export default function ProductsPage() {
   const look = getLook(selected?.category);
   const SelectedIcon = look.icon;
 
+  const compositeError = error || categoriesError || statsError;
   return (
     <div className="space-y-8 pb-10">
+      {compositeError ? <QueryErrorBanner error={compositeError} onRetry={() => refetch()} /> : null}
       {portalReady && galleryProduct ? createPortal(
         <AnimatePresence>
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[9999] grid place-items-center bg-[#120f0c]/88 p-4 backdrop-blur-xl" onClick={() => setGalleryProduct(null)}>
