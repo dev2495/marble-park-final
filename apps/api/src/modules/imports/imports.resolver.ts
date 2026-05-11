@@ -1,4 +1,7 @@
 import { Resolver, Mutation, Args, ObjectType, Field, Query, Context, InputType } from '@nestjs/graphql';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { ImportsService } from './imports.service';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requireRoles } from '../auth/session-context';
@@ -23,6 +26,13 @@ class UpdateImportRowInput {
   @Field({ nullable: true }) dimensions?: string;
   @Field(() => Number, { nullable: true }) sellPrice?: number;
   @Field({ nullable: true }) description?: string;
+}
+
+function writeUploadToTemp(filename: string, contentBase64: string) {
+  const safeName = path.basename(filename || `catalogue-${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '-');
+  const filePath = path.join(os.tmpdir(), `marble-import-${Date.now()}-${safeName}`);
+  fs.writeFileSync(filePath, Buffer.from(contentBase64, 'base64'));
+  return filePath;
 }
 
 @Resolver()
@@ -52,8 +62,32 @@ export class ImportsResolver {
   }
 
   @Mutation(() => ImportOutput)
+  async processExcelUpload(
+    @Args('filename') filename: string,
+    @Args('contentBase64') contentBase64: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const filePath = writeUploadToTemp(filename, contentBase64);
+    const result = await this.imports.processExcelImport(filePath, user.id);
+    return { id: `excel-${Date.now()}`, result };
+  }
+
+  @Mutation(() => ImportOutput)
   async processPdfImport(@Args('filePath') filePath: string, @Context() ctx: GraphqlRequestContext) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const result = await this.imports.processPdfImport(filePath, user.id);
+    return { id: `pdf-${Date.now()}`, result };
+  }
+
+  @Mutation(() => ImportOutput)
+  async processPdfUpload(
+    @Args('filename') filename: string,
+    @Args('contentBase64') contentBase64: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const filePath = writeUploadToTemp(filename, contentBase64);
     const result = await this.imports.processPdfImport(filePath, user.id);
     return { id: `pdf-${Date.now()}`, result };
   }

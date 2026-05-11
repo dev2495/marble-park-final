@@ -26,6 +26,13 @@ function unique(prefix) {
   return `${prefix}-${Date.now().toString(36).toUpperCase()}`;
 }
 
+function fileUploadVars(filePath) {
+  return {
+    filename: path.basename(filePath),
+    contentBase64: fs.readFileSync(filePath).toString('base64'),
+  };
+}
+
 async function login(email) {
   return (await gql(
     `mutation($input: LoginInput!) { login(input: $input) { token user { id email role name } } }`,
@@ -82,10 +89,10 @@ async function main() {
 
   const excelPath = await writeExcelSample();
   const excelImport = (await gql(
-    `mutation($filePath: String!) { processExcelImport(filePath: $filePath) { result } }`,
-    { filePath: excelPath },
+    `mutation($filename: String!, $contentBase64: String!) { processExcelUpload(filename: $filename, contentBase64: $contentBase64) { result } }`,
+    fileUploadVars(excelPath),
     inventory.token,
-  )).processExcelImport.result;
+  )).processExcelUpload.result;
   assert(excelImport.total === 1 && excelImport.importBatchId, 'Excel import should stage one row');
   const excelRows = (await gql(`query($id: String!) { importRows(importBatchId: $id) }`, { id: excelImport.importBatchId }, inventory.token)).importRows;
   assert(excelRows.length === 1 && excelRows[0].status === 'pending', 'Excel row should be ready without master-data gaps');
@@ -96,10 +103,10 @@ async function main() {
 
   assert(fs.existsSync(PDF_PATH), `readiness PDF missing: ${PDF_PATH}`);
   const pdfImport = (await gql(
-    `mutation($filePath: String!) { processPdfImport(filePath: $filePath) { result } }`,
-    { filePath: PDF_PATH },
+    `mutation($filename: String!, $contentBase64: String!) { processPdfUpload(filename: $filename, contentBase64: $contentBase64) { result } }`,
+    fileUploadVars(PDF_PATH),
     inventory.token,
-  )).processPdfImport.result;
+  )).processPdfUpload.result;
   assert(pdfImport.importBatchId, 'PDF import should create an import batch');
   assert(pdfImport.total >= 100, `American Standard PDF should extract at least 100 products, got ${pdfImport.total}`);
   const pdfRows = (await gql(`query($id: String!) { importRows(importBatchId: $id) }`, { id: pdfImport.importBatchId }, inventory.token)).importRows;

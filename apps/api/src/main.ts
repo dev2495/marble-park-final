@@ -4,10 +4,12 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
   const express = require('express');
   const fs = require('fs');
   const path = require('path');
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '100mb' }));
+  app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '100mb' }));
   const importImageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
   fs.mkdirSync(importImageDir, { recursive: true });
   app.use('/catalogue-images/imports', express.static(importImageDir));

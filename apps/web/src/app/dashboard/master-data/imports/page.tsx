@@ -9,8 +9,8 @@ import { Input } from '@/components/ui/input';
 const DATA = gql`query { importBatches }`;
 const MASTER_DATA = gql`query { masterProductCategories(status: "active") masterProductBrands(status: "active") masterProductFinishes(status: "active") }`;
 const ROWS = gql`query($importBatchId: String!) { importRows(importBatchId: $importBatchId) }`;
-const PROCESS_PDF = gql`mutation($filePath: String!) { processPdfImport(filePath: $filePath) { id result } }`;
-const PROCESS_EXCEL = gql`mutation($filePath: String!) { processExcelImport(filePath: $filePath) { id result } }`;
+const PROCESS_PDF = gql`mutation($filename: String!, $contentBase64: String!) { processPdfUpload(filename: $filename, contentBase64: $contentBase64) { id result } }`;
+const PROCESS_EXCEL = gql`mutation($filename: String!, $contentBase64: String!) { processExcelUpload(filename: $filename, contentBase64: $contentBase64) { id result } }`;
 const UPDATE_ROW = gql`mutation($id: String!, $input: UpdateImportRowInput!) { updateImportRow(id: $id, input: $input) { id result } }`;
 const SUBMIT = gql`mutation($importBatchId: String!) { submitImportBatchForApproval(importBatchId: $importBatchId) { id result } }`;
 const APPLY = gql`mutation($importBatchId: String!) { applyImportBatch(importBatchId: $importBatchId) { id result } }`;
@@ -24,6 +24,16 @@ function rowValue(row: any, key: string) {
   return row?.normalized?.[key] ?? row?.[key] ?? '';
 }
 
+async function fileToBase64(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export default function ImportCenterPage() {
   const { data, refetch, loading } = useQuery(DATA);
   const { data: masterData } = useQuery(MASTER_DATA);
@@ -31,8 +41,8 @@ export default function ImportCenterPage() {
   const { data: rowData, refetch: refetchRows } = useQuery(ROWS, { variables: { importBatchId: selectedBatchId }, skip: !selectedBatchId });
   const [drafts, setDrafts] = useState<Record<string, any>>({});
   const [status, setStatus] = useState('');
-  const [processPdf] = useMutation(PROCESS_PDF, { onCompleted: (result) => { refetch(); const id = result?.processPdfImport?.result?.importBatchId; if (id) setSelectedBatchId(id); } });
-  const [processExcel] = useMutation(PROCESS_EXCEL, { onCompleted: (result) => { refetch(); const id = result?.processExcelImport?.result?.importBatchId; if (id) setSelectedBatchId(id); } });
+  const [processPdf] = useMutation(PROCESS_PDF, { onCompleted: (result) => { refetch(); const id = result?.processPdfUpload?.result?.importBatchId; if (id) setSelectedBatchId(id); } });
+  const [processExcel] = useMutation(PROCESS_EXCEL, { onCompleted: (result) => { refetch(); const id = result?.processExcelUpload?.result?.importBatchId; if (id) setSelectedBatchId(id); } });
   const [updateRow, { loading: savingRow }] = useMutation(UPDATE_ROW, { onCompleted: () => { refetch(); refetchRows(); setStatus('Row review saved.'); } });
   const [submit] = useMutation(SUBMIT, { onCompleted: () => { refetch(); setStatus('Submitted to owner approval.'); }, onError: (error) => setStatus(error.message) });
   const [apply] = useMutation(APPLY, { onCompleted: () => { refetch(); refetchRows(); setStatus('Approved import applied to product master.'); }, onError: (error) => setStatus(error.message) });
@@ -70,7 +80,7 @@ export default function ImportCenterPage() {
 
     <section className="grid gap-6 xl:grid-cols-[0.72fr_1.28fr]">
       <div className="space-y-5">
-        <div className="mp-card rounded-[2rem] p-6"><Database className="h-8 w-8 text-[#b57942]" /><h2 className="mt-4 text-2xl font-black text-[#211b16]">Upload catalogue</h2><p className="mt-2 text-sm font-bold text-[#8b6b4c]">PDF imports also stage extracted images into Image Review for owner-approved mapping.</p><input type="file" accept=".pdf,.xlsx,.xls" className="mt-5 block w-full text-sm font-bold" onChange={async (e) => { const file=e.target.files?.[0]; if(!file) return; setStatus('Uploading...'); const fd=new FormData(); fd.append('file', file); const upload=await fetch('/api/upload',{method:'POST', body:fd}).then(r=>r.json()); setStatus('Staging rows and extracting images where possible...'); if(file.name.toLowerCase().endsWith('.pdf')) await processPdf({variables:{filePath: upload.filePath}}); else await processExcel({variables:{filePath: upload.filePath}}); setStatus('Staged. Review rows below before approval.'); e.target.value=''; }} />{status && <p className="mt-4 rounded-2xl bg-[#ead7c0]/70 p-3 text-xs font-black uppercase tracking-wider text-[#7a4f2e]">{status}</p>}</div>
+        <div className="mp-card rounded-[2rem] p-6"><Database className="h-8 w-8 text-[#b57942]" /><h2 className="mt-4 text-2xl font-black text-[#211b16]">Upload catalogue</h2><p className="mt-2 text-sm font-bold text-[#8b6b4c]">PDF imports also stage extracted images into Image Review for owner-approved mapping.</p><input type="file" accept=".pdf,.xlsx,.xls" className="mt-5 block w-full text-sm font-bold" onChange={async (e) => { const file=e.target.files?.[0]; if(!file) return; setStatus('Uploading file to API import engine...'); const contentBase64=await fileToBase64(file); setStatus('Staging rows and extracting images where possible...'); if(file.name.toLowerCase().endsWith('.pdf')) await processPdf({variables:{filename:file.name, contentBase64}}); else await processExcel({variables:{filename:file.name, contentBase64}}); setStatus('Staged. Review rows below before approval.'); e.target.value=''; }} />{status && <p className="mt-4 rounded-2xl bg-[#ead7c0]/70 p-3 text-xs font-black uppercase tracking-wider text-[#7a4f2e]">{status}</p>}</div>
         <div className="mp-card rounded-[2rem] p-6"><h2 className="text-2xl font-black text-[#211b16]">Batches</h2><div className="mt-5 space-y-3">{loading && <p className="text-sm font-bold text-[#8b6b4c]">Loading...</p>}{batches.map((batch:any)=><article key={batch.id} className={`rounded-[1.4rem] p-4 ${selectedBatchId===batch.id?'bg-[#211b16] text-white':'bg-white/75 text-[#211b16]'}`}><button className="w-full text-left" onClick={()=>setSelectedBatchId(batch.id)}><p className="font-black">{batch.brand || 'Mixed'} · {batch.rowCount} rows</p><p className={`text-xs font-bold ${selectedBatchId===batch.id?'text-[#d9c4a9]':'text-[#8b6b4c]'}`}>{batch.status} · review {batch.summary?.needsReview ?? 0} · ready {batch.summary?.ready ?? 0}</p></button></article>)}</div></div>
       </div>
 
