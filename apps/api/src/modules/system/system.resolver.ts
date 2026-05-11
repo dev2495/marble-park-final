@@ -87,6 +87,12 @@ export class SystemResolver {
     return { data: await this.system.updateSettings(input, user.id) };
   }
 
+  @Mutation(() => SystemJsonOutput)
+  async resetClientWorkspace(@Args('confirm') confirm: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin']);
+    return { data: await this.system.resetClientWorkspace(confirm, user.id) };
+  }
+
   @Query(() => [GraphQLJSON])
   async auditEvents(
     @Context() ctx: GraphqlRequestContext,

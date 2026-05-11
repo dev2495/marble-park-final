@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
+import * as bcrypt from 'bcrypt';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class SystemService {
@@ -43,6 +46,74 @@ export class SystemService {
     });
     await this.audit(actorUserId, 'settings.update', 'AppSetting', settings.id, 'Updated system settings', input);
     return settings;
+  }
+
+  async resetClientWorkspace(confirm: string, _actorUserId: string) {
+    if (confirm !== 'RESET_CLIENT_WORKSPACE') {
+      throw new Error('Invalid reset confirmation');
+    }
+
+    await this.prisma.dispatchChallan.deleteMany();
+    await this.prisma.dispatchJob.deleteMany();
+    await this.prisma.reservation.deleteMany();
+    await this.prisma.salesOrder.deleteMany();
+    await this.prisma.activity.deleteMany();
+    await this.prisma.followUpTask.deleteMany();
+    await this.prisma.quote.deleteMany();
+    await this.prisma.leadIntent.deleteMany();
+    await this.prisma.lead.deleteMany();
+    await this.prisma.inventoryMovement.deleteMany();
+    await this.prisma.inventoryInwardBatch.deleteMany();
+    await this.prisma.inventoryBalance.deleteMany();
+    await this.prisma.importRow.deleteMany();
+    await this.prisma.importBatch.deleteMany();
+    await this.prisma.catalogReviewTask.deleteMany();
+    await this.prisma.sourceFile.deleteMany();
+    await this.prisma.notification.deleteMany();
+    await this.prisma.auditEvent.deleteMany();
+    await this.prisma.customer.deleteMany();
+    await this.prisma.vendor.deleteMany();
+    await this.prisma.product.deleteMany();
+    await this.prisma.productBrand.deleteMany();
+    await this.prisma.productCategory.deleteMany();
+    await this.prisma.productFinish.deleteMany();
+    await this.prisma.passwordResetToken.deleteMany();
+    await this.prisma.session.deleteMany();
+
+    const passwordHash = await bcrypt.hash(process.env.CLIENT_RESET_ADMIN_PASSWORD || 'password123', 10);
+    await this.prisma.user.deleteMany({ where: { email: { not: 'admin@marblepark.com' } } });
+    const admin = await this.prisma.user.upsert({
+      where: { email: 'admin@marblepark.com' },
+      update: { name: 'Marble Park Admin', role: 'admin', phone: '9820098199', active: true, passwordHash },
+      create: {
+        id: ulid(),
+        email: 'admin@marblepark.com',
+        passwordHash,
+        name: 'Marble Park Admin',
+        role: 'admin',
+        phone: '9820098199',
+        active: true,
+      },
+    });
+
+    const importImageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
+    const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.dirname(importImageDir);
+    for (const folder of [path.join(catalogueImageRoot, 'imports'), path.join(catalogueImageRoot, 'manual')]) {
+      fs.rmSync(folder, { recursive: true, force: true });
+      fs.mkdirSync(folder, { recursive: true });
+    }
+
+    const counts = {
+      users: await this.prisma.user.count(),
+      products: await this.prisma.product.count(),
+      customers: await this.prisma.customer.count(),
+      leads: await this.prisma.lead.count(),
+      quotes: await this.prisma.quote.count(),
+      imports: await this.prisma.importBatch.count(),
+      catalogueImagesPending: await this.prisma.catalogReviewTask.count(),
+      inventoryBalances: await this.prisma.inventoryBalance.count(),
+    };
+    return { ok: true, counts };
   }
 
   async auditEvents(args?: { entityType?: string; entityId?: string; take?: number }) {
