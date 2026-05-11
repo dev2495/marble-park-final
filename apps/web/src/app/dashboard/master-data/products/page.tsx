@@ -95,10 +95,10 @@ export default function ProductMasterPage() {
   }
 
   return <div className="space-y-7 pb-10">
-    <section className="rounded-[2.25rem] bg-[#241b14] p-7 text-white shadow-2xl shadow-[#241b14]/15">
-      <p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#ead7bd]">Product master</p>
-      <h1 className="mt-3 text-5xl font-black tracking-[-0.05em]">Create SKUs with controlled brand, finish and category masters.</h1>
-      <p className="mt-3 max-w-3xl text-sm font-semibold leading-6 text-[#f6eadb]">Admin, owner and inventory users create SKUs here. Brand, finish and category are dropdown-backed master data so catalogue filters, quotes and imports stay clean.</p>
+    <section className="rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]">
+      <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Product master</p>
+      <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Create SKUs with controlled brand, finish and category masters.</h1>
+      <p className="mt-3 max-w-3xl text-sm text-[#52525b]">Admin, owner and inventory users create SKUs here. Brand, finish and category are dropdown-backed master data so catalogue filters, quotes and imports stay clean.</p>
       <div className="mt-5 flex flex-wrap gap-2">
         <Link href="/dashboard/master-data/categories" className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wider text-[#ffffff]">Category master</Link>
         <Link href="/dashboard/master-data/brands" className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wider text-[#ffffff]">Brand master</Link>
@@ -107,34 +107,34 @@ export default function ProductMasterPage() {
     </section>
 
     <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-      <div className="mp-card rounded-[2rem] p-5">
-        <div className="flex items-center gap-3"><PackagePlus className="h-6 w-6 text-[#b17643]" /><h2 className="text-xl font-black text-[#241b14]">Add SKU</h2></div>
+      <div className="mp-card rounded-r5 p-5">
+        <div className="flex items-center gap-3"><PackagePlus className="h-6 w-6 text-[#2563eb]" /><h2 className="text-xl font-semibold text-[#18181b]">Add SKU</h2></div>
         <div className="mt-5 grid gap-3 md:grid-cols-2">
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">SKU</span><Input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Name</span><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Brand</span><select value={effectiveForm.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{brands.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Finish</span><select value={effectiveForm.finish} onChange={(e) => setForm({ ...form, finish: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{finishes.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Category</span><select value={effectiveForm.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{categories.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Unit</span><Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Dimensions</span><Input value={form.dimensions} onChange={(e) => setForm({ ...form, dimensions: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Sell price</span><Input type="number" value={form.sellPrice} onChange={(e) => setForm({ ...form, sellPrice: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Floor price</span><Input type="number" value={form.floorPrice} onChange={(e) => setForm({ ...form, floorPrice: e.target.value })} /></label>
-          <label className="space-y-2 md:col-span-2"><span className="text-[10px] font-black uppercase tracking-widest text-[#6f6258]">Description</span><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
-          <label className="md:col-span-2 rounded-[1.4rem] border border-dashed border-[#b17643]/40 bg-white/65 p-4">
-            <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-[#6f6258]"><ImagePlus className="h-4 w-4" /> SKU image</span>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">SKU</span><Input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Name</span><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Brand</span><select value={effectiveForm.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{brands.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Finish</span><select value={effectiveForm.finish} onChange={(e) => setForm({ ...form, finish: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{finishes.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Category</span><select value={effectiveForm.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{categories.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Unit</span><Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Dimensions</span><Input value={form.dimensions} onChange={(e) => setForm({ ...form, dimensions: e.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Sell price</span><Input type="number" value={form.sellPrice} onChange={(e) => setForm({ ...form, sellPrice: e.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Floor price</span><Input type="number" value={form.floorPrice} onChange={(e) => setForm({ ...form, floorPrice: e.target.value })} /></label>
+          <label className="space-y-2 md:col-span-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Description</span><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+          <label className="md:col-span-2 rounded-[1.4rem] border border-dashed border-[#2563eb]/40 bg-white/65 p-4">
+            <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-[#52525b]"><ImagePlus className="h-4 w-4" /> SKU image</span>
             <input type="file" accept="image/*" className="mt-3 block w-full text-sm font-bold" disabled={uploading} onChange={(e) => uploadImage(e.target.files?.[0])} />
-            {form.media?.primary && <img src={form.media.primary} alt="SKU preview" className="mt-4 h-44 w-full rounded-2xl object-contain bg-[#fffaf3]" />}
+            {form.media?.primary && <img src={form.media.primary} alt="SKU preview" className="mt-4 h-44 w-full rounded-2xl object-contain bg-[#f7faff]" />}
           </label>
         </div>
-        {message && <p className="mt-4 rounded-2xl bg-[#f6eadb]/70 p-3 text-xs font-black uppercase tracking-wider text-[#8a552e]">{message}</p>}
+        {message && <p className="mt-4 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]">{message}</p>}
         <Button className="mt-5" disabled={loading || uploading || !form.sku || !form.name || !form.sellPrice} onClick={() => createProduct({ variables: { input: { ...effectiveForm, sellPrice: Number(form.sellPrice), floorPrice: form.floorPrice ? Number(form.floorPrice) : undefined } } })}><Save className="mr-2 h-4 w-4" /> Save SKU</Button>
       </div>
 
-      <div className="mp-card rounded-[2rem] p-5">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-black text-[#241b14]">SKU register</h2><Input placeholder="Search SKU/name" value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" /></div>
+      <div className="mp-card rounded-r5 p-5">
+        <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-semibold text-[#18181b]">SKU register</h2><Input placeholder="Search SKU/name" value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" /></div>
         <div className="mt-5 max-h-[42rem] space-y-2 overflow-y-auto custom-scrollbar">{products.map((p: any) => <Link href={`/dashboard/products?sku=${p.sku}`} key={p.id} className="flex gap-4 rounded-2xl bg-white/75 p-4 transition hover:bg-white">
-          {p.media?.primary && <img src={p.media.primary} alt="" className="h-16 w-16 shrink-0 rounded-xl object-contain bg-[#fffaf3]" />}
-          <div><p className="font-black text-[#241b14]">{p.sku} · {p.name}</p><p className="text-xs font-bold text-[#6f6258]">{p.category} · {p.brand} · {p.finish || 'Standard'} · ₹{Number(p.sellPrice || 0).toLocaleString('en-IN')}</p></div>
+          {p.media?.primary && <img src={p.media.primary} alt="" className="h-16 w-16 shrink-0 rounded-xl object-contain bg-[#f7faff]" />}
+          <div><p className="font-semibold text-[#18181b]">{p.sku} · {p.name}</p><p className="text-xs font-bold text-[#52525b]">{p.category} · {p.brand} · {p.finish || 'Standard'} · ₹{Number(p.sellPrice || 0).toLocaleString('en-IN')}</p></div>
         </Link>)}</div>
       </div>
     </section>

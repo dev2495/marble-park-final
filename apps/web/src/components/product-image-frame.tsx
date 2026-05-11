@@ -19,7 +19,7 @@ export function ProductImageFrame({
   fit = 'contain',
 }: ProductImageFrameProps) {
   return (
-    <div className={cn('relative isolate overflow-hidden bg-[#efe4d6]', className)}>
+    <div className={cn('relative isolate overflow-hidden bg-[#eaf0fa]', className)}>
       {src ? (
         <>
           <img
@@ -40,12 +40,12 @@ export function ProductImageFrame({
           />
         </>
       ) : (
-        <div className="grid h-full w-full place-items-center bg-gradient-to-br from-[#b17643] via-[#e0bd83] to-[#f7f2ea] text-white">
+        <div className="grid h-full w-full place-items-center bg-gradient-to-br from-[#2563eb] via-[#60a5fa] to-[#f4f7fc] text-white">
           <ImageIcon className="h-10 w-10 opacity-80" strokeWidth={1.4} />
         </div>
       )}
       {label && (
-        <div className="absolute left-4 top-4 z-20 rounded-full bg-white/88 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[#435062] shadow-sm backdrop-blur">
+        <div className="absolute left-4 top-4 z-20 rounded-full bg-white/88 px-3 py-1 text-xs font-medium uppercase tracking-widest text-[#435062] shadow-sm backdrop-blur">
           {label}
         </div>
       )}

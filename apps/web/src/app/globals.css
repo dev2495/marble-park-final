@@ -1,297 +1,235 @@
 /*
- * Marble Park · v2 design tokens
+ * Marble Park · subtle theme (v3)
  * ---------------------------------------------------------------------------
- * Warm showroom spine (Tailwind blue ladder), six-hue accent set, softened dark
- * tones. Adapted from GLOBAL_DESIGN_SYSTEM_V2.md — the "navy door" gradient
- * uses #241b14/#33261a instead of #0a1535/#0b1f55 because the operator was
- * specific about wanting "a bit lower tone of dark colors".
+ * Intent: a calm, professional admin interface in the spirit of Linear /
+ * Stripe / Vercel. Almost monochromatic — neutral zinc/slate surfaces, a
+ * single refined blue accent reserved for primary actions and selected
+ * states. No heavy gradients, no decorative washes; surfaces are mostly
+ * white with subtle borders and restrained shadows.
  *
- * Migration strategy: the .mp-card / .mp-dark-panel / .mp-shell-panel utility
- * classes are kept but redefined, and a large fallback `[class*="..."]` layer
- * remaps the old hex codes (brown/cream/gold) to the new palette without
- * touching every page file.
+ * Why this differs from v2: v2 leaned hard on a navy gradient sidebar and
+ * brand-coloured chip washes. The result felt loud for an ERP that
+ * operators stare at all day. v3 is built around clarity and silence —
+ * colour is information, not decoration.
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    /* ─── Brand spine ─── */
-    --brand-50:  #fbf6ef;
-    --brand-100: #f6eadb;
-    --brand-200: #ead7bd;
-    --brand-400: #e0bd83;
-    --brand-500: #c88a4a;
-    --brand-600: #b17643;
-    --brand-700: #8a552e;
-    --brand-800: #704722;
-    --brand-900: #5f3f24;
-    --brand-950: #33261a;
-
-    /* ─── Accent hues (kept from spec) ─── */
-    --indigo-50: #eef2ff; --indigo-500: #6366f1; --indigo-700: #4338ca; --indigo-900: #312e81;
-    --violet-50: #f5f3ff; --violet-500: #7c3aed; --violet-700: #6d28d9; --violet-900: #4c1d95;
-    --sky-50:    #f0f9ff; --sky-500:    #0ea5e9; --sky-700:    #0369a1;
-    --emerald-50:#ecfdf5; --emerald-500:#10b981; --emerald-700:#047857;
-    --amber-50:  #fffbeb; --amber-500:  #f59e0b; --amber-700:  #b45309;
-    --rose-50:   #fff1f2; --rose-500:   #f43f5e; --rose-700:   #be123c;
-
-    /* ─── Surfaces (softened) ─── */
-    --canvas-base:   #f7f2ea;
-    --canvas-tint:   #efe4d6;
-    --surface-1:     #ffffff;
-    --surface-1-soft:#fbfcfe;
-    --surface-2:     #fffaf3;
-    --surface-3:     #241b14; /* slightly lighter than the pure-navy #0a1535 */
-    --surface-glass: rgba(255, 255, 255, 0.74);
+    /* ─── Neutral foundation (zinc + slate blend) ─── */
+    --bg:           #fafafa;          /* app background */
+    --bg-soft:      #f4f4f5;          /* canvas tint */
+    --surface:      #ffffff;          /* card / panel surface */
+    --surface-2:    #fafafa;          /* secondary surface */
+    --surface-3:    #18181b;          /* inverted dark surface */
 
     /* ─── Text ─── */
-    --t1: #17130f;          /* primary heading ink */
-    --t2: #2d251f;          /* body strong */
-    --t3: #6f6258;          /* body muted */
-    --t4: #a89b90;          /* placeholder, meta */
-
-    /* ─── Quiet layout aliases ─── */
-    --bg:           #fbf8f3;
-    --bg-soft:      #f3eadf;
-    --surface:      #ffffff;
-    --ink:          var(--t1);
-    --ink-2:        var(--t2);
-    --ink-3:        var(--t3);
-    --ink-4:        #88766a;
-    --ink-5:        var(--t4);
-    --line:         var(--b);
-    --line-strong:  var(--bx);
-    --line-soft:    var(--bs);
-    --success-bg:   var(--emerald-50);
-    --warning-bg:   var(--amber-50);
-    --danger-bg:    var(--rose-50);
-    --info-bg:      var(--sky-50);
+    --ink:          #18181b;          /* primary heading + body strong */
+    --ink-2:        #27272a;          /* body */
+    --ink-3:        #52525b;          /* muted body */
+    --ink-4:        #71717a;          /* meta / captions */
+    --ink-5:        #a1a1aa;          /* placeholder / disabled */
 
     /* ─── Borders ─── */
-    --bs: #f0e6dc;          /* subtlest hairline */
-    --b:  #e9ded2;          /* default border */
-    --bx: #d9cbbd;          /* strong border / divider */
+    --line:         #e4e4e7;          /* default hairline */
+    --line-strong:  #d4d4d8;          /* strong divider */
+    --line-soft:    #f4f4f5;          /* subtle inner divider */
 
-    /* ─── Semantic aliases ─── */
-    --primary:       var(--brand-600);
-    --primary-hover: var(--brand-700);
-    --primary-deep:  var(--brand-900);
-    --link:          var(--brand-700);
-    --ring:          rgba(37, 99, 235, 0.18);
-    --success:       var(--emerald-500);
-    --warning:       var(--amber-500);
-    --danger:        var(--rose-500);
-    --info:          var(--sky-500);
+    /* ─── Brand spine (used SPARINGLY — primary actions & selected only) ─── */
+    --brand-50:     #eff6ff;
+    --brand-100:    #dbeafe;
+    --brand-200:    #bfdbfe;
+    --brand-400:    #60a5fa;
+    --brand-500:    #3b82f6;
+    --brand-600:    #2563eb;
+    --brand-700:    #1d4ed8;
+    --brand-800:    #1e40af;
+    --brand-900:    #1e3a8a;
 
-    /* ─── Shadows ─── */
-    --sh-flat: 0 1px 0 rgba(15,23,42,0.04);
-    --sh-sm:   0 1px 2px rgba(15,23,42,0.04), 0 4px 12px -8px rgba(15,23,42,0.10);
-    --sh-md:   0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.16);
-    --sh-lg:   0 6px 16px -8px rgba(15,23,42,0.18), 0 24px 56px -24px rgba(15,23,42,0.24);
-    --glow-brand:   0 0 0 1px rgba(37,99,235,0.18), 0 12px 28px -12px rgba(37,99,235,0.32);
-    --glow-sky:     0 0 0 1px rgba(14,165,233,0.18), 0 12px 28px -12px rgba(14,165,233,0.30);
-    --glow-emerald: 0 0 0 1px rgba(16,185,129,0.20), 0 12px 28px -12px rgba(16,185,129,0.30);
+    /* ─── Semantic colour ─── */
+    --success:      #059669;          /* emerald-600 */
+    --success-bg:   #ecfdf5;
+    --warning:      #d97706;          /* amber-600 */
+    --warning-bg:   #fffbeb;
+    --danger:       #dc2626;          /* red-600 */
+    --danger-bg:    #fef2f2;
+    --info:         #0284c7;          /* sky-600 */
+    --info-bg:      #f0f9ff;
+
+    /* ─── Focus ring ─── */
+    --ring:         rgba(37, 99, 235, 0.35);
+
+    /* ─── Shadows (very subtle) ─── */
+    --sh-flat:      0 1px 0 rgba(24, 24, 27, 0.04);
+    --sh-sm:        0 1px 2px rgba(24, 24, 27, 0.05);
+    --sh-md:        0 4px 12px -4px rgba(24, 24, 27, 0.08);
+    --sh-lg:        0 12px 32px -12px rgba(24, 24, 27, 0.12);
 
     /* ─── Radii ─── */
-    --r2: 6px;
-    --r3: 10px;
-    --r4: 14px;
-    --r5: 18px;
-    --r6: 24px;
+    --r2: 4px;
+    --r3: 6px;
+    --r4: 8px;
+    --r5: 12px;
+    --r6: 16px;
     --rp: 999px;
 
     /* ─── Motion ─── */
     --eo: cubic-bezier(.22, 1, .36, 1);
     --df: 120ms;
-    --db: 200ms;
-    --ds: 320ms;
+    --db: 180ms;
+    --ds: 260ms;
 
     /* ─── Typography ─── */
     --f-ui:      'Inter', 'SF Pro Text', system-ui, sans-serif;
     --f-mono:    'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
     --f-display: 'Fraunces', 'Inter', serif;
 
-    /* ─── Hero gradient (softened) ─── */
-    --hero-gradient:
-      radial-gradient(900px 500px at 90% -10%, rgba(59,130,246,0.55) 0%, transparent 60%),
-      radial-gradient(700px 400px at 0%  110%, rgba(37,99,235,0.40) 0%, transparent 65%),
-      linear-gradient(135deg, #33261a 0%, #5f3f24 50%, #b17643 100%);
-
-    /* ─── Admin door (softened from #0a1535/#0b1f55 to #241b14/#33261a) ─── */
-    --admin-hero-gradient:
-      radial-gradient(800px 400px at 90% 0%,   rgba(59,130,246,0.32) 0%, transparent 65%),
-      radial-gradient(700px 400px at 0%  100%, rgba(99,102,241,0.28) 0%, transparent 65%),
-      linear-gradient(135deg, #241b14 0%, #33261a 55%, #5f3f24 100%);
-
-    /* ─── shadcn/Radix base tokens (kept consumer-facing API stable; values
-     *      now map to the warm palette so existing components inherit.) ─── */
-    --background: 220 33% 97%;          /* canvas-base */
-    --foreground: 215 25% 17%;          /* t2 */
+    /* ─── shadcn aliases ─── */
+    --background: 0 0% 98%;
+    --foreground: 240 6% 10%;
     --card: 0 0% 100%;
-    --card-foreground: 215 25% 17%;
+    --card-foreground: 240 6% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 215 25% 17%;
-    --primary-hsl: 221 83% 53%;          /* brand-600 */
+    --popover-foreground: 240 6% 10%;
+    --primary-hsl: 221 83% 53%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 218 100% 96%;          /* brand-50/100 */
-    --secondary-foreground: 222 47% 11%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 218 100% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 349 89% 60%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 10%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 6% 10%;
+    --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
     --ring-hsl: 221 83% 53%;
-    --radius: 14px;
+    --radius: 8px;
     --font-sans: var(--f-ui);
     --font-display: var(--f-display);
-  }
-
-  /* shadcn primitives expect bare names — keep them mapped. */
-  :root {
-    --primary: var(--brand-600);
   }
 }
 
 @layer base {
-  * { border-color: var(--b); }
-  html { background: var(--canvas-base); }
+  * { border-color: var(--line, #e4e4e7); }
+  /* Hardcoded fallbacks on the html/body root so contrast is *never* broken
+   * even if the @import for Google Fonts blocks long enough that CSS vars
+   * race the first paint, or if some downstream PurgeCSS pass eats a token. */
+  html, body { background: #fafafa; }
   body {
     min-height: 100vh;
-    font-family: var(--f-ui);
-    color: var(--t2);
-    background:
-      radial-gradient(circle at 8%  10%, rgba(176,118,67,0.10), transparent 28%),
-      radial-gradient(circle at 88% 5%,  rgba(224,189,131,0.14), transparent 26%),
-      linear-gradient(135deg, #fbf8f3 0%, #f7f2ea 52%, #f3eadf 100%);
-    background-attachment: fixed;
+    font-family: var(--f-ui, 'Inter', system-ui, sans-serif);
+    color: #27272a;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'cv11', 'ss01';
   }
-  ::selection { background: var(--brand-600); color: #ffffff; }
+  ::selection { background: #2563eb; color: #ffffff; }
 
-  h1, h2, h3, h4 { color: var(--t1); }
+  h1, h2, h3, h4, h5 { color: #18181b; font-weight: 600; letter-spacing: -0.01em; }
+  h1 { font-weight: 700; letter-spacing: -0.02em; }
+
+  /* Quiet input baseline */
+  input, textarea, select { font-family: inherit; color: #18181b; }
+  /* Force-readable body copy as a safety net — if any page leaves text
+   * un-styled it still lands at proper contrast. */
+  p, span, li, td, th, label { color: inherit; }
 }
 
 @layer components {
-  /* Frosted white shell, used as the dashboard's main canvas. */
-  .mp-shell-panel {
-    border: 1px solid rgba(255, 255, 255, 0.72);
-    background: rgba(255, 255, 255, 0.78);
-    box-shadow: var(--sh-lg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-  }
-
-  /* Sidebar / hero strip — navy door with brand glow. */
-  .mp-dark-panel {
-    position: relative;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: var(--admin-hero-gradient);
-    color: #ffffff;
-    box-shadow: 0 28px 80px rgba(15, 23, 42, 0.20);
-    isolation: isolate;
-  }
-  .mp-dark-panel::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
-    background-size: 24px 24px;
-    pointer-events: none;
-    z-index: 0;
-    opacity: 0.7;
-  }
-  .mp-dark-panel > * { position: relative; z-index: 1; }
-
-  /* Standard surface card. */
+  /* Standard surface card — quiet, almost flat. */
   .mp-card {
-    border: 1px solid var(--b);
-    background: var(--surface-1);
-    box-shadow: var(--sh-sm);
+    background: var(--surface);
+    border: 1px solid var(--line);
     border-radius: var(--r5);
+    box-shadow: var(--sh-flat);
   }
-  .mp-card:hover { box-shadow: var(--sh-md); }
+
+  /* Used by sidebar — but now it's white, not navy. The class name is kept
+     so legacy pages don't break, and the background swapped to surface. */
+  .mp-dark-panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--ink);
+  }
+
+  .mp-shell-panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: var(--sh-sm);
+  }
+
+  /* Hero strip — used SPARINGLY (only on pages that need a section header).
+     Light gradient, no decorative grid overlay. */
+  .mp-hero {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid var(--line);
+    border-radius: var(--r6);
+    padding: 24px;
+    box-shadow: var(--sh-flat);
+  }
+
+  /* KPI tile — used on dashboards. */
+  .mp-kpi {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r5);
+    padding: 18px 20px;
+    transition: border-color var(--db) var(--eo), box-shadow var(--db) var(--eo);
+  }
+  .mp-kpi:hover { border-color: var(--line-strong); box-shadow: var(--sh-sm); }
 
   .mp-display { font-family: var(--f-display); }
-  .mp-mono { font-family: var(--f-mono); letter-spacing: -0.01em; }
+  .mp-mono { font-family: var(--f-mono); }
 
-  /* Brand chip — sky pill used for "this is the brand" markers. */
-  .mp-chip-brand {
+  /* Pill chip variants. */
+  .mp-pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 10px;
+    padding: 3px 10px;
     border-radius: var(--rp);
-    background: var(--brand-50);
-    color: var(--brand-700);
-    border: 1px solid var(--brand-100);
+    background: var(--bg-soft);
+    color: var(--ink-3);
+    border: 1px solid var(--line);
     font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    font-weight: 500;
   }
+  .mp-pill-brand { background: var(--brand-50); color: var(--brand-700); border-color: var(--brand-100); }
+  .mp-pill-success { background: var(--success-bg); color: var(--success); border-color: rgba(5,150,105,0.18); }
+  .mp-pill-warning { background: var(--warning-bg); color: var(--warning); border-color: rgba(217,119,6,0.18); }
+  .mp-pill-danger { background: var(--danger-bg); color: var(--danger); border-color: rgba(220,38,38,0.18); }
 
-  /* KPI tile — used by dashboards. */
-  .mp-kpi {
-    background: var(--surface-1);
-    border: 1px solid var(--b);
-    border-radius: var(--r5);
-    padding: 18px;
-    box-shadow: var(--sh-sm);
-    transition: box-shadow var(--db) var(--eo), transform var(--db) var(--eo);
-  }
-  .mp-kpi:hover { box-shadow: var(--sh-md); transform: translateY(-1px); }
-
-  /* Hero strip (light) — for in-page hero blocks. */
-  .mp-hero {
-    color: #ffffff;
-    background: var(--hero-gradient);
-    border-radius: var(--r6);
-    padding: 28px;
-    box-shadow: var(--sh-md);
-    position: relative;
-    overflow: hidden;
-  }
-  .mp-hero::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
-    background-size: 28px 28px;
-    pointer-events: none;
-  }
-
-  /* Scrollbar polish. */
-  .custom-scrollbar::-webkit-scrollbar { width: 10px; height: 10px; }
+  /* Custom scrollbar polish. */
+  .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(71, 85, 105, 0.22);
+    background: rgba(113, 113, 122, 0.20);
     border-radius: 999px;
   }
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(71, 85, 105, 0.36); }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(113, 113, 122, 0.35); }
   .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 }
 
-/* Back-compat: legacy glass classes used by a few pages. */
+/* Legacy glass aliases — keep flat surface. */
 .glass, .glass-card {
-  border: 1px solid var(--b);
-  background: var(--surface-1);
-  box-shadow: var(--sh-sm);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-flat);
   border-radius: var(--r5);
 }
 
-/* Recharts grid lines tuned to the new neutral palette. */
 .recharts-cartesian-grid-horizontal line,
-.recharts-cartesian-grid-vertical line { stroke: rgba(71, 85, 105, 0.10); }
+.recharts-cartesian-grid-vertical line { stroke: rgba(113, 113, 122, 0.10); }
+.recharts-tooltip-wrapper { font-family: var(--f-ui); }
+.recharts-default-tooltip {
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--r4) !important;
+  box-shadow: var(--sh-md) !important;
+  padding: 8px 10px !important;
+}
+.recharts-tooltip-label, .recharts-tooltip-item { color: var(--ink-2) !important; font-size: 12px !important; }

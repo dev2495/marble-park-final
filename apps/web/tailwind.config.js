@@ -12,7 +12,7 @@ module.exports = {
     },
     extend: {
       colors: {
-        // shadcn-compatible aliases (now pointing at the blue brand spine)
+        // shadcn aliases — pointed at the neutral palette
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring-hsl))',
@@ -46,7 +46,6 @@ module.exports = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
-        // v2 brand spine — usable as `bg-brand-600`, `text-brand-700`, etc.
         brand: {
           50: 'var(--brand-50)',
           100: 'var(--brand-100)',
@@ -57,20 +56,23 @@ module.exports = {
           700: 'var(--brand-700)',
           800: 'var(--brand-800)',
           900: 'var(--brand-900)',
-          950: 'var(--brand-950)',
         },
         ink: {
-          DEFAULT: 'var(--t1)',
-          subtle: 'var(--t2)',
-          muted: 'var(--t3)',
-          soft: 'var(--t4)',
+          DEFAULT: 'var(--ink)',
+          2: 'var(--ink-2)',
+          3: 'var(--ink-3)',
+          4: 'var(--ink-4)',
+          5: 'var(--ink-5)',
         },
         surface: {
-          1: 'var(--surface-1)',
-          '1soft': 'var(--surface-1-soft)',
+          DEFAULT: 'var(--surface)',
           2: 'var(--surface-2)',
           3: 'var(--surface-3)',
-          glass: 'var(--surface-glass)',
+        },
+        line: {
+          DEFAULT: 'var(--line)',
+          strong: 'var(--line-strong)',
+          soft: 'var(--line-soft)',
         },
       },
       borderRadius: {
@@ -90,37 +92,22 @@ module.exports = {
         mono: ['var(--f-mono)', ...fontFamily.mono],
       },
       boxShadow: {
-        'flat': 'var(--sh-flat)',
+        flat: 'var(--sh-flat)',
         'sm-soft': 'var(--sh-sm)',
         'md-soft': 'var(--sh-md)',
         'lg-soft': 'var(--sh-lg)',
-        'glow-brand': 'var(--glow-brand)',
-        'glow-sky': 'var(--glow-sky)',
-        'glow-emerald': 'var(--glow-emerald)',
       },
       keyframes: {
-        'accordion-down': {
-          from: { height: 0 },
-          to: { height: 'var(--radix-accordion-content-height)' },
-        },
-        'accordion-up': {
-          from: { height: 'var(--radix-accordion-content-height)' },
-          to: { height: 0 },
-        },
-        'fade-in': {
-          from: { opacity: 0 },
-          to: { opacity: 1 },
-        },
-        'slide-in-from-bottom': {
-          from: { transform: 'translateY(10px)', opacity: 0 },
-          to: { transform: 'translateY(0)', opacity: 1 },
-        },
+        'accordion-down': { from: { height: 0 }, to: { height: 'var(--radix-accordion-content-height)' } },
+        'accordion-up':   { from: { height: 'var(--radix-accordion-content-height)' }, to: { height: 0 } },
+        'fade-in':        { from: { opacity: 0 }, to: { opacity: 1 } },
+        'slide-in':       { from: { transform: 'translateY(8px)', opacity: 0 }, to: { transform: 'translateY(0)', opacity: 1 } },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
-        'accordion-up': 'accordion-up 0.2s ease-out',
-        'fade-in': 'fade-in 0.3s ease-out',
-        'slide-in': 'slide-in-from-bottom 0.3s ease-out',
+        'accordion-up':   'accordion-up 0.2s ease-out',
+        'fade-in':        'fade-in 200ms cubic-bezier(.22,1,.36,1)',
+        'slide-in':       'slide-in 240ms cubic-bezier(.22,1,.36,1)',
       },
     },
   },

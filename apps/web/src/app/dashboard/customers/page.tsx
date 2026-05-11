@@ -94,25 +94,25 @@ export default function CustomersPage() {
 
   return (
     <div className="space-y-7 pb-10">
-      <section className="rounded-[2.25rem] bg-[#241b14] p-7 text-white shadow-2xl shadow-[#241b14]/15">
+      <section className="rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]">
         <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.26em] text-[#ead7bd]">Customer master</p>
-            <h1 className="mt-3 text-5xl font-black tracking-[-0.05em]">Architects, walk-ins and project buyers.</h1>
-            <p className="mt-3 max-w-2xl text-sm font-semibold leading-6 text-[#f6eadb]">Keep site address, contact, city and design-owner context ready for quote and dispatch.</p>
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Customer master</p>
+            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Architects, walk-ins and project buyers.</h1>
+            <p className="mt-3 max-w-2xl text-sm text-[#52525b]">Keep site address, contact, city and design-owner context ready for quote and dispatch.</p>
           </div>
-          <Button onClick={() => setShowForm((value) => !value)} size="lg" className="bg-[#ffffff] text-[#241b14] hover:bg-white"><Plus className="mr-2 h-5 w-5" /> {showForm ? 'Close' : 'Add customer'}</Button>
+          <Button onClick={() => setShowForm((value) => !value)} size="lg" className="bg-[#2563eb] text-white hover:bg-[#1d4ed8]"><Plus className="mr-2 h-5 w-5" /> {showForm ? 'Close' : 'Add customer'}</Button>
         </div>
       </section>
 
-      <section className="mp-card rounded-[2rem] p-5">
+      <section className="mp-card rounded-r5 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by customer, city, mobile..." className="h-[3.25rem] max-w-xl" />
-          <p className="text-sm font-bold text-[#6f6258]">{customers.length} visible customers</p>
+          <p className="text-sm font-bold text-[#52525b]">{customers.length} visible customers</p>
         </div>
 
         {showForm && (
-          <form onSubmit={handleSubmit} className="mt-5 grid gap-3 rounded-[1.5rem] bg-white/65 p-4 md:grid-cols-4">
+          <form onSubmit={handleSubmit} className="mt-5 grid gap-3 rounded-r4 bg-white/65 p-4 md:grid-cols-4">
             <Input placeholder="Name" aria-label="Customer name" value={formData.name} onChange={(event) => setFormData({ ...formData, name: event.target.value })} required />
             <Input placeholder="Email" aria-label="Customer email" type="email" value={formData.email} onChange={(event) => setFormData({ ...formData, email: event.target.value })} />
             <Input placeholder="Phone" aria-label="Customer phone" value={formData.phone} onChange={(event) => setFormData({ ...formData, phone: event.target.value })} required />
@@ -129,7 +129,7 @@ export default function CustomersPage() {
                     <ul className="mt-2 space-y-1 text-xs font-bold">
                       {duplicates.map((dup) => (
                         <li key={dup.id} className="flex flex-wrap items-center gap-2">
-                          <span className="text-[#241b14]">{dup.name}</span>
+                          <span className="text-[#18181b]">{dup.name}</span>
                           <span className="text-amber-800/80">· {dup.city || 'no city'}</span>
                           <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] uppercase tracking-wider">matched on {dup.matchedOn?.join(', ')}</span>
                         </li>
@@ -160,19 +160,19 @@ export default function CustomersPage() {
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {loading && !data ? <div role="status" aria-live="polite" className="col-span-full rounded-[2rem] bg-white/70 p-12 text-center font-bold text-[#6f6258]">Loading customers...</div> : customers.map((customer: any) => (
-          <article key={customer.id} className="mp-card rounded-[2rem] p-5 transition hover:-translate-y-1 hover:shadow-2xl">
+        {loading && !data ? <div role="status" aria-live="polite" className="col-span-full rounded-r5 bg-white/70 p-12 text-center font-bold text-[#52525b]">Loading customers...</div> : customers.map((customer: any) => (
+          <article key={customer.id} className="mp-card rounded-r5 p-5 transition hover:-translate-y-1 hover:shadow-2xl">
             <div className="flex items-start gap-4">
-              <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#241b14] text-lg font-black text-[#ffffff]"><Building2 className="h-6 w-6" /></div>
+              <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#18181b] text-lg font-black text-[#ffffff]"><Building2 className="h-6 w-6" /></div>
               <div className="min-w-0">
-                <h2 className="truncate text-xl font-black text-[#241b14]">{customer.name}</h2>
-                <p className="mt-1 truncate text-sm font-bold text-[#6f6258]">{customer.architect || 'Retail customer'}</p>
+                <h2 className="truncate text-xl font-semibold text-[#18181b]">{customer.name}</h2>
+                <p className="mt-1 truncate text-sm font-bold text-[#52525b]">{customer.architect || 'Retail customer'}</p>
               </div>
             </div>
-            <div className="mt-5 space-y-3 text-sm font-semibold text-[#2d251f]">
-              {(customer.phone || customer.mobile) && <p className="flex items-center gap-3"><Phone className="h-4 w-4 text-[#b17643]" />{customer.phone || customer.mobile}</p>}
-              {customer.email && <p className="flex items-center gap-3"><Mail className="h-4 w-4 text-[#b17643]" />{customer.email}</p>}
-              {(customer.city || customer.siteAddress) && <p className="flex items-start gap-3"><MapPin className="mt-0.5 h-4 w-4 text-[#b17643]" />{[customer.siteAddress, customer.city].filter(Boolean).join(', ')}</p>}
+            <div className="mt-5 space-y-3 text-sm font-semibold text-[#27272a]">
+              {(customer.phone || customer.mobile) && <p className="flex items-center gap-3"><Phone className="h-4 w-4 text-[#2563eb]" />{customer.phone || customer.mobile}</p>}
+              {customer.email && <p className="flex items-center gap-3"><Mail className="h-4 w-4 text-[#2563eb]" />{customer.email}</p>}
+              {(customer.city || customer.siteAddress) && <p className="flex items-start gap-3"><MapPin className="mt-0.5 h-4 w-4 text-[#2563eb]" />{[customer.siteAddress, customer.city].filter(Boolean).join(', ')}</p>}
             </div>
           </article>
         ))}

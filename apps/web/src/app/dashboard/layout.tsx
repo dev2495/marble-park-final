@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Bath, Bell, Boxes, Briefcase, ChevronLeft, ChevronRight, ClipboardCheck, FileSpreadsheet,
+  Bath, Bell, Boxes, Briefcase, ClipboardCheck, FileSpreadsheet,
   LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
   Truck, Users, UserCog,
 } from 'lucide-react';
@@ -111,6 +111,24 @@ const pageTitles: Record<string, string> = {
   '/dashboard/settings': 'Settings',
 };
 
+/**
+ * Layout sidebar — hover-to-peek floating rail.
+ *
+ *   • Rail width: 4.5rem (72px). Always visible — icons only.
+ *   • Expanded width: 16rem (256px). Triggered by hover OR focus-within
+ *     (keyboard accessibility free).
+ *   • Floats OVER the content via fixed position + soft shadow. Main
+ *     content padding stays constant at the rail width so the page never
+ *     reflows when the panel opens.
+ *   • Entry: instant (delay-0). Exit: 250 ms grace delay so accidental
+ *     mouse-outs don't snap it shut. Pure CSS — `transition-delay` is set
+ *     short on the hover state and long on the resting state.
+ *   • Labels: opacity tween, 120 ms ease-out, delayed ~140 ms after the
+ *     width starts opening so they "arrive" inside the panel instead of
+ *     getting clipped during the slide.
+ *   • Active item: gentle blue tint that's still visible in the rail
+ *     state (icon column).
+ */
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -119,11 +137,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [searchQuery, setSearchQuery] = useState('');
   const [showResults, setShowResults] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  // Persistent collapse state. Default = expanded. A true collapse hides labels;
-  // there's no more "hover-to-peek" trick — operators found it disorienting
-  // because labels stayed clipped under the icon when the cursor wasn't
-  // exactly on the rail.
-  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -134,17 +147,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const stored = localStorage.getItem('user');
     if (stored) setUser(JSON.parse(stored));
     setRoleOverride(localStorage.getItem('role_override') || '');
-    const savedCollapsed = localStorage.getItem('mp_sidebar_collapsed');
-    if (savedCollapsed === '1') setCollapsed(true);
   }, [router]);
-
-  const toggleCollapsed = () => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      localStorage.setItem('mp_sidebar_collapsed', next ? '1' : '0');
-      return next;
-    });
-  };
 
   const effectiveRole = user?.role === 'admin' && roleOverride ? roleOverride : user?.role || 'owner';
   const visibleSections = navSections
@@ -170,126 +173,128 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     window.location.href = '/login';
   };
 
-  const sidebarWidth = collapsed ? 'w-[4.5rem]' : 'w-[16rem]';
+  // Shared tween classes for fading labels in *after* the rail opens.
+  // delay-0 in resting state (instant fade-out), delay-[140ms] when hovered
+  // (so labels appear after the width animation has begun, never clipped).
+  const fadeIn =
+    'opacity-0 -translate-x-1 transition-[opacity,transform] duration-150 ease-out ' +
+    'group-hover/rail:opacity-100 group-hover/rail:translate-x-0 group-hover/rail:delay-[140ms] ' +
+    'group-focus-within/rail:opacity-100 group-focus-within/rail:translate-x-0 group-focus-within/rail:delay-[140ms]';
 
   return (
-    <div className="min-h-screen w-full bg-[var(--bg)] text-[var(--ink-2)]">
-      {/* Sidebar — light surface, collapsible. */}
+    <div className="min-h-screen w-full bg-[#fafafa] text-[#27272a]">
+      {/* ─── Sidebar — hover-to-peek floating rail ───────────────────────── */}
       <aside
         aria-label="Primary workspace navigation"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-[var(--line)] bg-white transition-[width] duration-200 ease-out lg:flex',
-          sidebarWidth,
+          'group/rail fixed inset-y-0 left-0 z-40 hidden w-[4.5rem] overflow-hidden border-r border-[#e4e4e7] bg-white lg:block',
+          // Width + shadow tweens. The 250 ms delay on the resting state +
+          // 0 ms delay on the hover state creates "instant open, lazy close".
+          'transition-[width,box-shadow] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] delay-[250ms]',
+          'hover:w-[16rem] hover:shadow-[0_24px_60px_-20px_rgba(24,24,27,0.18)] hover:delay-0',
+          'focus-within:w-[16rem] focus-within:shadow-[0_24px_60px_-20px_rgba(24,24,27,0.18)] focus-within:delay-0',
         )}
       >
-        {/* Brand */}
-        <div className={cn('flex items-center gap-3 border-b border-[var(--line)] px-4', collapsed ? 'h-16 justify-center px-2' : 'h-16')}>
-          <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--brand-600)] text-sm font-bold text-white">MP</div>
-            {!collapsed ? (
-              <div className="min-w-0">
-                <div className="truncate font-display text-lg font-bold leading-tight text-[var(--ink)]">Marble Park</div>
-                <div className="truncate text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--ink-4)]">Retail Ops</div>
+        <div className="flex h-full w-[16rem] flex-col">
+          {/* Brand */}
+          <div className="flex h-16 items-center gap-3 border-b border-[#e4e4e7] px-4">
+            <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#2563eb] text-sm font-bold text-white">MP</div>
+              <div className={cn('min-w-0 whitespace-nowrap', fadeIn)}>
+                <p className="text-base font-bold leading-tight text-[#18181b]">Marble Park</p>
+                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[#71717a]">Retail Ops</p>
               </div>
-            ) : null}
-          </Link>
-        </div>
-
-        {/* Nav */}
-        <nav className="flex-1 overflow-y-auto py-3 custom-scrollbar">
-          {visibleSections.map((section) => (
-            <div key={section.title} className="px-3 pb-4">
-              {!collapsed ? (
-                <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">{section.title}</p>
-              ) : (
-                <div className="mx-2 mb-1.5 h-px bg-[var(--line)]" aria-hidden />
-              )}
-              <ul className="space-y-0.5">
-                {section.items.map((item) => {
-                  const active = isNavActive(item.href);
-                  return (
-                    <li key={item.href}>
-                      <Link
-                        href={item.href}
-                        title={item.name}
-                        className={cn(
-                          'group flex h-9 items-center gap-3 rounded-md px-2.5 text-sm font-medium transition-colors',
-                          collapsed ? 'justify-center' : '',
-                          active
-                            ? 'bg-[var(--brand-50)] text-[var(--brand-700)]'
-                            : 'text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]',
-                        )}
-                      >
-                        <item.icon
-                          className={cn('h-[18px] w-[18px] shrink-0', active ? 'text-[var(--brand-600)]' : 'text-[var(--ink-4)] group-hover:text-[var(--ink-2)]')}
-                          strokeWidth={1.6}
-                        />
-                        {!collapsed ? <span className="truncate">{item.name}</span> : null}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
-        </nav>
-
-        {/* Footer: user + collapse + logout */}
-        <div className="border-t border-[var(--line)] p-3">
-          <div className={cn('flex items-center gap-3', collapsed ? 'justify-center' : '')}>
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--bg-soft)] text-sm font-semibold text-[var(--ink-2)]">
-              {(user?.name?.[0] || 'M').toUpperCase()}
-            </div>
-            {!collapsed ? (
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-[var(--ink)]">{user?.name || 'Marble Park User'}</p>
-                <p className="truncate text-[11px] font-medium capitalize text-[var(--ink-4)]">{effectiveRole.replace('_', ' ')}</p>
-              </div>
-            ) : null}
+            </Link>
           </div>
-          <div className={cn('mt-3 flex gap-1.5', collapsed ? 'flex-col items-center' : '')}>
-            <button
-              onClick={toggleCollapsed}
-              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              className="grid h-9 w-9 place-items-center rounded-md text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]"
-              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-            </button>
+
+          {/* Nav */}
+          <nav className="flex-1 overflow-y-auto py-3 custom-scrollbar">
+            {visibleSections.map((section) => (
+              <div key={section.title} className="px-3 pb-4">
+                {/* Section title — visible only when expanded */}
+                <p
+                  className={cn(
+                    'px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#a1a1aa]',
+                    'whitespace-nowrap opacity-0 transition-opacity duration-150',
+                    'group-hover/rail:opacity-100 group-hover/rail:delay-[140ms]',
+                    'group-focus-within/rail:opacity-100 group-focus-within/rail:delay-[140ms]',
+                  )}
+                  aria-hidden="true"
+                >
+                  {section.title}
+                </p>
+                <ul className="space-y-0.5">
+                  {section.items.map((item) => {
+                    const active = isNavActive(item.href);
+                    return (
+                      <li key={item.href}>
+                        <Link
+                          href={item.href}
+                          title={item.name}
+                          className={cn(
+                            'flex h-9 items-center gap-3 rounded-md px-2.5 text-sm font-medium transition-colors',
+                            active
+                              ? 'bg-[#eff6ff] text-[#1d4ed8]'
+                              : 'text-[#52525b] hover:bg-[#f4f4f5] hover:text-[#18181b]',
+                          )}
+                        >
+                          <item.icon
+                            className={cn(
+                              'h-[18px] w-[18px] shrink-0 transition-colors',
+                              active ? 'text-[#2563eb]' : 'text-[#71717a]',
+                            )}
+                            strokeWidth={1.6}
+                          />
+                          <span className={cn('truncate whitespace-nowrap', fadeIn)}>{item.name}</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </nav>
+
+          {/* Footer: user + sign out */}
+          <div className="border-t border-[#e4e4e7] p-3">
+            <div className="flex items-center gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#f4f4f5] text-sm font-semibold text-[#27272a]">
+                {(user?.name?.[0] || 'M').toUpperCase()}
+              </div>
+              <div className={cn('min-w-0 flex-1 whitespace-nowrap', fadeIn)}>
+                <p className="truncate text-sm font-semibold text-[#18181b]">{user?.name || 'Marble Park User'}</p>
+                <p className="truncate text-[11px] font-medium capitalize text-[#71717a]">{effectiveRole.replace('_', ' ')}</p>
+              </div>
+            </div>
             <button
               onClick={handleLogout}
               title="Sign out"
-              className={cn(
-                'flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]',
-                collapsed ? 'w-9' : 'flex-1 px-3',
-              )}
+              className="mt-3 flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-sm font-medium text-[#52525b] transition-colors hover:bg-[#f4f4f5] hover:text-[#18181b]"
             >
-              <LogOut className="h-4 w-4" />
-              {!collapsed ? <span>Sign out</span> : null}
+              <LogOut className="h-4 w-4 shrink-0" />
+              <span className={cn('truncate whitespace-nowrap', fadeIn)}>Sign out</span>
             </button>
           </div>
         </div>
       </aside>
 
-      <main
-        className={cn('min-w-0 transition-[padding] duration-200 ease-out', collapsed ? 'lg:pl-[4.5rem]' : 'lg:pl-[16rem]')}
-      >
+      <main className="min-w-0 lg:pl-[4.5rem]">
         {/* Topbar */}
-        <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+        <header className="sticky top-0 z-30 border-b border-[#e4e4e7] bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/75">
           <div className="flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <h1 className="truncate text-base font-semibold text-[var(--ink)] lg:text-lg">
+                <h1 className="truncate text-base font-semibold text-[#18181b] lg:text-lg">
                   {pageTitles[pathname] || pageTitles[pathname.replace(/\/[^/]+$/, '')] || 'Workspace'}
                 </h1>
               </div>
-              <Link href="/dashboard" className="grid h-9 w-9 place-items-center rounded-md bg-[var(--brand-600)] text-xs font-bold text-white lg:hidden">MP</Link>
+              <Link href="/dashboard" className="grid h-9 w-9 place-items-center rounded-md bg-[#2563eb] text-xs font-bold text-white lg:hidden">MP</Link>
             </div>
 
             <div className="flex items-center gap-2">
               <div className="relative min-w-0 flex-1 lg:w-[26rem] lg:flex-none">
-                <div className={cn('flex h-9 items-center rounded-md border bg-white px-3 transition-colors', showResults ? 'border-[var(--brand-400)]' : 'border-[var(--line)]')}>
-                  <Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" />
+                <div className={cn('flex h-9 items-center rounded-md border bg-white px-3 transition-colors', showResults ? 'border-[#60a5fa]' : 'border-[#e4e4e7]')}>
+                  <Search className="mr-2 h-4 w-4 text-[#71717a]" />
                   <input
                     value={searchQuery}
                     onChange={(event) => {
@@ -299,9 +304,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     onFocus={() => setShowResults(searchQuery.length > 1)}
                     onBlur={() => setTimeout(() => setShowResults(false), 180)}
                     placeholder="Search SKU, customer, lead, quote…"
-                    className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)]"
+                    className="w-full bg-transparent text-sm text-[#18181b] outline-none placeholder:text-[#a1a1aa]"
                   />
-                  {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--brand-600)]" /> : null}
+                  {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#2563eb]" /> : null}
                 </div>
 
                 <AnimatePresence>
@@ -311,28 +316,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 6 }}
                       transition={{ duration: 0.16 }}
-                      className="absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[var(--line)] bg-white p-1 shadow-lg-soft lg:w-[26rem]"
+                      className="absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[#e4e4e7] bg-white p-1 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)] lg:w-[26rem]"
                     >
-                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">Products</div>
+                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#71717a]">Products</div>
                       <div className="max-h-80 overflow-y-auto custom-scrollbar">
                         {searchResults?.globalSearch?.products?.length ? (
                           searchResults.globalSearch.products.map((product: any) => (
                             <button
                               key={product.id}
                               onClick={() => router.push(`/dashboard/products?sku=${product.sku}`)}
-                              className="flex w-full items-center justify-between gap-3 rounded-md p-2.5 text-left transition-colors hover:bg-[var(--bg-soft)]"
+                              className="flex w-full items-center justify-between gap-3 rounded-md p-2.5 text-left transition-colors hover:bg-[#f4f4f5]"
                             >
                               <div className="min-w-0">
-                                <p className="truncate text-sm font-medium text-[var(--ink)]">{product.name}</p>
-                                <p className="truncate text-[11px] font-medium text-[var(--ink-4)]">
+                                <p className="truncate text-sm font-medium text-[#18181b]">{product.name}</p>
+                                <p className="truncate text-[11px] font-medium text-[#71717a]">
                                   <span className="mp-mono">{product.sku}</span> · {product.brand}
                                 </p>
                               </div>
-                              <span className="shrink-0 text-sm font-semibold text-[var(--ink)]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
+                              <span className="shrink-0 text-sm font-semibold text-[#18181b]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
                             </button>
                           ))
                         ) : (
-                          <p className="p-3 text-sm text-[var(--ink-4)]">No matches.</p>
+                          <p className="p-3 text-sm text-[#71717a]">No matches.</p>
                         )}
                       </div>
                     </motion.div>
@@ -341,8 +346,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               {user?.role === 'admin' ? (
-                <div className="hidden h-9 items-center gap-1.5 rounded-md border border-[var(--line)] bg-white px-2 text-xs font-medium text-[var(--ink-2)] lg:flex">
-                  <Shield className="h-3.5 w-3.5 text-[var(--brand-600)]" />
+                <div className="hidden h-9 items-center gap-1.5 rounded-md border border-[#e4e4e7] bg-white px-2 text-xs font-medium text-[#27272a] lg:flex">
+                  <Shield className="h-3.5 w-3.5 text-[#2563eb]" />
                   <select
                     value={effectiveRole}
                     onChange={(event) => {
@@ -362,13 +367,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <Button
                   variant="outline"
                   size="icon"
-                  className="relative h-9 w-9 rounded-md border-[var(--line)] hover:bg-[var(--bg-soft)]"
+                  className="relative h-9 w-9 rounded-md border-[#e4e4e7] hover:bg-[#f4f4f5]"
                   onClick={() => setShowNotifications((current) => !current)}
                   aria-label="Notifications"
                 >
-                  <Bell className="h-4 w-4 text-[var(--ink-2)]" />
+                  <Bell className="h-4 w-4 text-[#27272a]" />
                   {Number(notificationData?.unreadNotificationCount || 0) > 0 ? (
-                    <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[var(--danger)] px-1 text-[10px] font-semibold text-white">
+                    <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#dc2626] px-1 text-[10px] font-semibold text-white">
                       {notificationData.unreadNotificationCount}
                     </span>
                   ) : null}
@@ -380,11 +385,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 6 }}
                       transition={{ duration: 0.16 }}
-                      className="absolute right-0 top-full z-50 mt-2 w-[22rem] overflow-hidden rounded-md border border-[var(--line)] bg-white p-2 shadow-lg-soft"
+                      className="absolute right-0 top-full z-50 mt-2 w-[22rem] overflow-hidden rounded-md border border-[#e4e4e7] bg-white p-2 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)]"
                     >
                       <div className="flex items-center justify-between px-2 py-1">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">Notifications</p>
-                        <Link href="/dashboard" onClick={() => setShowNotifications(false)} className="text-xs font-medium text-[var(--brand-700)] hover:underline">Open</Link>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-[#71717a]">Notifications</p>
+                        <Link href="/dashboard" onClick={() => setShowNotifications(false)} className="text-xs font-medium text-[#1d4ed8] hover:underline">Open</Link>
                       </div>
                       <div className="mt-1 max-h-96 space-y-1 overflow-y-auto custom-scrollbar">
                         {(notificationData?.notifications || []).length ? (notificationData?.notifications || []).map((notification: any) => (
@@ -396,20 +401,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                               setShowNotifications(false);
                             }}
                             className={cn(
-                              'w-full rounded-md p-2.5 text-left transition-colors hover:bg-[var(--bg-soft)]',
-                              !notification.readAt ? 'bg-[var(--brand-50)]' : '',
+                              'w-full rounded-md p-2.5 text-left transition-colors hover:bg-[#f4f4f5]',
+                              !notification.readAt ? 'bg-[#eff6ff]' : '',
                             )}
                           >
                             <div className="flex items-start justify-between gap-3">
-                              <p className="text-sm font-semibold text-[var(--ink)]">{notification.title}</p>
-                              {!notification.readAt ? <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--brand-600)]" /> : null}
+                              <p className="text-sm font-semibold text-[#18181b]">{notification.title}</p>
+                              {!notification.readAt ? <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#2563eb]" /> : null}
                             </div>
-                            <p className="mt-0.5 line-clamp-2 text-xs text-[var(--ink-3)]">{notification.message}</p>
-                            <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[var(--ink-5)]">
+                            <p className="mt-0.5 line-clamp-2 text-xs text-[#52525b]">{notification.message}</p>
+                            <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[#a1a1aa]">
                               {notification.type} · {new Date(notification.createdAt).toLocaleString()}
                             </p>
                           </button>
-                        )) : <p className="p-3 text-sm text-[var(--ink-4)]">No notifications yet.</p>}
+                        )) : <p className="p-3 text-sm text-[#71717a]">No notifications yet.</p>}
                       </div>
                     </motion.div>
                   ) : null}
@@ -419,7 +424,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           {/* Mobile nav strip */}
-          <nav className="flex gap-1 overflow-x-auto border-t border-[var(--line)] px-4 py-2 lg:hidden">
+          <nav className="flex gap-1 overflow-x-auto border-t border-[#e4e4e7] px-4 py-2 lg:hidden">
             {visibleSections.flatMap((s) => s.items).map((item) => {
               const active = isNavActive(item.href);
               return (
@@ -428,7 +433,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   href={item.href}
                   className={cn(
                     'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium',
-                    active ? 'bg-[var(--brand-600)] text-white' : 'bg-[var(--bg-soft)] text-[var(--ink-2)]',
+                    active ? 'bg-[#2563eb] text-white' : 'bg-[#f4f4f5] text-[#27272a]',
                   )}
                 >
                   <item.icon className="h-3.5 w-3.5" />
