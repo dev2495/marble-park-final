@@ -1,6 +1,5 @@
 node_modules
 .next
-public/catalogue-images
 .env
 .env.*
 npm-debug.log*
