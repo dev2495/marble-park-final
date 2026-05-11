@@ -6,6 +6,7 @@ import { ImportsService } from './imports.service';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requireRoles } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { ulid } from 'ulid';
 
 @ObjectType()
 export class ImportOutput {
@@ -33,6 +34,12 @@ function writeUploadToTemp(filename: string, contentBase64: string) {
   const filePath = path.join(os.tmpdir(), `marble-import-${Date.now()}-${safeName}`);
   fs.writeFileSync(filePath, Buffer.from(contentBase64, 'base64'));
   return filePath;
+}
+
+function uploadTempPath(uploadId: string, filename: string) {
+  const safeUploadId = uploadId.replace(/[^a-zA-Z0-9_-]/g, '');
+  const safeName = path.basename(filename || 'catalogue-upload').replace(/[^a-zA-Z0-9._-]/g, '-');
+  return path.join(os.tmpdir(), `marble-import-${safeUploadId}-${safeName}`);
 }
 
 @Resolver()
@@ -90,6 +97,47 @@ export class ImportsResolver {
     const filePath = writeUploadToTemp(filename, contentBase64);
     const result = await this.imports.processPdfImport(filePath, user.id);
     return { id: `pdf-${Date.now()}`, result };
+  }
+
+  @Mutation(() => ImportOutput)
+  async beginImportUpload(@Args('filename') filename: string, @Context() ctx: GraphqlRequestContext) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const uploadId = ulid();
+    const filePath = uploadTempPath(uploadId, filename);
+    fs.rmSync(filePath, { force: true });
+    fs.writeFileSync(filePath, '');
+    return { id: uploadId, result: { uploadId } };
+  }
+
+  @Mutation(() => ImportOutput)
+  async appendImportUpload(
+    @Args('uploadId') uploadId: string,
+    @Args('filename') filename: string,
+    @Args('contentBase64') contentBase64: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const filePath = uploadTempPath(uploadId, filename);
+    fs.appendFileSync(filePath, Buffer.from(contentBase64, 'base64'));
+    return { id: uploadId, result: { uploadedBytes: fs.statSync(filePath).size } };
+  }
+
+  @Mutation(() => ImportOutput)
+  async processUploadedImport(
+    @Args('uploadId') uploadId: string,
+    @Args('filename') filename: string,
+    @Args('kind') kind: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const filePath = uploadTempPath(uploadId, filename);
+    if (!fs.existsSync(filePath)) {
+      throw new Error('Uploaded file was not found. Please upload again.');
+    }
+    const result = kind === 'pdf'
+      ? await this.imports.processPdfImport(filePath, user.id)
+      : await this.imports.processExcelImport(filePath, user.id);
+    return { id: uploadId, result };
   }
 
   @Mutation(() => ImportOutput)
