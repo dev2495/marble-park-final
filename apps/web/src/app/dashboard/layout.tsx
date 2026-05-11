@@ -153,10 +153,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   title={item.name}
                   className={cn(
                     'group relative flex min-h-14 items-center justify-center rounded-2xl px-0 py-4 text-sm font-bold transition-all group-hover/sidebar:justify-start group-hover/sidebar:gap-4 group-hover/sidebar:px-4 group-focus-within/sidebar:justify-start group-focus-within/sidebar:gap-4 group-focus-within/sidebar:px-4',
-                    active ? 'bg-white text-[var(--brand-700)] shadow-xl' : 'text-[#cbd5e1] hover:bg-white/10 hover:text-white'
+                    active ? 'bg-white text-[var(--brand-700)] shadow-xl' : 'text-[#d9cbbd] hover:bg-white/10 hover:text-white'
                   )}
                 >
-                  <item.icon className={cn('h-5 w-5', active ? 'text-[var(--brand-600)]' : 'text-[#94a3b8] group-hover:text-[var(--brand-200)]')} strokeWidth={1.7} />
+                  <item.icon className={cn('h-5 w-5', active ? 'text-[var(--brand-600)]' : 'text-[#a89b90] group-hover:text-[var(--brand-200)]')} strokeWidth={1.7} />
                   <span className="w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-300 group-hover/sidebar:w-40 group-hover/sidebar:opacity-100 group-focus-within/sidebar:w-40 group-focus-within/sidebar:opacity-100">{item.name}</span>
                   {active && <motion.span layoutId="mp-active-nav" className="absolute right-2 h-2 w-2 rounded-full bg-[var(--brand-500)] transition-all group-hover/sidebar:right-3 group-focus-within/sidebar:right-3" />}
                 </Link>

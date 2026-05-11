@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
   // Slightly less aggressive font weight (was font-black tracking-tight) so
-  // the blue-spine UI doesn't feel shouty. Letter-spacing relaxed for Inter.
+  // the showroom UI doesn't feel shouty. Letter-spacing relaxed for Inter.
   "inline-flex items-center justify-center whitespace-nowrap rounded-2xl text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {

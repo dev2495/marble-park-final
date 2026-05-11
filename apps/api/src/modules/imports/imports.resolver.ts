@@ -42,6 +42,21 @@ function uploadTempPath(uploadId: string, filename: string) {
   return path.join(os.tmpdir(), `marble-import-${safeUploadId}-${safeName}`);
 }
 
+function persistentManualAssetPath(filename: string) {
+  const importImageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
+  const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.dirname(importImageDir);
+  const ext = path.extname(filename || '').replace(/[^a-zA-Z0-9.]/g, '').slice(0, 12) || '.bin';
+  const safeName = `${ulid()}${ext}`;
+  const directory = path.join(catalogueImageRoot, 'manual');
+  fs.mkdirSync(directory, { recursive: true });
+  return { filePath: path.join(directory, safeName), safeName };
+}
+
+function cataloguePublicUrl(fileName: string) {
+  const baseUrl = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '');
+  return `${baseUrl}/catalogue-images/manual/${fileName}`;
+}
+
 @Resolver()
 export class ImportsResolver {
   constructor(
@@ -138,6 +153,26 @@ export class ImportsResolver {
       ? await this.imports.processPdfImport(filePath, user.id)
       : await this.imports.processExcelImport(filePath, user.id);
     return { id: uploadId, result };
+  }
+
+  @Mutation(() => ImportOutput)
+  async uploadStoredAsset(
+    @Args('filename') filename: string,
+    @Args('contentBase64') contentBase64: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('scope', { nullable: true }) scope?: string,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
+    const { filePath, safeName } = persistentManualAssetPath(filename);
+    fs.writeFileSync(filePath, Buffer.from(contentBase64, 'base64'));
+    return {
+      id: safeName,
+      result: {
+        scope: scope || 'asset',
+        filePath,
+        publicUrl: cataloguePublicUrl(safeName),
+      },
+    };
   }
 
   @Mutation(() => ImportOutput)

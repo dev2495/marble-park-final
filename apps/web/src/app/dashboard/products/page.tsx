@@ -45,77 +45,31 @@ const GET_PRODUCT_STATS = gql`
 `;
 
 
-const fallbackProducts = [
-  {
-    id: 'demo-1',
-    sku: 'GRO-23571003',
-    name: 'Grohe Eurostyle Basin Mixer',
-    category: 'Faucets',
-    brand: 'Grohe',
-    finish: 'Chrome',
-    dimensions: 'Single lever, 1/2 inch',
-    unit: 'PC',
-    sellPrice: 8950,
-    floorPrice: 8050,
-    taxClass: 'GST_18',
-    status: 'active',
-    description: 'Retail-ready CP faucet with quote image placement and catalogue trace support.',
-  },
-  {
-    id: 'demo-2',
-    sku: 'AQ-SS-2418-HM',
-    name: 'Aquant Handmade SS Sink 24x18',
-    category: 'Kitchen Sinks',
-    brand: 'Aquant',
-    finish: 'Satin Steel',
-    dimensions: '24 x 18 x 10 inch',
-    unit: 'PC',
-    sellPrice: 12800,
-    floorPrice: 11200,
-    taxClass: 'GST_18',
-    status: 'active',
-    description: 'Stainless steel sink line item with image, MRP, dimensions, and stock visibility.',
-  },
-  {
-    id: 'demo-3',
-    sku: 'HIN-WC-ARIA-RIM',
-    name: 'Hindware Aria Rimless Wall Hung WC',
-    category: 'Sanitaryware',
-    brand: 'Hindware',
-    finish: 'Gloss White',
-    dimensions: '520 x 365 x 355 mm',
-    unit: 'PC',
-    sellPrice: 18600,
-    floorPrice: 16200,
-    taxClass: 'GST_18',
-    status: 'active',
-    description: 'Sanitaryware SKU prepared for owner pricing guardrails and dispatch reservation.',
-  },
-  {
-    id: 'demo-4',
-    sku: 'TIL-STAT-6001200',
-    name: 'Statuario Porcelain Tile 600x1200',
-    category: 'Tiles',
-    brand: 'Marble Park Select',
-    finish: 'Polished',
-    dimensions: '600 x 1200 mm',
-    unit: 'BOX',
-    sellPrice: 1450,
-    floorPrice: 1250,
-    taxClass: 'GST_18',
-    status: 'active',
-    description: 'Large-format tile catalogue item with box unit, shade story, and quote-ready details.',
-  },
-];
+const emptyPreview = {
+  id: 'empty-catalogue-preview',
+  sku: 'NO-SKU-YET',
+  name: 'Start with Product Master',
+  category: 'Clean Catalogue',
+  brand: 'No brand yet',
+  finish: 'No finish yet',
+  dimensions: 'Add first SKU',
+  unit: 'PC',
+  sellPrice: 0,
+  floorPrice: 0,
+  taxClass: 'GST_18',
+  status: 'draft',
+  description: 'This Railway workspace is clean. Add products manually or import a client catalogue to begin.',
+  media: {},
+};
 
 const categoryLooks: Record<string, { accent: string; wash: string; icon: any }> = {
-  Faucets: { accent: 'from-[#2563eb] via-[#60a5fa] to-[#f4f7fc]', wash: 'bg-[#dbeafe] text-[#1d4ed8]', icon: Bath },
-  'Faucets & Showers': { accent: 'from-[#2563eb] via-[#60a5fa] to-[#f4f7fc]', wash: 'bg-[#dbeafe] text-[#1d4ed8]', icon: Bath },
+  Faucets: { accent: 'from-[#b17643] via-[#e0bd83] to-[#f7f2ea]', wash: 'bg-[#f6eadb] text-[#8a552e]', icon: Bath },
+  'Faucets & Showers': { accent: 'from-[#b17643] via-[#e0bd83] to-[#f7f2ea]', wash: 'bg-[#f6eadb] text-[#8a552e]', icon: Bath },
   'Kitchen Sinks': { accent: 'from-zinc-500 to-slate-300', wash: 'bg-slate-100 text-slate-700', icon: Boxes },
   Sanitaryware: { accent: 'from-stone-200 to-white', wash: 'bg-stone-100 text-stone-700', icon: ShieldCheck },
   Tiles: { accent: 'from-amber-600 to-stone-200', wash: 'bg-amber-50 text-amber-800', icon: Grid3X3 },
   Accessories: { accent: 'from-[#047857] to-[#98b7ad]', wash: 'bg-[#ecfdf5] text-[#047857]', icon: Wrench },
-  'Catalogue Products': { accent: 'from-[#0e1a3d] to-[#2563eb]', wash: 'bg-[#dbeafe] text-[#0e1a3d]', icon: PackageSearch },
+  'Catalogue Products': { accent: 'from-[#241b14] to-[#b17643]', wash: 'bg-[#f6eadb] text-[#241b14]', icon: PackageSearch },
 };
 
 function currency(value?: number) {
@@ -142,12 +96,10 @@ export default function ProductsPage() {
   const { data: categoriesData, error: categoriesError } = useQuery(GET_CATEGORIES);
   const { data: statsData, error: statsError } = useQuery(GET_PRODUCT_STATS);
 
-  const products = data?.products?.length ? data.products : fallbackProducts;
+  const products = data?.products || [];
   const stats = statsData?.productStats;
-  const categories = categoriesData?.productCategories?.length
-    ? categoriesData.productCategories
-    : Array.from(new Set(fallbackProducts.map((p) => p.category)));
-  const selected = useMemo(() => products.find((p: any) => p.id === selectedId) || products[0], [products, selectedId]);
+  const categories = categoriesData?.productCategories || [];
+  const selected = useMemo(() => products.find((p: any) => p.id === selectedId) || products[0] || emptyPreview, [products, selectedId]);
   useEffect(() => setPortalReady(true), []);
   const look = getLook(selected?.category);
   const SelectedIcon = look.icon;
@@ -160,20 +112,20 @@ export default function ProductsPage() {
         <AnimatePresence>
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[9999] grid place-items-center bg-[#120f0c]/88 p-4 backdrop-blur-xl" onClick={() => setGalleryProduct(null)}>
             <motion.div initial={{ y: 24, scale: 0.96 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: 0.96 }} className="relative max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-[2rem] bg-[#ffffff] p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-              <button onClick={() => setGalleryProduct(null)} className="absolute right-5 top-5 z-10 grid h-11 w-11 place-items-center rounded-full bg-[#0e1a3d] text-white shadow-xl"><X className="h-5 w-5" /></button>
+              <button onClick={() => setGalleryProduct(null)} className="absolute right-5 top-5 z-10 grid h-11 w-11 place-items-center rounded-full bg-[#241b14] text-white shadow-xl"><X className="h-5 w-5" /></button>
               <div className="grid gap-4 lg:grid-cols-[1fr_13rem]">
                 <div className="overflow-hidden rounded-[1.5rem] bg-white">
                   <ProductImageFrame src={galleryFor(galleryProduct)[galleryIndex] || galleryProduct.media?.primary || '/catalogue-art/faucet.svg'} alt={galleryProduct.name} className="h-[74vh] rounded-[1.5rem]" imageClassName="p-4" />
                 </div>
                 <div className="space-y-3">
-                  <div className="rounded-[1.5rem] bg-[#0e1a3d] p-4 text-white">
-                    <p className="font-mono text-xs font-black uppercase tracking-wider text-[#bfdbfe]">{galleryProduct.sku}</p>
+                  <div className="rounded-[1.5rem] bg-[#241b14] p-4 text-white">
+                    <p className="font-mono text-xs font-black uppercase tracking-wider text-[#ead7bd]">{galleryProduct.sku}</p>
                     <h3 className="mt-2 text-xl font-black leading-tight">{galleryProduct.name}</h3>
-                    <p className="mt-2 text-xs font-bold text-[#dbeafe]">{Math.max(galleryFor(galleryProduct).length, 1)} image(s)</p>
+                    <p className="mt-2 text-xs font-bold text-[#f6eadb]">{Math.max(galleryFor(galleryProduct).length, 1)} image(s)</p>
                   </div>
                   <div className="grid max-h-[55vh] gap-2 overflow-y-auto custom-scrollbar">
                     {(galleryFor(galleryProduct).length ? galleryFor(galleryProduct) : ['/catalogue-art/faucet.svg']).map((src: string, index: number) => (
-                      <button key={src} onClick={() => setGalleryIndex(index)} className={`overflow-hidden rounded-2xl border-2 bg-white ${index === galleryIndex ? 'border-[#2563eb]' : 'border-transparent'}`}>
+                      <button key={src} onClick={() => setGalleryIndex(index)} className={`overflow-hidden rounded-2xl border-2 bg-white ${index === galleryIndex ? 'border-[#b17643]' : 'border-transparent'}`}>
                         <ProductImageFrame src={src} alt={`${galleryProduct.name} ${index + 1}`} className="h-28 rounded-2xl" imageClassName="p-2" />
                       </button>
                     ))}
@@ -205,9 +157,9 @@ export default function ProductsPage() {
 
             <div className="grid grid-cols-3 gap-3 text-sm">
               {[
-                ['Products', stats?.totalProducts || products.length],
-                ['Categories', stats?.totalCategories || categories.length],
-                ['Quote Image Ready', stats?.activeProducts || products.filter((p: any) => p.status === 'active').length],
+                ['Products', stats?.totalProducts ?? products.length],
+                ['Categories', stats?.totalCategories ?? categories.length],
+                ['Image Ready', stats?.activeProducts ?? products.filter((p: any) => p.status === 'active').length],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-3xl border border-white/10 bg-white/[0.08] p-4 backdrop-blur">
                   <div className="text-3xl font-black">{value}</div>
@@ -224,7 +176,7 @@ export default function ProductsPage() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -18, scale: 0.98 }}
               transition={{ duration: 0.32 }}
-              className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white p-5 text-[#0e1a3d] shadow-2xl"
+              className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white p-5 text-[#241b14] shadow-2xl"
             >
               {selected?.media?.primary ? (
                 <button
@@ -252,11 +204,11 @@ export default function ProductsPage() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="font-mono text-xs font-black uppercase tracking-wider text-slate-400">{selected?.sku}</div>
-                  <h2 className="mt-1 text-3xl font-black tracking-tight text-[#0e1a3d]">{selected?.name}</h2>
+                  <h2 className="mt-1 text-3xl font-black tracking-tight text-[#241b14]">{selected?.name}</h2>
                   <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-slate-500">{selected?.description || `${selected?.brand} ${selected?.finish} catalogue product.`}</p>
                 </div>
                 <div className="text-right">
-                  <div className="text-3xl font-black text-[#0e1a3d]">{currency(selected?.sellPrice)}</div>
+                  <div className="text-3xl font-black text-[#241b14]">{currency(selected?.sellPrice)}</div>
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">MRP / {selected?.unit}</div>
                 </div>
               </div>
@@ -304,12 +256,12 @@ export default function ProductsPage() {
         </div>
       </section>
 
-      <section className="rounded-[2rem] border border-[#cbd5e1]/10 bg-[#ffffff]/80 p-5 shadow-xl shadow-[#475569]/8">
+      <section className="rounded-[2rem] border border-[#d9cbbd]/10 bg-[#ffffff]/80 p-5 shadow-xl shadow-[#6f6258]/8">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#475569]">Product master is separate</p>
-            <h2 className="mt-1 text-2xl font-black text-[#0e1a3d]">Catalogue is for browsing and selling. SKU creation lives in Product Master.</h2>
-            <p className="mt-2 text-sm font-bold text-[#475569]">This keeps sales browsing clean and master-data permissions controlled for admin/owner/inventory roles.</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#6f6258]">Product master is separate</p>
+            <h2 className="mt-1 text-2xl font-black text-[#241b14]">Catalogue is for browsing and selling. SKU creation lives in Product Master.</h2>
+            <p className="mt-2 text-sm font-bold text-[#6f6258]">This keeps sales browsing clean and master-data permissions controlled for admin/owner/inventory roles.</p>
           </div>
           <Button asChild className="rounded-2xl"><Link href="/dashboard/master-data/products">Open Product Master</Link></Button>
         </div>
@@ -320,7 +272,7 @@ export default function ProductsPage() {
           <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-stone-900" />
         </div>
       ) : products.length === 0 ? (
-        <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white/70 p-16 text-center text-slate-500">No products found.</div>
+        <div className="rounded-[2rem] border border-dashed border-stone-300 bg-white/78 p-16 text-center text-stone-600"><PackageSearch className="mx-auto mb-4 h-10 w-10 text-[#b17643]" /><h2 className="text-2xl font-black text-[#241b14]">Catalogue is clean</h2><p className="mx-auto mt-2 max-w-xl text-sm font-semibold leading-6">No products, imports, or sample images are loaded. Add a SKU in Product Master or upload a client catalogue when testing starts.</p><Button asChild className="mt-5"><Link href="/dashboard/master-data/products">Add first SKU</Link></Button></div>
       ) : (
         <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
           {products.map((product: any, index: number) => {
@@ -359,15 +311,15 @@ export default function ProductsPage() {
                       <span className="font-mono text-[11px] font-black uppercase tracking-wider text-slate-400">{product.sku}</span>
                       <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${productLook.wash}`}>{product.brand}</span>
                     </div>
-                    <h3 className="mt-2 line-clamp-2 text-xl font-black leading-tight text-[#0e1a3d]">{product.name}</h3>
+                    <h3 className="mt-2 line-clamp-2 text-xl font-black leading-tight text-[#241b14]">{product.name}</h3>
                     <p className="mt-1 text-sm font-semibold text-slate-500">{product.finish || 'Standard'} · {product.dimensions || product.unit}</p>
                   </div>
                   <div className="flex items-end justify-between border-t border-slate-100 pt-4">
                     <div>
-                      <div className="text-2xl font-black text-[#0e1a3d]">{currency(product.sellPrice)}</div>
+                      <div className="text-2xl font-black text-[#241b14]">{currency(product.sellPrice)}</div>
                       <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Floor margin {currency(margin)}</div>
                     </div>
-                    <div className="rounded-2xl bg-[#0e1a3d] p-3 text-white transition-transform group-hover:rotate-3">
+                    <div className="rounded-2xl bg-[#241b14] p-3 text-white transition-transform group-hover:rotate-3">
                       <Tag size={18} />
                     </div>
                   </div>

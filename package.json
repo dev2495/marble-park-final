@@ -25,7 +25,8 @@
     "smoke:intent-order": "node scripts/e2e-lead-intent-order-smoke.mjs",
     "system:upgrade": "node scripts/upgrade-retail-os.mjs",
     "smoke:quote-notifications": "node scripts/e2e-quote-area-notification-smoke.mjs",
-    "smoke:readiness": "node scripts/e2e-readiness-import-smoke.mjs"
+    "smoke:readiness": "node scripts/e2e-readiness-import-smoke.mjs",
+    "reset:client-data": "node scripts/reset-client-test-data.mjs"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

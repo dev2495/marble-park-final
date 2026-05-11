@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { mkdir, writeFile } from 'fs/promises';
-import path from 'path';
-import { ulid } from 'ulid';
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,21 +11,40 @@ export async function POST(req: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const ext = path.extname(file.name);
-    const filename = `${ulid()}${ext}`;
-    const isProductImage = scope === 'product-image' || file.type.startsWith('image/');
-    const absolutePath = isProductImage
-      ? path.join(process.cwd(), 'public', 'catalogue-images', 'manual', filename)
-      : `/tmp/${filename}`;
-    if (isProductImage) {
-      await mkdir(path.dirname(absolutePath), { recursive: true });
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql';
+    const authorization = req.headers.get('authorization') || '';
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(authorization ? { authorization } : {}),
+      },
+      body: JSON.stringify({
+        query: `
+          mutation UploadStoredAsset($filename: String!, $contentBase64: String!, $scope: String) {
+            uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) {
+              id
+              result
+            }
+          }
+        `,
+        variables: {
+          filename: file.name,
+          contentBase64: buffer.toString('base64'),
+          scope,
+        },
+      }),
+    });
+    const json = await response.json();
+    if (!response.ok || json.errors?.length) {
+      throw new Error(json.errors?.[0]?.message || 'Upload failed.');
     }
-    await writeFile(absolutePath, buffer);
+    const result = json.data?.uploadStoredAsset?.result || {};
     
     return NextResponse.json({
       success: true,
-      filePath: absolutePath,
-      publicUrl: isProductImage ? `/catalogue-images/manual/${filename}` : null,
+      filePath: result.filePath,
+      publicUrl: result.publicUrl,
     });
   } catch (error) {
     console.error(error);

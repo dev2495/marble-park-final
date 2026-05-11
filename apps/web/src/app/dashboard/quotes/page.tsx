@@ -42,9 +42,9 @@ function quoteTotal(lines: any) {
 
 function statusClass(status?: string) {
   if (status === 'confirmed' || status === 'won') return 'bg-[#ecfdf5] text-[#047857]';
-  if (status === 'sent') return 'bg-[#dbeafe] text-[#1d4ed8]';
+  if (status === 'sent') return 'bg-[#f6eadb] text-[#8a552e]';
   if (status === 'lost' || status === 'expired') return 'bg-red-50 text-red-700';
-  return 'bg-white text-[#1e293b]';
+  return 'bg-white text-[#2d251f]';
 }
 
 export default function QuotesRegisterPage() {
@@ -84,14 +84,14 @@ export default function QuotesRegisterPage() {
   return (
     <div className="space-y-6 pb-10">
       <section className="grid gap-5 xl:grid-cols-[1fr_0.72fr]">
-        <div className="relative overflow-hidden rounded-[2.25rem] bg-[#0e1a3d] p-7 text-white shadow-2xl shadow-[#0e1a3d]/15">
+        <div className="relative overflow-hidden rounded-[2.25rem] bg-[#241b14] p-7 text-white shadow-2xl shadow-[#241b14]/15">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(59,130,246,0.40),transparent_28%),radial-gradient(circle_at_86%_35%,rgba(99,102,241,0.32),transparent_30%)]" />
           <div className="relative">
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#bfdbfe]">Quote register</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#ead7bd]">Quote register</p>
             <h1 className="mt-3 max-w-4xl text-5xl font-black leading-[0.95] tracking-[-0.055em]">Every quotation, PDF, follow-up and confirmation in one desk.</h1>
-            <p className="mt-5 max-w-2xl text-sm font-semibold leading-6 text-[#dbeafe]">Sales users see their own register. Owners and admins see the full store pipeline.</p>
+            <p className="mt-5 max-w-2xl text-sm font-semibold leading-6 text-[#f6eadb]">Sales users see their own register. Owners and admins see the full store pipeline.</p>
             <div className="mt-7 flex flex-wrap gap-3">
-              <Button asChild size="lg" className="bg-[#ffffff] text-[#0e1a3d] hover:bg-white"><Link href="/dashboard/quotes/new"><Plus className="mr-2 h-5 w-5" /> New quote</Link></Button>
+              <Button asChild size="lg" className="bg-[#ffffff] text-[#241b14] hover:bg-white"><Link href="/dashboard/quotes/new"><Plus className="mr-2 h-5 w-5" /> New quote</Link></Button>
               <Button asChild variant="outline" size="lg" className="border-white/15 bg-white/10 text-white hover:bg-white/15"><Link href="/dashboard/sales">Sales desk</Link></Button>
               <Button asChild variant="outline" size="lg" className="border-white/15 bg-white/10 text-white hover:bg-white/15"><Link href="/dashboard/approvals">Approvals</Link></Button>
             </div>
@@ -106,9 +106,9 @@ export default function QuotesRegisterPage() {
             ['Pipeline value', money(totals.value)],
           ].map(([label, value]) => (
             <div key={label} className="mp-card rounded-[2rem] p-5">
-              <FileSpreadsheet className="h-6 w-6 text-[#2563eb]" />
-              <div className="mt-5 text-3xl font-black tracking-[-0.04em] text-[#0e1a3d]">{loading ? '...' : value}</div>
-              <div className="mt-1 text-[10px] font-black uppercase tracking-widest text-[#475569]">{label}</div>
+              <FileSpreadsheet className="h-6 w-6 text-[#b17643]" />
+              <div className="mt-5 text-3xl font-black tracking-[-0.04em] text-[#241b14]">{loading ? '...' : value}</div>
+              <div className="mt-1 text-[10px] font-black uppercase tracking-widest text-[#6f6258]">{label}</div>
             </div>
           ))}
         </div>
@@ -118,7 +118,7 @@ export default function QuotesRegisterPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
             {['all', 'draft', 'sent', 'confirmed', 'lost'].map((item) => (
-              <button key={item} onClick={() => setStatus(item)} className={`rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-wider ${status === item ? 'bg-[#0e1a3d] text-white' : 'bg-white/75 text-[#1e293b]'}`}>{item}</button>
+              <button key={item} onClick={() => setStatus(item)} className={`rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-wider ${status === item ? 'bg-[#241b14] text-white' : 'bg-white/75 text-[#2d251f]'}`}>{item}</button>
             ))}
           </div>
           <Button asChild><Link href="/dashboard/quotes/new"><Plus className="mr-2 h-4 w-4" /> Build quote</Link></Button>
@@ -131,29 +131,29 @@ export default function QuotesRegisterPage() {
       {sendError ? <QueryErrorBanner error={sendError} /> : null}
       {confirmError ? <QueryErrorBanner error={confirmError} /> : null}
 
-      <section className="overflow-hidden rounded-[2rem] border border-[#cbd5e1]/10 bg-[#ffffff]/80 shadow-xl shadow-[#475569]/8">
-        <div className="hidden grid-cols-[1.2fr_1fr_0.72fr_0.55fr_1.25fr] gap-4 border-b border-[#cbd5e1]/10 bg-[#dbeafe]/75 px-5 py-4 text-[10px] font-black uppercase tracking-widest text-[#475569] lg:grid">
+      <section className="overflow-hidden rounded-[2rem] border border-[#d9cbbd]/10 bg-[#ffffff]/80 shadow-xl shadow-[#6f6258]/8">
+        <div className="hidden grid-cols-[1.2fr_1fr_0.72fr_0.55fr_1.25fr] gap-4 border-b border-[#d9cbbd]/10 bg-[#f6eadb]/75 px-5 py-4 text-[10px] font-black uppercase tracking-widest text-[#6f6258] lg:grid">
           <div>Quote</div><div>Customer</div><div>Status</div><div className="text-right">Value</div><div className="text-right">Actions</div>
         </div>
-        <div className="divide-y divide-[#cbd5e1]/10">
-          {loading && <div className="p-10 text-center text-sm font-bold text-[#475569]" role="status" aria-live="polite">Loading quotes...</div>}
-          {!loading && !error && quotes.length === 0 && <div className="p-10 text-center text-sm font-bold text-[#475569]">No quotes in this filter.</div>}
+        <div className="divide-y divide-[#d9cbbd]/10">
+          {loading && <div className="p-10 text-center text-sm font-bold text-[#6f6258]" role="status" aria-live="polite">Loading quotes...</div>}
+          {!loading && !error && quotes.length === 0 && <div className="p-10 text-center text-sm font-bold text-[#6f6258]">No quotes in this filter.</div>}
           {quotes.map((quote: any) => {
             const value = quoteTotal(quote.lines);
             const pdfHref = `/api/pdf/quote/${quote.id}`;
             return (
               <article key={quote.id} className="grid gap-4 p-5 lg:grid-cols-[1.2fr_1fr_0.72fr_0.55fr_1.25fr] lg:items-center">
                 <div>
-                  <Link href={`/dashboard/quotes/${quote.id}`} className="text-lg font-black text-[#0e1a3d] hover:underline">{quote.quoteNumber}</Link>
-                  <p className="mt-1 line-clamp-1 text-sm font-bold text-[#475569]">{quote.title || quote.projectName || 'Retail quotation'}</p>
-                  <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-[#94a3b8]">{quote.owner?.name || 'Unassigned'}</p>
+                  <Link href={`/dashboard/quotes/${quote.id}`} className="text-lg font-black text-[#241b14] hover:underline">{quote.quoteNumber}</Link>
+                  <p className="mt-1 line-clamp-1 text-sm font-bold text-[#6f6258]">{quote.title || quote.projectName || 'Retail quotation'}</p>
+                  <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-[#a89b90]">{quote.owner?.name || 'Unassigned'}</p>
                 </div>
                 <div>
-                  <p className="font-black text-[#0e1a3d]">{quote.customer?.name || 'Customer'}</p>
-                  <p className="mt-1 text-xs font-bold text-[#475569]">{quote.customer?.siteAddress || quote.customer?.city || 'Site pending'}</p>
+                  <p className="font-black text-[#241b14]">{quote.customer?.name || 'Customer'}</p>
+                  <p className="mt-1 text-xs font-bold text-[#6f6258]">{quote.customer?.siteAddress || quote.customer?.city || 'Site pending'}</p>
                 </div>
                 <div><span className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${statusClass(quote.status)}`}>{quote.status}</span></div>
-                <div className="text-right text-xl font-black text-[#0e1a3d]">{money(value)}</div>
+                <div className="text-right text-xl font-black text-[#241b14]">{money(value)}</div>
                 <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
                   <Button asChild variant="outline" size="sm"><Link href={`/dashboard/quotes/${quote.id}`}><Eye className="mr-2 h-4 w-4" /> View</Link></Button>
                   <Button asChild variant="outline" size="sm"><a href={pdfHref} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> PDF</a></Button>

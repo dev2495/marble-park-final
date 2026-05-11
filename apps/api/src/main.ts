@@ -11,8 +11,12 @@ async function bootstrap() {
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '100mb' }));
   const importImageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
+  const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.dirname(importImageDir);
+  const manualImageDir = path.join(catalogueImageRoot, 'manual');
   fs.mkdirSync(importImageDir, { recursive: true });
+  fs.mkdirSync(manualImageDir, { recursive: true });
   app.use('/catalogue-images/imports', express.static(importImageDir));
+  app.use('/catalogue-images/manual', express.static(manualImageDir));
 
   const configuredOrigins = process.env.CORS_ORIGIN?.split(',')
     .map((origin) => origin.trim())
