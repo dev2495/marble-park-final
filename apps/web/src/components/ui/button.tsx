@@ -4,18 +4,22 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-2xl text-sm font-black tracking-tight transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  // Slightly less aggressive font weight (was font-black tracking-tight) so
+  // the blue-spine UI doesn't feel shouty. Letter-spacing relaxed for Inter.
+  "inline-flex items-center justify-center whitespace-nowrap rounded-2xl text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
-        default: "bg-[#211b16] text-[#fffaf3] shadow-xl shadow-[#211b16]/15 hover:-translate-y-0.5 hover:bg-[#33291f]",
-        destructive: "bg-red-700 text-white shadow-red-900/20 hover:bg-red-800",
-        outline: "border border-[#7a5b3c]/18 bg-white/70 text-[#211b16] shadow-sm hover:bg-white hover:border-[#b57942]/40",
-        secondary: "bg-[#ead7c0] text-[#211b16] hover:bg-[#dfc4a4]",
-        ghost: "text-[#5f4b3b] hover:bg-[#ead7c0]/60 hover:text-[#211b16]",
-        link: "text-[#9a6434] underline-offset-4 hover:underline",
-        success: "bg-[#24544d] text-white shadow-[#24544d]/20 hover:bg-[#1d463f]",
-        warning: "bg-[#b57942] text-white shadow-[#b57942]/20 hover:bg-[#9f6638]",
+        // Primary CTA = brand-600 → brand-700 hover. Glow shadow at rest.
+        default: "bg-[var(--brand-600)] text-white shadow-md-soft hover:-translate-y-0.5 hover:bg-[var(--brand-700)] hover:shadow-glow-brand",
+        destructive: "bg-[var(--rose-500)] text-white shadow-sm-soft hover:bg-[var(--rose-700)]",
+        outline: "border border-[var(--b)] bg-white text-[var(--t2)] shadow-flat hover:bg-[var(--brand-50)] hover:border-[var(--brand-400)] hover:text-[var(--brand-700)]",
+        secondary: "bg-[var(--brand-50)] text-[var(--brand-800)] border border-[var(--brand-100)] hover:bg-[var(--brand-100)]",
+        ghost: "text-[var(--t2)] hover:bg-[var(--canvas-tint)] hover:text-[var(--t1)]",
+        link: "text-[var(--link)] underline-offset-4 hover:underline",
+        success: "bg-[var(--emerald-500)] text-white shadow-glow-emerald hover:bg-[var(--emerald-700)]",
+        warning: "bg-[var(--amber-500)] text-white shadow-sm-soft hover:bg-[var(--amber-700)]",
+        dark: "bg-[var(--brand-950)] text-white hover:bg-[var(--brand-900)]",
       },
       size: {
         default: "h-10 px-4 py-2",

@@ -62,7 +62,7 @@ export function QueryErrorBanner({ error, onRetry }: { error: ApolloError | Erro
 
 export function QueryLoading({ label = 'Loading…' }: { label?: string }) {
   return (
-    <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-2xl bg-white/60 p-6 text-sm font-bold text-[#8b6b4c]">
+    <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-2xl bg-white/60 p-6 text-sm font-bold text-[#475569]">
       <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
       <span>{label}</span>
     </div>
@@ -71,7 +71,7 @@ export function QueryLoading({ label = 'Loading…' }: { label?: string }) {
 
 export function QueryEmpty({ label = 'No records yet.' }: { label?: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-[#e8c39b]/60 bg-white/40 p-8 text-center text-sm font-bold text-[#8b6b4c]">
+    <div className="rounded-2xl border border-dashed border-[#bfdbfe]/60 bg-white/40 p-8 text-center text-sm font-bold text-[#475569]">
       {label}
     </div>
   );

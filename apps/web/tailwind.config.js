@@ -8,19 +8,18 @@ module.exports = {
     container: {
       center: true,
       padding: '2rem',
-      screens: {
-        '2xl': '1400px',
-      },
+      screens: { '2xl': '1400px' },
     },
     extend: {
       colors: {
+        // shadcn-compatible aliases (now pointing at the blue brand spine)
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
-        ring: 'hsl(var(--ring))',
+        ring: 'hsl(var(--ring-hsl))',
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         primary: {
-          DEFAULT: 'hsl(var(--primary))',
+          DEFAULT: 'hsl(var(--primary-hsl))',
           foreground: 'hsl(var(--primary-foreground))',
         },
         secondary: {
@@ -47,14 +46,57 @@ module.exports = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        // v2 brand spine — usable as `bg-brand-600`, `text-brand-700`, etc.
+        brand: {
+          50: 'var(--brand-50)',
+          100: 'var(--brand-100)',
+          200: 'var(--brand-200)',
+          400: 'var(--brand-400)',
+          500: 'var(--brand-500)',
+          600: 'var(--brand-600)',
+          700: 'var(--brand-700)',
+          800: 'var(--brand-800)',
+          900: 'var(--brand-900)',
+          950: 'var(--brand-950)',
+        },
+        ink: {
+          DEFAULT: 'var(--t1)',
+          subtle: 'var(--t2)',
+          muted: 'var(--t3)',
+          soft: 'var(--t4)',
+        },
+        surface: {
+          1: 'var(--surface-1)',
+          '1soft': 'var(--surface-1-soft)',
+          2: 'var(--surface-2)',
+          3: 'var(--surface-3)',
+          glass: 'var(--surface-glass)',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+        r2: 'var(--r2)',
+        r3: 'var(--r3)',
+        r4: 'var(--r4)',
+        r5: 'var(--r5)',
+        r6: 'var(--r6)',
+        rp: 'var(--rp)',
       },
       fontFamily: {
-        sans: ['var(--font-sans)', ...fontFamily.sans],
+        sans: ['var(--f-ui)', ...fontFamily.sans],
+        display: ['var(--f-display)', 'serif'],
+        mono: ['var(--f-mono)', ...fontFamily.mono],
+      },
+      boxShadow: {
+        'flat': 'var(--sh-flat)',
+        'sm-soft': 'var(--sh-sm)',
+        'md-soft': 'var(--sh-md)',
+        'lg-soft': 'var(--sh-lg)',
+        'glow-brand': 'var(--glow-brand)',
+        'glow-sky': 'var(--glow-sky)',
+        'glow-emerald': 'var(--glow-emerald)',
       },
       keyframes: {
         'accordion-down': {

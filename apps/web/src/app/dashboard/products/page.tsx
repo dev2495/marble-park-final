@@ -109,13 +109,13 @@ const fallbackProducts = [
 ];
 
 const categoryLooks: Record<string, { accent: string; wash: string; icon: any }> = {
-  Faucets: { accent: 'from-[#b57942] via-[#d4a56f] to-[#f3eadf]', wash: 'bg-[#ead7c0] text-[#7a4f2e]', icon: Bath },
-  'Faucets & Showers': { accent: 'from-[#b57942] via-[#d4a56f] to-[#f3eadf]', wash: 'bg-[#ead7c0] text-[#7a4f2e]', icon: Bath },
+  Faucets: { accent: 'from-[#2563eb] via-[#60a5fa] to-[#f4f7fc]', wash: 'bg-[#dbeafe] text-[#1d4ed8]', icon: Bath },
+  'Faucets & Showers': { accent: 'from-[#2563eb] via-[#60a5fa] to-[#f4f7fc]', wash: 'bg-[#dbeafe] text-[#1d4ed8]', icon: Bath },
   'Kitchen Sinks': { accent: 'from-zinc-500 to-slate-300', wash: 'bg-slate-100 text-slate-700', icon: Boxes },
   Sanitaryware: { accent: 'from-stone-200 to-white', wash: 'bg-stone-100 text-stone-700', icon: ShieldCheck },
   Tiles: { accent: 'from-amber-600 to-stone-200', wash: 'bg-amber-50 text-amber-800', icon: Grid3X3 },
-  Accessories: { accent: 'from-[#24544d] to-[#98b7ad]', wash: 'bg-[#dbe8e3] text-[#24544d]', icon: Wrench },
-  'Catalogue Products': { accent: 'from-[#211b16] to-[#b57942]', wash: 'bg-[#ead7c0] text-[#211b16]', icon: PackageSearch },
+  Accessories: { accent: 'from-[#047857] to-[#98b7ad]', wash: 'bg-[#ecfdf5] text-[#047857]', icon: Wrench },
+  'Catalogue Products': { accent: 'from-[#0e1a3d] to-[#2563eb]', wash: 'bg-[#dbeafe] text-[#0e1a3d]', icon: PackageSearch },
 };
 
 function currency(value?: number) {
@@ -159,21 +159,21 @@ export default function ProductsPage() {
       {portalReady && galleryProduct ? createPortal(
         <AnimatePresence>
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[9999] grid place-items-center bg-[#120f0c]/88 p-4 backdrop-blur-xl" onClick={() => setGalleryProduct(null)}>
-            <motion.div initial={{ y: 24, scale: 0.96 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: 0.96 }} className="relative max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-[2rem] bg-[#fffaf3] p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-              <button onClick={() => setGalleryProduct(null)} className="absolute right-5 top-5 z-10 grid h-11 w-11 place-items-center rounded-full bg-[#211b16] text-white shadow-xl"><X className="h-5 w-5" /></button>
+            <motion.div initial={{ y: 24, scale: 0.96 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: 0.96 }} className="relative max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-[2rem] bg-[#ffffff] p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <button onClick={() => setGalleryProduct(null)} className="absolute right-5 top-5 z-10 grid h-11 w-11 place-items-center rounded-full bg-[#0e1a3d] text-white shadow-xl"><X className="h-5 w-5" /></button>
               <div className="grid gap-4 lg:grid-cols-[1fr_13rem]">
                 <div className="overflow-hidden rounded-[1.5rem] bg-white">
                   <ProductImageFrame src={galleryFor(galleryProduct)[galleryIndex] || galleryProduct.media?.primary || '/catalogue-art/faucet.svg'} alt={galleryProduct.name} className="h-[74vh] rounded-[1.5rem]" imageClassName="p-4" />
                 </div>
                 <div className="space-y-3">
-                  <div className="rounded-[1.5rem] bg-[#211b16] p-4 text-white">
-                    <p className="font-mono text-xs font-black uppercase tracking-wider text-[#d5b58f]">{galleryProduct.sku}</p>
+                  <div className="rounded-[1.5rem] bg-[#0e1a3d] p-4 text-white">
+                    <p className="font-mono text-xs font-black uppercase tracking-wider text-[#bfdbfe]">{galleryProduct.sku}</p>
                     <h3 className="mt-2 text-xl font-black leading-tight">{galleryProduct.name}</h3>
-                    <p className="mt-2 text-xs font-bold text-[#d9c4a9]">{Math.max(galleryFor(galleryProduct).length, 1)} image(s)</p>
+                    <p className="mt-2 text-xs font-bold text-[#dbeafe]">{Math.max(galleryFor(galleryProduct).length, 1)} image(s)</p>
                   </div>
                   <div className="grid max-h-[55vh] gap-2 overflow-y-auto custom-scrollbar">
                     {(galleryFor(galleryProduct).length ? galleryFor(galleryProduct) : ['/catalogue-art/faucet.svg']).map((src: string, index: number) => (
-                      <button key={src} onClick={() => setGalleryIndex(index)} className={`overflow-hidden rounded-2xl border-2 bg-white ${index === galleryIndex ? 'border-[#b57942]' : 'border-transparent'}`}>
+                      <button key={src} onClick={() => setGalleryIndex(index)} className={`overflow-hidden rounded-2xl border-2 bg-white ${index === galleryIndex ? 'border-[#2563eb]' : 'border-transparent'}`}>
                         <ProductImageFrame src={src} alt={`${galleryProduct.name} ${index + 1}`} className="h-28 rounded-2xl" imageClassName="p-2" />
                       </button>
                     ))}
@@ -224,7 +224,7 @@ export default function ProductsPage() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -18, scale: 0.98 }}
               transition={{ duration: 0.32 }}
-              className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white p-5 text-[#211b16] shadow-2xl"
+              className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white p-5 text-[#0e1a3d] shadow-2xl"
             >
               {selected?.media?.primary ? (
                 <button
@@ -252,11 +252,11 @@ export default function ProductsPage() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="font-mono text-xs font-black uppercase tracking-wider text-slate-400">{selected?.sku}</div>
-                  <h2 className="mt-1 text-3xl font-black tracking-tight text-[#211b16]">{selected?.name}</h2>
+                  <h2 className="mt-1 text-3xl font-black tracking-tight text-[#0e1a3d]">{selected?.name}</h2>
                   <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-slate-500">{selected?.description || `${selected?.brand} ${selected?.finish} catalogue product.`}</p>
                 </div>
                 <div className="text-right">
-                  <div className="text-3xl font-black text-[#211b16]">{currency(selected?.sellPrice)}</div>
+                  <div className="text-3xl font-black text-[#0e1a3d]">{currency(selected?.sellPrice)}</div>
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">MRP / {selected?.unit}</div>
                 </div>
               </div>
@@ -304,12 +304,12 @@ export default function ProductsPage() {
         </div>
       </section>
 
-      <section className="rounded-[2rem] border border-[#7a5b3c]/10 bg-[#fffaf3]/80 p-5 shadow-xl shadow-[#6b4f38]/8">
+      <section className="rounded-[2rem] border border-[#cbd5e1]/10 bg-[#ffffff]/80 p-5 shadow-xl shadow-[#475569]/8">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#8b6b4c]">Product master is separate</p>
-            <h2 className="mt-1 text-2xl font-black text-[#211b16]">Catalogue is for browsing and selling. SKU creation lives in Product Master.</h2>
-            <p className="mt-2 text-sm font-bold text-[#7d6b5c]">This keeps sales browsing clean and master-data permissions controlled for admin/owner/inventory roles.</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#475569]">Product master is separate</p>
+            <h2 className="mt-1 text-2xl font-black text-[#0e1a3d]">Catalogue is for browsing and selling. SKU creation lives in Product Master.</h2>
+            <p className="mt-2 text-sm font-bold text-[#475569]">This keeps sales browsing clean and master-data permissions controlled for admin/owner/inventory roles.</p>
           </div>
           <Button asChild className="rounded-2xl"><Link href="/dashboard/master-data/products">Open Product Master</Link></Button>
         </div>
@@ -359,15 +359,15 @@ export default function ProductsPage() {
                       <span className="font-mono text-[11px] font-black uppercase tracking-wider text-slate-400">{product.sku}</span>
                       <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${productLook.wash}`}>{product.brand}</span>
                     </div>
-                    <h3 className="mt-2 line-clamp-2 text-xl font-black leading-tight text-[#211b16]">{product.name}</h3>
+                    <h3 className="mt-2 line-clamp-2 text-xl font-black leading-tight text-[#0e1a3d]">{product.name}</h3>
                     <p className="mt-1 text-sm font-semibold text-slate-500">{product.finish || 'Standard'} · {product.dimensions || product.unit}</p>
                   </div>
                   <div className="flex items-end justify-between border-t border-slate-100 pt-4">
                     <div>
-                      <div className="text-2xl font-black text-[#211b16]">{currency(product.sellPrice)}</div>
+                      <div className="text-2xl font-black text-[#0e1a3d]">{currency(product.sellPrice)}</div>
                       <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Floor margin {currency(margin)}</div>
                     </div>
-                    <div className="rounded-2xl bg-[#211b16] p-3 text-white transition-transform group-hover:rotate-3">
+                    <div className="rounded-2xl bg-[#0e1a3d] p-3 text-white transition-transform group-hover:rotate-3">
                       <Tag size={18} />
                     </div>
                   </div>

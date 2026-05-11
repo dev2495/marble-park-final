@@ -1,87 +1,280 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,900&family=Manrope:wght@400;500;600;700;800&display=swap');
+/*
+ * Marble Park · v2 design tokens
+ * ---------------------------------------------------------------------------
+ * Blue brand spine (Tailwind blue ladder), six-hue accent set, softened dark
+ * tones. Adapted from GLOBAL_DESIGN_SYSTEM_V2.md — the "navy door" gradient
+ * uses #0e1a3d/#172554 instead of #0a1535/#0b1f55 because the operator was
+ * specific about wanting "a bit lower tone of dark colors".
+ *
+ * Migration strategy: the .mp-card / .mp-dark-panel / .mp-shell-panel utility
+ * classes are kept but redefined, and a large fallback `[class*="..."]` layer
+ * remaps the old hex codes (brown/cream/gold) to the new palette without
+ * touching every page file.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 32 45% 94%;
-    --foreground: 25 26% 11%;
-    --card: 36 48% 98%;
-    --card-foreground: 25 26% 11%;
-    --popover: 36 48% 98%;
-    --popover-foreground: 25 26% 11%;
-    --primary: 27 48% 48%;
-    --primary-foreground: 35 60% 96%;
-    --secondary: 35 34% 86%;
-    --secondary-foreground: 25 26% 16%;
-    --muted: 33 30% 88%;
-    --muted-foreground: 27 15% 42%;
-    --accent: 166 29% 28%;
-    --accent-foreground: 38 52% 94%;
-    --destructive: 6 71% 48%;
-    --destructive-foreground: 35 60% 96%;
-    --border: 30 25% 79%;
-    --input: 30 25% 79%;
-    --ring: 27 48% 48%;
-    --radius: 1.25rem;
-    --font-sans: 'Manrope', system-ui, -apple-system, sans-serif;
-    --font-display: 'Fraunces', Georgia, serif;
+    /* ─── Brand spine ─── */
+    --brand-50:  #eff6ff;
+    --brand-100: #dbeafe;
+    --brand-200: #bfdbfe;
+    --brand-400: #60a5fa;
+    --brand-500: #3b82f6;
+    --brand-600: #2563eb;
+    --brand-700: #1d4ed8;
+    --brand-800: #1e40af;
+    --brand-900: #1e3a8a;
+    --brand-950: #172554;
+
+    /* ─── Accent hues (kept from spec) ─── */
+    --indigo-50: #eef2ff; --indigo-500: #6366f1; --indigo-700: #4338ca; --indigo-900: #312e81;
+    --violet-50: #f5f3ff; --violet-500: #7c3aed; --violet-700: #6d28d9; --violet-900: #4c1d95;
+    --sky-50:    #f0f9ff; --sky-500:    #0ea5e9; --sky-700:    #0369a1;
+    --emerald-50:#ecfdf5; --emerald-500:#10b981; --emerald-700:#047857;
+    --amber-50:  #fffbeb; --amber-500:  #f59e0b; --amber-700:  #b45309;
+    --rose-50:   #fff1f2; --rose-500:   #f43f5e; --rose-700:   #be123c;
+
+    /* ─── Surfaces (softened) ─── */
+    --canvas-base:   #f4f7fc;
+    --canvas-tint:   #eaf0fa;
+    --surface-1:     #ffffff;
+    --surface-1-soft:#fbfcfe;
+    --surface-2:     #f7faff;
+    --surface-3:     #0e1a3d; /* slightly lighter than the pure-navy #0a1535 */
+    --surface-glass: rgba(255, 255, 255, 0.74);
+
+    /* ─── Text ─── */
+    --t1: #0b1220;          /* primary heading ink */
+    --t2: #1e293b;          /* body strong */
+    --t3: #475569;          /* body muted */
+    --t4: #94a3b8;          /* placeholder, meta */
+
+    /* ─── Borders ─── */
+    --bs: #eef0f7;          /* subtlest hairline */
+    --b:  #e2e8f0;          /* default border */
+    --bx: #cbd5e1;          /* strong border / divider */
+
+    /* ─── Semantic aliases ─── */
+    --primary:       var(--brand-600);
+    --primary-hover: var(--brand-700);
+    --primary-deep:  var(--brand-900);
+    --link:          var(--brand-700);
+    --ring:          rgba(37, 99, 235, 0.18);
+    --success:       var(--emerald-500);
+    --warning:       var(--amber-500);
+    --danger:        var(--rose-500);
+    --info:          var(--sky-500);
+
+    /* ─── Shadows ─── */
+    --sh-flat: 0 1px 0 rgba(15,23,42,0.04);
+    --sh-sm:   0 1px 2px rgba(15,23,42,0.04), 0 4px 12px -8px rgba(15,23,42,0.10);
+    --sh-md:   0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.16);
+    --sh-lg:   0 6px 16px -8px rgba(15,23,42,0.18), 0 24px 56px -24px rgba(15,23,42,0.24);
+    --glow-brand:   0 0 0 1px rgba(37,99,235,0.18), 0 12px 28px -12px rgba(37,99,235,0.32);
+    --glow-sky:     0 0 0 1px rgba(14,165,233,0.18), 0 12px 28px -12px rgba(14,165,233,0.30);
+    --glow-emerald: 0 0 0 1px rgba(16,185,129,0.20), 0 12px 28px -12px rgba(16,185,129,0.30);
+
+    /* ─── Radii ─── */
+    --r2: 6px;
+    --r3: 10px;
+    --r4: 14px;
+    --r5: 18px;
+    --r6: 24px;
+    --rp: 999px;
+
+    /* ─── Motion ─── */
+    --eo: cubic-bezier(.22, 1, .36, 1);
+    --df: 120ms;
+    --db: 200ms;
+    --ds: 320ms;
+
+    /* ─── Typography ─── */
+    --f-ui:      'Inter', 'SF Pro Text', system-ui, sans-serif;
+    --f-mono:    'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+    --f-display: 'Fraunces', 'Inter', serif;
+
+    /* ─── Hero gradient (softened) ─── */
+    --hero-gradient:
+      radial-gradient(900px 500px at 90% -10%, rgba(59,130,246,0.55) 0%, transparent 60%),
+      radial-gradient(700px 400px at 0%  110%, rgba(37,99,235,0.40) 0%, transparent 65%),
+      linear-gradient(135deg, #172554 0%, #1e3a8a 50%, #2563eb 100%);
+
+    /* ─── Admin door (softened from #0a1535/#0b1f55 to #0e1a3d/#172554) ─── */
+    --admin-hero-gradient:
+      radial-gradient(800px 400px at 90% 0%,   rgba(59,130,246,0.32) 0%, transparent 65%),
+      radial-gradient(700px 400px at 0%  100%, rgba(99,102,241,0.28) 0%, transparent 65%),
+      linear-gradient(135deg, #0e1a3d 0%, #172554 55%, #1e3a8a 100%);
+
+    /* ─── shadcn/Radix base tokens (kept consumer-facing API stable; values
+     *      now map to the blue palette so existing components inherit.) ─── */
+    --background: 220 33% 97%;          /* canvas-base */
+    --foreground: 215 25% 17%;          /* t2 */
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 17%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 25% 17%;
+    --primary-hsl: 221 83% 53%;          /* brand-600 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 218 100% 96%;          /* brand-50/100 */
+    --secondary-foreground: 222 47% 11%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 218 100% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 349 89% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring-hsl: 221 83% 53%;
+    --radius: 14px;
+    --font-sans: var(--f-ui);
+    --font-display: var(--f-display);
+  }
+
+  /* shadcn primitives expect bare names — keep them mapped. */
+  :root {
+    --primary: var(--brand-600);
   }
 }
 
 @layer base {
-  * { border-color: hsl(var(--border)); }
-  html { background: #f3eadf; }
+  * { border-color: var(--b); }
+  html { background: var(--canvas-base); }
   body {
     min-height: 100vh;
-    font-family: var(--font-sans);
-    color: hsl(var(--foreground));
+    font-family: var(--f-ui);
+    color: var(--t2);
     background:
-      radial-gradient(circle at 8% 10%, rgba(181, 123, 70, 0.18), transparent 28%),
-      radial-gradient(circle at 88% 5%, rgba(34, 84, 77, 0.13), transparent 26%),
-      linear-gradient(135deg, #fffaf3 0%, #f1e3d1 46%, #e5c7a1 100%);
+      radial-gradient(circle at 8%  10%, rgba(59,130,246,0.10), transparent 28%),
+      radial-gradient(circle at 88% 5%,  rgba(99,102,241,0.08), transparent 26%),
+      linear-gradient(135deg, #f4f7fc 0%, #eaf0fa 50%, #dbeafe 100%);
     background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-  ::selection { background: #b57942; color: #fffaf3; }
+  ::selection { background: var(--brand-600); color: #ffffff; }
+
+  h1, h2, h3, h4 { color: var(--t1); }
 }
 
 @layer components {
+  /* Frosted white shell, used as the dashboard's main canvas. */
   .mp-shell-panel {
-    border: 1px solid rgba(255, 255, 255, 0.62);
-    background: rgba(255, 250, 243, 0.72);
-    box-shadow: 0 28px 80px rgba(79, 57, 39, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.78);
+    box-shadow: var(--sh-lg);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
   }
 
+  /* Sidebar / hero strip — navy door with brand glow. */
   .mp-dark-panel {
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    background: #211b16;
-    box-shadow: 0 28px 80px rgba(33, 27, 22, 0.22);
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--admin-hero-gradient);
+    color: #ffffff;
+    box-shadow: 0 28px 80px rgba(15, 23, 42, 0.20);
+    isolation: isolate;
   }
+  .mp-dark-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 24px 24px;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.7;
+  }
+  .mp-dark-panel > * { position: relative; z-index: 1; }
 
+  /* Standard surface card. */
   .mp-card {
-    border: 1px solid rgba(122, 91, 60, 0.14);
-    background: rgba(255, 250, 243, 0.78);
-    box-shadow: 0 18px 45px rgba(79, 57, 39, 0.08);
+    border: 1px solid var(--b);
+    background: var(--surface-1);
+    box-shadow: var(--sh-sm);
+    border-radius: var(--r5);
+  }
+  .mp-card:hover { box-shadow: var(--sh-md); }
+
+  .mp-display { font-family: var(--f-display); }
+  .mp-mono { font-family: var(--f-mono); letter-spacing: -0.01em; }
+
+  /* Brand chip — sky pill used for "this is the brand" markers. */
+  .mp-chip-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: var(--rp);
+    background: var(--brand-50);
+    color: var(--brand-700);
+    border: 1px solid var(--brand-100);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
-  .mp-display { font-family: var(--font-display); }
+  /* KPI tile — used by dashboards. */
+  .mp-kpi {
+    background: var(--surface-1);
+    border: 1px solid var(--b);
+    border-radius: var(--r5);
+    padding: 18px;
+    box-shadow: var(--sh-sm);
+    transition: box-shadow var(--db) var(--eo), transform var(--db) var(--eo);
+  }
+  .mp-kpi:hover { box-shadow: var(--sh-md); transform: translateY(-1px); }
 
+  /* Hero strip (light) — for in-page hero blocks. */
+  .mp-hero {
+    color: #ffffff;
+    background: var(--hero-gradient);
+    border-radius: var(--r6);
+    padding: 28px;
+    box-shadow: var(--sh-md);
+    position: relative;
+    overflow: hidden;
+  }
+  .mp-hero::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 28px 28px;
+    pointer-events: none;
+  }
+
+  /* Scrollbar polish. */
   .custom-scrollbar::-webkit-scrollbar { width: 10px; height: 10px; }
-  .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(122, 91, 60, 0.32); border-radius: 999px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(71, 85, 105, 0.22);
+    border-radius: 999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(71, 85, 105, 0.36); }
   .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 }
 
-/* Backward-compatible aliases while pages are being migrated. */
+/* Back-compat: legacy glass classes used by a few pages. */
 .glass, .glass-card {
-  border: 1px solid rgba(122, 91, 60, 0.14);
-  background: rgba(255, 250, 243, 0.78);
-  box-shadow: 0 18px 45px rgba(79, 57, 39, 0.08);
+  border: 1px solid var(--b);
+  background: var(--surface-1);
+  box-shadow: var(--sh-sm);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--r5);
 }
 
+/* Recharts grid lines tuned to the new neutral palette. */
 .recharts-cartesian-grid-horizontal line,
-.recharts-cartesian-grid-vertical line { stroke: rgba(87, 63, 41, 0.10); }
+.recharts-cartesian-grid-vertical line { stroke: rgba(71, 85, 105, 0.10); }
