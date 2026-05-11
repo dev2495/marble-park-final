@@ -36,7 +36,7 @@ function renderQuotePdf(id: string, requestUrl: string, apiUrl: string) {
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql';
+    const apiUrl = process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql';
     const buffer = await renderQuotePdf(id, req.url, apiUrl);
 
     return new NextResponse(buffer as unknown as BodyInit, {
