@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, CheckCircle, Download, ImagePlus, Save, Send } from 'lucide-react';
@@ -48,7 +49,9 @@ function groupLines(lines: any[]) {
   return Array.from(groups.entries()).map(([area, rows]) => ({ area, rows }));
 }
 
-export default function QuoteDetailPage({ params }: { params: { id: string } }) {
+export default function QuoteDetailPage() {
+  const params = useParams();
+  const id = String(params.id);
   const [paymentMode, setPaymentMode] = useState('cash');
   const [advanceAmount, setAdvanceAmount] = useState('0');
   const [orderMessage, setOrderMessage] = useState('');
@@ -62,7 +65,7 @@ export default function QuoteDetailPage({ params }: { params: { id: string } }) 
   const [tagline, setTagline] = useState('');
   const [uploadingCover, setUploadingCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
-  const { data, loading, error, refetch } = useQuery(QUOTE_DETAIL, { variables: { id: params.id } });
+  const { data, loading, error, refetch } = useQuery(QUOTE_DETAIL, { variables: { id } });
   const [updateQuote, { loading: savingQuote, error: updateError }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
   const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
   const [confirmQuote, { loading: confirming, error: confirmError }] = useMutation(CONFIRM_QUOTE, { onCompleted: () => refetch() });
