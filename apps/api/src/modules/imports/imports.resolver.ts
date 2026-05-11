@@ -1,7 +1,7 @@
 import { Resolver, Mutation, Args, ObjectType, Field, Query, Context, InputType } from '@nestjs/graphql';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { ImportsService } from './imports.service';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requireRoles } from '../auth/session-context';
