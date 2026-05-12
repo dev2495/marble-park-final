@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { CalendarClock, Mail, Phone, PlusCircle } from 'lucide-react';
 import Link from 'next/link';
 import { QueryErrorBanner } from '@/components/query-state';
+import { UserAvatar } from '@/components/user-avatar';
 
 const GET_LEADS = gql`
   query Leads {
@@ -69,7 +70,7 @@ export default function LeadsPipelinePage() {
                   {loading ? <p className="p-4 text-sm font-bold text-[#52525b]">Loading...</p> : rows.map((lead: any, index: number) => (
                     <motion.article key={lead.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.03 }} className="rounded-r4 bg-white/80 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl">
                       <div className="mb-3 flex items-center gap-3">
-                        <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#18181b] text-sm font-black text-[#ffffff]">{lead.customer?.name?.[0] || 'L'}</div>
+                        <UserAvatar user={lead.customer} size="md" />
                         <div className="min-w-0">
                           <p className="truncate text-xs font-black uppercase tracking-wider text-[#52525b]">{lead.customer?.name || lead.source}</p>
                           <p className="truncate text-[11px] font-bold text-[#52525b]">{lead.owner?.name || 'Unassigned'}</p>

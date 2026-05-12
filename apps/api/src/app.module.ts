@@ -18,6 +18,7 @@ import { ImportsModule } from './modules/imports/imports.module';
 import { ProductsModule } from './modules/products/products.module';
 import { SystemModule } from './modules/system/system.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { AuditModule } from './modules/audit/audit.module';
 
 import { SearchModule } from './modules/search/search.module';
 
@@ -53,6 +54,7 @@ import { SearchModule } from './modules/search/search.module';
     SearchModule,
     SystemModule,
     NotificationsModule,
+    AuditModule,
   ],
 })
 export class AppModule {}

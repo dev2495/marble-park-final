@@ -93,8 +93,8 @@ export class SystemResolver {
     return { data: await this.system.resetClientWorkspace(confirm, user.id) };
   }
 
-  @Query(() => [GraphQLJSON])
-  async auditEvents(
+  @Query(() => [GraphQLJSON], { name: 'legacyAuditEvents' })
+  async legacyAuditEvents(
     @Context() ctx: GraphqlRequestContext,
     @Args('entityType', { nullable: true }) entityType?: string,
     @Args('entityId', { nullable: true }) entityId?: string,

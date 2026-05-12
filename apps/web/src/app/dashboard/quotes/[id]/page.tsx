@@ -55,6 +55,7 @@ export default function QuoteDetailPage() {
   const [paymentMode, setPaymentMode] = useState('cash');
   const [advanceAmount, setAdvanceAmount] = useState('0');
   const [orderMessage, setOrderMessage] = useState('');
+  const [orderPdfUrl, setOrderPdfUrl] = useState('');
   const [editLines, setEditLines] = useState<any[]>([]);
   const [displayMode, setDisplayMode] = useState('priced');
   const [remarks, setRemarks] = useState('');
@@ -69,7 +70,18 @@ export default function QuoteDetailPage() {
   const [updateQuote, { loading: savingQuote, error: updateError }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
   const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
   const [confirmQuote, { loading: confirming, error: confirmError }] = useMutation(CONFIRM_QUOTE, { onCompleted: () => refetch() });
-  const [createSalesOrder, { loading: creatingOrder, error: createOrderError }] = useMutation(CREATE_SALES_ORDER, { onCompleted: (result) => { setOrderMessage(`Sales order ${result.createSalesOrderFromQuote.orderNumber} created.`); refetch(); }, onError: (error) => setOrderMessage(error.message) });
+  const [createSalesOrder, { loading: creatingOrder, error: createOrderError }] = useMutation(CREATE_SALES_ORDER, {
+    onCompleted: (result) => {
+      const order = result.createSalesOrderFromQuote;
+      setOrderMessage(`Sales order ${order.orderNumber} created. Inventory has been reserved where available and dispatch can work split rows.`);
+      setOrderPdfUrl(order.documents?.salesOrderPdfUrl || `/api/pdf/order/${order.id}`);
+      refetch();
+    },
+    onError: (error) => {
+      setOrderPdfUrl('');
+      setOrderMessage(error.message);
+    },
+  });
   const mutationError = updateError || sendError || confirmError || createOrderError;
   const quote = data?.quote;
 
@@ -149,8 +161,8 @@ export default function QuoteDetailPage() {
         <div className="flex flex-wrap gap-3">
           <Button disabled={savingQuote} onClick={saveQuote} size="lg" className="bg-[#dbeafe] text-[#18181b] hover:bg-[#eff6ff]"><Save className="mr-2 h-5 w-5" /> Save quote layout</Button>
           <Button asChild size="lg" className="bg-[#2563eb] text-white hover:bg-[#1d4ed8]"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button>
-          {quote.status !== 'sent' && quote.status !== 'confirmed' && <Button disabled={sending || quote.approvalStatus === 'pending'} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
-          {quote.status !== 'confirmed' && <Button disabled={confirming || quote.approvalStatus === 'pending'} onClick={() => confirmQuote({ variables: { id: quote.id } })} size="lg"><CheckCircle className="mr-2 h-5 w-5" /> Confirm & dispatch</Button>}
+          {quote.status !== 'sent' && quote.status !== 'confirmed' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
+          {quote.status !== 'confirmed' && <Button disabled={confirming} onClick={() => confirmQuote({ variables: { id: quote.id } })} size="lg"><CheckCircle className="mr-2 h-5 w-5" /> Confirm & dispatch</Button>}
         </div>
       </div>
     </section>
@@ -235,7 +247,7 @@ export default function QuoteDetailPage() {
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Customer</h2><p className="mt-4 text-lg font-semibold text-[#18181b]">{quote.customer?.name || 'Customer'}</p><p className="mt-2 text-sm font-bold text-[#52525b]">{quote.customer?.mobile || quote.customer?.phone}</p><p className="mt-2 text-sm font-bold text-[#52525b]">{quote.customer?.siteAddress || quote.customer?.city}</p></div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Totals</h2>{showPrices ? <div className="mt-5 space-y-3 text-sm font-bold text-[#27272a]"><div className="flex justify-between"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between"><span>Discount</span><span>{money(quoteDiscount)}</span></div><div className="flex justify-between"><span>GST 18%</span><span>{money(tax)}</span></div><div className="flex justify-between border-t border-[#e4e4e7]/10 pt-4 text-2xl font-semibold text-[#18181b]"><span>Total</span><span>{money(total)}</span></div></div> : <p className="mt-4 rounded-2xl bg-[#eff6ff]/70 p-4 text-sm font-black text-[#1d4ed8]">Selection summary mode hides all prices in the PDF.</p>}</div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">PDF terms</h2><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Terms</span><textarea value={terms} onChange={(event)=>setTerms(event.target.value)} className="min-h-28 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 py-3 text-xs font-bold" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Bank details</span><textarea value={bankDetails} onChange={(event)=>setBankDetails(event.target.value)} className="min-h-24 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 py-3 text-xs font-bold" /></label></div>
-        <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert to sales order</h2><p className="mt-2 text-sm font-bold text-[#52525b]">Use after final customer confirmation. Cash orders capture advance/full payment; credit orders are tagged for owner reports.</p><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Advance / full paid</span><input type="number" value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label>}{orderMessage && <p className="mt-3 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]">{orderMessage}</p>}<Button className="mt-4 w-full" disabled={creatingOrder || quote.approvalStatus === 'pending'} onClick={()=>createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),notes:'Created from quote detail'}}})}>Create sales order</Button>{quote.approvalStatus === 'pending' && <p className="mt-2 text-xs font-bold text-red-700">Owner approval required before conversion.</p>}</div>
+        <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert to sales order</h2><p className="mt-2 text-sm font-bold text-[#52525b]">Use after final customer confirmation. Cash orders capture advance/full payment; credit orders are tagged for owner reports. No owner approval is required at this step.</p><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Advance / full paid</span><input type="number" value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label>}{orderMessage && <div className="mt-3 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[#2563eb] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder} onClick={()=>createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),notes:'Created from quote detail'}}})}>Create sales order</Button></div>
       </aside>
     </section>
   </div>;

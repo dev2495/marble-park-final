@@ -148,8 +148,8 @@ export class QuotesService {
               leadId,
               lines: normalizedLines,
               quoteNumber,
-              status: 'pending_approval',
-              approvalStatus: 'pending',
+              status: 'draft',
+              approvalStatus: 'approved',
               discountPercent: data.discountPercent || 0,
               displayMode,
               projectName: data.projectName || '',
@@ -161,11 +161,12 @@ export class QuotesService {
               quoteMeta,
               approval: {
                 requestedAt: new Date().toISOString(),
-                reason: 'owner_quote_approval_required',
+                reason: 'quote_ready_no_owner_approval_required',
                 availabilityIssues,
                 discountPercent: data.discountPercent || 0,
                 total: this.getLinesTotal(normalizedLines),
                 displayMode,
+                autoApprovedAt: new Date().toISOString(),
               },
               updatedAt: new Date(),
             },
@@ -184,24 +185,24 @@ export class QuotesService {
     await this.audit(created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId });
     await this.notifications.createMany([
       {
-        title: 'Quote needs approval',
-        message: `${created.quoteNumber} is waiting for owner approval for ${created.customer?.name || 'customer'}.`,
-        type: 'approval',
+        title: 'Quote ready',
+        message: `${created.quoteNumber} is ready to share or confirm for ${created.customer?.name || 'customer'}.`,
+        type: 'quote_ready',
         entityType: 'Quote',
         entityId: created.id,
-        href: `/dashboard/approvals?quote=${created.id}`,
-        targetRole: 'owner',
-        metadata: { quoteNumber: created.quoteNumber, displayMode },
+        href: `/dashboard/quotes/${created.id}`,
+        targetUserId: created.ownerId,
+        metadata: { quoteNumber: created.quoteNumber, displayMode, pdfUrl: `/api/pdf/quote/${created.id}` },
       },
       {
-        title: 'Quote needs approval',
-        message: `${created.quoteNumber} is waiting for admin approval for ${created.customer?.name || 'customer'}.`,
-        type: 'approval',
+        title: 'Quote ready',
+        message: `${created.quoteNumber} is visible to admin/owner without approval blocking.`,
+        type: 'quote_ready',
         entityType: 'Quote',
         entityId: created.id,
-        href: `/dashboard/approvals?quote=${created.id}`,
+        href: `/dashboard/quotes/${created.id}`,
         targetRole: 'admin',
-        metadata: { quoteNumber: created.quoteNumber, displayMode },
+        metadata: { quoteNumber: created.quoteNumber, displayMode, pdfUrl: `/api/pdf/quote/${created.id}` },
       },
     ]);
     return created;
@@ -215,14 +216,15 @@ export class QuotesService {
       const lines = data.lines !== undefined ? this.normalizeLines(data.lines) : this.normalizeLines((await this.findById(id)).lines);
       updateData.lines = data.lines !== undefined ? lines : undefined;
       updateData.quoteMeta = data.quoteMeta !== undefined ? this.normalizeQuoteMeta(data.quoteMeta, lines) : undefined;
-      updateData.approvalStatus = 'pending';
-      updateData.status = 'pending_approval';
+      updateData.approvalStatus = 'approved';
+      updateData.status = 'draft';
       updateData.approval = {
         requestedAt: new Date().toISOString(),
-        reason: 'quote_changed_owner_reapproval_required',
+        reason: 'quote_changed_no_owner_reapproval_required',
         availabilityIssues: await this.getAvailabilityIssues(lines),
         discountPercent: data.discountPercent,
         total: this.getLinesTotal(lines),
+        autoApprovedAt: new Date().toISOString(),
       };
     }
     if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
@@ -234,17 +236,28 @@ export class QuotesService {
       include: quoteInclude,
     } as any) as any;
     await this.audit(updated.ownerId, 'quote.update', id, `Updated ${updated.quoteNumber}`, updateData);
-    if (updated.approvalStatus === 'pending') {
-      await this.notifications.create({
-        title: 'Quote changed',
-        message: `${updated.quoteNumber} was changed and needs owner re-approval.`,
-        type: 'approval',
+    await this.notifications.createMany([
+      {
+        title: 'Quote updated',
+        message: `${updated.quoteNumber} was updated and is ready to share or confirm.`,
+        type: 'quote_ready',
         entityType: 'Quote',
         entityId: updated.id,
-        href: `/dashboard/approvals?quote=${updated.id}`,
-        targetRole: 'owner',
-      });
-    }
+        href: `/dashboard/quotes/${updated.id}`,
+        targetUserId: updated.ownerId,
+        metadata: { pdfUrl: `/api/pdf/quote/${updated.id}` },
+      },
+      {
+        title: 'Quote updated',
+        message: `${updated.quoteNumber} was updated and remains unblocked for confirmation.`,
+        type: 'quote_ready',
+        entityType: 'Quote',
+        entityId: updated.id,
+        href: `/dashboard/quotes/${updated.id}`,
+        targetRole: 'admin',
+        metadata: { pdfUrl: `/api/pdf/quote/${updated.id}` },
+      },
+    ]);
     return updated;
   }
 
@@ -291,12 +304,9 @@ export class QuotesService {
 
   async sendQuote(id: string): Promise<any> {
     const quote = await this.findById(id);
-    if (quote.approvalStatus === 'pending') {
-      throw new BadRequestException('Quote needs approval before sending');
-    }
     const sent = await this.prisma.quote.update({
       where: { id },
-      data: { status: 'sent', sentAt: new Date() },
+      data: { status: 'sent', approvalStatus: quote.approvalStatus === 'pending' ? 'approved' : quote.approvalStatus, sentAt: new Date() },
       include: quoteInclude,
     } as any) as any;
     await this.audit(sent.ownerId, 'quote.send', id, `Sent ${sent.quoteNumber}`, {});
@@ -317,14 +327,11 @@ export class QuotesService {
     // Use the with-relations variant: we need `customer.siteAddress` to seed the
     // dispatch job. DataLoader is not available in service-layer code paths.
     const quote = await this.findByIdWithRelations(id);
-    if (quote.approvalStatus === 'pending') {
-      throw new BadRequestException('Quote needs approval before confirmation');
-    }
     
     return this.prisma.$transaction(async (tx) => {
       const confirmed = await tx.quote.update({
         where: { id },
-        data: { status: 'confirmed', confirmedAt: new Date() },
+        data: { status: 'confirmed', approvalStatus: quote.approvalStatus === 'pending' ? 'approved' : quote.approvalStatus, confirmedAt: new Date(), updatedAt: new Date() },
         include: quoteInclude,
       });
 
@@ -379,9 +386,6 @@ export class QuotesService {
   async createSalesOrderFromQuote(input: CreateSalesOrderInput, actorUserId: string) {
     // Same as confirmQuote: needs `customer.siteAddress`.
     const quote = await this.findByIdWithRelations(input.quoteId);
-    if (quote.approvalStatus === 'pending') {
-      throw new BadRequestException('Quote needs owner approval before sales order conversion');
-    }
     const paymentMode = String(input.paymentMode || '').toLowerCase() === 'credit' ? 'credit' : 'cash';
     const lines = this.normalizeLines(quote.lines);
     const totalAmount = this.getLinesTotal(lines);
@@ -411,11 +415,13 @@ export class QuotesService {
         });
       }
 
+      const salesOrderId = ulid();
       const count = await tx.salesOrder.count({ where: { orderNumber: { startsWith: `SO/${new Date().getFullYear()}` } } });
+      const orderNumber = `SO/${new Date().getFullYear()}/${String(count + 1).padStart(4, '0')}`;
       const salesOrder = await tx.salesOrder.create({
         data: {
-          id: ulid(),
-          orderNumber: `SO/${new Date().getFullYear()}/${String(count + 1).padStart(4, '0')}`,
+          id: salesOrderId,
+          orderNumber,
           quoteId: quote.id,
           leadId: quote.leadId,
           customerId: quote.customerId,
@@ -427,6 +433,12 @@ export class QuotesService {
           totalAmount,
           lines,
           notes: input.notes || '',
+          documents: {
+            quotePdfUrl: `/api/pdf/quote/${quote.id}`,
+            salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`,
+            generatedAt: new Date().toISOString(),
+            forwardingUse: 'Send sales-order PDF to customer and use it for dispatch marking.',
+          },
           updatedAt: new Date(),
         },
       });
@@ -464,7 +476,7 @@ export class QuotesService {
             entityId: salesOrder.id,
             href: '/dashboard/orders',
             targetRole: 'owner',
-            metadata: { quoteId: quote.id, paymentMode, paymentStatus, totalAmount },
+            metadata: { quoteId: quote.id, paymentMode, paymentStatus, totalAmount, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
           },
           {
             id: ulid(),
@@ -475,7 +487,7 @@ export class QuotesService {
             entityId: salesOrder.id,
             href: '/dashboard/dispatch',
             targetRole: 'dispatch_ops',
-            metadata: { quoteId: quote.id },
+            metadata: { quoteId: quote.id, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
           },
           {
             id: ulid(),
@@ -486,7 +498,7 @@ export class QuotesService {
             entityId: salesOrder.id,
             href: `/dashboard/leads/${quote.leadId}`,
             targetUserId: quote.ownerId,
-            metadata: { quoteId: quote.id },
+            metadata: { quoteId: quote.id, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
           },
         ],
       }).catch(() => null);

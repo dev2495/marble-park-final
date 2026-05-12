@@ -1,16 +1,15 @@
 /*
- * Marble Park · subtle theme (v3)
+ * Marble Park · v4 — softer dark, tinted light, smooth theme swap
  * ---------------------------------------------------------------------------
- * Intent: a calm, professional admin interface in the spirit of Linear /
- * Stripe / Vercel. Almost monochromatic — neutral zinc/slate surfaces, a
- * single refined blue accent reserved for primary actions and selected
- * states. No heavy gradients, no decorative washes; surfaces are mostly
- * white with subtle borders and restrained shadows.
- *
- * Why this differs from v2: v2 leaned hard on a navy gradient sidebar and
- * brand-coloured chip washes. The result felt loud for an ERP that
- * operators stare at all day. v3 is built around clarity and silence —
- * colour is information, not decoration.
+ * • Dark mode is now Linear-flavoured: cool charcoal greys (#1a1b23 → #232432)
+ *   with subtle indigo-tinted gradients and softer borders. Not pure black.
+ * • Light mode picks up subtle colour washes — cards lean on tinted-white
+ *   backgrounds (off-white with a hint of blue/violet) instead of clinical
+ *   #ffffff everywhere. The body also carries a stronger radial brand wash
+ *   that you can feel without being able to point at it.
+ * • Theme swap is animated globally (200ms background/border/color across
+ *   every element). The inline init script in <head> still prevents FOUC on
+ *   first paint.
  */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -20,26 +19,23 @@
 
 @layer base {
   :root {
-    /* ─── Neutral foundation (zinc + slate blend) ─── */
-    --bg:           #fafafa;          /* app background */
-    --bg-soft:      #f4f4f5;          /* canvas tint */
-    --surface:      #ffffff;          /* card / panel surface */
-    --surface-2:    #fafafa;          /* secondary surface */
-    --surface-3:    #18181b;          /* inverted dark surface */
+    /* ─── LIGHT — refined zinc + indigo tints ─── */
+    --bg:           #f7f8fb;          /* canvas — very subtle bluish off-white */
+    --bg-soft:      #f0f2f7;          /* canvas tint */
+    --surface:      #ffffff;          /* card surface */
+    --surface-2:    #fafbfd;          /* secondary surface (cards on subtle tint) */
+    --surface-3:    #1a1b23;          /* inverted */
 
-    /* ─── Text ─── */
-    --ink:          #18181b;          /* primary heading + body strong */
-    --ink-2:        #27272a;          /* body */
-    --ink-3:        #52525b;          /* muted body */
-    --ink-4:        #71717a;          /* meta / captions */
-    --ink-5:        #a1a1aa;          /* placeholder / disabled */
+    --ink:          #18181b;
+    --ink-2:        #27272a;
+    --ink-3:        #52525b;
+    --ink-4:        #71717a;
+    --ink-5:        #a1a1aa;
 
-    /* ─── Borders ─── */
-    --line:         #e4e4e7;          /* default hairline */
-    --line-strong:  #d4d4d8;          /* strong divider */
-    --line-soft:    #f4f4f5;          /* subtle inner divider */
+    --line:         #e4e6ec;          /* slightly bluer than pure zinc */
+    --line-strong:  #d1d5dc;
+    --line-soft:    #f0f2f7;
 
-    /* ─── Brand spine (used SPARINGLY — primary actions & selected only) ─── */
     --brand-50:     #eff6ff;
     --brand-100:    #dbeafe;
     --brand-200:    #bfdbfe;
@@ -50,46 +46,33 @@
     --brand-800:    #1e40af;
     --brand-900:    #1e3a8a;
 
-    /* ─── Semantic colour ─── */
-    --success:      #059669;          /* emerald-600 */
+    --success:      #059669;
     --success-bg:   #ecfdf5;
-    --warning:      #d97706;          /* amber-600 */
+    --warning:      #d97706;
     --warning-bg:   #fffbeb;
-    --danger:       #dc2626;          /* red-600 */
+    --danger:       #dc2626;
     --danger-bg:    #fef2f2;
-    --info:         #0284c7;          /* sky-600 */
+    --info:         #0284c7;
     --info-bg:      #f0f9ff;
 
-    /* ─── Focus ring ─── */
     --ring:         rgba(37, 99, 235, 0.35);
 
-    /* ─── Shadows (very subtle) ─── */
     --sh-flat:      0 1px 0 rgba(24, 24, 27, 0.04);
     --sh-sm:        0 1px 2px rgba(24, 24, 27, 0.05);
     --sh-md:        0 4px 12px -4px rgba(24, 24, 27, 0.08);
     --sh-lg:        0 12px 32px -12px rgba(24, 24, 27, 0.12);
 
-    /* ─── Radii ─── */
-    --r2: 4px;
-    --r3: 6px;
-    --r4: 8px;
-    --r5: 12px;
-    --r6: 16px;
-    --rp: 999px;
+    --r2: 4px; --r3: 6px; --r4: 8px; --r5: 12px; --r6: 16px; --rp: 999px;
 
-    /* ─── Motion ─── */
     --eo: cubic-bezier(.22, 1, .36, 1);
-    --df: 120ms;
-    --db: 180ms;
-    --ds: 260ms;
+    --df: 120ms; --db: 180ms; --ds: 260ms; --dt: 220ms;
 
-    /* ─── Typography ─── */
     --f-ui:      'Inter', 'SF Pro Text', system-ui, sans-serif;
     --f-mono:    'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
     --f-display: 'Fraunces', 'Inter', serif;
 
-    /* ─── shadcn aliases ─── */
-    --background: 0 0% 98%;
+    /* shadcn aliases */
+    --background: 220 33% 98%;
     --foreground: 240 6% 10%;
     --card: 0 0% 100%;
     --card-foreground: 240 6% 10%;
@@ -97,51 +80,173 @@
     --popover-foreground: 240 6% 10%;
     --primary-hsl: 221 83% 53%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 5% 96%;
+    --secondary: 220 17% 96%;
     --secondary-foreground: 240 6% 10%;
-    --muted: 240 5% 96%;
+    --muted: 220 17% 96%;
     --muted-foreground: 240 4% 46%;
-    --accent: 240 5% 96%;
+    --accent: 220 17% 96%;
     --accent-foreground: 240 6% 10%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 240 6% 90%;
-    --input: 240 6% 90%;
+    --border: 220 17% 92%;
+    --input: 220 17% 92%;
     --ring-hsl: 221 83% 53%;
     --radius: 8px;
     --font-sans: var(--f-ui);
     --font-display: var(--f-display);
   }
+
+  /* ─── DARK — Linear-style indigo-tinted charcoal ─── */
+  :root.dark {
+    --bg:           #14151b;          /* canvas — cool charcoal, slightly indigo */
+    --bg-soft:      #1a1c25;          /* canvas tint */
+    --surface:      #1f2129;          /* card surface */
+    --surface-2:    #262833;          /* one-step elevated */
+    --surface-3:    #fafafa;
+
+    --ink:          #fafafa;
+    --ink-2:        #e4e4e7;
+    --ink-3:        #b3b5c0;          /* slightly cool muted body */
+    --ink-4:        #8a8d9c;
+    --ink-5:        #5a5d6e;
+
+    --line:         #2a2d39;          /* subtle indigo-tinted border */
+    --line-strong:  #3a3e4d;
+    --line-soft:    #1f2129;
+
+    --brand-50:     #1e293b;
+    --brand-100:    #1e3a8a;
+    --brand-200:    #1d4ed8;
+    --brand-400:    #60a5fa;
+    --brand-500:    #3b82f6;
+    --brand-600:    #3b82f6;
+    --brand-700:    #60a5fa;
+    --brand-800:    #93c5fd;
+    --brand-900:    #dbeafe;
+
+    --success:      #10b981;
+    --success-bg:   #052e24;
+    --warning:      #f59e0b;
+    --warning-bg:   #3a2106;
+    --danger:       #ef4444;
+    --danger-bg:    #3a0f0f;
+    --info:         #38bdf8;
+    --info-bg:      #0c2c3f;
+
+    --ring:         rgba(96, 165, 250, 0.50);
+
+    --sh-flat:      0 1px 0 rgba(0, 0, 0, 0.35);
+    --sh-sm:        0 1px 2px rgba(0, 0, 0, 0.40);
+    --sh-md:        0 4px 12px -4px rgba(0, 0, 0, 0.55);
+    --sh-lg:        0 12px 32px -12px rgba(0, 0, 0, 0.65);
+
+    /* shadcn (dark) */
+    --background: 230 14% 9%;
+    --foreground: 0 0% 98%;
+    --card: 228 13% 14%;
+    --card-foreground: 0 0% 98%;
+    --popover: 228 13% 14%;
+    --popover-foreground: 0 0% 98%;
+    --primary-hsl: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 228 13% 17%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 228 13% 17%;
+    --muted-foreground: 233 9% 68%;
+    --accent: 228 13% 17%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 230 16% 19%;
+    --input: 230 16% 19%;
+    --ring-hsl: 217 91% 60%;
+  }
 }
 
+/* ─── Smooth theme transition ───────────────────────────────────────────
+ * Apply a 200ms colour/background/border transition to every element on
+ * theme swap. The Tailwind `transition-colors` utility on individual
+ * components is already 200ms so this won't fight with them. */
 @layer base {
-  * { border-color: var(--line, #e4e4e7); }
-  /* Hardcoded fallbacks on the html/body root so contrast is *never* broken
-   * even if the @import for Google Fonts blocks long enough that CSS vars
-   * race the first paint, or if some downstream PurgeCSS pass eats a token. */
-  html, body { background: #fafafa; }
+  *, *::before, *::after {
+    transition-property: background-color, border-color, color, fill, stroke;
+    transition-duration: 220ms;
+    transition-timing-function: cubic-bezier(.22, 1, .36, 1);
+  }
+  :root.theme-transitioning *,
+  :root.theme-transitioning *::before,
+  :root.theme-transitioning *::after {
+    transition-duration: 520ms;
+    transition-timing-function: cubic-bezier(.22, 1, .36, 1);
+  }
+  /* Disable the global transition during page load to avoid wash-in */
+  .preload *, .preload *::before, .preload *::after { transition: none !important; }
+
+  * { border-color: var(--line, #e4e6ec); }
+  html, body { background: var(--bg); }
   body {
     min-height: 100vh;
     font-family: var(--f-ui, 'Inter', system-ui, sans-serif);
-    color: #27272a;
+    color: var(--ink-2);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-feature-settings: 'cv11', 'ss01';
-  }
-  ::selection { background: #2563eb; color: #ffffff; }
 
-  h1, h2, h3, h4, h5 { color: #18181b; font-weight: 600; letter-spacing: -0.01em; }
+    /* Light mode body — stronger brand + violet washes so the canvas
+       doesn't read as clinical white. Subtle, but visibly tinted. */
+    background-image:
+      radial-gradient(1100px 600px at 10% -15%, rgba(59, 130, 246, 0.10), transparent 55%),
+      radial-gradient(1100px 600px at 100% 110%, rgba(124, 58, 237, 0.08), transparent 55%),
+      linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 100%);
+    background-attachment: fixed;
+  }
+  ::selection { background: var(--brand-600); color: #ffffff; }
+
+  h1, h2, h3, h4, h5 { color: var(--ink); font-weight: 600; letter-spacing: -0.01em; }
   h1 { font-weight: 700; letter-spacing: -0.02em; }
 
-  /* Quiet input baseline */
-  input, textarea, select { font-family: inherit; color: #18181b; }
-  /* Force-readable body copy as a safety net — if any page leaves text
-   * un-styled it still lands at proper contrast. */
+  input, textarea, select { font-family: inherit; color: var(--ink); }
   p, span, li, td, th, label { color: inherit; }
+
+  /* Dark mode body — dramatic indigo wash over Linear-style charcoal. */
+  :root.dark body {
+    background-image:
+      radial-gradient(1200px 700px at 10% -15%, rgba(99, 102, 241, 0.20), transparent 55%),
+      radial-gradient(1100px 600px at 100% 110%, rgba(168, 85, 247, 0.14), transparent 55%),
+      radial-gradient(900px 500px at 50% 50%, rgba(59, 130, 246, 0.05), transparent 70%),
+      linear-gradient(180deg, #16171f 0%, #1a1c25 50%, #14151b 100%);
+  }
+}
+
+@keyframes mp-theme-in {
+  from { opacity: 0; filter: blur(8px) saturate(1.08); transform: scale(1.008); }
+  to { opacity: 1; filter: blur(0) saturate(1); transform: scale(1); }
+}
+
+@keyframes mp-theme-out {
+  from { opacity: 1; filter: blur(0) saturate(1); transform: scale(1); }
+  to { opacity: 0; filter: blur(6px) saturate(0.96); transform: scale(0.996); }
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 520ms;
+  animation-timing-function: cubic-bezier(.22, 1, .36, 1);
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) { animation-name: mp-theme-out; }
+::view-transition-new(root) { animation-name: mp-theme-in; }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 1ms;
+  }
 }
 
 @layer components {
-  /* Standard surface card — quiet, almost flat. */
+  /* ── Cards ── */
   .mp-card {
     background: var(--surface);
     border: 1px solid var(--line);
@@ -149,8 +254,6 @@
     box-shadow: var(--sh-flat);
   }
 
-  /* Used by sidebar — but now it's white, not navy. The class name is kept
-     so legacy pages don't break, and the background swapped to surface. */
   .mp-dark-panel {
     background: var(--surface);
     border: 1px solid var(--line);
@@ -163,58 +266,105 @@
     box-shadow: var(--sh-sm);
   }
 
-  /* Hero strip — used SPARINGLY (only on pages that need a section header).
-     Light gradient, no decorative grid overlay. */
+  /* ── Hero (subtle tint, not flat) ── */
   .mp-hero {
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
     border: 1px solid var(--line);
     border-radius: var(--r6);
     padding: 24px;
     box-shadow: var(--sh-flat);
   }
 
-  /* KPI tile — used on dashboards. */
   .mp-kpi {
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r5);
     padding: 18px 20px;
-    transition: border-color var(--db) var(--eo), box-shadow var(--db) var(--eo);
+    transition: border-color var(--db) var(--eo), box-shadow var(--db) var(--eo), transform var(--db) var(--eo);
   }
-  .mp-kpi:hover { border-color: var(--line-strong); box-shadow: var(--sh-sm); }
+  .mp-kpi:hover { border-color: var(--line-strong); box-shadow: var(--sh-sm); transform: translateY(-1px); }
 
   .mp-display { font-family: var(--f-display); }
   .mp-mono { font-family: var(--f-mono); }
 
-  /* Pill chip variants. */
-  .mp-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 10px;
-    border-radius: var(--rp);
-    background: var(--bg-soft);
-    color: var(--ink-3);
+  /* ── Tinted KPI cards — more visible in light mode now ── */
+  .mp-kpi-tint-brand    { background: linear-gradient(160deg, #eef4ff 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #c7d6f7, var(--sh-flat); }
+  .mp-kpi-tint-success  { background: linear-gradient(160deg, #ecfdf5 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #bbf2d6, var(--sh-flat); }
+  .mp-kpi-tint-warning  { background: linear-gradient(160deg, #fffaeb 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #fcd58b, var(--sh-flat); }
+  .mp-kpi-tint-danger   { background: linear-gradient(160deg, #fff1f2 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #fcb1b1, var(--sh-flat); }
+  .mp-kpi-tint-violet   { background: linear-gradient(160deg, #f4f0ff 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #d6c2fb, var(--sh-flat); }
+  .mp-kpi-tint-sky      { background: linear-gradient(160deg, #eaf6ff 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #95d2f8, var(--sh-flat); }
+  .mp-kpi-tint-neutral  { background: linear-gradient(160deg, #f7f8fb 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #e4e6ec, var(--sh-flat); }
+
+  /* Dark tints — soft glow on the top edge, gradient back to surface. */
+  :root.dark .mp-kpi-tint-brand    { background: linear-gradient(160deg, rgba(59,130,246,0.16) 0%, var(--surface) 65%); box-shadow: inset 0 1px 0 rgba(59,130,246,0.35), var(--sh-flat); }
+  :root.dark .mp-kpi-tint-success  { background: linear-gradient(160deg, rgba(16,185,129,0.16) 0%, var(--surface) 65%); box-shadow: inset 0 1px 0 rgba(16,185,129,0.40), var(--sh-flat); }
+  :root.dark .mp-kpi-tint-warning  { background: linear-gradient(160deg, rgba(245,158,11,0.16) 0%, var(--surface) 65%); box-shadow: inset 0 1px 0 rgba(245,158,11,0.40), var(--sh-flat); }
+  :root.dark .mp-kpi-tint-danger   { background: linear-gradient(160deg, rgba(239,68,68,0.16)  0%, var(--surface) 65%); box-shadow: inset 0 1px 0 rgba(239,68,68,0.40),  var(--sh-flat); }
+  :root.dark .mp-kpi-tint-violet   { background: linear-gradient(160deg, rgba(168,85,247,0.16) 0%, var(--surface) 65%); box-shadow: inset 0 1px 0 rgba(168,85,247,0.40), var(--sh-flat); }
+  :root.dark .mp-kpi-tint-sky      { background: linear-gradient(160deg, rgba(56,189,248,0.16) 0%, var(--surface) 65%); box-shadow: inset 0 1px 0 rgba(56,189,248,0.40), var(--sh-flat); }
+  :root.dark .mp-kpi-tint-neutral  { background: var(--surface); box-shadow: inset 0 1px 0 var(--line), var(--sh-flat); }
+
+  /* ── Icon chips — vivid, identifiable ── */
+  .mp-kpi-icon-brand    { background: #dbeafe; color: #1d4ed8; }
+  .mp-kpi-icon-success  { background: #d1fae5; color: #047857; }
+  .mp-kpi-icon-warning  { background: #fde68a; color: #b45309; }
+  .mp-kpi-icon-danger   { background: #fecaca; color: #b91c1c; }
+  .mp-kpi-icon-violet   { background: #e9d5ff; color: #6d28d9; }
+  .mp-kpi-icon-sky      { background: #bae6fd; color: #0369a1; }
+  .mp-kpi-icon-neutral  { background: #f0f2f7; color: #52525b; }
+
+  :root.dark .mp-kpi-icon-brand    { background: rgba(59,130,246,0.22);  color: #93c5fd; }
+  :root.dark .mp-kpi-icon-success  { background: rgba(16,185,129,0.22); color: #6ee7b7; }
+  :root.dark .mp-kpi-icon-warning  { background: rgba(245,158,11,0.22); color: #fcd34d; }
+  :root.dark .mp-kpi-icon-danger   { background: rgba(239,68,68,0.22);  color: #fca5a5; }
+  :root.dark .mp-kpi-icon-violet   { background: rgba(168,85,247,0.22); color: #d8b4fe; }
+  :root.dark .mp-kpi-icon-sky      { background: rgba(56,189,248,0.22); color: #7dd3fc; }
+  :root.dark .mp-kpi-icon-neutral  { background: var(--bg-soft);        color: var(--ink-3); }
+
+  /* ── Section panel ── */
+  .mp-panel {
+    background: var(--surface);
     border: 1px solid var(--line);
-    font-size: 11px;
-    font-weight: 500;
+    border-radius: var(--r5);
+    box-shadow: var(--sh-flat);
+    overflow: hidden;
   }
-  .mp-pill-brand { background: var(--brand-50); color: var(--brand-700); border-color: var(--brand-100); }
+  .mp-panel-band-brand   { background: linear-gradient(180deg, #eef4ff 0%, var(--surface) 60%); border-top: 1px solid #c7d6f7; }
+  .mp-panel-band-success { background: linear-gradient(180deg, #ecfdf5 0%, var(--surface) 60%); border-top: 1px solid #bbf2d6; }
+  .mp-panel-band-warning { background: linear-gradient(180deg, #fffaeb 0%, var(--surface) 60%); border-top: 1px solid #fcd58b; }
+  .mp-panel-band-danger  { background: linear-gradient(180deg, #fff1f2 0%, var(--surface) 60%); border-top: 1px solid #fcb1b1; }
+  .mp-panel-band-violet  { background: linear-gradient(180deg, #f4f0ff 0%, var(--surface) 60%); border-top: 1px solid #d6c2fb; }
+  .mp-panel-band-sky     { background: linear-gradient(180deg, #eaf6ff 0%, var(--surface) 60%); border-top: 1px solid #95d2f8; }
+
+  :root.dark .mp-panel-band-brand   { background: linear-gradient(180deg, rgba(59,130,246,0.10) 0%, var(--surface) 60%); border-top: 1px solid rgba(59,130,246,0.28); }
+  :root.dark .mp-panel-band-success { background: linear-gradient(180deg, rgba(16,185,129,0.10) 0%, var(--surface) 60%); border-top: 1px solid rgba(16,185,129,0.28); }
+  :root.dark .mp-panel-band-warning { background: linear-gradient(180deg, rgba(245,158,11,0.10) 0%, var(--surface) 60%); border-top: 1px solid rgba(245,158,11,0.28); }
+  :root.dark .mp-panel-band-danger  { background: linear-gradient(180deg, rgba(239,68,68,0.10) 0%, var(--surface) 60%);  border-top: 1px solid rgba(239,68,68,0.28); }
+  :root.dark .mp-panel-band-violet  { background: linear-gradient(180deg, rgba(168,85,247,0.10) 0%, var(--surface) 60%); border-top: 1px solid rgba(168,85,247,0.28); }
+  :root.dark .mp-panel-band-sky     { background: linear-gradient(180deg, rgba(56,189,248,0.10) 0%, var(--surface) 60%); border-top: 1px solid rgba(56,189,248,0.28); }
+
+  /* ── Pill chips ── */
+  .mp-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px; border-radius: var(--rp);
+    background: var(--bg-soft); color: var(--ink-3);
+    border: 1px solid var(--line);
+    font-size: 11px; font-weight: 500;
+  }
+  .mp-pill-brand   { background: var(--brand-50);  color: var(--brand-700); border-color: var(--brand-100); }
   .mp-pill-success { background: var(--success-bg); color: var(--success); border-color: rgba(5,150,105,0.18); }
   .mp-pill-warning { background: var(--warning-bg); color: var(--warning); border-color: rgba(217,119,6,0.18); }
-  .mp-pill-danger { background: var(--danger-bg); color: var(--danger); border-color: rgba(220,38,38,0.18); }
+  .mp-pill-danger  { background: var(--danger-bg);  color: var(--danger);  border-color: rgba(220,38,38,0.18); }
 
-  /* Custom scrollbar polish. */
+  /* ── Scrollbar ── */
   .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(113, 113, 122, 0.20);
-    border-radius: 999px;
-  }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(113, 113, 122, 0.20); border-radius: 999px; }
+  :root.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.10); }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(113, 113, 122, 0.35); }
   .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 }
 
-/* Legacy glass aliases — keep flat surface. */
 .glass, .glass-card {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -224,6 +374,9 @@
 
 .recharts-cartesian-grid-horizontal line,
 .recharts-cartesian-grid-vertical line { stroke: rgba(113, 113, 122, 0.10); }
+:root.dark .recharts-cartesian-grid-horizontal line,
+:root.dark .recharts-cartesian-grid-vertical line { stroke: rgba(255, 255, 255, 0.06); }
+
 .recharts-tooltip-wrapper { font-family: var(--f-ui); }
 .recharts-default-tooltip {
   background: var(--surface) !important;
@@ -233,3 +386,68 @@
   padding: 8px 10px !important;
 }
 .recharts-tooltip-label, .recharts-tooltip-item { color: var(--ink-2) !important; font-size: 12px !important; }
+
+/* ── Hardcoded hex remap for dark mode ── */
+:root.dark {
+  body { color: var(--ink-2); }
+}
+
+:root.dark .bg-white,
+:root.dark [class*="bg-[#ffffff]"] { background-color: var(--surface) !important; }
+:root.dark [class*="bg-[#fafafa]"] { background-color: var(--bg) !important; }
+:root.dark [class*="bg-[#f4f4f5]"] { background-color: var(--bg-soft) !important; }
+:root.dark [class*="bg-[#f7f8fb]"] { background-color: var(--bg) !important; }
+:root.dark [class*="bg-[#f0f2f7]"] { background-color: var(--bg-soft) !important; }
+:root.dark [class*="bg-[#f8fafc]"] { background-color: var(--surface-2) !important; }
+
+:root.dark [class*="text-[#18181b]"] { color: var(--ink) !important; }
+:root.dark [class*="text-[#27272a]"] { color: var(--ink-2) !important; }
+:root.dark [class*="text-[#52525b]"] { color: var(--ink-3) !important; }
+:root.dark [class*="text-[#71717a]"] { color: var(--ink-4) !important; }
+:root.dark [class*="text-[#a1a1aa]"] { color: var(--ink-5) !important; }
+:root.dark [class*="text-[#0e1a3d]"] { color: var(--ink) !important; }
+
+:root.dark [class*="border-[#e4e4e7]"] { border-color: var(--line) !important; }
+:root.dark [class*="border-[#e4e6ec]"] { border-color: var(--line) !important; }
+:root.dark [class*="border-[#d4d4d8]"] { border-color: var(--line-strong) !important; }
+:root.dark [class*="border-[#d1d5dc]"] { border-color: var(--line-strong) !important; }
+:root.dark [class*="border-[#f4f4f5]"] { border-color: var(--line-soft) !important; }
+:root.dark [class*="border-[#f0f2f7]"] { border-color: var(--line-soft) !important; }
+:root.dark .divide-y > * + *,
+:root.dark [class*="divide-[#f4f4f5]"] > * + * { border-color: var(--line-soft) !important; }
+
+:root.dark [class*="bg-[#eff6ff]"] { background-color: rgba(59,130,246,0.12) !important; }
+:root.dark [class*="bg-[#dbeafe]"] { background-color: rgba(59,130,246,0.22) !important; }
+:root.dark [class*="text-[#1d4ed8]"] { color: #93c5fd !important; }
+:root.dark [class*="text-[#2563eb]"] { color: #60a5fa !important; }
+:root.dark [class*="text-[#1e40af]"] { color: #93c5fd !important; }
+:root.dark [class*="border-[#60a5fa]"] { border-color: rgba(96,165,250,0.55) !important; }
+
+:root.dark [class*="bg-white/85"] { background-color: rgba(31,33,41,0.85) !important; }
+:root.dark [class*="bg-white/75"] { background-color: rgba(31,33,41,0.75) !important; }
+:root.dark [class*="bg-white/72"] { background-color: rgba(31,33,41,0.72) !important; }
+:root.dark [class*="bg-white/80"] { background-color: rgba(31,33,41,0.80) !important; }
+
+/* ── Icon-pop helpers ──
+ * Drop-in classes you can hang on any lucide icon's parent to get a vivid
+ * tinted background + soft halo. Used wherever the design calls for a
+ * "feature icon" instead of a plain glyph. */
+.icon-pop {
+  display: inline-grid; place-items: center;
+  width: 2rem; height: 2rem; border-radius: var(--r4);
+  transition: transform var(--db) var(--eo), box-shadow var(--db) var(--eo);
+}
+.icon-pop:hover { transform: scale(1.05); }
+.icon-pop-brand   { background: #dbeafe; color: #1d4ed8; box-shadow: 0 0 0 1px rgba(59,130,246,0.18); }
+.icon-pop-success { background: #d1fae5; color: #047857; box-shadow: 0 0 0 1px rgba(16,185,129,0.20); }
+.icon-pop-warning { background: #fde68a; color: #b45309; box-shadow: 0 0 0 1px rgba(245,158,11,0.22); }
+.icon-pop-danger  { background: #fecaca; color: #b91c1c; box-shadow: 0 0 0 1px rgba(239,68,68,0.20); }
+.icon-pop-violet  { background: #e9d5ff; color: #6d28d9; box-shadow: 0 0 0 1px rgba(124,58,237,0.20); }
+.icon-pop-sky     { background: #bae6fd; color: #0369a1; box-shadow: 0 0 0 1px rgba(14,165,233,0.20); }
+
+:root.dark .icon-pop-brand   { background: rgba(59,130,246,0.22); color: #93c5fd; box-shadow: 0 0 0 1px rgba(59,130,246,0.35); }
+:root.dark .icon-pop-success { background: rgba(16,185,129,0.22); color: #6ee7b7; box-shadow: 0 0 0 1px rgba(16,185,129,0.35); }
+:root.dark .icon-pop-warning { background: rgba(245,158,11,0.22); color: #fcd34d; box-shadow: 0 0 0 1px rgba(245,158,11,0.35); }
+:root.dark .icon-pop-danger  { background: rgba(239,68,68,0.22);  color: #fca5a5; box-shadow: 0 0 0 1px rgba(239,68,68,0.35); }
+:root.dark .icon-pop-violet  { background: rgba(168,85,247,0.22); color: #d8b4fe; box-shadow: 0 0 0 1px rgba(168,85,247,0.35); }
+:root.dark .icon-pop-sky     { background: rgba(56,189,248,0.22); color: #7dd3fc; box-shadow: 0 0 0 1px rgba(56,189,248,0.35); }

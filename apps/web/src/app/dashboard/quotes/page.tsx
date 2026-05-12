@@ -157,9 +157,8 @@ export default function QuotesRegisterPage() {
                 <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
                   <Button asChild variant="outline" size="sm"><Link href={`/dashboard/quotes/${quote.id}`}><Eye className="mr-2 h-4 w-4" /> View</Link></Button>
                   <Button asChild variant="outline" size="sm"><a href={pdfHref} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> PDF</a></Button>
-                  {quote.approvalStatus === 'pending' && <Button asChild variant="outline" size="sm"><Link href="/dashboard/approvals">Needs owner approval</Link></Button>}
-                  {quote.status !== 'sent' && quote.status !== 'confirmed' && quote.approvalStatus !== 'pending' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="sm"><Send className="mr-2 h-4 w-4" /> Send</Button>}
-                  {quote.status !== 'confirmed' && quote.approvalStatus !== 'pending' && <Button disabled={confirming} onClick={() => confirmQuote({ variables: { id: quote.id } })} size="sm"><ShieldCheck className="mr-2 h-4 w-4" /> Confirm</Button>}
+                  {quote.status !== 'sent' && quote.status !== 'confirmed' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="sm"><Send className="mr-2 h-4 w-4" /> Send</Button>}
+                  {quote.status !== 'confirmed' && <Button disabled={confirming} onClick={() => confirmQuote({ variables: { id: quote.id } })} size="sm"><ShieldCheck className="mr-2 h-4 w-4" /> Confirm</Button>}
                 </div>
               </article>
             );

@@ -31,6 +31,7 @@ DATABASE_URL=${{Postgres.DATABASE_URL}}
 JWT_SECRET=<generate-a-long-random-secret>
 CORS_ORIGIN=https://${{web.RAILWAY_PUBLIC_DOMAIN}}
 CATALOGUE_IMPORT_IMAGE_DIR=/data/catalogue-images/imports
+CATALOGUE_IMAGE_STORAGE_DIR=/data/catalogue-images
 PUBLIC_CATALOGUE_IMAGE_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
 QUOTE_PDF_EMAIL=admin@marblepark.com
 QUOTE_PDF_PASSWORD=password123
@@ -41,6 +42,7 @@ Notes:
 - Replace `Postgres` and `web` with the exact Railway service names if different.
 - `QUOTE_PDF_*` lets the Next PDF route fetch protected quote data server-side.
 - Change the seeded admin password after first login if this is shared outside internal testing.
+- Manual SKU, profile and quote images are stored by the API under `CATALOGUE_IMAGE_STORAGE_DIR` and served from `/catalogue-images/manual/...`, so the API volume is the persistent image store.
 
 ## 3. Web Service
 

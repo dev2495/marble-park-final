@@ -471,6 +471,7 @@ model SalesOrder {
   totalAmount   Float
   lines         Json
   notes         String
+  documents     Json     @default("{}")
   createdAt     DateTime @default(now())
   updatedAt     DateTime
 
@@ -494,20 +495,29 @@ model SourceFile {
 }
 
 model User {
-  id           String         @id
-  name         String
-  email        String         @unique
-  passwordHash String
-  role         String
-  phone        String
-  active       Boolean        @default(true)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  leads        Lead[]
-  quotes       Quote[]
-  activities   Activity[]
-  followUps    FollowUpTask[]
-  dispatchJobs DispatchJob[]
+  id                 String         @id
+  name               String
+  email              String         @unique
+  passwordHash       String
+  role               String
+  phone              String
+  active             Boolean        @default(true)
+  /// Optional uploaded avatar URL. When null the UI falls back to a
+  /// deterministic colour + initials block derived from `id`.
+  avatarUrl          String?
+  /// One-line bio shown on the profile page. Not validated; kept short
+  /// (<= 280 chars) in the resolver.
+  bio                String?
+  /// Audit trail for password rotations. Used by the profile page to show
+  /// "last changed N days ago" + by future password-expiry policies.
+  passwordChangedAt  DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  leads              Lead[]
+  quotes             Quote[]
+  activities         Activity[]
+  followUps          FollowUpTask[]
+  dispatchJobs       DispatchJob[]
 }
 
 model Vendor {

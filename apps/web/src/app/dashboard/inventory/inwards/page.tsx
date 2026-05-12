@@ -1,113 +1,367 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { motion } from 'framer-motion';
-import { CheckCircle2, FileSpreadsheet, PackagePlus, UploadCloud } from 'lucide-react';
+import {
+  Boxes, ClipboardList, FileCheck2, PackageCheck, PackagePlus, Search, Trash2, Truck,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
+import { cn } from '@/lib/utils';
 
-const PROCESS_PDF_IMPORT = gql`
-  mutation ProcessPdfImport($filePath: String!) { processPdfImport(filePath: $filePath) { id result } }
+const INVENTORY_BALANCES = gql`
+  query GrnInventoryBalances($search: String, $take: Int) {
+    inventoryBalances(search: $search, take: $take) {
+      id
+      productId
+      onHand
+      available
+      reserved
+      damaged
+      lowStockThreshold
+      reorderPoint
+      updatedAt
+      product {
+        id
+        sku
+        name
+        category
+        brand
+        finish
+        dimensions
+        unit
+        sellPrice
+      }
+    }
+  }
 `;
-const PROCESS_EXCEL_IMPORT = gql`
-  mutation ProcessExcelImport($filePath: String!) { processExcelImport(filePath: $filePath) { id result } }
+
+const ADJUST_INVENTORY = gql`
+  mutation ReceiveInventory($id: ID!, $adjustment: Float!, $type: String!, $notes: String) {
+    adjustInventory(id: $id, adjustment: $adjustment, type: $type, notes: $notes) {
+      id
+      onHand
+      available
+      reserved
+      damaged
+      updatedAt
+      product { id sku name category brand finish unit }
+    }
+  }
 `;
-const GET_VENDORS = gql`
-  query Vendors { vendors(status: "active", take: 60) }
-`;
+
+type Balance = {
+  id: string;
+  productId: string;
+  onHand: number;
+  available: number;
+  reserved: number;
+  damaged: number;
+  lowStockThreshold?: number;
+  reorderPoint?: number | null;
+  updatedAt?: string;
+  product?: {
+    id: string;
+    sku?: string;
+    name?: string;
+    category?: string;
+    brand?: string;
+    finish?: string;
+    dimensions?: string;
+    unit?: string;
+    sellPrice?: number;
+  } | null;
+};
+
+type GrnLine = {
+  balanceId: string;
+  quantity: string;
+  rate: string;
+  location: string;
+  notes: string;
+};
+
+function money(value?: number) {
+  return `₹${Number(value || 0).toLocaleString('en-IN')}`;
+}
+
+function qty(value?: number) {
+  return Number(value || 0).toLocaleString('en-IN');
+}
 
 export default function InventoryInwardsPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [vendorId, setVendorId] = useState('');
-  const { data: vendorData } = useQuery(GET_VENDORS);
-  const [processPdfImport] = useMutation(PROCESS_PDF_IMPORT);
-  const [processExcelImport] = useMutation(PROCESS_EXCEL_IMPORT);
-  const vendors = vendorData?.vendors || [];
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState('');
+  const [vendor, setVendor] = useState('');
+  const [grnRef, setGrnRef] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [remarks, setRemarks] = useState('');
+  const [rows, setRows] = useState<GrnLine[]>([]);
+  const [message, setMessage] = useState('');
 
-  const handleUpload = async () => {
-    if (!file) return;
-    setIsUploading(true);
-    setResult(null);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { authorization: `Bearer ${localStorage.getItem('auth_token') || ''}` },
-        body: formData,
-      });
-      if (!response.ok) throw new Error('Upload failed');
-      const { filePath } = await response.json();
-      const isExcel = /\.xlsx?$/i.test(file.name);
-      const mutationResult = isExcel
-        ? await processExcelImport({ variables: { filePath } })
-        : await processPdfImport({ variables: { filePath } });
-      setResult({
-        vendor: vendors.find((vendor: any) => vendor.id === vendorId) || null,
-        ...(isExcel ? mutationResult.data?.processExcelImport?.result : mutationResult.data?.processPdfImport?.result),
-      });
-    } catch (error: any) {
-      setResult({ error: error.message || 'Import failed' });
-    } finally {
-      setIsUploading(false);
+  const { data, loading, error, refetch } = useQuery(INVENTORY_BALANCES, {
+    variables: { search: search || undefined, take: 80 },
+    fetchPolicy: 'cache-and-network',
+  });
+  const [receiveInventory, { loading: saving, error: saveError }] = useMutation(ADJUST_INVENTORY);
+
+  const balances: Balance[] = data?.inventoryBalances || [];
+  const selected = useMemo(() => balances.find((item) => item.id === selectedId) || balances[0], [balances, selectedId]);
+  const byId = useMemo(() => new Map(balances.map((item) => [item.id, item] as const)), [balances]);
+
+  const addSelectedLine = () => {
+    if (!selected) return;
+    setMessage('');
+    setRows((current) => {
+      if (current.some((line) => line.balanceId === selected.id)) return current;
+      return [...current, { balanceId: selected.id, quantity: '', rate: selected.product?.sellPrice ? String(selected.product.sellPrice) : '', location: '', notes: '' }];
+    });
+  };
+
+  const updateLine = (index: number, patch: Partial<GrnLine>) => {
+    setRows((current) => current.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+  };
+
+  const removeLine = (index: number) => {
+    setRows((current) => current.filter((_, i) => i !== index));
+  };
+
+  const totalQty = rows.reduce((sum, line) => sum + Math.max(0, Number(line.quantity || 0)), 0);
+  const totalValue = rows.reduce((sum, line) => sum + Math.max(0, Number(line.quantity || 0)) * Math.max(0, Number(line.rate || 0)), 0);
+  const selectedUnit = selected?.product?.unit || 'PC';
+
+  const submitGrn = async () => {
+    setMessage('');
+    const validRows = rows.filter((line) => Number(line.quantity || 0) > 0 && byId.has(line.balanceId));
+    if (!validRows.length) {
+      setMessage('Add at least one SKU with received quantity before posting GRN.');
+      return;
     }
+    if (!grnRef.trim()) {
+      setMessage('GRN / challan reference is required for audit trail.');
+      return;
+    }
+
+    await Promise.all(validRows.map((line) => {
+      const balance = byId.get(line.balanceId);
+      const product = balance?.product;
+      const notes = [
+        `GRN: ${grnRef.trim()}`,
+        vendor.trim() ? `Vendor: ${vendor.trim()}` : '',
+        invoiceDate ? `Date: ${invoiceDate}` : '',
+        line.location.trim() ? `Location: ${line.location.trim()}` : '',
+        line.rate ? `Rate: ${line.rate}` : '',
+        remarks.trim(),
+        line.notes.trim(),
+        product?.sku ? `SKU: ${product.sku}` : '',
+      ].filter(Boolean).join(' • ');
+      return receiveInventory({ variables: { id: line.balanceId, adjustment: Number(line.quantity), type: 'inward', notes } });
+    }));
+
+    setMessage(`GRN ${grnRef.trim()} posted. ${qty(totalQty)} units received and inventory availability updated.`);
+    setRows([]);
+    setRemarks('');
+    await refetch();
   };
 
   return (
-    <div className="space-y-7 pb-10">
-      <section className="rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]">
-        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+    <div className="space-y-6 pb-10">
+      <section className="mp-hero relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(16,185,129,0.18),transparent_28%),radial-gradient(circle_at_92%_12%,rgba(59,130,246,0.14),transparent_28%)]" />
+        <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Inward and import</p>
-            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Bring vendor catalogues into stock control.</h1>
-            <p className="mt-3 max-w-2xl text-sm text-[#52525b]">Excel imports create catalogue SKUs directly. PDF imports extract deterministic text first and can fall back to review queues.</p>
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Goods receipt note</p>
+            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[var(--ink)]">Receive vendor stock against existing SKUs.</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
+              This is only for inward/GRN entry. Quote confirmation reserves stock automatically, dispatch consumes stock automatically, and exceptions live in Inventory controls.
+            </p>
           </div>
-          <PackagePlus className="h-12 w-12 text-[#71717a]" />
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline"><Link href="/dashboard/inventory"><Boxes className="mr-2 h-4 w-4" /> Inventory controls</Link></Button>
+            <Button asChild variant="outline"><Link href="/dashboard/master-data/imports"><ClipboardList className="mr-2 h-4 w-4" /> Catalogue imports</Link></Button>
+          </div>
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
-        <div className="mp-card rounded-r5 p-6">
-          <div className="grid h-16 w-16 place-items-center rounded-3xl bg-[#eff6ff] text-[#1d4ed8]"><FileSpreadsheet className="h-8 w-8" /></div>
-          <h2 className="mt-6 text-3xl font-black tracking-tight">Supported imports</h2>
-          <div className="mt-5 space-y-3 text-sm font-bold text-[#27272a]">
-            <p className="rounded-2xl bg-white/60 p-4">Excel: Grohe, Hansgrohe, Hindware and other tabular price lists.</p>
-            <p className="rounded-2xl bg-white/60 p-4">PDF: searchable catalogues, product text extraction and review summary.</p>
-            <p className="rounded-2xl bg-white/60 p-4">Stock: imported catalogue SKUs start at zero stock until received.</p>
-            <p className="rounded-2xl bg-white/60 p-4">Vendor master: choose the supplier before import so purchase and catalogue responsibility is clear.</p>
+      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {saveError ? <QueryErrorBanner error={saveError} /> : null}
+      {message ? <div className={cn('rounded-r4 border p-4 text-sm font-semibold', message.includes('posted') ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800')}>{message}</div> : null}
+
+      <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="mp-panel overflow-hidden">
+          <div className="border-b border-[var(--line)] p-5">
+            <h2 className="text-lg font-semibold text-[var(--ink)]">Pick SKU to receive</h2>
+            <p className="mt-1 text-sm text-[var(--ink-4)]">Search existing inventory SKUs. New SKU creation stays in Product Master.</p>
+            <div className="mt-4 flex h-10 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 shadow-sm-soft">
+              <Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search SKU, name, brand..."
+                className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)]"
+              />
+            </div>
+          </div>
+
+          {loading && !balances.length ? <div className="p-5"><QueryLoading label="Loading inventory SKUs..." /></div> : null}
+
+          {!loading && !balances.length ? (
+            <div className="p-8 text-center">
+              <PackageCheck className="mx-auto h-10 w-10 text-[var(--ink-5)]" />
+              <h3 className="mt-3 text-lg font-semibold text-[var(--ink)]">No inventory SKUs found</h3>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-[var(--ink-4)]">Create the SKU in Product Master first, then receive it here.</p>
+              <Button asChild className="mt-5"><Link href="/dashboard/master-data/products">Open Product Master</Link></Button>
+            </div>
+          ) : (
+            <div className="max-h-[34rem] overflow-y-auto p-3 custom-scrollbar">
+              {balances.map((balance) => {
+                const product = balance.product;
+                const active = selected?.id === balance.id;
+                return (
+                  <button
+                    key={balance.id}
+                    type="button"
+                    onClick={() => setSelectedId(balance.id)}
+                    className={cn(
+                      'mb-2 w-full rounded-r3 border p-3 text-left transition-all',
+                      active ? 'border-[var(--brand-400)] bg-[var(--brand-50)] shadow-sm-soft' : 'border-[var(--line)] bg-[var(--surface)] hover:border-[var(--line-strong)] hover:bg-[var(--bg-soft)]',
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-[var(--ink)]">{product?.sku || 'NO-SKU'} · {product?.name || 'Unnamed SKU'}</p>
+                        <p className="mt-1 truncate text-xs text-[var(--ink-4)]">{product?.category || 'Uncategorized'} · {product?.brand || 'No brand'} · {product?.finish || 'No finish'}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-[var(--bg-soft)] px-2 py-1 text-xs font-semibold tabular-nums text-[var(--ink)]">Avail {balance.available}</span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-4 gap-2 text-center text-[11px] font-medium text-[var(--ink-4)]">
+                      <span>On hand <b className="block text-[var(--ink)]">{balance.onHand}</b></span>
+                      <span>Reserved <b className="block text-[var(--ink)]">{balance.reserved}</b></span>
+                      <span>Damaged <b className="block text-[var(--ink)]">{balance.damaged}</b></span>
+                      <span>{money(product?.sellPrice)}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-5">
+          <div className="mp-panel p-5">
+            <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Selected for GRN</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--ink)]">{selected?.product?.name || 'Choose a SKU'}</h2>
+                <p className="mt-1 text-sm text-[var(--ink-4)]"><span className="font-semibold text-[var(--ink-2)]">{selected?.product?.sku || '—'}</span> · {selected?.product?.brand || 'No brand'} · {selected?.product?.category || 'No category'}</p>
+              </div>
+              <span className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-xs font-semibold text-[var(--ink-3)]">{selectedUnit}</span>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-4">
+              <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">On hand</p><p className="mt-1 font-display text-2xl font-bold tabular-nums text-[var(--ink)]">{qty(selected?.onHand)}</p></div>
+              <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">Available</p><p className="mt-1 font-display text-2xl font-bold tabular-nums text-emerald-600">{qty(selected?.available)}</p></div>
+              <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">Reserved</p><p className="mt-1 font-display text-2xl font-bold tabular-nums text-blue-600">{qty(selected?.reserved)}</p></div>
+              <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">Damaged</p><p className="mt-1 font-display text-2xl font-bold tabular-nums text-red-600">{qty(selected?.damaged)}</p></div>
+            </div>
+            <Button type="button" onClick={addSelectedLine} disabled={!selected} className="mt-5"><PackagePlus className="mr-2 h-4 w-4" /> Add selected SKU to GRN</Button>
+          </div>
+
+          <div className="mp-panel p-5">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700"><Truck className="h-5 w-5" /></div>
+              <div>
+                <h3 className="text-lg font-semibold text-[var(--ink)]">GRN header</h3>
+                <p className="text-sm text-[var(--ink-4)]">Saved in inventory movement notes for audit and vendor traceability.</p>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Vendor / supplier</span>
+                <Input value={vendor} onChange={(event) => setVendor(event.target.value)} placeholder="e.g. Hindware distributor" />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">GRN / challan ref</span>
+                <Input value={grnRef} onChange={(event) => setGrnRef(event.target.value)} placeholder="GRN-0001 / bill no." />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Invoice date</span>
+                <Input type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} />
+              </label>
+              <label className="space-y-2 sm:col-span-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">GRN remarks</span>
+                <textarea
+                  value={remarks}
+                  onChange={(event) => setRemarks(event.target.value)}
+                  placeholder="Transport details, received by, storage note, pending invoice differences..."
+                  className="min-h-[72px] w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] shadow-sm-soft outline-none transition-colors placeholder:text-[var(--ink-5)] focus:border-[var(--brand-400)] focus:ring-2 focus:ring-[var(--ring)]"
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="mp-panel p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">GRN lines</p>
+            <h2 className="mt-2 text-2xl font-semibold text-[var(--ink)]">Received SKUs</h2>
+            <p className="mt-1 text-sm text-[var(--ink-4)]">Each line posts one inward movement. Backordered quote items auto-reserve when matching stock arrives.</p>
+          </div>
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            <div className="rounded-r3 border border-[var(--line)] bg-[var(--bg-soft)] px-4 py-2"><span className="text-[var(--ink-4)]">Total qty</span><b className="ml-2 text-[var(--ink)]">{qty(totalQty)}</b></div>
+            <div className="rounded-r3 border border-[var(--line)] bg-[var(--bg-soft)] px-4 py-2"><span className="text-[var(--ink-4)]">Approx value</span><b className="ml-2 text-[var(--ink)]">{money(totalValue)}</b></div>
           </div>
         </div>
 
-        <div className="mp-card rounded-r5 p-6">
-          <label className="mb-5 block space-y-2">
-            <span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Vendor master</span>
-            <select value={vendorId} onChange={(event) => setVendorId(event.target.value)} className="h-12 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-semibold text-[#18181b]">
-              <option value="">Select vendor for this import</option>
-              {vendors.map((vendor: any) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}
-            </select>
-          </label>
-          <label className="group relative grid min-h-[330px] cursor-pointer place-items-center overflow-hidden rounded-r5 border-2 border-dashed border-[#e4e4e7]/22 bg-white/60 p-8 text-center transition hover:bg-white">
-            <input type="file" accept=".pdf,.xlsx,.xls" className="absolute inset-0 opacity-0" onChange={(event) => setFile(event.target.files?.[0] || null)} disabled={isUploading} />
-            <div>
-              <motion.div animate={{ y: file ? -4 : 0 }} className="mx-auto grid h-20 w-20 place-items-center rounded-r4 bg-[#18181b] text-[#ffffff] shadow-2xl"><UploadCloud className="h-9 w-9" /></motion.div>
-              <h3 className="mt-6 text-3xl font-black tracking-tight">{file ? file.name : 'Drop catalogue file here'}</h3>
-              <p className="mx-auto mt-3 max-w-md text-sm font-semibold leading-6 text-[#52525b]">Choose an Excel or searchable PDF catalogue. The backend will normalize rows into product master data.</p>
-            </div>
-          </label>
+        <div className="mt-5 overflow-x-auto custom-scrollbar">
+          <table className="w-full min-w-[980px] text-left">
+            <thead className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">
+              <tr>
+                <th className="px-3 py-2">SKU</th>
+                <th className="px-3 py-2 text-center">Current avail</th>
+                <th className="px-3 py-2">Qty received</th>
+                <th className="px-3 py-2">Rate</th>
+                <th className="px-3 py-2">Location</th>
+                <th className="px-3 py-2">Line note</th>
+                <th className="px-3 py-2 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--line-soft)]">
+              {rows.length ? rows.map((line, index) => {
+                const balance = byId.get(line.balanceId);
+                const product = balance?.product;
+                return (
+                  <tr key={line.balanceId}>
+                    <td className="px-3 py-3">
+                      <div className="font-semibold text-[var(--ink)]">{product?.sku || 'NO-SKU'}</div>
+                      <div className="text-xs text-[var(--ink-4)]">{product?.name || 'Unnamed SKU'} · {product?.brand || 'No brand'}</div>
+                    </td>
+                    <td className="px-3 py-3 text-center font-semibold tabular-nums text-[var(--ink)]">{qty(balance?.available)}</td>
+                    <td className="px-3 py-3"><Input type="number" min={1} step={1} value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} placeholder="0" /></td>
+                    <td className="px-3 py-3"><Input type="number" min={0} step={0.01} value={line.rate} onChange={(event) => updateLine(index, { rate: event.target.value })} placeholder="Rate" /></td>
+                    <td className="px-3 py-3"><Input value={line.location} onChange={(event) => updateLine(index, { location: event.target.value })} placeholder="Rack / bay" /></td>
+                    <td className="px-3 py-3"><Input value={line.notes} onChange={(event) => updateLine(index, { notes: event.target.value })} placeholder="Optional" /></td>
+                    <td className="px-3 py-3 text-right"><Button type="button" variant="ghost" size="sm" onClick={() => removeLine(index)}><Trash2 className="h-4 w-4" /></Button></td>
+                  </tr>
+                );
+              }) : (
+                <tr>
+                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-[var(--ink-4)]">No GRN lines yet. Select a SKU and add it to this receipt.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
 
-          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Button onClick={handleUpload} disabled={!file || isUploading} size="lg" className="gap-2"><UploadCloud className="h-5 w-5" /> {isUploading ? 'Processing...' : 'Process import'}</Button>
-            {file && <span className="text-sm font-bold text-[#52525b]">{Math.round(file.size / 1024).toLocaleString('en-IN')} KB</span>}
-          </div>
-
-          {result && (
-            <div className="mt-5 rounded-r4 bg-[#ecfdf5] p-5 text-[#059669]">
-              <div className="flex items-center gap-2 font-black"><CheckCircle2 className="h-5 w-5" /> Import result</div>
-              <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs font-bold leading-5 custom-scrollbar">{JSON.stringify(result, null, 2)}</pre>
-            </div>
-          )}
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <Button onClick={submitGrn} disabled={!rows.length || saving}>
+            <FileCheck2 className="mr-2 h-4 w-4" />
+            {saving ? 'Posting GRN...' : 'Post GRN inward'}
+          </Button>
+          <Button type="button" variant="outline" onClick={() => { setRows([]); setMessage(''); }}>Clear lines</Button>
         </div>
       </section>
     </div>

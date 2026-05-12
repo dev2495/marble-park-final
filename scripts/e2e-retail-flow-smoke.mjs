@@ -43,8 +43,7 @@ async function main() {
     input: { leadId: lead.id, customerId: customer.id, title: 'E2E quote with image and stock', projectName: 'E2E Bathroom', notes: 'E2E quote', lines },
   }, token);
   const quote = quoteData.createQuote;
-  assert(quote.approvalStatus === 'pending', 'quote should wait for owner approval before send/confirm');
-  await gql(`mutation($id: ID!, $note: String) { approveQuote(id: $id, note: $note) { id status approvalStatus } }`, { id: quote.id, note: 'E2E owner approval' }, token);
+  assert(quote.approvalStatus === 'approved', 'quote should be ready without owner approval before send/confirm');
   await gql(`mutation($id: ID!) { sendQuote(id: $id) { id status sentAt } }`, { id: quote.id }, token);
   await gql(`mutation($id: ID!) { confirmQuote(id: $id) { id status confirmedAt } }`, { id: quote.id }, token);
 

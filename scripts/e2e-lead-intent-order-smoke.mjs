@@ -144,7 +144,7 @@ async function main() {
   );
   const generated = generatedData.generateQuoteFromIntent;
   const quote = generated.quote;
-  assert(quote.id && quote.approvalStatus === 'pending', 'generated quote should require owner approval');
+  assert(quote.id && quote.approvalStatus === 'approved', 'generated quote should be ready without owner approval');
   assert(generated.pdfUrl === `/api/pdf/quote/${quote.id}`, 'lead follow-up PDF URL should point at the quote PDF route');
   assert(quote.lines.some((line) => line.type === 'tile' && line.tileCode === tileCode), 'quote should preserve tile code intent');
 
@@ -156,12 +156,6 @@ async function main() {
   assert(salesLeadAfterQuote.lead.stage === 'quoted', 'office quote should move sales lead to quoted follow-up stage');
   assert(salesLeadAfterQuote.lead.followUps?.some((task) => String(task.notes || '').includes(`/api/pdf/quote/${quote.id}`)), 'sales follow-up should include shareable quote PDF URL');
 
-  await gql(
-    `mutation($id: ID!, $note: String) { approveQuote(id: $id, note: $note) { id approvalStatus status } }`,
-    { id: quote.id, note: 'Owner approved intent smoke quote.' },
-    admin.token,
-  );
-
   const orderData = await gql(
     `mutation($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`,
     { input: { quoteId: quote.id, paymentMode: 'cash', advanceAmount: 5000, notes: 'Cash advance received.' } },
@@ -170,6 +164,7 @@ async function main() {
   const order = orderData.createSalesOrderFromQuote;
   assert(order.orderNumber?.startsWith('SO/'), 'sales order number should be generated');
   assert(order.paymentMode === 'cash' && order.paymentStatus === 'advance', 'cash order should track advance payment');
+  assert(order.documents?.salesOrderPdfUrl === `/api/pdf/order/${order.id}`, 'sales order should keep a stable order PDF URL');
 
   const orderBook = await gql(
     `query($paymentMode: String, $range: String) { salesOrders(paymentMode: $paymentMode, range: $range) salesOrderStats(range: $range) }`,
@@ -231,6 +226,11 @@ async function main() {
     assert(pdf.ok, `quote PDF route should return 200, got ${pdf.status}`);
     assert(pdf.headers.get('content-type')?.includes('application/pdf'), 'quote PDF should return application/pdf');
     assert(bytes.subarray(0, 4).toString() === '%PDF', 'quote PDF should start with a PDF header');
+    const orderPdf = await fetch(`${WEB}/api/pdf/order/${order.id}`);
+    const orderBytes = Buffer.from(await orderPdf.arrayBuffer());
+    assert(orderPdf.ok, `sales order PDF route should return 200, got ${orderPdf.status}`);
+    assert(orderPdf.headers.get('content-type')?.includes('application/pdf'), 'sales order PDF should return application/pdf');
+    assert(orderBytes.subarray(0, 4).toString() === '%PDF', 'sales order PDF should start with a PDF header');
   }
 
   console.log(JSON.stringify({

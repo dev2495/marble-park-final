@@ -1,17 +1,28 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Bath, Bell, Boxes, Briefcase, ClipboardCheck, FileSpreadsheet,
-  LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
-  Truck, Users, UserCog,
+  Bath, Bell, Boxes, Briefcase, ChevronDown, ClipboardCheck, FileSpreadsheet,
+  History, KeyRound, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
+  Truck, UserCircle2, Users, UserCog,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { UserAvatar } from '@/components/user-avatar';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem,
+} from '@/components/ui/dropdown-menu';
+import { ThemeToggle, ThemeToggleButton } from '@/components/theme-toggle';
+
+const ME_QUERY = gql`
+  query LayoutMe {
+    me { id name email avatarUrl role }
+  }
+`;
 
 const SEARCH_QUERY = gql`
   query GlobalSearch($query: String!) {
@@ -67,13 +78,20 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
     items: [
       { name: 'Customers', href: '/dashboard/customers', icon: Users, roles: ['admin', 'owner', 'sales_manager', 'sales', 'dispatch_ops', 'office_staff'] },
       { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: ['admin', 'owner'] },
+      { name: 'Audit Log', href: '/dashboard/audit', icon: History, roles: ['admin', 'owner'] },
       { name: 'Master Data', href: '/dashboard/master-data', icon: Settings, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'] },
       { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'owner'] },
     ],
   },
+  {
+    title: 'Account',
+    items: [
+      { name: 'My Profile', href: '/dashboard/profile', icon: UserCircle2, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
+    ],
+  },
 ];
 
-const roleOptions = [
+const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
   { value: 'owner', label: 'Owner' },
   { value: 'sales_manager', label: 'Sales Manager' },
@@ -87,7 +105,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard': 'Command Center',
   '/dashboard/products': 'Catalogue',
   '/dashboard/inventory': 'Inventory',
-  '/dashboard/inventory/inwards': 'Inwards',
+  '/dashboard/inventory/inwards': 'GRN Inward',
   '/dashboard/sales': 'Sales Desk',
   '/dashboard/approvals': 'Approval Desk',
   '/dashboard/intents': 'Intent Desk',
@@ -109,25 +127,23 @@ const pageTitles: Record<string, string> = {
   '/dashboard/master-data/categories': 'Category Master',
   '/dashboard/master-data/vendors': 'Vendor Master',
   '/dashboard/settings': 'Settings',
+  '/dashboard/profile': 'My Profile',
+  '/dashboard/audit': 'Audit Log',
 };
 
 /**
- * Layout sidebar — hover-to-peek floating rail.
+ * Dashboard layout.
  *
- *   • Rail width: 4.5rem (72px). Always visible — icons only.
- *   • Expanded width: 16rem (256px). Triggered by hover OR focus-within
- *     (keyboard accessibility free).
- *   • Floats OVER the content via fixed position + soft shadow. Main
- *     content padding stays constant at the rail width so the page never
- *     reflows when the panel opens.
- *   • Entry: instant (delay-0). Exit: 250 ms grace delay so accidental
- *     mouse-outs don't snap it shut. Pure CSS — `transition-delay` is set
- *     short on the hover state and long on the resting state.
- *   • Labels: opacity tween, 120 ms ease-out, delayed ~140 ms after the
- *     width starts opening so they "arrive" inside the panel instead of
- *     getting clipped during the slide.
- *   • Active item: gentle blue tint that's still visible in the rail
- *     state (icon column).
+ *   ┌─────────────────────────────────────────────────────────────────────┐
+ *   │ Sidebar (hover-to-peek floating rail, 72px → 256px)                │
+ *   │   • Pure-CSS animation, instant open, 250ms lazy-close              │
+ *   │   • Scrim sibling (peer-hover/rail:…) dims content when expanded    │
+ *   │   • Footer: avatar → /dashboard/profile                             │
+ *   ├─────────────────────────────────────────────────────────────────────┤
+ *   │ Topbar (sticky, blurred)                                            │
+ *   │   • Title · Search · Notifications (Radix) · Profile menu (Radix)   │
+ *   │   • All popovers close-on-outside-click via Radix                   │
+ *   └─────────────────────────────────────────────────────────────────────┘
  */
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -136,7 +152,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [roleOverride, setRoleOverride] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showResults, setShowResults] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -148,6 +163,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (stored) setUser(JSON.parse(stored));
     setRoleOverride(localStorage.getItem('role_override') || '');
   }, [router]);
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+
+  const clearSidebarTimer = () => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const closeSidebarSoon = () => {
+    clearSidebarTimer();
+    closeTimerRef.current = window.setTimeout(() => setSidebarOpen(false), 110);
+  };
+
+  const openSidebar = () => {
+    clearSidebarTimer();
+    setSidebarOpen(true);
+  };
+
+  // Route changes previously left Safari focus/hover state stuck open. Treat
+  // every navigation as a hard rail reset so the next hover starts cleanly.
+  useEffect(() => {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    clearSidebarTimer();
+    setSidebarOpen(false);
+    return clearSidebarTimer;
+  }, [pathname]);
 
   const effectiveRole = user?.role === 'admin' && roleOverride ? roleOverride : user?.role || 'owner';
   const visibleSections = navSections
@@ -164,6 +208,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     skip: !user,
     pollInterval: 30000,
   });
+  const { data: meData } = useQuery(ME_QUERY, { skip: !user, fetchPolicy: 'cache-and-network' });
+  const me = meData?.me || user;
   const [markNotificationRead] = useMutation(MARK_NOTIFICATION_READ, { onCompleted: () => refetchNotifications() });
 
   const handleLogout = () => {
@@ -173,51 +219,45 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     window.location.href = '/login';
   };
 
-  // Shared tween classes for fading labels in *after* the rail opens.
-  // delay-0 in resting state (instant fade-out), delay-[140ms] when hovered
-  // (so labels appear after the width animation has begun, never clipped).
-  const fadeIn =
-    'opacity-0 -translate-x-1 transition-[opacity,transform] duration-150 ease-out ' +
-    'group-hover/rail:opacity-100 group-hover/rail:translate-x-0 group-hover/rail:delay-[140ms] ' +
-    'group-focus-within/rail:opacity-100 group-focus-within/rail:translate-x-0 group-focus-within/rail:delay-[140ms]';
+  const labelClass = sidebarOpen
+    ? 'pointer-events-auto max-w-[12rem] translate-x-0 opacity-100'
+    : 'pointer-events-none max-w-0 -translate-x-2 opacity-0';
+
+  const unreadCount = Number(notificationData?.unreadNotificationCount || 0);
 
   return (
-    <div className="min-h-screen w-full bg-[#fafafa] text-[#27272a]">
-      {/* ─── Sidebar — hover-to-peek floating rail ───────────────────────── */}
+    <div className="min-h-screen w-full bg-[#f7f8fb] text-[#27272a]">
+      {/* ─── Sidebar — narrow by default, opens only while hovered ───────── */}
       <aside
         aria-label="Primary workspace navigation"
+        onMouseEnter={openSidebar}
+        onMouseLeave={closeSidebarSoon}
+        onFocusCapture={openSidebar}
+        onBlurCapture={closeSidebarSoon}
         className={cn(
-          'group/rail fixed inset-y-0 left-0 z-40 hidden w-[4.5rem] overflow-hidden border-r border-[#e4e4e7] bg-white lg:block',
-          // Width + shadow tweens. The 250 ms delay on the resting state +
-          // 0 ms delay on the hover state creates "instant open, lazy close".
-          'transition-[width,box-shadow] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] delay-[250ms]',
-          'hover:w-[16rem] hover:shadow-[0_24px_60px_-20px_rgba(24,24,27,0.18)] hover:delay-0',
-          'focus-within:w-[16rem] focus-within:shadow-[0_24px_60px_-20px_rgba(24,24,27,0.18)] focus-within:delay-0',
+          'fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-[var(--line)] bg-[var(--surface)]/96 backdrop-blur-xl lg:flex',
+          'transition-[width,box-shadow,background-color,border-color] duration-300 ease-out',
+          sidebarOpen ? 'w-[16rem] shadow-[0_24px_60px_-28px_rgba(15,23,42,0.45)]' : 'w-[4.5rem] shadow-sm',
         )}
       >
-        <div className="flex h-full w-[16rem] flex-col">
-          {/* Brand */}
-          <div className="flex h-16 items-center gap-3 border-b border-[#e4e4e7] px-4">
-            <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#2563eb] text-sm font-bold text-white">MP</div>
-              <div className={cn('min-w-0 whitespace-nowrap', fadeIn)}>
-                <p className="text-base font-bold leading-tight text-[#18181b]">Marble Park</p>
-                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[#71717a]">Retail Ops</p>
+        <div className={cn('flex h-full flex-col overflow-hidden transition-[width] duration-300 ease-out', sidebarOpen ? 'w-[16rem]' : 'w-[4.5rem]')}>
+          <div className={cn('flex h-16 items-center gap-3 border-b border-[var(--line)]', sidebarOpen ? 'px-4' : 'justify-center px-2')}>
+            <Link href="/dashboard" onClick={() => setSidebarOpen(false)} className="flex min-w-0 items-center gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#2563eb] text-sm font-bold text-white shadow-[0_4px_12px_-4px_rgba(37,99,235,0.45)]">MP</div>
+              <div className={cn('min-w-0 overflow-hidden whitespace-nowrap transition-all duration-200 ease-out', labelClass)}>
+                <p className="text-base font-bold leading-tight text-[var(--ink)]">Marble Park</p>
+                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
               </div>
             </Link>
           </div>
 
-          {/* Nav */}
           <nav className="flex-1 overflow-y-auto py-3 custom-scrollbar">
             {visibleSections.map((section) => (
               <div key={section.title} className="px-3 pb-4">
-                {/* Section title — visible only when expanded */}
                 <p
                   className={cn(
-                    'px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#a1a1aa]',
-                    'whitespace-nowrap opacity-0 transition-opacity duration-150',
-                    'group-hover/rail:opacity-100 group-hover/rail:delay-[140ms]',
-                    'group-focus-within/rail:opacity-100 group-focus-within/rail:delay-[140ms]',
+                    'overflow-hidden whitespace-nowrap px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)] transition-all duration-200 ease-out',
+                    labelClass,
                   )}
                   aria-hidden="true"
                 >
@@ -231,21 +271,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         <Link
                           href={item.href}
                           title={item.name}
+                          onClick={() => setSidebarOpen(false)}
                           className={cn(
-                            'flex h-9 items-center gap-3 rounded-md px-2.5 text-sm font-medium transition-colors',
+                            'flex h-9 items-center gap-3 rounded-md text-sm font-medium transition-[background-color,color,box-shadow,transform] duration-200',
+                            sidebarOpen ? 'px-2.5' : 'justify-center px-0',
                             active
-                              ? 'bg-[#eff6ff] text-[#1d4ed8]'
-                              : 'text-[#52525b] hover:bg-[#f4f4f5] hover:text-[#18181b]',
+                              ? 'bg-[var(--brand-50)] text-[var(--brand-800)] shadow-[inset_0_0_0_1px_var(--brand-100)]'
+                              : 'text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]',
                           )}
                         >
                           <item.icon
-                            className={cn(
-                              'h-[18px] w-[18px] shrink-0 transition-colors',
-                              active ? 'text-[#2563eb]' : 'text-[#71717a]',
-                            )}
+                            className={cn('h-[18px] w-[18px] shrink-0 transition-colors', active ? 'text-[var(--brand-700)]' : 'text-[var(--ink-4)]')}
                             strokeWidth={1.6}
                           />
-                          <span className={cn('truncate whitespace-nowrap', fadeIn)}>{item.name}</span>
+                          <span className={cn('overflow-hidden truncate whitespace-nowrap transition-all duration-200 ease-out', labelClass)}>{item.name}</span>
                         </Link>
                       </li>
                     );
@@ -255,32 +294,34 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             ))}
           </nav>
 
-          {/* Footer: user + sign out */}
-          <div className="border-t border-[#e4e4e7] p-3">
-            <div className="flex items-center gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#f4f4f5] text-sm font-semibold text-[#27272a]">
-                {(user?.name?.[0] || 'M').toUpperCase()}
+          <div className="border-t border-[var(--line)] p-3">
+            <Link href="/dashboard/profile" onClick={() => setSidebarOpen(false)} className={cn('flex items-center gap-3 rounded-md p-1 transition-colors hover:bg-[var(--bg-soft)]', !sidebarOpen && 'justify-center')} title="Open profile">
+              <UserAvatar user={me} size="md" />
+              <div className={cn('min-w-0 flex-1 overflow-hidden whitespace-nowrap transition-all duration-200 ease-out', labelClass)}>
+                <p className="truncate text-sm font-semibold text-[var(--ink)]">{me?.name || 'Marble Park User'}</p>
+                <p className="truncate text-[11px] font-medium capitalize text-[var(--ink-4)]">{effectiveRole.replace('_', ' ')}</p>
               </div>
-              <div className={cn('min-w-0 flex-1 whitespace-nowrap', fadeIn)}>
-                <p className="truncate text-sm font-semibold text-[#18181b]">{user?.name || 'Marble Park User'}</p>
-                <p className="truncate text-[11px] font-medium capitalize text-[#71717a]">{effectiveRole.replace('_', ' ')}</p>
+            </Link>
+            <div className={cn('mt-3 flex gap-1.5', sidebarOpen ? 'items-center' : 'flex-col items-center')}>
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-[var(--ink-4)]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand-600)] shadow-[0_0_0_4px_var(--brand-50)]" />
               </div>
+              <button
+                onClick={handleLogout}
+                title="Sign out"
+                className={cn('flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-[var(--ink-3)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]', sidebarOpen ? 'flex-1 px-3' : 'w-9')}
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                <span className={cn('overflow-hidden truncate whitespace-nowrap transition-all duration-200 ease-out', labelClass)}>Sign out</span>
+              </button>
             </div>
-            <button
-              onClick={handleLogout}
-              title="Sign out"
-              className="mt-3 flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-sm font-medium text-[#52525b] transition-colors hover:bg-[#f4f4f5] hover:text-[#18181b]"
-            >
-              <LogOut className="h-4 w-4 shrink-0" />
-              <span className={cn('truncate whitespace-nowrap', fadeIn)}>Sign out</span>
-            </button>
           </div>
         </div>
       </aside>
 
-      <main className="min-w-0 lg:pl-[4.5rem]">
-        {/* Topbar */}
-        <header className="sticky top-0 z-30 border-b border-[#e4e4e7] bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+      <main className="min-w-0 transition-[padding] duration-300 ease-out lg:pl-[4.5rem]">
+        {/* ─── Topbar ───────────────────────────────────────────────────── */}
+        <header className="sticky top-0 z-20 border-b border-[#e4e4e7] bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/75">
           <div className="flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -292,6 +333,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Global search */}
               <div className="relative min-w-0 flex-1 lg:w-[26rem] lg:flex-none">
                 <div className={cn('flex h-9 items-center rounded-md border bg-white px-3 transition-colors', showResults ? 'border-[#60a5fa]' : 'border-[#e4e4e7]')}>
                   <Search className="mr-2 h-4 w-4 text-[#71717a]" />
@@ -309,117 +351,169 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#2563eb]" /> : null}
                 </div>
 
-                <AnimatePresence>
-                  {showResults && searchQuery.length >= 2 ? (
-                    <motion.div
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 6 }}
-                      transition={{ duration: 0.16 }}
-                      className="absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[#e4e4e7] bg-white p-1 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)] lg:w-[26rem]"
-                    >
-                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#71717a]">Products</div>
-                      <div className="max-h-80 overflow-y-auto custom-scrollbar">
-                        {searchResults?.globalSearch?.products?.length ? (
-                          searchResults.globalSearch.products.map((product: any) => (
-                            <button
-                              key={product.id}
-                              onClick={() => router.push(`/dashboard/products?sku=${product.sku}`)}
-                              className="flex w-full items-center justify-between gap-3 rounded-md p-2.5 text-left transition-colors hover:bg-[#f4f4f5]"
-                            >
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-medium text-[#18181b]">{product.name}</p>
-                                <p className="truncate text-[11px] font-medium text-[#71717a]">
-                                  <span className="mp-mono">{product.sku}</span> · {product.brand}
-                                </p>
-                              </div>
-                              <span className="shrink-0 text-sm font-semibold text-[#18181b]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
-                            </button>
-                          ))
-                        ) : (
-                          <p className="p-3 text-sm text-[#71717a]">No matches.</p>
-                        )}
-                      </div>
-                    </motion.div>
-                  ) : null}
-                </AnimatePresence>
-              </div>
-
-              {user?.role === 'admin' ? (
-                <div className="hidden h-9 items-center gap-1.5 rounded-md border border-[#e4e4e7] bg-white px-2 text-xs font-medium text-[#27272a] lg:flex">
-                  <Shield className="h-3.5 w-3.5 text-[#2563eb]" />
-                  <select
-                    value={effectiveRole}
-                    onChange={(event) => {
-                      localStorage.setItem('role_override', event.target.value);
-                      setRoleOverride(event.target.value);
-                      window.location.href = '/dashboard';
-                    }}
-                    className="bg-transparent text-xs font-medium outline-none"
-                    aria-label="Role preview"
-                  >
-                    {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
-                  </select>
-                </div>
-              ) : null}
-
-              <div className="relative">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="relative h-9 w-9 rounded-md border-[#e4e4e7] hover:bg-[#f4f4f5]"
-                  onClick={() => setShowNotifications((current) => !current)}
-                  aria-label="Notifications"
-                >
-                  <Bell className="h-4 w-4 text-[#27272a]" />
-                  {Number(notificationData?.unreadNotificationCount || 0) > 0 ? (
-                    <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#dc2626] px-1 text-[10px] font-semibold text-white">
-                      {notificationData.unreadNotificationCount}
-                    </span>
-                  ) : null}
-                </Button>
-                <AnimatePresence>
-                  {showNotifications ? (
-                    <motion.div
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 6 }}
-                      transition={{ duration: 0.16 }}
-                      className="absolute right-0 top-full z-50 mt-2 w-[22rem] overflow-hidden rounded-md border border-[#e4e4e7] bg-white p-2 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)]"
-                    >
-                      <div className="flex items-center justify-between px-2 py-1">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-[#71717a]">Notifications</p>
-                        <Link href="/dashboard" onClick={() => setShowNotifications(false)} className="text-xs font-medium text-[#1d4ed8] hover:underline">Open</Link>
-                      </div>
-                      <div className="mt-1 max-h-96 space-y-1 overflow-y-auto custom-scrollbar">
-                        {(notificationData?.notifications || []).length ? (notificationData?.notifications || []).map((notification: any) => (
+                {showResults && searchQuery.length >= 2 ? (
+                  <div className="animate-fade-in animate-slide-in absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[#e4e4e7] bg-white p-1 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)] lg:w-[26rem]">
+                    <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#71717a]">Products</div>
+                    <div className="max-h-80 overflow-y-auto custom-scrollbar">
+                      {searchResults?.globalSearch?.products?.length ? (
+                        searchResults.globalSearch.products.map((product: any) => (
                           <button
-                            key={notification.id}
-                            onClick={async () => {
-                              await markNotificationRead({ variables: { id: notification.id } });
-                              if (notification.href) router.push(notification.href);
-                              setShowNotifications(false);
-                            }}
-                            className={cn(
-                              'w-full rounded-md p-2.5 text-left transition-colors hover:bg-[#f4f4f5]',
-                              !notification.readAt ? 'bg-[#eff6ff]' : '',
-                            )}
+                            key={product.id}
+                            onMouseDown={() => router.push(`/dashboard/products?sku=${product.sku}`)}
+                            className="flex w-full items-center justify-between gap-3 rounded-md p-2.5 text-left transition-colors hover:bg-[#f4f4f5]"
                           >
-                            <div className="flex items-start justify-between gap-3">
-                              <p className="text-sm font-semibold text-[#18181b]">{notification.title}</p>
-                              {!notification.readAt ? <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#2563eb]" /> : null}
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-[#18181b]">{product.name}</p>
+                              <p className="truncate text-[11px] font-medium text-[#71717a]">
+                                <span className="mp-mono">{product.sku}</span> · {product.brand}
+                              </p>
                             </div>
-                            <p className="mt-0.5 line-clamp-2 text-xs text-[#52525b]">{notification.message}</p>
-                            <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[#a1a1aa]">
-                              {notification.type} · {new Date(notification.createdAt).toLocaleString()}
-                            </p>
+                            <span className="shrink-0 text-sm font-semibold text-[#18181b]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
                           </button>
-                        )) : <p className="p-3 text-sm text-[#71717a]">No notifications yet.</p>}
-                      </div>
-                    </motion.div>
-                  ) : null}
-                </AnimatePresence>
+                        ))
+                      ) : (
+                        <p className="p-3 text-sm text-[#71717a]">No matches.</p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
               </div>
+
+              {/* Quick light/dark toggle */}
+              <ThemeToggleButton className="hidden sm:inline-flex" />
+
+              {/* ─── Notifications dropdown (Radix — close on outside click) ─── */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="relative grid h-9 w-9 place-items-center rounded-md border border-[#e4e4e7] bg-white text-[#27272a] transition-colors hover:bg-[#f4f4f5]"
+                    aria-label="Notifications"
+                  >
+                    <Bell className="h-4 w-4" />
+                    {unreadCount > 0 ? (
+                      <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#dc2626] px-1 text-[10px] font-semibold text-white">
+                        {unreadCount}
+                      </span>
+                    ) : null}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-[22rem]">
+                  <DropdownMenuLabel className="flex items-center justify-between">
+                    <span>Notifications</span>
+                    {unreadCount > 0 ? <span className="rounded-full bg-[#fef2f2] px-1.5 text-[10px] font-semibold text-[#b91c1c]">{unreadCount} new</span> : null}
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <div className="max-h-96 overflow-y-auto custom-scrollbar">
+                    {(notificationData?.notifications || []).length ? (notificationData?.notifications || []).map((notification: any) => (
+                      <DropdownMenuItem
+                        key={notification.id}
+                        onSelect={async (event) => {
+                          event.preventDefault();
+                          await markNotificationRead({ variables: { id: notification.id } });
+                          if (notification.href) router.push(notification.href);
+                        }}
+                        className={cn('items-start gap-2.5 px-2.5 py-2.5', !notification.readAt ? 'bg-[#eff6ff]' : '')}
+                      >
+                        <span className={cn('mt-1 h-1.5 w-1.5 shrink-0 rounded-full', !notification.readAt ? 'bg-[#2563eb]' : 'bg-[#e4e4e7]')} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-[#18181b]">{notification.title}</p>
+                          <p className="mt-0.5 line-clamp-2 text-xs text-[#52525b]">{notification.message}</p>
+                          <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[#a1a1aa]">
+                            {notification.type} · {new Date(notification.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                      </DropdownMenuItem>
+                    )) : (
+                      <p className="px-3 py-6 text-center text-sm text-[#71717a]">No notifications yet.</p>
+                    )}
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {/* ─── Profile dropdown ─── */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-9 items-center gap-2 rounded-md border border-[#e4e4e7] bg-white pl-1 pr-2 transition-colors hover:bg-[#f4f4f5]"
+                    aria-label="Profile menu"
+                  >
+                    <UserAvatar user={me} size="sm" />
+                    <span className="hidden text-sm font-medium text-[#18181b] sm:inline-block">{me?.name?.split(/\s+/)[0] || 'Account'}</span>
+                    <ChevronDown className="h-3.5 w-3.5 text-[#71717a]" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  <div className="flex items-center gap-3 px-2.5 py-2">
+                    <UserAvatar user={me} size="md" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-[#18181b]">{me?.name || 'Marble Park User'}</p>
+                      <p className="truncate text-[11px] text-[#71717a]">{me?.email}</p>
+                    </div>
+                  </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => router.push('/dashboard/profile')}>
+                    <UserCircle2 className="h-4 w-4 text-[#52525b]" />
+                    <span>View profile</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => router.push('/dashboard/profile#change-password')}>
+                    <KeyRound className="h-4 w-4 text-[#52525b]" />
+                    <span>Change password</span>
+                  </DropdownMenuItem>
+
+                  <DropdownMenuSeparator />
+                  <div className="flex items-center justify-between px-2.5 py-1.5">
+                    <span className="text-xs font-medium text-[#52525b]">Theme</span>
+                    <ThemeToggle />
+                  </div>
+
+                  {user?.role === 'admin' ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="flex items-center gap-1.5"><Shield className="h-3 w-3 text-[#2563eb]" /> Preview as role</DropdownMenuLabel>
+                      <DropdownMenuRadioGroup
+                        value={effectiveRole}
+                        onValueChange={(value) => {
+                          // Picking "admin" clears the override so admin lands
+                          // on their own admin command center, not a stale
+                          // preview of themselves.
+                          if (value === 'admin') {
+                            localStorage.removeItem('role_override');
+                            setRoleOverride('');
+                          } else {
+                            localStorage.setItem('role_override', value);
+                            setRoleOverride(value);
+                          }
+                          window.location.href = '/dashboard';
+                        }}
+                      >
+                        {ROLE_OPTIONS.map((role) => (
+                          <DropdownMenuRadioItem key={role.value} value={role.value}>
+                            {role.label}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </>
+                  ) : null}
+
+                  {['admin', 'owner'].includes(user?.role) ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => router.push('/dashboard/settings')}>
+                        <Settings className="h-4 w-4 text-[#52525b]" />
+                        <span>System settings</span>
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem danger onSelect={handleLogout}>
+                    <LogOut className="h-4 w-4" />
+                    <span>Sign out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
