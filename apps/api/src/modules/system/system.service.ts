@@ -12,10 +12,11 @@ export class SystemService {
   async getSettings() {
     let settings = await this.prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } });
     if (!settings) {
+      const railwayUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
       settings = await this.prisma.appSetting.create({
         data: {
           id: 'default',
-          canonicalAppUrl: 'http://localhost:3001',
+          canonicalAppUrl: process.env.PUBLIC_APP_URL || railwayUrl || '',
           quotePrefix: 'QT',
           challanPrefix: 'CH',
           approvalDiscountThreshold: 15,

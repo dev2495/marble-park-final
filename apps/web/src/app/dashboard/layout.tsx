@@ -6,10 +6,9 @@ import { usePathname, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
   Bath, Bell, Boxes, Briefcase, ChevronDown, ClipboardCheck, FileSpreadsheet,
-  History, KeyRound, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
-  Truck, UserCircle2, Users, UserCog,
+  History, KeyRound, LayoutDashboard, ListChecks, LogOut, Menu, PackageSearch, Receipt, Search, Settings, Shield,
+  Truck, UserCircle2, Users, UserCog, X,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { UserAvatar } from '@/components/user-avatar';
 import {
@@ -165,6 +164,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [router]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
 
   const clearSidebarTimer = () => {
@@ -190,6 +190,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     (document.activeElement as HTMLElement | null)?.blur?.();
     clearSidebarTimer();
     setSidebarOpen(false);
+    setMobileNavOpen(false);
     return clearSidebarTimer;
   }, [pathname]);
 
@@ -226,7 +227,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const unreadCount = Number(notificationData?.unreadNotificationCount || 0);
 
   return (
-    <div className="min-h-screen w-full bg-[#f7f8fb] text-[#27272a]">
+    <div className="min-h-screen w-full bg-[var(--bg)] text-[var(--ink-2)]">
       {/* ─── Sidebar — narrow by default, opens only while hovered ───────── */}
       <aside
         aria-label="Primary workspace navigation"
@@ -319,24 +320,93 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
+      {/* Mobile navigation — explicit top button, no accidental rail. */}
+      {mobileNavOpen ? (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            type="button"
+            aria-label="Close menu"
+            className="absolute inset-0 bg-slate-950/35 backdrop-blur-sm"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside className="relative flex h-full w-[84vw] max-w-[22rem] flex-col border-r border-[var(--line)] bg-[var(--surface)] shadow-[0_30px_100px_-50px_rgba(15,23,42,0.75)]">
+            <div className="flex h-16 items-center justify-between border-b border-[var(--line)] px-4">
+              <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} className="flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-r3 bg-[var(--brand-600)] text-sm font-black text-white">MP</div>
+                <div>
+                  <p className="text-base font-bold text-[var(--ink)]">Marble Park</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
+                </div>
+              </Link>
+              <button type="button" onClick={() => setMobileNavOpen(false)} className="grid h-9 w-9 place-items-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-3)]">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <nav className="flex-1 overflow-y-auto p-3 custom-scrollbar">
+              {visibleSections.map((section) => (
+                <div key={section.title} className="pb-4">
+                  <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">{section.title}</p>
+                  <ul className="space-y-1">
+                    {section.items.map((item) => {
+                      const active = isNavActive(item.href);
+                      return (
+                        <li key={item.href}>
+                          <Link
+                            href={item.href}
+                            onClick={() => setMobileNavOpen(false)}
+                            className={cn(
+                              'flex h-11 items-center gap-3 rounded-r3 px-3 text-sm font-semibold transition-colors',
+                              active ? 'bg-[var(--brand-50)] text-[var(--brand-800)]' : 'text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]',
+                            )}
+                          >
+                            <item.icon className="h-[18px] w-[18px]" strokeWidth={1.6} />
+                            {item.name}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </nav>
+            <div className="border-t border-[var(--line)] p-4">
+              <div className="flex items-center gap-3">
+                <UserAvatar user={me} size="md" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-[var(--ink)]">{me?.name || 'Marble Park User'}</p>
+                  <p className="truncate text-xs capitalize text-[var(--ink-4)]">{effectiveRole.replace('_', ' ')}</p>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       <main className="min-w-0 transition-[padding] duration-300 ease-out lg:pl-[4.5rem]">
         {/* ─── Topbar ───────────────────────────────────────────────────── */}
-        <header className="sticky top-0 z-20 border-b border-[#e4e4e7] bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+        <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-[var(--surface)]/88 backdrop-blur supports-[backdrop-filter]:bg-[var(--surface)]/78">
           <div className="flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
             <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                aria-label="Open navigation"
+                onClick={() => setMobileNavOpen(true)}
+                className="grid h-9 w-9 place-items-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-3)] shadow-sm-soft lg:hidden"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
               <div className="min-w-0">
-                <h1 className="truncate text-base font-semibold text-[#18181b] lg:text-lg">
+                <h1 className="truncate text-base font-semibold text-[var(--ink)] lg:text-lg">
                   {pageTitles[pathname] || pageTitles[pathname.replace(/\/[^/]+$/, '')] || 'Workspace'}
                 </h1>
               </div>
-              <Link href="/dashboard" className="grid h-9 w-9 place-items-center rounded-md bg-[#2563eb] text-xs font-bold text-white lg:hidden">MP</Link>
             </div>
 
             <div className="flex items-center gap-2">
               {/* Global search */}
               <div className="relative min-w-0 flex-1 lg:w-[26rem] lg:flex-none">
-                <div className={cn('flex h-9 items-center rounded-md border bg-white px-3 transition-colors', showResults ? 'border-[#60a5fa]' : 'border-[#e4e4e7]')}>
-                  <Search className="mr-2 h-4 w-4 text-[#71717a]" />
+                <div className={cn('flex h-9 items-center rounded-md border bg-[var(--surface)] px-3 shadow-sm-soft transition-colors', showResults ? 'border-[var(--brand-400)]' : 'border-[var(--line)]')}>
+                  <Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" />
                   <input
                     value={searchQuery}
                     onChange={(event) => {
@@ -346,33 +416,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     onFocus={() => setShowResults(searchQuery.length > 1)}
                     onBlur={() => setTimeout(() => setShowResults(false), 180)}
                     placeholder="Search SKU, customer, lead, quote…"
-                    className="w-full bg-transparent text-sm text-[#18181b] outline-none placeholder:text-[#a1a1aa]"
+                    className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)]"
                   />
                   {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#2563eb]" /> : null}
                 </div>
 
                 {showResults && searchQuery.length >= 2 ? (
-                  <div className="animate-fade-in animate-slide-in absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[#e4e4e7] bg-white p-1 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)] lg:w-[26rem]">
-                    <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#71717a]">Products</div>
+                  <div className="animate-fade-in animate-slide-in absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)] lg:w-[26rem]">
+                    <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">Products</div>
                     <div className="max-h-80 overflow-y-auto custom-scrollbar">
                       {searchResults?.globalSearch?.products?.length ? (
                         searchResults.globalSearch.products.map((product: any) => (
                           <button
                             key={product.id}
                             onMouseDown={() => router.push(`/dashboard/products?sku=${product.sku}`)}
-                            className="flex w-full items-center justify-between gap-3 rounded-md p-2.5 text-left transition-colors hover:bg-[#f4f4f5]"
+                            className="flex w-full items-center justify-between gap-3 rounded-md p-2.5 text-left transition-colors hover:bg-[var(--bg-soft)]"
                           >
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-[#18181b]">{product.name}</p>
-                              <p className="truncate text-[11px] font-medium text-[#71717a]">
+                              <p className="truncate text-sm font-medium text-[var(--ink)]">{product.name}</p>
+                              <p className="truncate text-[11px] font-medium text-[var(--ink-4)]">
                                 <span className="mp-mono">{product.sku}</span> · {product.brand}
                               </p>
                             </div>
-                            <span className="shrink-0 text-sm font-semibold text-[#18181b]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
+                            <span className="shrink-0 text-sm font-semibold text-[var(--ink)]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
                           </button>
                         ))
                       ) : (
-                        <p className="p-3 text-sm text-[#71717a]">No matches.</p>
+                        <p className="p-3 text-sm text-[var(--ink-4)]">No matches.</p>
                       )}
                     </div>
                   </div>
@@ -380,14 +450,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               {/* Quick light/dark toggle */}
-              <ThemeToggleButton className="hidden sm:inline-flex" />
+              <ThemeToggleButton className="inline-flex" />
 
               {/* ─── Notifications dropdown (Radix — close on outside click) ─── */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="relative grid h-9 w-9 place-items-center rounded-md border border-[#e4e4e7] bg-white text-[#27272a] transition-colors hover:bg-[#f4f4f5]"
+                    className="relative grid h-9 w-9 place-items-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)] shadow-sm-soft transition-colors hover:bg-[var(--bg-soft)]"
                     aria-label="Notifications"
                   >
                     <Bell className="h-4 w-4" />
@@ -401,7 +471,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <DropdownMenuContent align="end" className="w-[22rem]">
                   <DropdownMenuLabel className="flex items-center justify-between">
                     <span>Notifications</span>
-                    {unreadCount > 0 ? <span className="rounded-full bg-[#fef2f2] px-1.5 text-[10px] font-semibold text-[#b91c1c]">{unreadCount} new</span> : null}
+                    {unreadCount > 0 ? <span className="rounded-full bg-[var(--danger-bg)] px-1.5 text-[10px] font-semibold text-[var(--danger)]">{unreadCount} new</span> : null}
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <div className="max-h-96 overflow-y-auto custom-scrollbar">
@@ -413,19 +483,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           await markNotificationRead({ variables: { id: notification.id } });
                           if (notification.href) router.push(notification.href);
                         }}
-                        className={cn('items-start gap-2.5 px-2.5 py-2.5', !notification.readAt ? 'bg-[#eff6ff]' : '')}
+                        className={cn('items-start gap-2.5 px-2.5 py-2.5', !notification.readAt ? 'bg-[var(--brand-50)]' : '')}
                       >
-                        <span className={cn('mt-1 h-1.5 w-1.5 shrink-0 rounded-full', !notification.readAt ? 'bg-[#2563eb]' : 'bg-[#e4e4e7]')} />
+                        <span className={cn('mt-1 h-1.5 w-1.5 shrink-0 rounded-full', !notification.readAt ? 'bg-[var(--brand-600)]' : 'bg-[var(--line)]')} />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold text-[#18181b]">{notification.title}</p>
-                          <p className="mt-0.5 line-clamp-2 text-xs text-[#52525b]">{notification.message}</p>
-                          <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[#a1a1aa]">
+                          <p className="truncate text-sm font-semibold text-[var(--ink)]">{notification.title}</p>
+                          <p className="mt-0.5 line-clamp-2 text-xs text-[var(--ink-3)]">{notification.message}</p>
+                          <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[var(--ink-5)]">
                             {notification.type} · {new Date(notification.createdAt).toLocaleString()}
                           </p>
                         </div>
                       </DropdownMenuItem>
                     )) : (
-                      <p className="px-3 py-6 text-center text-sm text-[#71717a]">No notifications yet.</p>
+                      <p className="px-3 py-6 text-center text-sm text-[var(--ink-4)]">No notifications yet.</p>
                     )}
                   </div>
                 </DropdownMenuContent>
@@ -436,42 +506,42 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex h-9 items-center gap-2 rounded-md border border-[#e4e4e7] bg-white pl-1 pr-2 transition-colors hover:bg-[#f4f4f5]"
+                    className="flex h-9 items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] pl-1 pr-2 shadow-sm-soft transition-colors hover:bg-[var(--bg-soft)]"
                     aria-label="Profile menu"
                   >
                     <UserAvatar user={me} size="sm" />
-                    <span className="hidden text-sm font-medium text-[#18181b] sm:inline-block">{me?.name?.split(/\s+/)[0] || 'Account'}</span>
-                    <ChevronDown className="h-3.5 w-3.5 text-[#71717a]" />
+                    <span className="hidden text-sm font-medium text-[var(--ink)] sm:inline-block">{me?.name?.split(/\s+/)[0] || 'Account'}</span>
+                    <ChevronDown className="h-3.5 w-3.5 text-[var(--ink-4)]" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-64">
                   <div className="flex items-center gap-3 px-2.5 py-2">
                     <UserAvatar user={me} size="md" />
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-[#18181b]">{me?.name || 'Marble Park User'}</p>
-                      <p className="truncate text-[11px] text-[#71717a]">{me?.email}</p>
+                      <p className="truncate text-sm font-semibold text-[var(--ink)]">{me?.name || 'Marble Park User'}</p>
+                      <p className="truncate text-[11px] text-[var(--ink-4)]">{me?.email}</p>
                     </div>
                   </div>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={() => router.push('/dashboard/profile')}>
-                    <UserCircle2 className="h-4 w-4 text-[#52525b]" />
+                    <UserCircle2 className="h-4 w-4 text-[var(--ink-3)]" />
                     <span>View profile</span>
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => router.push('/dashboard/profile#change-password')}>
-                    <KeyRound className="h-4 w-4 text-[#52525b]" />
+                    <KeyRound className="h-4 w-4 text-[var(--ink-3)]" />
                     <span>Change password</span>
                   </DropdownMenuItem>
 
                   <DropdownMenuSeparator />
                   <div className="flex items-center justify-between px-2.5 py-1.5">
-                    <span className="text-xs font-medium text-[#52525b]">Theme</span>
+                    <span className="text-xs font-medium text-[var(--ink-3)]">Theme</span>
                     <ThemeToggle />
                   </div>
 
                   {user?.role === 'admin' ? (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuLabel className="flex items-center gap-1.5"><Shield className="h-3 w-3 text-[#2563eb]" /> Preview as role</DropdownMenuLabel>
+                      <DropdownMenuLabel className="flex items-center gap-1.5"><Shield className="h-3 w-3 text-[var(--brand-600)]" /> Preview as role</DropdownMenuLabel>
                       <DropdownMenuRadioGroup
                         value={effectiveRole}
                         onValueChange={(value) => {
@@ -501,7 +571,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => router.push('/dashboard/settings')}>
-                        <Settings className="h-4 w-4 text-[#52525b]" />
+                        <Settings className="h-4 w-4 text-[var(--ink-3)]" />
                         <span>System settings</span>
                       </DropdownMenuItem>
                     </>
@@ -516,26 +586,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </DropdownMenu>
             </div>
           </div>
-
-          {/* Mobile nav strip */}
-          <nav className="flex gap-1 overflow-x-auto border-t border-[#e4e4e7] px-4 py-2 lg:hidden">
-            {visibleSections.flatMap((s) => s.items).map((item) => {
-              const active = isNavActive(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium',
-                    active ? 'bg-[#2563eb] text-white' : 'bg-[#f4f4f5] text-[#27272a]',
-                  )}
-                >
-                  <item.icon className="h-3.5 w-3.5" />
-                  {item.name}
-                </Link>
-              );
-            })}
-          </nav>
         </header>
 
         <div className="px-4 py-6 lg:px-8 lg:py-8">{children}</div>

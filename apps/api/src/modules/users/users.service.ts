@@ -14,9 +14,11 @@ export interface CreateUserInput {
 
 export interface UpdateUserInput {
   name?: string;
+  email?: string;
   phone?: string;
   role?: string;
   active?: boolean;
+  password?: string;
   avatarUrl?: string | null;
   bio?: string | null;
 }
@@ -55,15 +57,21 @@ export class UsersService {
   }
 
   async create(data: CreateUserInput): Promise<any> {
+    if (!data.name?.trim()) throw new BadRequestException('Name is required');
+    if (!data.email?.trim()) throw new BadRequestException('Email is required');
+    if (!data.password || data.password.length < 8) throw new BadRequestException('Password must be at least 8 characters');
+    const email = data.email.trim().toLowerCase();
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) throw new BadRequestException('Another user already uses that email');
     const passwordHash = await bcrypt.hash(data.password, 12);
     const created = await this.prisma.user.create({
       data: {
         id: ulid(),
-        name: data.name,
-        email: data.email,
+        name: data.name.trim().slice(0, 80),
+        email,
         passwordHash,
         role: data.role,
-        phone: data.phone,
+        phone: data.phone?.trim() || '',
         passwordChangedAt: new Date(),
       },
     } as any) as any;
@@ -80,9 +88,28 @@ export class UsersService {
 
   async update(id: string, data: UpdateUserInput) {
     const before = await this.findById(id);
+    const patch: any = {};
+    if (typeof data.name === 'string' && data.name.trim()) patch.name = data.name.trim().slice(0, 80);
+    if (typeof data.phone === 'string') patch.phone = data.phone.trim().slice(0, 24);
+    if (typeof data.role === 'string' && data.role.trim()) patch.role = data.role.trim();
+    if (typeof data.active === 'boolean') patch.active = data.active;
+    if (typeof data.bio === 'string') patch.bio = data.bio.slice(0, 280);
+    if (data.avatarUrl !== undefined) patch.avatarUrl = data.avatarUrl || null;
+    if (typeof data.email === 'string' && data.email.trim() && data.email.trim().toLowerCase() !== before.email) {
+      const email = data.email.trim().toLowerCase();
+      const existing = await this.prisma.user.findUnique({ where: { email } });
+      if (existing && existing.id !== id) throw new BadRequestException('Another user already uses that email');
+      patch.email = email;
+    }
+    if (typeof data.password === 'string' && data.password.length > 0) {
+      if (data.password.length < 8) throw new BadRequestException('Password must be at least 8 characters');
+      patch.passwordHash = await bcrypt.hash(data.password, 12);
+      patch.passwordChangedAt = new Date();
+    }
+    if (Object.keys(patch).length === 0) return before;
     const updated = await this.prisma.user.update({
       where: { id },
-      data: data as any,
+      data: patch,
     });
     // Detect role / active changes specifically — they're the high-impact ones.
     const roleChanged = data.role && data.role !== before.role;
@@ -104,6 +131,14 @@ export class UsersService {
         entityId: id,
         summary: `${updated.name} ${data.active ? 'enabled' : 'disabled'}`,
       });
+    } else if (patch.passwordHash) {
+      await this.audit.record({
+        actorUserId: 'system',
+        action: 'password.reset',
+        entityType: 'User',
+        entityId: id,
+        summary: `${updated.name} password was reset by admin/owner`,
+      });
     } else {
       await this.audit.record({
         actorUserId: 'system',
@@ -118,13 +153,13 @@ export class UsersService {
 
   async delete(id: string) {
     const user = await this.findById(id);
-    const result = await this.prisma.user.delete({ where: { id } });
+    const result = await this.prisma.user.update({ where: { id }, data: { active: false, email: `${user.email}.deleted-${Date.now()}` } });
     await this.audit.record({
       actorUserId: 'system',
       action: 'user.delete',
       entityType: 'User',
       entityId: id,
-      summary: `User ${user.name} (${user.email}) deleted`,
+      summary: `User ${user.name} (${user.email}) removed from active team access`,
     });
     return result;
   }
