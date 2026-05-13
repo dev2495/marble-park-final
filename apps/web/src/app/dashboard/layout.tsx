@@ -236,7 +236,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         onFocusCapture={openSidebar}
         onBlurCapture={closeSidebarSoon}
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-[var(--line)] bg-[var(--surface)]/96 backdrop-blur-xl lg:flex',
+          'fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-[var(--line)] bg-[var(--surface)] lg:flex',
           'transition-[width,box-shadow,background-color,border-color] duration-300 ease-out',
           sidebarOpen ? 'w-[16rem] shadow-[0_24px_60px_-28px_rgba(15,23,42,0.45)]' : 'w-[4.5rem] shadow-sm',
         )}
@@ -384,7 +384,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       <main className="min-w-0 transition-[padding] duration-300 ease-out lg:pl-[4.5rem]">
         {/* ─── Topbar ───────────────────────────────────────────────────── */}
-        <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-[var(--surface)]/88 backdrop-blur supports-[backdrop-filter]:bg-[var(--surface)]/78">
+        <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-[var(--surface)]">
           <div className="flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
             <div className="flex items-center justify-between gap-3">
               <button
