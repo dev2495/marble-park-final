@@ -149,7 +149,7 @@ export class SystemResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales']);
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
     return this.system.productCategories({ status });
   }
 
@@ -164,7 +164,7 @@ export class SystemResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales']);
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
     return this.system.productBrands({ status });
   }
 
@@ -179,7 +179,7 @@ export class SystemResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales']);
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
     return this.system.productFinishes({ status });
   }
 
@@ -196,7 +196,7 @@ export class SystemResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'dispatch']);
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops', 'dispatch']);
     return this.system.vendors({ search, status, take });
   }
 

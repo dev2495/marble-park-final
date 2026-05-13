@@ -1,10 +1,37 @@
 'use client';
 
-import { useState } from 'react';
-import { gql, useMutation, useQuery } from '@apollo/client';
-import { Building2, Save } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-const DATA=gql`query { vendors(take: 100) }`; const SAVE=gql`mutation($input: VendorInput!) { saveVendor(input:$input){ data } }`;
-const empty={id:'',name:'',phone:'',email:'',gstNo:'',address:'',city:'',state:'',contactPerson:'',category:'',status:'active',notes:''};
-export default function VendorMasterPage(){const {data,refetch}=useQuery(DATA); const [form,setForm]=useState<any>(empty); const [save,{loading}]=useMutation(SAVE,{onCompleted:()=>{refetch();setForm(empty);}}); const vendors=data?.vendors||[]; return <div className="space-y-7 pb-10"><section className="rounded-r6 bg-[#18181b] p-7 text-white"><p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Vendor master</p><h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Manage suppliers for inwards and catalogues.</h1></section><section className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]"><div className="mp-card rounded-r5 p-5"><Building2 className="h-7 w-7 text-[#2563eb]"/><div className="mt-5 grid gap-3 md:grid-cols-2">{Object.keys(empty).filter(k=>k!=='id').map(k=><label key={k} className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">{k}</span><Input value={form[k]||''} onChange={e=>setForm({...form,[k]:e.target.value})}/></label>)}</div><Button className="mt-5" disabled={loading||!form.name} onClick={()=>save({variables:{input:form}})}><Save className="mr-2 h-4 w-4"/>Save vendor</Button></div><div className="mp-card rounded-r5 p-5"><h2 className="text-2xl font-semibold text-[#18181b]">Vendors</h2><div className="mt-5 space-y-2">{vendors.map((v:any)=><button key={v.id} onClick={()=>setForm(v)} className="w-full rounded-2xl bg-white/75 p-4 text-left"><p className="font-semibold text-[#18181b]">{v.name}</p><p className="text-xs font-bold text-[#52525b]">{v.phone||'no phone'} · {v.city||'no city'}</p></button>)}</div></div></section></div>}
+import { MasterEntityPage, statusOptions } from '../_components/master-entity-page';
+
+const empty = { id: '', name: '', phone: '', email: '', gstNo: '', address: '', city: '', state: '', contactPerson: '', category: '', status: 'active', notes: '' };
+
+export default function VendorMasterPage() {
+  return (
+    <MasterEntityPage
+      title="Supplier records for GRN, purchase and catalogue imports."
+      eyebrow="Vendor master"
+      description="Keep supplier contact, GST, city and category details current so inwards, catalogue uploads and purchase tracking can be traced to the correct vendor."
+      icon="vendor"
+      tone="warning"
+      queryName="vendors"
+      mutationName="saveVendor"
+      mutationInputType="VendorInput"
+      listTitle="Live vendors"
+      emptyLabel="No vendors available"
+      empty={empty}
+      variant="vendor"
+      fields={[
+        { key: 'name', label: 'Vendor name', placeholder: 'Aquant India' },
+        { key: 'contactPerson', label: 'Contact person' },
+        { key: 'phone', label: 'Phone' },
+        { key: 'email', label: 'Email' },
+        { key: 'gstNo', label: 'GST number' },
+        { key: 'category', label: 'Category' },
+        { key: 'city', label: 'City' },
+        { key: 'state', label: 'State' },
+        { key: 'address', label: 'Address', type: 'textarea', className: 'md:col-span-2' },
+        { key: 'notes', label: 'Notes', type: 'textarea', className: 'md:col-span-2' },
+        { key: 'status', label: 'Status', type: 'select', options: statusOptions },
+      ]}
+    />
+  );
+}

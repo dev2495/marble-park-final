@@ -10,6 +10,8 @@ export interface CreateUserInput {
   password: string;
   role: string;
   phone: string;
+  avatarUrl?: string | null;
+  bio?: string | null;
 }
 
 export interface UpdateUserInput {
@@ -42,6 +44,12 @@ export class UsersService {
 
   async findAll() {
     return this.prisma.user.findMany({
+      where: {
+        AND: [
+          { email: { not: { contains: '.deleted-' } } },
+          { email: { not: { contains: '@removed.local' } } },
+        ],
+      },
       orderBy: { name: 'asc' },
     });
   }
@@ -72,6 +80,8 @@ export class UsersService {
         passwordHash,
         role: data.role,
         phone: data.phone?.trim() || '',
+        avatarUrl: data.avatarUrl || null,
+        bio: typeof data.bio === 'string' ? data.bio.slice(0, 280) : null,
         passwordChangedAt: new Date(),
       },
     } as any) as any;
@@ -153,7 +163,24 @@ export class UsersService {
 
   async delete(id: string) {
     const user = await this.findById(id);
-    const result = await this.prisma.user.update({ where: { id }, data: { active: false, email: `${user.email}.deleted-${Date.now()}` } });
+    await this.prisma.session.deleteMany({ where: { userId: id } }).catch(() => null);
+    await this.prisma.passwordResetToken.deleteMany({ where: { userId: id } }).catch(() => null);
+    let result: any;
+    try {
+      result = await this.prisma.user.delete({ where: { id } });
+    } catch {
+      result = await this.prisma.user.update({
+        where: { id },
+        data: {
+          active: false,
+          name: 'Removed user',
+          email: `removed-${id.toLowerCase()}-${Date.now()}@removed.local`,
+          phone: '',
+          avatarUrl: null,
+          bio: null,
+        } as any,
+      });
+    }
     await this.audit.record({
       actorUserId: 'system',
       action: 'user.delete',

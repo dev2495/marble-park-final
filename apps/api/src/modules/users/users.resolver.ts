@@ -52,6 +52,12 @@ export class CreateUserInput {
 
   @Field()
   phone!: string;
+
+  @Field({ nullable: true, description: '/catalogue-images/manual/<file>.png from /api/upload, or null to remove' })
+  avatarUrl?: string;
+
+  @Field({ nullable: true })
+  bio?: string;
 }
 
 @InputType()

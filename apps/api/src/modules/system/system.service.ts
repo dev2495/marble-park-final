@@ -9,6 +9,36 @@ import * as path from 'path';
 export class SystemService {
   constructor(private prisma: PrismaService) {}
 
+  private readonly defaultCategories = [
+    'Sanitaryware',
+    'Faucets',
+    'Faucets & Showers',
+    'Kitchen Sinks',
+    'Tiles',
+    'Accessories',
+    'Catalogue Products',
+    'Uncategorized',
+  ];
+
+  private readonly defaultBrands = [
+    'Marble Park Select',
+    'Aquant',
+    'Hindware',
+    'Grohe',
+    'Hansgrohe',
+    'American Standard',
+  ];
+
+  private readonly defaultFinishes = [
+    'Standard',
+    'Chrome',
+    'White',
+    'Matt',
+    'Glossy',
+    'Satin Steel',
+    'Black',
+  ];
+
   async getSettings() {
     let settings = await this.prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } });
     if (!settings) {
@@ -192,6 +222,7 @@ export class SystemService {
   }
 
   async productCategories(args?: { status?: string }) {
+    await this.ensureDefaultProductCategories();
     await this.backfillProductCategories();
     const where: any = {};
     if (args?.status) where.status = args.status;
@@ -202,6 +233,7 @@ export class SystemService {
   }
 
   async productBrands(args?: { status?: string }) {
+    await this.ensureDefaultProductMasterValues('brand');
     await this.backfillProductMasterValues('brand');
     const where: any = {};
     if (args?.status) where.status = args.status;
@@ -212,6 +244,7 @@ export class SystemService {
   }
 
   async productFinishes(args?: { status?: string }) {
+    await this.ensureDefaultProductMasterValues('finish');
     await this.backfillProductMasterValues('finish');
     const where: any = {};
     if (args?.status) where.status = args.status;
@@ -338,6 +371,54 @@ export class SystemService {
         },
       });
       existingNames.add(name);
+    }
+  }
+
+  private async ensureDefaultProductCategories() {
+    const existing = await this.prisma.productCategory.findMany({ select: { name: true } });
+    const existingNames = new Set(existing.map((row) => row.name.toLowerCase()));
+    let sortOrder = 0;
+    for (const name of this.defaultCategories) {
+      sortOrder += 10;
+      if (existingNames.has(name.toLowerCase())) continue;
+      await this.prisma.productCategory.create({
+        data: {
+          id: ulid(),
+          name,
+          code: this.slugCode(name),
+          description: 'Default operational category',
+          status: 'active',
+          sortOrder,
+          metadata: { source: 'system-default' },
+          updatedAt: new Date(),
+        },
+      });
+      existingNames.add(name.toLowerCase());
+    }
+  }
+
+  private async ensureDefaultProductMasterValues(kind: 'brand' | 'finish') {
+    const delegate: any = kind === 'brand' ? this.prisma.productBrand : this.prisma.productFinish;
+    const defaults = kind === 'brand' ? this.defaultBrands : this.defaultFinishes;
+    const existing = await delegate.findMany({ select: { name: true } });
+    const existingNames = new Set(existing.map((row: any) => String(row.name).toLowerCase()));
+    let sortOrder = 0;
+    for (const name of defaults) {
+      sortOrder += 10;
+      if (existingNames.has(name.toLowerCase())) continue;
+      await delegate.create({
+        data: {
+          id: ulid(),
+          name,
+          code: this.slugCode(name),
+          description: `Default operational ${kind}`,
+          status: 'active',
+          sortOrder,
+          metadata: { source: 'system-default' },
+          updatedAt: new Date(),
+        },
+      });
+      existingNames.add(name.toLowerCase());
     }
   }
 

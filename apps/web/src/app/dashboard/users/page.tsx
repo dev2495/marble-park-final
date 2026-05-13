@@ -98,7 +98,10 @@ export default function UsersPage() {
   const [resetPassword, setResetPassword] = useState('');
   const [message, setMessage] = useState('');
 
-  const users = data?.users || [];
+  const users = (data?.users || []).filter((user: any) => {
+    const email = String(user.email || '').toLowerCase();
+    return !email.includes('.deleted-') && !email.endsWith('@removed.local');
+  });
   const selected = useMemo(() => users.find((user: any) => user.id === selectedId) || users[0], [users, selectedId]);
   const performance = data?.ownerDashboard?.userPerformance || [];
   const performanceByUser = useMemo(() => new Map(performance.map((row: any) => [row.id, row])), [performance]);
@@ -125,47 +128,67 @@ export default function UsersPage() {
       setMessage('Enter or generate a password of at least 8 characters.');
       return;
     }
-    const { data: result } = await createUser({ variables: { input: { ...createForm, email: createForm.email.trim().toLowerCase() } } });
-    setCreateForm(emptyCreate);
-    setSelectedId(result?.createUser?.id || '');
-    setMessage('User created. Share the password securely outside the system.');
-    await refetch();
+    try {
+      const { data: result } = await createUser({ variables: { input: { ...createForm, email: createForm.email.trim().toLowerCase() } } });
+      setCreateForm(emptyCreate);
+      setSelectedId(result?.createUser?.id || '');
+      setMessage('User created. Share the password securely outside the system.');
+      await refetch();
+    } catch {
+      setMessage('');
+    }
   }
 
   async function submitEdit(event: React.FormEvent) {
     event.preventDefault();
     if (!selected) return;
     setMessage('');
-    await updateUser({ variables: { id: selected.id, input: { ...editForm, email: editForm.email.trim().toLowerCase() } } });
-    setMessage('User details saved.');
-    await refetch();
+    try {
+      await updateUser({ variables: { id: selected.id, input: { ...editForm, email: editForm.email.trim().toLowerCase() } } });
+      setMessage('User details saved.');
+      await refetch();
+    } catch {
+      setMessage('');
+    }
   }
 
   async function submitResetPassword() {
     if (!selected || !resetPassword) return;
     setMessage('');
-    await updateUser({ variables: { id: selected.id, input: { password: resetPassword } } });
-    setResetPassword('');
-    setMessage(`Password reset for ${selected.name}. Share the new password securely.`);
-    await refetch();
+    try {
+      await updateUser({ variables: { id: selected.id, input: { password: resetPassword } } });
+      setResetPassword('');
+      setMessage(`Password reset for ${selected.name}. Share the new password securely.`);
+      await refetch();
+    } catch {
+      setMessage('');
+    }
   }
 
   async function toggleAccess(user = selected) {
     if (!user) return;
     setMessage('');
-    await updateUser({ variables: { id: user.id, input: { active: !user.active } } });
-    setMessage(`${user.name} ${user.active ? 'disabled' : 'enabled'}.`);
-    await refetch();
+    try {
+      await updateUser({ variables: { id: user.id, input: { active: !user.active } } });
+      setMessage(`${user.name} ${user.active ? 'disabled' : 'enabled'}.`);
+      await refetch();
+    } catch {
+      setMessage('');
+    }
   }
 
   async function removeUser() {
     if (!selected) return;
     if (!window.confirm(`Remove ${selected.name} from active team access? Their past quotes/orders stay in history.`)) return;
     setMessage('');
-    await deleteUser({ variables: { id: selected.id } });
-    setSelectedId('');
-    setMessage('User removed from active team access.');
-    await refetch();
+    try {
+      await deleteUser({ variables: { id: selected.id } });
+      setSelectedId('');
+      setMessage('User removed from team access.');
+      await refetch();
+    } catch {
+      setMessage('');
+    }
   }
 
   const activeUsers = users.filter((user: any) => user.active).length;
@@ -206,7 +229,7 @@ export default function UsersPage() {
         </div>
       ) : null}
 
-      <section className="grid gap-5 xl:grid-cols-[0.72fr_1.28fr]">
+      <section className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
         <form onSubmit={submitCreate} className="mp-panel p-5 lg:p-6">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><UserPlus className="h-5 w-5" /></div>
@@ -238,7 +261,7 @@ export default function UsersPage() {
           </div>
         </form>
 
-        <div className="mp-panel overflow-hidden">
+        <div className="mp-panel min-w-0 overflow-hidden">
           <div className="flex flex-col gap-3 border-b border-[var(--line)] p-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">Team access</h2>
@@ -246,8 +269,8 @@ export default function UsersPage() {
             </div>
             <Users className="h-7 w-7 text-[var(--success)]" />
           </div>
-          <div className="grid min-h-[34rem] lg:grid-cols-[0.92fr_1.08fr]">
-            <div className="border-b border-[var(--line)] p-3 lg:border-b-0 lg:border-r">
+          <div className="grid min-h-[34rem] min-w-0 2xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+            <div className="min-w-0 border-b border-[var(--line)] p-3 2xl:border-b-0 2xl:border-r">
               {loading && !users.length ? <p className="p-8 text-center text-sm text-[var(--ink-4)]">Loading users…</p> : null}
               <div className="max-h-[42rem] space-y-2 overflow-y-auto pr-1 custom-scrollbar">
                 {users.map((user: any) => {
@@ -278,14 +301,14 @@ export default function UsersPage() {
               </div>
             </div>
 
-            <div className="p-5">
+            <div className="min-w-0 p-5">
               {selected ? (
                 <div className="space-y-5">
                   <div className="flex items-start gap-4">
                     <UserAvatar user={{ ...selected, avatarUrl: editForm.avatarUrl }} size="xl" ringed />
                     <div className="min-w-0 flex-1">
                       <h3 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">{selected.name}</h3>
-                      <p className="mt-1 text-sm text-[var(--ink-4)]">{selected.email}</p>
+                      <p className="mt-1 truncate text-sm text-[var(--ink-4)]">{selected.email}</p>
                       <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
                         <span className="rounded-full bg-[var(--brand-50)] px-3 py-1 text-[var(--brand-800)]">{roleLabel(selected.role)}</span>
                         <span className="rounded-full bg-[var(--bg-soft)] px-3 py-1 text-[var(--ink-3)]">Joined {formatDate(selected.createdAt)}</span>
@@ -294,7 +317,7 @@ export default function UsersPage() {
                     </div>
                   </div>
 
-                  <form onSubmit={submitEdit} className="grid gap-4 md:grid-cols-2">
+                  <form onSubmit={submitEdit} className="grid gap-4 lg:grid-cols-2">
                     <Field label="Full name"><Input value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} required /></Field>
                     <Field label="Email"><Input value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} type="email" required /></Field>
                     <Field label="Phone"><Input value={editForm.phone} onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })} /></Field>

@@ -95,14 +95,17 @@ export default function ProductMasterPage() {
   }
 
   return <div className="space-y-7 pb-10">
-    <section className="rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]">
+    <section className="relative overflow-hidden rounded-r6 border border-[var(--line)] bg-gradient-to-br from-blue-50 via-white to-emerald-50 p-6 shadow-sm-soft text-[var(--ink)]">
+      <div className="absolute right-8 top-8 h-28 w-28 rounded-full bg-blue-400/20 blur-3xl" />
+      <div className="relative">
       <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Product master</p>
       <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Create SKUs with controlled brand, finish and category masters.</h1>
       <p className="mt-3 max-w-3xl text-sm text-[#52525b]">Admin, owner and inventory users create SKUs here. Brand, finish and category are dropdown-backed master data so catalogue filters, quotes and imports stay clean.</p>
       <div className="mt-5 flex flex-wrap gap-2">
-        <Link href="/dashboard/master-data/categories" className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wider text-[#ffffff]">Category master</Link>
-        <Link href="/dashboard/master-data/brands" className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wider text-[#ffffff]">Brand master</Link>
-        <Link href="/dashboard/master-data/finishes" className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wider text-[#ffffff]">Finish master</Link>
+        <Link href="/dashboard/master-data/categories" className="rounded-full border border-[var(--line)] bg-white/80 px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)] shadow-sm-soft">Category master</Link>
+        <Link href="/dashboard/master-data/brands" className="rounded-full border border-[var(--line)] bg-white/80 px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)] shadow-sm-soft">Brand master</Link>
+        <Link href="/dashboard/master-data/finishes" className="rounded-full border border-[var(--line)] bg-white/80 px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)] shadow-sm-soft">Finish master</Link>
+      </div>
       </div>
     </section>
 
