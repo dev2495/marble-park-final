@@ -217,6 +217,63 @@ export class InventoryService {
     return summary;
   }
 
+  async pendingInwardItems(take = 200): Promise<any[]> {
+    const limit = Math.max(1, Math.min(500, Number(take) || 200));
+    const reservations = await this.prisma.reservation.findMany({
+      where: { status: 'backordered' },
+      include: {
+        product: true,
+        quote: {
+          include: {
+            customer: true,
+            owner: { select: { id: true, name: true, email: true, role: true, phone: true, active: true } },
+          },
+        },
+      } as any,
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    } as any) as any[];
+    if (!reservations.length) return [];
+
+    const productIds = Array.from(new Set(reservations.map((row) => row.productId)));
+    const quoteIds = Array.from(new Set(reservations.map((row) => row.quoteId)));
+    const [balances, salesOrders] = await Promise.all([
+      this.prisma.inventoryBalance.findMany({ where: { productId: { in: productIds } } }),
+      this.prisma.salesOrder.findMany({ where: { quoteId: { in: quoteIds } } }),
+    ]);
+    const balanceMap = new Map(balances.map((balance) => [balance.productId, balance]));
+    const orderMap = new Map(salesOrders.map((order) => [order.quoteId, order]));
+
+    return reservations.map((reservation) => {
+      const balance = balanceMap.get(reservation.productId) as any;
+      const salesOrder = orderMap.get(reservation.quoteId) as any;
+      const quantity = Number(reservation.quantity || 0);
+      const available = Number(balance?.available || 0);
+      return {
+        reservationId: reservation.id,
+        quoteId: reservation.quoteId,
+        productId: reservation.productId,
+        sku: reservation.product?.sku,
+        name: reservation.product?.name,
+        brand: reservation.product?.brand,
+        category: reservation.product?.category,
+        finish: reservation.product?.finish,
+        sellPrice: Number(reservation.product?.sellPrice || 0),
+        quantity,
+        available,
+        shortage: Math.max(0, quantity - available),
+        quoteNumber: reservation.quote?.quoteNumber,
+        leadId: reservation.quote?.leadId,
+        salesOrderId: salesOrder?.id || null,
+        orderNumber: salesOrder?.orderNumber || null,
+        customer: reservation.quote?.customer || null,
+        owner: reservation.quote?.owner || null,
+        createdAt: reservation.createdAt,
+        status: 'pending_inward',
+      };
+    });
+  }
+
   private async notifyBackorderReady(productId: string, actorUserId: string) {
     const reservations = await this.prisma.reservation.findMany({
       where: { productId, status: 'backordered' },

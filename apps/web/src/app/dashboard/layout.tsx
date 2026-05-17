@@ -69,6 +69,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
     items: [
       { name: 'Catalogue', href: '/dashboard/products', icon: Bath, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'office_staff'] },
       { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes, roles: ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff'] },
+      { name: 'Pending Inward', href: '/dashboard/pending-inward', icon: PackageSearch, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
       { name: 'Dispatch', href: '/dashboard/dispatch', icon: Truck, roles: ['admin', 'owner', 'dispatch_ops', 'sales_manager', 'office_staff'] },
     ],
   },
@@ -105,6 +106,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/products': 'Catalogue',
   '/dashboard/inventory': 'Inventory',
   '/dashboard/inventory/inwards': 'GRN Inward',
+  '/dashboard/pending-inward': 'Pending Inward',
   '/dashboard/sales': 'Sales Desk',
   '/dashboard/approvals': 'Approval Desk',
   '/dashboard/intents': 'Intent Desk',

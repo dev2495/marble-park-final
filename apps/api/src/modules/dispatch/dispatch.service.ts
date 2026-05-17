@@ -50,6 +50,85 @@ export class DispatchService {
     } as any) as any;
   }
 
+  async dispatchQueue(args?: { status?: string; customerId?: string }): Promise<any[]> {
+    const jobs = await this.findAllJobs(args);
+    if (!jobs.length) return [];
+
+    const jobIds = jobs.map((job: any) => job.id);
+    const quoteIds = Array.from(new Set(jobs.map((job: any) => job.quoteId).filter(Boolean)));
+    const quoteLines = jobs.flatMap((job: any) => this.normalizeLines(job.quote?.lines) || []);
+    const productIds = Array.from(new Set(quoteLines.map((line: any) => String(line.productId || '').trim()).filter(Boolean)));
+
+    const [challans, reservations, balances, orders] = await Promise.all([
+      this.prisma.dispatchChallan.findMany({
+        where: { dispatchJobId: { in: jobIds }, status: { in: ['pending', 'dispatched', 'delivered'] } },
+      } as any),
+      this.prisma.reservation.findMany({ where: { quoteId: { in: quoteIds } } }),
+      this.prisma.inventoryBalance.findMany({ where: { productId: { in: productIds } }, include: { product: true } as any } as any),
+      this.prisma.salesOrder.findMany({ where: { quoteId: { in: quoteIds } } }),
+    ]);
+
+    const balanceMap = new Map((balances as any[]).map((balance) => [balance.productId, balance]));
+    const orderMap = new Map((orders as any[]).map((order) => [order.quoteId, order]));
+    const reservationsByQuoteProduct = this.groupByQuoteProduct(reservations as any[]);
+    const challanQtyByJobProduct = this.groupChallanQty(challans as any[]);
+    const challansByJob = new Map<string, any[]>();
+    for (const challan of challans as any[]) {
+      challansByJob.set(challan.dispatchJobId, [...(challansByJob.get(challan.dispatchJobId) || []), challan]);
+    }
+
+    return jobs.map((job: any) => {
+      const lines = this.normalizeLines(job.quote?.lines) || [];
+      const lineStatus = lines.map((line: any) => {
+        const productId = String(line.productId || '').trim();
+        const orderedQty = Number(line.qty || line.quantity || 0);
+        const committedQty = Number(challanQtyByJobProduct.get(`${job.id}:${productId}`) || 0);
+        const remainingQty = Math.max(0, orderedQty - committedQty);
+        const reservationRows = reservationsByQuoteProduct.get(`${job.quoteId}:${productId}`) || [];
+        const reservedQty = reservationRows
+          .filter((reservation: any) => reservation.status === 'reserved')
+          .reduce((sum: number, reservation: any) => sum + Number(reservation.quantity || 0), 0);
+        const backorderedQty = reservationRows
+          .filter((reservation: any) => reservation.status === 'backordered')
+          .reduce((sum: number, reservation: any) => sum + Number(reservation.quantity || 0), 0);
+        const balance = balanceMap.get(productId) as any;
+        const dispatchableQty = Math.max(0, Math.min(remainingQty, reservedQty));
+        const blockedQty = Math.max(0, remainingQty - dispatchableQty);
+        const status = remainingQty <= 0
+          ? 'fully_dispatched'
+          : dispatchableQty > 0
+            ? 'ready'
+            : backorderedQty > 0
+              ? 'pending_inward'
+              : 'not_reserved';
+        return {
+          ...line,
+          productId,
+          orderedQty,
+          committedQty,
+          remainingQty,
+          reservedQty,
+          backorderedQty,
+          dispatchableQty,
+          blockedQty,
+          onHand: Number(balance?.onHand || 0),
+          available: Number(balance?.available || 0),
+          status,
+        };
+      });
+
+      return {
+        ...job,
+        salesOrder: orderMap.get(job.quoteId) || null,
+        lines: lineStatus,
+        readyLines: lineStatus.filter((line: any) => line.dispatchableQty > 0),
+        pendingInwardLines: lineStatus.filter((line: any) => line.remainingQty > 0 && line.backorderedQty > 0),
+        completedLines: lineStatus.filter((line: any) => line.status === 'fully_dispatched'),
+        challans: challansByJob.get(job.id) || [],
+      };
+    });
+  }
+
   async findJobById(id: string): Promise<any> {
     const job = await this.prisma.dispatchJob.findUnique({
       where: { id },
@@ -118,8 +197,9 @@ export class DispatchService {
     const contactPhone = data.contactPhone || data.driverPhone || job.customer?.mobile || '';
     if (!contactPhone) throw new BadRequestException('A driver/contact phone is required');
 
-    const challanLines = this.normalizeLines(data.lines) || job.quote?.lines || [];
-    await this.assertDispatchableLines(challanLines);
+    const challanLines = this.normalizeLines(data.lines) || [];
+    if (!challanLines.length) throw new BadRequestException('Select at least one ready item to create a challan');
+    await this.assertDispatchableLines(challanLines, job.quoteId);
     const challan = await this.prisma.dispatchChallan.create({
       data: {
         id: ulid(),
@@ -299,31 +379,92 @@ export class DispatchService {
         },
       });
 
-      const reservation = await tx.reservation.findFirst({
-        where: { quoteId: challan.quoteId, productId, status: 'reserved' },
-        orderBy: { createdAt: 'asc' },
-      });
-      if (reservation) {
-        await tx.reservation.update({
-          where: { id: reservation.id },
-          data: { status: 'dispatched', updatedAt: new Date() },
+      let remainingToDispatch = quantity;
+      while (remainingToDispatch > 0) {
+        const reservation = await tx.reservation.findFirst({
+          where: { quoteId: challan.quoteId, productId, status: 'reserved' },
+          orderBy: { createdAt: 'asc' },
         });
+        if (!reservation) break;
+        const consume = Math.min(remainingToDispatch, Number(reservation.quantity || 0));
+        if (consume >= Number(reservation.quantity || 0)) {
+          await tx.reservation.update({
+            where: { id: reservation.id },
+            data: { status: 'dispatched', updatedAt: new Date() },
+          });
+        } else {
+          await tx.reservation.update({
+            where: { id: reservation.id },
+            data: { quantity: Number(reservation.quantity || 0) - consume, updatedAt: new Date() },
+          });
+        }
+        remainingToDispatch -= consume;
       }
     }
   }
 
-  private async assertDispatchableLines(lines: any[]) {
+  private async assertDispatchableLines(lines: any[], quoteId: string) {
+    const quote = await this.prisma.quote.findUnique({ where: { id: quoteId } });
+    if (!quote) throw new BadRequestException('Dispatch quote not found');
+    const quoteLines = this.normalizeLines((quote as any).lines) || [];
+    const quoteQtyByProduct = new Map<string, number>();
+    for (const line of quoteLines) {
+      const productId = String(line.productId || '').trim();
+      if (!productId) continue;
+      quoteQtyByProduct.set(productId, (quoteQtyByProduct.get(productId) || 0) + Number(line.qty || line.quantity || 0));
+    }
+
+    const [challans, reservations] = await Promise.all([
+      this.prisma.dispatchChallan.findMany({
+        where: { quoteId, status: { in: ['pending', 'dispatched', 'delivered'] } },
+      } as any),
+      this.prisma.reservation.findMany({ where: { quoteId, status: 'reserved' } }),
+    ]);
+    const committedByProduct = this.groupChallanQty(challans as any[], 'quote');
+    const reservedByProduct = new Map<string, number>();
+    for (const reservation of reservations as any[]) {
+      reservedByProduct.set(reservation.productId, (reservedByProduct.get(reservation.productId) || 0) + Number(reservation.quantity || 0));
+    }
+
     for (const line of Array.isArray(lines) ? lines : []) {
       const quantity = Number(line.dispatchQty || line.qty || line.quantity || 0);
       if (quantity <= 0) continue;
-      if (!line.productId) {
+      const productId = String(line.productId || '').trim();
+      if (!productId) {
         throw new BadRequestException(`${line.name || line.sku || 'Line item'} is not linked to stock and cannot be dispatched`);
       }
-      const balance = await this.prisma.inventoryBalance.findUnique({ where: { productId: line.productId } });
-      const onHand = Number(balance?.onHand || 0);
-      if (!balance || onHand < quantity) {
-        throw new BadRequestException(`${line.name || line.sku || 'Line item'} is not inwards yet. Required ${quantity}, on hand ${onHand}`);
+      const ordered = Number(quoteQtyByProduct.get(productId) || 0);
+      const alreadyCommitted = Number(committedByProduct.get(productId) || 0);
+      const remainingOrderQty = Math.max(0, ordered - alreadyCommitted);
+      const reservedQty = Number(reservedByProduct.get(productId) || 0);
+      const dispatchable = Math.min(remainingOrderQty, reservedQty);
+      if (quantity > dispatchable) {
+        throw new BadRequestException(`${line.name || line.sku || 'Line item'} is not ready to dispatch. Requested ${quantity}, ready ${dispatchable}, pending inward ${Math.max(0, remainingOrderQty - dispatchable)}`);
       }
     }
+  }
+
+  private groupByQuoteProduct(reservations: any[]) {
+    const grouped = new Map<string, any[]>();
+    for (const reservation of reservations) {
+      const key = `${reservation.quoteId}:${reservation.productId}`;
+      grouped.set(key, [...(grouped.get(key) || []), reservation]);
+    }
+    return grouped;
+  }
+
+  private groupChallanQty(challans: any[], scope: 'job' | 'quote' = 'job') {
+    const grouped = new Map<string, number>();
+    for (const challan of challans || []) {
+      const lines = this.normalizeLines(challan.lines) || [];
+      for (const line of lines) {
+        const productId = String(line.productId || '').trim();
+        if (!productId) continue;
+        const prefix = scope === 'quote' ? '' : `${challan.dispatchJobId}:`;
+        const key = `${prefix}${productId}`;
+        grouped.set(key, (grouped.get(key) || 0) + Number(line.dispatchQty || line.qty || line.quantity || 0));
+      }
+    }
+    return grouped;
   }
 }

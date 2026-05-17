@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 
@@ -61,37 +61,64 @@ export class ProductsService {
   }
 
   async findBySku(sku: string) {
-    return this.prisma.product.findUnique({ where: { sku } });
+    return this.prisma.product.findUnique({ where: { sku: this.normalizeSku(sku) } });
   }
 
   async create(data: CreateProductInput): Promise<any> {
-    const existing = await this.findBySku(data.sku);
+    const sku = this.normalizeSku(data.sku);
+    const name = String(data.name || '').trim();
+    const category = String(data.category || '').trim();
+    const brand = String(data.brand || '').trim();
+    const finish = String(data.finish || 'Standard').trim() || 'Standard';
+    const sellPrice = Number(data.sellPrice || 0);
+    if (!sku) throw new BadRequestException('SKU is required');
+    if (!name) throw new BadRequestException('Product name is required');
+    if (!category) throw new BadRequestException('Category is required');
+    if (!brand) throw new BadRequestException('Brand is required');
+    if (!Number.isFinite(sellPrice) || sellPrice <= 0) throw new BadRequestException('Sell price must be greater than zero');
+
+    const existing = await this.findBySku(sku);
     if (existing) {
-      throw new Error('Product with this SKU already exists');
+      throw new BadRequestException('Product with this SKU already exists');
     }
-    await this.ensureCategory(data.category);
-    await this.ensureBrand(data.brand);
-    await this.ensureFinish(data.finish || 'Standard');
-    return this.prisma.product.create({
-      data: {
-        id: ulid(),
-        sku: data.sku,
-        name: data.name,
-        category: data.category,
-        brand: data.brand,
-        finish: data.finish || 'Standard',
-        dimensions: data.dimensions || '',
-        unit: data.unit || 'PC',
-        tags: [],
-        sellPrice: data.sellPrice,
-        floorPrice: data.floorPrice ?? data.sellPrice * 0.88,
-        taxClass: data.taxClass || 'GST_18',
-        status: 'active',
-        media: data.media || {},
-        sourceRefs: {},
-        description: data.description || '',
-        updatedAt: new Date(),
-      } as any,
+    await this.ensureCategory(category);
+    await this.ensureBrand(brand);
+    await this.ensureFinish(finish);
+    return this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({
+        data: {
+          id: ulid(),
+          sku,
+          name,
+          category,
+          brand,
+          finish,
+          dimensions: String(data.dimensions || '').trim(),
+          unit: String(data.unit || 'PC').trim().toUpperCase() || 'PC',
+          tags: [],
+          sellPrice,
+          floorPrice: data.floorPrice ?? sellPrice * 0.88,
+          taxClass: data.taxClass || 'GST_18',
+          status: 'active',
+          media: data.media || {},
+          sourceRefs: {},
+          description: data.description || '',
+          updatedAt: new Date(),
+        } as any,
+      });
+      await tx.inventoryBalance.create({
+        data: {
+          id: ulid(),
+          productId: product.id,
+          onHand: 0,
+          available: 0,
+          reserved: 0,
+          damaged: 0,
+          hold: 0,
+          updatedAt: new Date(),
+        } as any,
+      });
+      return product;
     });
   }
 
@@ -249,5 +276,9 @@ export class ProductsService {
         updatedAt: new Date(),
       },
     });
+  }
+
+  private normalizeSku(sku: string) {
+    return String(sku || '').trim().replace(/\s+/g, '').toUpperCase();
   }
 }

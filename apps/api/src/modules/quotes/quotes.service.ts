@@ -104,7 +104,7 @@ export class QuotesService {
     const customerId = data.customerId;
     if (!customerId) throw new BadRequestException('A customer is required');
 
-    const normalizedLines = this.normalizeLines(data.lines);
+    const normalizedLines = await this.assertProductMasterLines(data.lines, 'creating a quote');
     const displayMode = this.normalizeDisplayMode(data.displayMode);
     const quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, normalizedLines);
     const availabilityIssues = await this.getAvailabilityIssues(normalizedLines);
@@ -129,7 +129,7 @@ export class QuotesService {
                 title: data.projectName || data.title || 'Retail quote opportunity',
                 source: 'Quote desk',
                 stage: 'quoted',
-                expectedValue: this.getLinesTotal(data.lines),
+                expectedValue: this.getLinesTotal(normalizedLines),
                 lastContactAt: new Date(),
                 nextActionAt: new Date(Date.now() + 86400000 * 2),
                 notes: 'Auto-created from quote builder.',
@@ -209,11 +209,13 @@ export class QuotesService {
   }
 
   async update(id: string, data: UpdateQuoteInput): Promise<any> {
-    await this.findById(id);
+    const current = await this.findById(id);
     
     const updateData: any = { ...data };
     if (data.discountPercent !== undefined || data.lines !== undefined) {
-      const lines = data.lines !== undefined ? this.normalizeLines(data.lines) : this.normalizeLines((await this.findById(id)).lines);
+      const lines = data.lines !== undefined
+        ? await this.assertProductMasterLines(data.lines, 'updating a quote')
+        : await this.assertProductMasterLines(current.lines, 'updating a quote');
       updateData.lines = data.lines !== undefined ? lines : undefined;
       updateData.quoteMeta = data.quoteMeta !== undefined ? this.normalizeQuoteMeta(data.quoteMeta, lines) : undefined;
       updateData.approvalStatus = 'approved';
@@ -228,7 +230,7 @@ export class QuotesService {
       };
     }
     if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
-    if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, this.normalizeLines((await this.findById(id)).lines));
+    if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, this.normalizeLines(current.lines));
     
     const updated = await this.prisma.quote.update({
       where: { id },
@@ -264,6 +266,10 @@ export class QuotesService {
   async updateStatus(id: string, status: string): Promise<any> {
     if (!QUOTE_STATUSES.includes(status)) {
       throw new BadRequestException(`Invalid status: ${status}`);
+    }
+
+    if (status === 'confirmed') {
+      return this.confirmQuote(id);
     }
 
     await this.findById(id);
@@ -327,18 +333,19 @@ export class QuotesService {
     // Use the with-relations variant: we need `customer.siteAddress` to seed the
     // dispatch job. DataLoader is not available in service-layer code paths.
     const quote = await this.findByIdWithRelations(id);
+    const canonicalLines = await this.assertProductMasterLines(quote.lines, 'confirming a quote');
     
     return this.prisma.$transaction(async (tx) => {
       const confirmed = await tx.quote.update({
         where: { id },
-        data: { status: 'confirmed', approvalStatus: quote.approvalStatus === 'pending' ? 'approved' : quote.approvalStatus, confirmedAt: new Date(), updatedAt: new Date() },
+        data: { status: 'confirmed', lines: canonicalLines, approvalStatus: quote.approvalStatus === 'pending' ? 'approved' : quote.approvalStatus, confirmedAt: new Date(), updatedAt: new Date() },
         include: quoteInclude,
       });
 
       const existingJob = await tx.dispatchJob.findUnique({ where: { quoteId: id } });
       const existingReservations = await tx.reservation.count({ where: { quoteId: id } });
       if (!existingReservations) {
-        await this.createReservationsForQuote(tx, quote);
+        await this.createReservationsForQuote(tx, { ...quote, lines: canonicalLines });
       }
       if (!existingJob) {
         await tx.dispatchJob.create({
@@ -387,7 +394,7 @@ export class QuotesService {
     // Same as confirmQuote: needs `customer.siteAddress`.
     const quote = await this.findByIdWithRelations(input.quoteId);
     const paymentMode = String(input.paymentMode || '').toLowerCase() === 'credit' ? 'credit' : 'cash';
-    const lines = this.normalizeLines(quote.lines);
+    const lines = await this.assertProductMasterLines(quote.lines, 'creating a sales order');
     const totalAmount = this.getLinesTotal(lines);
     const advanceAmount = paymentMode === 'cash' ? Number(input.advanceAmount || 0) : 0;
     const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= totalAmount ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
@@ -397,7 +404,7 @@ export class QuotesService {
       if (existingOrder) return existingOrder;
 
       const existingReservations = await tx.reservation.count({ where: { quoteId: quote.id } });
-      if (!existingReservations) await this.createReservationsForQuote(tx, quote);
+      if (!existingReservations) await this.createReservationsForQuote(tx, { ...quote, lines });
 
       const existingJob = await tx.dispatchJob.findUnique({ where: { quoteId: quote.id } });
       if (!existingJob) {
@@ -445,7 +452,7 @@ export class QuotesService {
 
       await tx.quote.update({
         where: { id: quote.id },
-        data: { status: 'confirmed', confirmedAt: quote.confirmedAt || new Date(), updatedAt: new Date() },
+        data: { status: 'confirmed', lines, confirmedAt: quote.confirmedAt || new Date(), updatedAt: new Date() },
       });
       await tx.lead.update({
         where: { id: quote.leadId },
@@ -522,6 +529,37 @@ export class QuotesService {
     const customerMap = new Map(customers.map((customer) => [customer.id, customer]));
     const ownerMap = new Map(owners.map((owner) => [owner.id, owner]));
     return orders.map((order) => ({ ...order, customer: customerMap.get(order.customerId), owner: ownerMap.get(order.ownerId) }));
+  }
+
+  async salesOrderPdfPayload(id: string) {
+    const order = await this.prisma.salesOrder.findUnique({ where: { id } });
+    if (!order) throw new NotFoundException('Sales order not found');
+    const [quote, customer, owner, settings, reservations, challans] = await Promise.all([
+      this.prisma.quote.findUnique({ where: { id: order.quoteId } }),
+      this.prisma.customer.findUnique({ where: { id: order.customerId } }),
+      this.prisma.user.findUnique({
+        where: { id: order.ownerId },
+        select: { id: true, name: true, email: true, role: true, phone: true, active: true, avatarUrl: true },
+      }),
+      this.prisma.appSetting.findFirst(),
+      this.prisma.reservation.findMany({ where: { quoteId: order.quoteId } }),
+      this.prisma.dispatchChallan.findMany({ where: { quoteId: order.quoteId }, orderBy: { createdAt: 'asc' } }),
+    ]);
+    const lines = this.normalizeLines(order.lines || (quote as any)?.lines);
+    const productIds: string[] = Array.from(new Set(lines.map((line: any) => String(line.productId || '').trim()).filter(Boolean) as string[]));
+    const products = productIds.length
+      ? await this.prisma.product.findMany({ where: { id: { in: productIds } } })
+      : [];
+    return {
+      order: { ...order, lines },
+      quote,
+      customer,
+      owner,
+      settings,
+      products,
+      reservations,
+      challans,
+    };
   }
 
   async salesOrderStats(args?: { range?: string }) {
@@ -634,6 +672,59 @@ export class QuotesService {
       area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
       quoteImage: line.quoteImage || line.customImageUrl || '',
     })) : [];
+  }
+
+  private async assertProductMasterLines(linesInput: any, action: string) {
+    const lines = this.normalizeLines(linesInput);
+    if (!lines.length) {
+      throw new BadRequestException(`At least one Product Master item is required before ${action}`);
+    }
+
+    const productIds: string[] = Array.from(new Set(lines.map((line: any) => String(line.productId || '').trim()).filter(Boolean) as string[]));
+    if (productIds.length === 0 || lines.some((line: any) => !String(line.productId || '').trim())) {
+      throw new BadRequestException(`Every quote row must be selected from Product Master before ${action}`);
+    }
+
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+    });
+    const productMap = new Map(products.map((product) => [product.id, product]));
+
+    return lines.map((line: any, index: number) => {
+      const productId = String(line.productId || '').trim();
+      const product = productMap.get(productId) as any;
+      if (!product || product.status !== 'active') {
+        throw new BadRequestException(`${line.name || line.sku || `Line ${index + 1}`} is not an active Product Master SKU`);
+      }
+      const qty = Math.trunc(Number(line.qty || line.quantity || 0));
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new BadRequestException(`${product.sku} needs a positive whole-number quantity`);
+      }
+      const price = Number(line.price || line.sellPrice || product.sellPrice || 0);
+      if (!Number.isFinite(price) || price < 0) {
+        throw new BadRequestException(`${product.sku} has an invalid price`);
+      }
+      const media = line.media || product.media || {};
+      return {
+        ...line,
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        brand: product.brand,
+        finish: product.finish,
+        dimensions: product.dimensions,
+        unit: product.unit,
+        qty,
+        quantity: qty,
+        price,
+        sellPrice: price,
+        floorPrice: Number(product.floorPrice || 0),
+        media,
+        area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
+        quoteImage: line.quoteImage || line.customImageUrl || '',
+      };
+    });
   }
 
   private normalizeDisplayMode(value?: string) {

@@ -53,7 +53,15 @@ function persistentManualAssetPath(filename: string) {
 }
 
 function cataloguePublicUrl(fileName: string) {
-  const baseUrl = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '');
+  const raw = String(
+    process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL ||
+    process.env.API_PUBLIC_BASE_URL ||
+    process.env.RAILWAY_PUBLIC_DOMAIN ||
+    '',
+  ).trim();
+  const baseUrl = raw
+    ? (raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`).replace(/\/+$/, '')
+    : '';
   return `${baseUrl}/catalogue-images/manual/${fileName}`;
 }
 

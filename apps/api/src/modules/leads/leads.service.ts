@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotesService } from '../quotes/quotes.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -72,7 +72,7 @@ export class LeadsService {
   }
 
   async create(data: CreateLeadInput, createdBy = 'system'): Promise<any> {
-    const intentRows = this.normalizeRows(data.intentRows);
+    const intentRows = await this.validateProductMasterRows(this.normalizeRows(data.intentRows));
     return this.prisma.$transaction(async (tx) => {
       const lead = await tx.lead.create({
         data: {
@@ -194,7 +194,7 @@ export class LeadsService {
     if (!['admin', 'owner', 'sales_manager', 'office_staff'].includes(role) && lead.ownerId !== createdBy) {
       throw new Error('This lead is restricted');
     }
-    const rows = this.normalizeRows(input.rows);
+    const rows = await this.validateProductMasterRows(this.normalizeRows(input.rows));
     if (!rows.length) throw new Error('At least one intent row is required');
     const intent = await this.prisma.leadIntent.create({
       data: {
@@ -369,11 +369,71 @@ export class LeadsService {
     return rows.reduce((sum, row) => sum + Number(row.qty || row.quantity || 0) * Number(row.price || row.sellPrice || 0), 0);
   }
 
+  private async validateProductMasterRows(rows: any[]) {
+    const activeRows = rows
+      .map((row) => ({ ...row, productId: String(row.productId || '').trim(), qty: Number(row.qty || row.quantity || 0) }))
+      .filter((row) => row.qty > 0);
+
+    if (!activeRows.length) return [];
+
+    const missingProduct = activeRows.find((row) => !row.productId);
+    if (missingProduct) {
+      throw new BadRequestException(
+        'Every intent row must use a Product Master SKU. Create or select the SKU in Product Master before making an intent or quote.',
+      );
+    }
+
+    const productIds = Array.from(new Set(activeRows.map((row) => row.productId)));
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, status: 'active' },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        category: true,
+        brand: true,
+        finish: true,
+        unit: true,
+        sellPrice: true,
+        media: true,
+      },
+    });
+    const productMap = new Map(products.map((product) => [product.id, product]));
+    const missingIds = productIds.filter((id) => !productMap.has(id));
+    if (missingIds.length) {
+      throw new BadRequestException(`Product Master SKU missing or inactive for ${missingIds.length} intent row(s).`);
+    }
+
+    return activeRows.map((row) => {
+      const product = productMap.get(row.productId)!;
+      const price = Number(row.price || row.sellPrice || product.sellPrice || 0);
+      return {
+        ...row,
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        brand: product.brand,
+        finish: product.finish || row.finish || '',
+        unit: row.unit || product.unit || 'PC',
+        qty: row.qty,
+        price,
+        sellPrice: price,
+        media: product.media || row.media || {},
+        area: row.area || row.room || 'General Selection',
+        source: 'product-master',
+      };
+    });
+  }
+
   private async intentRowsToQuoteLines(rows: any[]) {
     const lines: any[] = [];
     for (const row of rows) {
       const isTile = row.type === 'tile' || String(row.category || '').toLowerCase() === 'tiles';
-      if (isTile) {
+      let product: any = null;
+      if (row.productId) product = await this.prisma.product.findUnique({ where: { id: row.productId } });
+      if (!product && row.sku) product = await this.prisma.product.findUnique({ where: { sku: row.sku } }).catch(() => null);
+      if (!product && isTile) {
         lines.push({
           type: 'tile',
           category: 'Tiles',
@@ -390,24 +450,24 @@ export class LeadsService {
         });
         continue;
       }
-      let product: any = null;
-      if (row.productId) product = await this.prisma.product.findUnique({ where: { id: row.productId } });
-      if (!product && row.sku) product = await this.prisma.product.findUnique({ where: { sku: row.sku } }).catch(() => null);
+      if (!product) {
+        throw new BadRequestException('Quote generation requires active Product Master rows. Re-select the SKU and try again.');
+      }
       lines.push({
-        productId: product?.id || row.productId || undefined,
-        sku: product?.sku || row.sku || '',
-        name: product?.name || row.name || row.description || row.sku || 'Catalogue item',
-        category: product?.category || row.category || '',
-        brand: product?.brand || row.brand || '',
-        finish: product?.finish || row.finish || '',
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        brand: product.brand,
+        finish: product.finish || row.finish || '',
         qty: Number(row.qty || row.quantity || 0),
-        unit: row.unit || product?.unit || 'PC',
-        price: Number(row.price || row.sellPrice || product?.sellPrice || 0),
-        sellPrice: Number(row.price || row.sellPrice || product?.sellPrice || 0),
-        media: product?.media || row.media || {},
+        unit: row.unit || product.unit || 'PC',
+        price: Number(row.price || row.sellPrice || product.sellPrice || 0),
+        sellPrice: Number(row.price || row.sellPrice || product.sellPrice || 0),
+        media: product.media || row.media || {},
         area: row.area || row.room || 'General Selection',
         quoteImage: row.quoteImage || row.customImageUrl || '',
-        source: product ? 'inventory-or-catalogue' : 'manual-intent',
+        source: 'product-master',
       });
     }
     return lines;

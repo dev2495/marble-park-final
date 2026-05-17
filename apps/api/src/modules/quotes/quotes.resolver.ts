@@ -292,6 +292,14 @@ export class QuotesResolver {
   }
 
   @Query(() => GraphQLJSON)
+  async salesOrderPdfPayload(@Args('id', { type: () => ID }) id: string) {
+    // The web PDF route is already a public document endpoint. This query is
+    // intentionally limited to one sales-order payload by opaque ULID so PDF
+    // rendering does not depend on a default admin password.
+    return this.quotes.salesOrderPdfPayload(id);
+  }
+
+  @Query(() => GraphQLJSON)
   async salesOrderStats(@Context() ctx: GraphqlRequestContext, @Args('range', { nullable: true }) range?: string) {
     await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
     return this.quotes.salesOrderStats({ range });

@@ -178,6 +178,32 @@ async function getPdfServiceToken(apiUrl) {
 
 async function fetchOrder(id, requestUrl) {
   const apiUrl = apiUrlFromRequest(requestUrl);
+  try {
+    const directData = await graphQL(
+      apiUrl,
+      `query SalesOrderPdfPayload($id: ID!) { salesOrderPdfPayload(id: $id) }`,
+      { id },
+    );
+    const payload = directData?.salesOrderPdfPayload;
+    if (payload?.order) {
+      const lines = normalizeLines(payload.order.lines?.length ? payload.order.lines : payload.quote?.lines);
+      return {
+        order: { ...payload.order, lines },
+        quote: payload.quote || null,
+        customer: payload.customer || payload.quote?.customer || null,
+        owner: payload.owner || payload.quote?.owner || null,
+        settings: payload.settings || null,
+        products: Array.isArray(payload.products) ? payload.products : [],
+        reservations: Array.isArray(payload.reservations) ? payload.reservations : [],
+        challans: Array.isArray(payload.challans) ? payload.challans : [],
+      };
+    }
+  } catch (error) {
+    // Fall back to the legacy authenticated GraphQL path for older API
+    // deployments. New API deployments expose a PDF-only payload query so this
+    // no longer depends on the default admin password.
+  }
+
   const token = await getPdfServiceToken(apiUrl);
 
   const orderData = await graphQL(

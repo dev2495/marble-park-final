@@ -48,7 +48,7 @@ export class ImportsService {
    */
   async processPdfImport(filePath: string, uploadedBy = 'system'): Promise<any> {
     const imageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../web/public/catalogue-images/imports');
-    const publicBase = `${String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '')}/catalogue-images/imports`;
+    const publicBase = `${this.catalogueImageBaseUrl()}/catalogue-images/imports`;
     try {
       const result = await extractCataloguePdf({
         filePath,
@@ -541,7 +541,7 @@ export class ImportsService {
       const { PNG } = require('pngjs');
       const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
       const publicDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
-      const publicBaseUrl = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '');
+      const publicBaseUrl = this.catalogueImageBaseUrl();
       fs.mkdirSync(publicDir, { recursive: true });
       const bytes = new Uint8Array(fs.readFileSync(filePath));
       const pdf = await pdfjs.getDocument({ data: bytes }).promise;
@@ -660,11 +660,16 @@ export class ImportsService {
 
   private async processProductRow(data: any): Promise<any> {
     const normalized = this.normalizeProductRow(data);
-    const { sku, name, category, brand, finish, dimensions, sellPrice } = normalized;
+    const sku = this.normalizeSku(normalized.sku);
+    const name = String(normalized.name || '').trim();
+    const category = String(normalized.category || 'Uncategorized').trim();
+    const brand = String(normalized.brand || 'Unknown').trim();
+    const finish = String(normalized.finish || 'Standard').trim() || 'Standard';
+    const dimensions = String(normalized.dimensions || '').trim();
+    const sellPrice = Number(normalized.sellPrice || 0);
 
-    if (!sku || !name) {
-      throw new Error('SKU and Name are required');
-    }
+    if (!sku || !name) throw new Error('SKU and Name are required');
+    if (!Number.isFinite(sellPrice) || sellPrice <= 0) throw new Error('Sell price is required');
 
     // Spatial-extractor rows carry the resolved image URL directly. Pass it
     // through into product.media so approved rows land with an image
@@ -680,34 +685,70 @@ export class ImportsService {
       // Don't clobber an existing curated image with a (lower-quality) auto-extracted one.
       const existingMedia: any = existing.media || {};
       const mergedMedia = existingMedia.primary ? existingMedia : media;
-      return this.prisma.product.update({
-        where: { sku },
-        data: { sellPrice, media: mergedMedia, updatedAt: new Date() },
+      return this.prisma.$transaction(async (tx) => {
+        const product = await tx.product.update({
+          where: { sku },
+          data: { sellPrice, floorPrice: sellPrice * 0.9, media: mergedMedia, updatedAt: new Date() },
+        });
+        await tx.inventoryBalance.upsert({
+          where: { productId: product.id },
+          update: { updatedAt: new Date() },
+          create: {
+            id: ulid(),
+            productId: product.id,
+            onHand: 0,
+            available: 0,
+            reserved: 0,
+            damaged: 0,
+            hold: 0,
+            updatedAt: new Date(),
+          },
+        } as any);
+        return product;
       });
     } else {
       await this.ensureProductMasters(category, brand, finish);
-      return this.prisma.product.create({
-        data: {
-          id: ulid(),
-          sku,
-          name,
-          category,
-          brand,
-          finish,
-          dimensions,
-          sellPrice,
-          unit: 'PC',
-          status: 'active',
-          tags: {},
-          media,
-          sourceRefs: { extractedFrom: data.page ? `page-${data.page}` : 'pdf-import' },
-          floorPrice: sellPrice * 0.9,
-          taxClass: 'STANDARD',
-          description: data['Description'] || data['PRODUCT DESCRIPTION'] || data.rawText?.join(' · ') || '',
-          updatedAt: new Date(),
-        } as any,
+      return this.prisma.$transaction(async (tx) => {
+        const product = await tx.product.create({
+          data: {
+            id: ulid(),
+            sku,
+            name,
+            category,
+            brand,
+            finish,
+            dimensions,
+            sellPrice,
+            unit: 'PC',
+            status: 'active',
+            tags: {},
+            media,
+            sourceRefs: { extractedFrom: data.page ? `page-${data.page}` : 'pdf-import' },
+            floorPrice: sellPrice * 0.9,
+            taxClass: 'STANDARD',
+            description: data['Description'] || data['PRODUCT DESCRIPTION'] || data.rawText?.join(' · ') || '',
+            updatedAt: new Date(),
+          } as any,
+        });
+        await tx.inventoryBalance.create({
+          data: {
+            id: ulid(),
+            productId: product.id,
+            onHand: 0,
+            available: 0,
+            reserved: 0,
+            damaged: 0,
+            hold: 0,
+            updatedAt: new Date(),
+          } as any,
+        });
+        return product;
       });
     }
+  }
+
+  private normalizeSku(value: any) {
+    return String(value || '').trim().replace(/\s+/g, '').toUpperCase();
   }
 
   private async ensureProductMasters(category: string, brand: string, finish: string) {
@@ -734,5 +775,16 @@ export class ImportsService {
         create: { id: ulid(), name: finish, code: code(finish), description: 'Created from approved import', status: 'active', sortOrder: 100, metadata: { source: 'import-approval' }, updatedAt: now },
       });
     }
+  }
+
+  private catalogueImageBaseUrl() {
+    const raw = String(
+      process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL ||
+      process.env.API_PUBLIC_BASE_URL ||
+      process.env.RAILWAY_PUBLIC_DOMAIN ||
+      '',
+    ).trim();
+    if (!raw) return '';
+    return (raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`).replace(/\/+$/, '');
   }
 }
