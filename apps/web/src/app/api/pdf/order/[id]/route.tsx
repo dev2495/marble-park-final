@@ -76,6 +76,9 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     });
   } catch (error) {
     console.error('Sales Order PDF Gen Error:', error);
+    if (String(error instanceof Error ? error.message : error).toLowerCase().includes('not found')) {
+      return new NextResponse('Sales order not found', { status: 404 });
+    }
     return new NextResponse('Error generating sales order PDF', { status: 500 });
   }
 }

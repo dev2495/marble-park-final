@@ -199,9 +199,12 @@ async function fetchOrder(id, requestUrl) {
       };
     }
   } catch (error) {
-    // Fall back to the legacy authenticated GraphQL path for older API
-    // deployments. New API deployments expose a PDF-only payload query so this
-    // no longer depends on the default admin password.
+    // Only older API deployments need the authenticated fallback. The live API
+    // now exposes salesOrderPdfPayload; if it says the order is missing, fail
+    // fast instead of doing a slow service-login attempt.
+    if (!String(error?.message || '').includes('Cannot query field')) {
+      throw error;
+    }
   }
 
   const token = await getPdfServiceToken(apiUrl);
