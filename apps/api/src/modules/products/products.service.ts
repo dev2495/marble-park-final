@@ -37,7 +37,7 @@ export class ProductsService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(args?: { search?: string; category?: string; take?: number }) {
-    const where: any = {};
+    const where: any = { status: 'active' };
     if (args?.search) {
       where.OR = [
         { name: { contains: args.search, mode: 'insensitive' } },
@@ -131,8 +131,27 @@ export class ProductsService {
   }
 
   async delete(id: string) {
-    await this.findById(id);
-    return this.prisma.product.delete({ where: { id } });
+    const product = await this.findById(id);
+    const [reservations, movements] = await Promise.all([
+      this.prisma.reservation.count({ where: { productId: id } }),
+      this.prisma.inventoryMovement.count({ where: { productId: id } }),
+    ]);
+
+    if (reservations > 0 || movements > 0) {
+      return this.prisma.product.update({
+        where: { id },
+        data: {
+          status: 'deleted',
+          sku: `${product.sku}.deleted-${Date.now()}`,
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.inventoryBalance.deleteMany({ where: { productId: id } });
+      return tx.product.delete({ where: { id } });
+    });
   }
 
   async getCategories() {
