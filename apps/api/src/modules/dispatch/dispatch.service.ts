@@ -82,6 +82,22 @@ export class DispatchService {
       const lineStatus = lines.map((line: any) => {
         const productId = String(line.productId || '').trim();
         const orderedQty = Number(line.qty || line.quantity || 0);
+        if (!productId || orderedQty <= 0) {
+          return {
+            ...line,
+            productId,
+            orderedQty,
+            committedQty: 0,
+            remainingQty: Math.max(0, orderedQty),
+            reservedQty: 0,
+            backorderedQty: 0,
+            dispatchableQty: 0,
+            blockedQty: Math.max(0, orderedQty),
+            onHand: 0,
+            available: 0,
+            status: 'invalid_product',
+          };
+        }
         const committedQty = Number(challanQtyByJobProduct.get(`${job.id}:${productId}`) || 0);
         const remainingQty = Math.max(0, orderedQty - committedQty);
         const reservationRows = reservationsByQuoteProduct.get(`${job.quoteId}:${productId}`) || [];
@@ -121,8 +137,9 @@ export class DispatchService {
         ...job,
         salesOrder: orderMap.get(job.quoteId) || null,
         lines: lineStatus,
-        readyLines: lineStatus.filter((line: any) => line.dispatchableQty > 0),
-        pendingInwardLines: lineStatus.filter((line: any) => line.remainingQty > 0 && line.backorderedQty > 0),
+        readyLines: lineStatus.filter((line: any) => line.status === 'ready'),
+        pendingInwardLines: lineStatus.filter((line: any) => line.status === 'pending_inward'),
+        invalidLines: lineStatus.filter((line: any) => line.status === 'invalid_product'),
         completedLines: lineStatus.filter((line: any) => line.status === 'fully_dispatched'),
         challans: challansByJob.get(job.id) || [],
       };

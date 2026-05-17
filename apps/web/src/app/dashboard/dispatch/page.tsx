@@ -35,6 +35,7 @@ export default function DispatchPage() {
   const jobs = data?.dispatchQueue || [];
   const readyCount = jobs.reduce((sum: number, job: any) => sum + (job.readyLines?.length || 0), 0);
   const pendingCount = jobs.reduce((sum: number, job: any) => sum + (job.pendingInwardLines?.length || 0), 0);
+  const invalidCount = jobs.reduce((sum: number, job: any) => sum + (job.invalidLines?.length || 0), 0);
 
   return (
     <div className="space-y-7 pb-10">
@@ -61,7 +62,7 @@ export default function DispatchPage() {
             </Button>
           </div>
         </div>
-        <div className="relative mt-6 grid gap-3 sm:grid-cols-3">
+        <div className="relative mt-6 grid gap-3 sm:grid-cols-4">
           <div className="rounded-r4 border border-[var(--line)] bg-white/80 p-4 shadow-sm-soft">
             <p className="text-2xl font-black text-[var(--ink)]">{jobs.length}</p>
             <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Open jobs</p>
@@ -73,6 +74,10 @@ export default function DispatchPage() {
           <div className="rounded-r4 border border-[var(--line)] bg-white/80 p-4 shadow-sm-soft">
             <p className="text-2xl font-black text-amber-700">{pendingCount}</p>
             <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Pending inward</p>
+          </div>
+          <div className="rounded-r4 border border-[var(--line)] bg-white/80 p-4 shadow-sm-soft">
+            <p className="text-2xl font-black text-red-700">{invalidCount}</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Needs rebuild</p>
           </div>
         </div>
       </section>
@@ -103,11 +108,12 @@ export default function DispatchPage() {
                     <p className="mt-3 flex items-start gap-2 text-xs font-semibold leading-5 text-[var(--ink-3)]"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{job.siteAddress || 'Site address pending'}</p>
 
                     <div className="mt-4 space-y-2">
-                      {jobLines(job).filter((line: any) => Number(line.remainingQty || 0) > 0).map((line: any) => {
-                        const key = `${job.id}:${line.productId}`;
+                      {jobLines(job).filter((line: any) => Number(line.remainingQty || 0) > 0).map((line: any, lineIndex: number) => {
+                        const key = `${job.id}:${line.productId || line.sku || line.name || lineIndex}`;
                         const max = Number(line.dispatchableQty || 0);
                         const desired = Math.max(1, Math.min(Number(dispatchQty[key] || max || 1), max || 1));
-                        const ready = max > 0;
+                        const ready = line.status === 'ready' && max > 0;
+                        const invalid = line.status === 'invalid_product';
                         return (
                           <div key={key} className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-3">
                             <div className="flex items-start justify-between gap-3">
@@ -117,8 +123,8 @@ export default function DispatchPage() {
                                   Ordered {line.orderedQty} · Ready {line.dispatchableQty} · Pending {line.blockedQty}
                                 </p>
                               </div>
-                              <span className={ready ? 'rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase text-emerald-700' : 'rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black uppercase text-amber-700'}>
-                                {ready ? 'Ready' : 'Pending inward'}
+                              <span className={ready ? 'rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase text-emerald-700' : invalid ? 'rounded-full bg-red-50 px-2 py-1 text-[10px] font-black uppercase text-red-700' : 'rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black uppercase text-amber-700'}>
+                                {ready ? 'Ready' : invalid ? 'Rebuild quote' : 'Pending inward'}
                               </span>
                             </div>
                             {ready ? (
@@ -150,6 +156,8 @@ export default function DispatchPage() {
                                   Partial challan
                                 </Button>
                               </div>
+                            ) : invalid ? (
+                              <p className="mt-3 text-xs font-semibold text-red-700">This is an old/manual quote row without a Product Master SKU. Rebuild the quote from Product Master before dispatch.</p>
                             ) : (
                               <p className="mt-3 text-xs font-semibold text-[var(--ink-3)]">Blocked until this SKU is received on GRN and auto-reserved.</p>
                             )}
