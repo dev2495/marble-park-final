@@ -7,7 +7,16 @@ import { QueryErrorBanner } from '@/components/query-state';
 
 const AUDIT_QUERY = gql`
   query SystemAudit {
-    auditEvents(take: 120)
+    auditEvents(take: 120) {
+      events {
+        id
+        action
+        entityType
+        entityId
+        summary
+        createdAt
+      }
+    }
     salesOrderStats(range: "today")
     salesOrders(range: "today")
     quotes {
@@ -61,7 +70,7 @@ function fmt(value: string) {
 
 export default function SystemAuditPage() {
   const { data, loading, error, refetch } = useQuery(AUDIT_QUERY, { pollInterval: 30000 });
-  const audits = data?.auditEvents || [];
+  const audits = data?.auditEvents?.events || [];
   const orders = data?.salesOrders || [];
   const quotes = data?.quotes || [];
   const balances = data?.inventoryBalances || [];

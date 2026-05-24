@@ -5,7 +5,9 @@ import ExcelJS from 'exceljs';
 
 const API = process.env.API_URL || 'http://localhost:4011/graphql';
 const WEB = process.env.WEB_URL || 'http://localhost:3011';
-const PDF_PATH = process.env.READINESS_PDF || '/Users/devarshthakkar/Downloads/American Standard Pricing Catalogue 2025 (1).pdf';
+const DEFAULT_PDF_URL = 'https://site.dgtechsoln.com/wp-content/uploads/2024/01/AS-Pricing-Catalogue.pdf';
+const PDF_URL = process.env.READINESS_PDF_URL || DEFAULT_PDF_URL;
+const PDF_PATH = process.env.READINESS_PDF || path.join(os.tmpdir(), 'marble-readiness-american-standard.pdf');
 
 async function gql(query, variables = {}, token) {
   const res = await fetch(API, {
@@ -69,6 +71,15 @@ async function writeExcelSample() {
   return filePath;
 }
 
+async function ensureReadinessPdf() {
+  if (fs.existsSync(PDF_PATH)) return;
+  const response = await fetch(PDF_URL);
+  assert(response.ok, `readiness PDF download failed: ${response.status} ${PDF_URL}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  assert(buffer.subarray(0, 4).toString() === '%PDF', `readiness PDF URL did not return a PDF: ${PDF_URL}`);
+  fs.writeFileSync(PDF_PATH, buffer);
+}
+
 async function main() {
   const [admin, owner, inventory] = await Promise.all([
     login('admin@marblepark.com'),
@@ -116,6 +127,7 @@ async function main() {
   const excelApply = (await gql(`mutation($id: String!) { applyImportBatch(importBatchId: $id) { result } }`, { id: excelImport.importBatchId }, inventory.token)).applyImportBatch.result;
   assert(excelApply.applied === 1 && excelApply.failed === 0, 'approved Excel batch should apply cleanly');
 
+  await ensureReadinessPdf();
   assert(fs.existsSync(PDF_PATH), `readiness PDF missing: ${PDF_PATH}`);
   const pdfImport = await processUpload(PDF_PATH, 'pdf', inventory.token);
   assert(pdfImport.importBatchId, 'PDF import should create an import batch');

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 
 export interface CreateCustomerInput {
   name: string;
@@ -82,7 +83,7 @@ export interface DuplicateCandidate {
 
 @Injectable()
 export class CustomersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   async findAll(args?: { search?: string }): Promise<any[]> {
     const where = args?.search
@@ -128,6 +129,14 @@ export class CustomersService {
     }
     const customer = await this.prisma.customer.create({
       data: this.toDbCustomer(data, true) as any,
+    });
+    await this.audit.record({
+      actorUserId: 'system',
+      action: 'customer.create',
+      entityType: 'Customer',
+      entityId: customer.id,
+      summary: `Customer ${customer.name} created${data.forceCreate ? ' (duplicate guard bypassed)' : ''}`,
+      metadata: { city: customer.city, email: customer.email, gstNo: customer.gstNo, forceCreate: !!data.forceCreate },
     });
     return this.toApiCustomer(customer);
   }
@@ -229,12 +238,28 @@ export class CustomersService {
       where: { id },
       data: this.toDbCustomer(data, false) as any,
     });
+    await this.audit.record({
+      actorUserId: 'system',
+      action: 'customer.update',
+      entityType: 'Customer',
+      entityId: id,
+      summary: `Customer ${customer.name} updated`,
+      metadata: { changed: Object.keys(data) },
+    });
     return this.toApiCustomer(customer);
   }
 
   async delete(id: string) {
-    await this.findById(id);
-    return this.prisma.customer.delete({ where: { id } });
+    const customer = await this.findById(id);
+    const result = await this.prisma.customer.delete({ where: { id } });
+    await this.audit.record({
+      actorUserId: 'system',
+      action: 'customer.delete',
+      entityType: 'Customer',
+      entityId: id,
+      summary: `Customer ${customer.name} deleted`,
+    });
+    return result;
   }
 
   private toApiCustomer(customer: any) {

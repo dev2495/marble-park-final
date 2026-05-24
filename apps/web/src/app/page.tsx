@@ -61,11 +61,10 @@ export default function HomePage() {
                   ))}
                 </div>
                 <div className="rounded-r4 bg-[#f4f7fc] p-5 text-[#18181b]">
-                  <div className="text-xs font-medium uppercase tracking-[0.14em] text-[#52525b]">Demo credentials</div>
-                  <div className="mt-2 grid gap-2 text-sm font-black sm:grid-cols-2">
-                    <div>owner@marblepark.com</div>
-                    <div>password123</div>
-                  </div>
+                  <div className="text-xs font-medium uppercase tracking-[0.14em] text-[#52525b]">Secure workspace</div>
+                  <p className="mt-2 text-sm font-bold leading-6 text-[#18181b]">
+                    User accounts and temporary passwords are issued from User Management by admin/owner roles only.
+                  </p>
                 </div>
               </div>
             </div>

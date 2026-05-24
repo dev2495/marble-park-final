@@ -5,6 +5,10 @@ import { Providers } from './providers';
 export const metadata: Metadata = {
   title: 'Marble Park | Premium Bath Solutions',
   description: 'Marble Park - Premium Bath Solutions CRM & Inventory Management',
+  icons: {
+    icon: '/favicon.svg',
+    shortcut: '/favicon.svg',
+  },
 };
 
 /**

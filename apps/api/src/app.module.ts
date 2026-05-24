@@ -20,6 +20,7 @@ import { SystemModule } from './modules/system/system.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { OperationsModule } from './modules/operations/operations.module';
+import { AuditModule } from './modules/audit/audit.module';
 
 import { SearchModule } from './modules/search/search.module';
 
@@ -57,6 +58,7 @@ import { SearchModule } from './modules/search/search.module';
     ProcurementModule,
     OperationsModule,
     NotificationsModule,
+    AuditModule,
   ],
 })
 export class AppModule {}

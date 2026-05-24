@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
+import { AuditService } from '../audit/audit.service';
 import { ulid } from 'ulid';
 import * as bcrypt from 'bcrypt';
 
@@ -22,25 +23,59 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private users: UsersService,
+    private audit: AuditService,
   ) {}
 
   async login(input: LoginInput, ipAddress?: string, userAgent?: string) {
     const user = await this.users.findByEmail(input.email);
     if (!user) {
+      // Record a failed-login attempt against an anonymous actor so admins
+      // can spot brute-force or typo storms in the audit log.
+      await this.audit.record({
+        actorUserId: 'anonymous',
+        action: 'auth.login.failed',
+        entityType: 'User',
+        entityId: input.email || 'unknown',
+        summary: `Failed login attempt for ${input.email || 'unknown email'}`,
+        metadata: { email: input.email, ipAddress, userAgent, reason: 'user-not-found' },
+      });
       throw new UnauthorizedException('Invalid credentials');
     }
 
     const valid = await this.users.verifyPassword(user, input.password);
     if (!valid) {
+      await this.audit.record({
+        actorUserId: user.id,
+        action: 'auth.login.failed',
+        entityType: 'User',
+        entityId: user.id,
+        summary: `Failed login attempt for ${user.email}`,
+        metadata: { email: user.email, ipAddress, userAgent, reason: 'invalid-password' },
+      });
       throw new UnauthorizedException('Invalid credentials');
     }
 
     if (!user.active) {
+      await this.audit.record({
+        actorUserId: user.id,
+        action: 'auth.login.blocked',
+        entityType: 'User',
+        entityId: user.id,
+        summary: `Disabled account ${user.email} tried to sign in`,
+        metadata: { ipAddress, userAgent },
+      });
       throw new UnauthorizedException('Account is disabled');
     }
 
     const token = await this.createSession(user.id, ipAddress, userAgent);
-    
+    await this.audit.record({
+      actorUserId: user.id,
+      action: 'auth.login',
+      entityType: 'User',
+      entityId: user.id,
+      summary: `${user.name || user.email} signed in`,
+      metadata: { ipAddress, userAgent, role: user.role },
+    });
     return {
       authenticated: true,
       token,
@@ -54,7 +89,17 @@ export class AuthService {
   }
 
   async logout(sessionId: string) {
+    const session = await this.prisma.session.findUnique({ where: { id: sessionId } }).catch(() => null);
     await this.prisma.session.delete({ where: { id: sessionId } }).catch(() => {});
+    if (session?.userId) {
+      await this.audit.record({
+        actorUserId: session.userId,
+        action: 'auth.logout',
+        entityType: 'User',
+        entityId: session.userId,
+        summary: 'User signed out',
+      });
+    }
     return { success: true };
   }
 

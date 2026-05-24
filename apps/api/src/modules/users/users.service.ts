@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import * as bcrypt from 'bcrypt';
 import { ulid } from 'ulid';
 
@@ -9,15 +10,15 @@ export interface CreateUserInput {
   password: string;
   role: string;
   phone: string;
-  avatarUrl?: string | null;
-  bio?: string | null;
 }
 
 export interface UpdateUserInput {
   name?: string;
+  email?: string;
   phone?: string;
   role?: string;
   active?: boolean;
+  password?: string;
   avatarUrl?: string | null;
   bio?: string | null;
 }
@@ -37,7 +38,7 @@ export interface ChangeMyPasswordInput {
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   async findAll() {
     return this.prisma.user.findMany({
@@ -56,33 +57,111 @@ export class UsersService {
   }
 
   async create(data: CreateUserInput): Promise<any> {
+    if (!data.name?.trim()) throw new BadRequestException('Name is required');
+    if (!data.email?.trim()) throw new BadRequestException('Email is required');
+    if (!data.password || data.password.length < 8) throw new BadRequestException('Password must be at least 8 characters');
+    const email = data.email.trim().toLowerCase();
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) throw new BadRequestException('Another user already uses that email');
     const passwordHash = await bcrypt.hash(data.password, 12);
-    return this.prisma.user.create({
+    const created = await this.prisma.user.create({
       data: {
         id: ulid(),
-        name: data.name,
-        email: data.email,
+        name: data.name.trim().slice(0, 80),
+        email,
         passwordHash,
         role: data.role,
-        phone: data.phone,
-        avatarUrl: data.avatarUrl || null,
-        bio: data.bio ? data.bio.slice(0, 280) : null,
+        phone: data.phone?.trim() || '',
         passwordChangedAt: new Date(),
       },
     } as any) as any;
+    await this.audit.record({
+      actorUserId: 'system',
+      action: 'user.create',
+      entityType: 'User',
+      entityId: created.id,
+      summary: `User ${created.name} (${created.email}) created with role ${created.role}`,
+      metadata: { role: created.role, email: created.email },
+    });
+    return created;
   }
 
   async update(id: string, data: UpdateUserInput) {
-    await this.findById(id);
-    return this.prisma.user.update({
+    const before = await this.findById(id);
+    const patch: any = {};
+    if (typeof data.name === 'string' && data.name.trim()) patch.name = data.name.trim().slice(0, 80);
+    if (typeof data.phone === 'string') patch.phone = data.phone.trim().slice(0, 24);
+    if (typeof data.role === 'string' && data.role.trim()) patch.role = data.role.trim();
+    if (typeof data.active === 'boolean') patch.active = data.active;
+    if (typeof data.bio === 'string') patch.bio = data.bio.slice(0, 280);
+    if (data.avatarUrl !== undefined) patch.avatarUrl = data.avatarUrl || null;
+    if (typeof data.email === 'string' && data.email.trim() && data.email.trim().toLowerCase() !== before.email) {
+      const email = data.email.trim().toLowerCase();
+      const existing = await this.prisma.user.findUnique({ where: { email } });
+      if (existing && existing.id !== id) throw new BadRequestException('Another user already uses that email');
+      patch.email = email;
+    }
+    if (typeof data.password === 'string' && data.password.length > 0) {
+      if (data.password.length < 8) throw new BadRequestException('Password must be at least 8 characters');
+      patch.passwordHash = await bcrypt.hash(data.password, 12);
+      patch.passwordChangedAt = new Date();
+    }
+    if (Object.keys(patch).length === 0) return before;
+    const updated = await this.prisma.user.update({
       where: { id },
-      data: data as any,
+      data: patch,
     });
+    // Detect role / active changes specifically — they're the high-impact ones.
+    const roleChanged = data.role && data.role !== before.role;
+    const activeChanged = typeof data.active === 'boolean' && data.active !== before.active;
+    if (roleChanged) {
+      await this.audit.record({
+        actorUserId: 'system',
+        action: 'user.role.change',
+        entityType: 'User',
+        entityId: id,
+        summary: `${updated.name} role changed: ${before.role} → ${updated.role}`,
+        metadata: { from: before.role, to: updated.role },
+      });
+    } else if (activeChanged) {
+      await this.audit.record({
+        actorUserId: 'system',
+        action: data.active ? 'user.enable' : 'user.disable',
+        entityType: 'User',
+        entityId: id,
+        summary: `${updated.name} ${data.active ? 'enabled' : 'disabled'}`,
+      });
+    } else if (patch.passwordHash) {
+      await this.audit.record({
+        actorUserId: 'system',
+        action: 'password.reset',
+        entityType: 'User',
+        entityId: id,
+        summary: `${updated.name} password was reset by admin/owner`,
+      });
+    } else {
+      await this.audit.record({
+        actorUserId: 'system',
+        action: 'user.update',
+        entityType: 'User',
+        entityId: id,
+        summary: `${updated.name} profile updated`,
+      });
+    }
+    return updated;
   }
 
   async delete(id: string) {
-    await this.findById(id);
-    return this.prisma.user.update({ where: { id }, data: { active: false } });
+    const user = await this.findById(id);
+    const result = await this.prisma.user.update({ where: { id }, data: { active: false, email: `${user.email}.deleted-${Date.now()}` } });
+    await this.audit.record({
+      actorUserId: 'system',
+      action: 'user.delete',
+      entityType: 'User',
+      entityId: id,
+      summary: `User ${user.name} (${user.email}) removed from active team access`,
+    });
+    return result;
   }
 
   async verifyPassword(user: { passwordHash: string }, password: string) {
@@ -135,6 +214,13 @@ export class UsersService {
     await this.prisma.user.update({
       where: { id: userId },
       data: { passwordHash, passwordChangedAt: new Date() } as any,
+    });
+    await this.audit.record({
+      actorUserId: userId,
+      action: 'password.change',
+      entityType: 'User',
+      entityId: userId,
+      summary: `${user.name || user.email} changed their password`,
     });
     // Invalidate every existing session for this user except — to keep the
     // current request usable — we don't delete the session bound to the

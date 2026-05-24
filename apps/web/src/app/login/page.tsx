@@ -142,6 +142,7 @@ export default function LoginPage() {
                     type="email"
                     required
                     autoFocus
+                    autoComplete="username"
                     placeholder="Enter your work email"
                     className="h-11 w-full rounded-lg border border-white/10 bg-white/[0.065] pl-9 pr-3 text-sm font-medium text-white placeholder:text-slate-500 focus:border-blue-300/60 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
                   />
@@ -157,6 +158,7 @@ export default function LoginPage() {
                     onChange={(event) => setPassword(event.target.value)}
                     type={showPassword ? 'text' : 'password'}
                     required
+                    autoComplete="current-password"
                     placeholder="Enter your password"
                     className="h-11 w-full rounded-lg border border-white/10 bg-white/[0.065] pl-9 pr-11 text-sm font-medium text-white placeholder:text-slate-500 focus:border-blue-300/60 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
                   />

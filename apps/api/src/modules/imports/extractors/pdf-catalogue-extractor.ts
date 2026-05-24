@@ -77,6 +77,15 @@ export interface ExtractorResult {
   brand: string;
 }
 
+function boundedInt(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(parsed)));
+}
+
+const IMAGE_FETCH_TIMEOUT_MS = boundedInt(process.env.PDF_IMAGE_FETCH_TIMEOUT_MS, 1000, 250, 5000);
+const ORPHAN_IMAGES_PER_PAGE = boundedInt(process.env.PDF_ORPHAN_IMAGES_PER_PAGE, 3, 0, 25);
+
 const SKU_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   // American Standard: CL3229B-6DACTCB, FFAS0401-151500BA0, BTAS6722-2020403C5
   { name: 'us-style', regex: /^(?:CL|FFAS|FFAST|BTAS|CCAS[A-Z]?|B)\d{3,5}[A-Z]?(?:-\d{1,8}[A-Z0-9]*)?$/ },
@@ -86,7 +95,6 @@ const SKU_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   { name: 'numeric-prefix', regex: /^\d{6}[A-Z]\d{3}$/ },
 ];
 
-const MRP_RE = /^(?:[`₹]?\s*)?(\d{1,3}(?:,\d{2,3})+|\d{4,7})(?:\.\d{1,2})?$/;
 const PURE_PRICE_RE = /(\d{1,3}(?:,\d{2,3})+|\d{5,7})/;
 const NOISE_RE = /^(?:MRP|Price|Page|Note|Image|Description|Series|Range|Brand|`|₹|—|-{1,3})$/i;
 
@@ -145,6 +153,21 @@ function safeParsePrice(input: string): number {
   return Number(m[1].replace(/,/g, '')) || 0;
 }
 
+function parseMrpText(input: string): number {
+  const text = String(input || '');
+  const mrpMatch = text.match(/\bMRP\b[^0-9]{0,30}(\d{1,3}(?:,\d{2,3})+|\d{4,7})(?:\.\d{1,2})?/i);
+  if (mrpMatch) return safeParsePrice(mrpMatch[1]);
+  if (/^[`₹\s:()-]*\d/.test(text.trim())) return safeParsePrice(text);
+  return 0;
+}
+
+function cleanCatalogueLabel(input: string): string {
+  return String(input || '')
+    .replace(/^\s*(?:Product\s+Description|Description|Product\s+Group|Collection|Range|Series)\s*[:\-]\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 interface PageItem {
   str: string;
   x: number;
@@ -173,7 +196,7 @@ function multiplyMatrix(a: number[], b: number[]): number[] {
   ];
 }
 
-async function readImageObject(page: any, id: string, timeoutMs = 5000): Promise<any> {
+async function readImageObject(page: any, id: string, timeoutMs = IMAGE_FETCH_TIMEOUT_MS): Promise<any> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`image-fetch-timeout:${id}`)), timeoutMs);
     page.objs.get(id, (img: any) => {
@@ -335,16 +358,17 @@ function deriveProductMeta(
     // out helper text like "(S Trap M11453 set ...)" that happens to
     // contain a 5-digit number.
     if (!mrp && /\bMRP\b/i.test(text)) {
-      const m = text.match(/MRP[`\s₹]*(\d{1,3}(?:,\d{2,3})+|\d{4,7})/i);
-      if (m) {
-        mrp = safeParsePrice(m[1]);
+      const parsedMrp = parseMrpText(text);
+      if (parsedMrp) {
+        mrp = parsedMrp;
         continue;
       }
       // Fall back to the next line.
       const idx = ordered.indexOf(line);
       if (idx >= 0 && idx + 1 < ordered.length) {
         const next = ordered[idx + 1].text;
-        if (MRP_RE.test(next)) mrp = safeParsePrice(next);
+        const nextMrp = parseMrpText(next);
+        if (nextMrp) mrp = nextMrp;
       }
       continue;
     }
@@ -355,11 +379,11 @@ function deriveProductMeta(
 
     if (!name && text.length >= 4 && /[a-zA-Z]/.test(text) && !/^[A-Z\s\-]+$/.test(text) && !/^MRP/.test(text)) {
       // First descriptive line: usually the product name.
-      name = text;
+      name = cleanCatalogueLabel(text);
       continue;
     }
     if (!series && /^[A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2}$/.test(text) && text !== name) {
-      series = text;
+      series = cleanCatalogueLabel(text);
     }
   }
   return { name, series, mrp, rawText, sectionHeader };
@@ -555,7 +579,9 @@ export async function extractCataloguePdf(opts: ExtractorOptions): Promise<Extra
     const claimedThisPage = new Set(
       pageRows.filter((r) => r.imagePath).map((r) => path.basename(r.imagePath as string)),
     );
+    let savedOrphansOnPage = 0;
     for (const img of pageImages) {
+      if (savedOrphansOnPage >= ORPHAN_IMAGES_PER_PAGE) break;
       const claimKey = `${pageNumber}:${img.id}`;
       if (claimedImages.has(claimKey)) continue;
       try {
@@ -577,6 +603,7 @@ export async function extractCataloguePdf(opts: ExtractorOptions): Promise<Extra
           height: (obj as any).height,
           hash,
         });
+        savedOrphansOnPage += 1;
       } catch {
         // ignore unreadable images
       }

@@ -73,7 +73,7 @@ export default function ProductMasterPage() {
       fd.append('scope', 'product-image');
       const upload = await fetch('/api/upload', {
         method: 'POST',
-        headers: { authorization: `Bearer ${localStorage.getItem('auth_token') || ''}` },
+        headers: { Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}` },
         body: fd,
       }).then((res) => res.json());
       if (!upload.publicUrl) throw new Error(upload.error || 'Image upload failed');

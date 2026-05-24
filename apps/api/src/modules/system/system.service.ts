@@ -12,10 +12,11 @@ export class SystemService {
   async getSettings() {
     let settings = await this.prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } });
     if (!settings) {
+      const railwayUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
       settings = await this.prisma.appSetting.create({
         data: {
           id: 'default',
-          canonicalAppUrl: 'http://localhost:3001',
+          canonicalAppUrl: process.env.PUBLIC_APP_URL || railwayUrl || '',
           quotePrefix: 'QT',
           challanPrefix: 'CH',
           approvalDiscountThreshold: 15,
@@ -155,11 +156,24 @@ export class SystemService {
   async reviewTasks(args?: { status?: string; take?: number }) {
     const where: any = {};
     if (args?.status) where.status = args.status;
-    return this.prisma.catalogReviewTask.findMany({
+    const tasks = await this.prisma.catalogReviewTask.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take: args?.take || 100,
     });
+    return tasks.map((task) => this.withCurrentCatalogueImageUrl(task));
+  }
+
+  private withCurrentCatalogueImageUrl(task: any) {
+    if (!task?.imagePath) return task;
+    const baseUrl = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || process.env.PUBLIC_APP_URL || '').replace(/\/+$/, '');
+    if (!baseUrl) return task;
+    const imageUrl = String(task.imageUrl || '');
+    if (imageUrl && !/localhost:3002|127\.0\.0\.1:3002/.test(imageUrl)) return task;
+    return {
+      ...task,
+      imageUrl: `${baseUrl}/catalogue-images/imports/${path.basename(task.imagePath)}`,
+    };
   }
 
   async mapReviewTask(id: string, productId: string, actorUserId: string) {

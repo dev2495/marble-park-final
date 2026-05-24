@@ -91,7 +91,7 @@ export default function ProfilePage() {
       fd.append('scope', 'product-image'); // reuse the image upload path
       const res = await fetch('/api/upload', {
         method: 'POST',
-        headers: { authorization: `Bearer ${localStorage.getItem('auth_token') || ''}` },
+        headers: { Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}` },
         body: fd,
       });
       const json = await res.json();

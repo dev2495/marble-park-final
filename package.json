@@ -32,13 +32,5 @@
   "devDependencies": {
     "concurrently": "^8.2.2",
     "typescript": "^5.3.3"
-  },
-  "overrides": {
-    "exceljs@4.4.0": {
-      "uuid": "11.1.1"
-    },
-    "next@15.5.18": {
-      "postcss": "8.5.15"
-    }
   }
 }

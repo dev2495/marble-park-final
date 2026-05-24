@@ -52,18 +52,15 @@ export class CreateUserInput {
 
   @Field()
   phone!: string;
-
-  @Field({ nullable: true })
-  avatarUrl?: string;
-
-  @Field({ nullable: true })
-  bio?: string;
 }
 
 @InputType()
 export class UpdateUserInput {
   @Field({ nullable: true })
   name?: string;
+
+  @Field({ nullable: true })
+  email?: string;
 
   @Field({ nullable: true })
   phone?: string;
@@ -75,6 +72,9 @@ export class UpdateUserInput {
   active?: boolean;
 
   @Field({ nullable: true })
+  password?: string;
+
+  @Field({ nullable: true, description: '/catalogue-images/manual/<file>.png from /api/upload, or null to remove' })
   avatarUrl?: string;
 
   @Field({ nullable: true })
