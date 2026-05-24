@@ -1,0 +1,149 @@
+import { Args, Context, Field, ID, InputType, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { GraphQLJSON } from 'graphql-scalars';
+import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
+import { PrismaService } from '../prisma/prisma.service';
+import { ProcurementService } from './procurement.service';
+
+@InputType()
+class CreatePurchaseOrderInput {
+  @Field(() => [String])
+  demandIds!: string[];
+
+  @Field({ nullable: true })
+  vendorId?: string;
+
+  @Field({ nullable: true })
+  vendorName?: string;
+
+  @Field(() => Date, { nullable: true })
+  expectedDate?: Date;
+
+  @Field({ nullable: true })
+  notes?: string;
+}
+
+@InputType()
+class ReceivePurchaseOrderInput {
+  @Field()
+  purchaseOrderId!: string;
+
+  @Field({ nullable: true })
+  supplierChallan?: string;
+
+  @Field({ nullable: true })
+  supplierBill?: string;
+
+  @Field(() => Date, { nullable: true })
+  receivedDate?: Date;
+
+  @Field({ nullable: true })
+  notes?: string;
+
+  @Field(() => String, { nullable: true })
+  lines?: string;
+}
+
+@InputType()
+class ManualGoodsReceiptInput {
+  @Field({ nullable: true })
+  vendorId?: string;
+
+  @Field()
+  vendorName!: string;
+
+  @Field({ nullable: true })
+  supplierChallan?: string;
+
+  @Field({ nullable: true })
+  supplierBill?: string;
+
+  @Field(() => Date, { nullable: true })
+  receivedDate?: Date;
+
+  @Field({ nullable: true })
+  reason?: string;
+
+  @Field({ nullable: true })
+  notes?: string;
+
+  @Field(() => String, { nullable: true })
+  lines?: string;
+}
+
+@Resolver()
+export class ProcurementResolver {
+  constructor(
+    private procurement: ProcurementService,
+    private prisma: PrismaService,
+  ) {}
+
+  @Query(() => [GraphQLJSON])
+  async purchaseDemandQueue(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('take', { nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.procurement.purchaseDemandQueue({ status, take });
+  }
+
+  @Query(() => [GraphQLJSON])
+  async purchaseOrders(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('take', { nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.procurement.purchaseOrders({ status, take });
+  }
+
+  @Query(() => GraphQLJSON)
+  async purchaseOrder(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    await requireSession(this.prisma, ctx);
+    return this.procurement.purchaseOrder(id);
+  }
+
+  @Query(() => [GraphQLJSON])
+  async goodsReceiptNotes(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('purchaseOrderId', { nullable: true }) purchaseOrderId?: string,
+    @Args('take', { nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.procurement.goodsReceiptNotes({ purchaseOrderId, take });
+  }
+
+  @Query(() => GraphQLJSON)
+  async procurementSummary(@Context() ctx: GraphqlRequestContext) {
+    await requireSession(this.prisma, ctx);
+    return this.procurement.procurementSummary();
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async createPurchaseOrder(@Args('input') input: CreatePurchaseOrderInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'office_staff']);
+    return this.procurement.createPurchaseOrder(input as any, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async updatePurchaseOrderStatus(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('status') status: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    return this.procurement.updatePurchaseOrderStatus(id, status, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async receivePurchaseOrder(@Args('input') input: ReceivePurchaseOrderInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    return this.procurement.receivePurchaseOrder(input as any, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async createManualGoodsReceipt(@Args('input') input: ManualGoodsReceiptInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    return this.procurement.createManualGoodsReceipt(input as any, user.id);
+  }
+}

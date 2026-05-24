@@ -55,8 +55,8 @@ export default function UsersPage() {
   const [form, setForm] = useState(emptyForm);
   const [message, setMessage] = useState('');
 
-  const users = data?.users || [];
-  const performance = data?.ownerDashboard?.userPerformance || [];
+  const users = useMemo<any[]>(() => data?.users || [], [data?.users]);
+  const performance = useMemo<any[]>(() => data?.ownerDashboard?.userPerformance || [], [data?.ownerDashboard?.userPerformance]);
   const performanceByUser = useMemo(() => new Map(performance.map((row: any) => [row.id, row])), [performance]);
 
   async function submit() {

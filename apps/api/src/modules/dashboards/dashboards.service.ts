@@ -219,7 +219,8 @@ export class DashboardsService {
       summary.totalQuantity += balance.onHand;
       summary.totalAvailable += balance.available;
       summary.totalReserved += balance.reserved;
-      if (balance.available < 5) summary.lowStock++;
+      const threshold = balance.reorderPoint ?? balance.lowStockThreshold ?? 5;
+      if (Number(threshold) > 0 && balance.available <= Number(threshold)) summary.lowStock++;
       if (balance.available === 0) summary.outOfStock++;
       summary.totalValue += balance.available * (balance.product.sellPrice || 0);
     }

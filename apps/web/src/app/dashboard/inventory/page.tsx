@@ -72,9 +72,12 @@ export default function InventoryPage() {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_16%,rgba(59,130,246,0.40),transparent_32%),radial-gradient(circle_at_88%_85%,rgba(99,102,241,0.32),transparent_28%)]" />
           <div className="relative">
             <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Inventory truth</p>
-            <h1 className="mt-4 font-display text-3xl font-bold leading-tight tracking-[-0.02em] text-[#18181b]">Stock desk for sales, inward and dispatch.</h1>
-            <p className="mt-5 text-sm text-[#52525b]">Catalogue-only SKUs are visible with zero stock until inwarded. This avoids fake stock while keeping every quoted item searchable.</p>
-            <Button asChild size="lg" className="mt-7 bg-[#2563eb] text-white hover:bg-[#1d4ed8]"><Link href="/dashboard/inventory/inwards"><PackagePlus className="mr-2 h-5 w-5" /> New inward</Link></Button>
+            <h1 className="mt-4 font-display text-3xl font-bold leading-tight tracking-[-0.02em] text-[#18181b]">Stock desk for availability, reservations and procurement.</h1>
+            <p className="mt-5 text-sm text-[#52525b]">Catalogue-only SKUs are visible with zero stock until PO/GRN receiving posts real inward. Manual GRN remains available for verified vendor receipts without a PO.</p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Button asChild size="lg" className="bg-[#2563eb] text-white hover:bg-[#1d4ed8]"><Link href="/dashboard/procurement"><PackagePlus className="mr-2 h-5 w-5" /> Procurement desk</Link></Button>
+              <Button asChild size="lg" variant="outline"><Link href="/dashboard/inventory/inwards">Manual GRN</Link></Button>
+            </div>
           </div>
         </div>
 

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { nextDocumentNumber } from '../common/sequence';
 import { ulid } from 'ulid';
 
 export interface CreateQuoteInput {
@@ -104,7 +105,7 @@ export class QuotesService {
     const customerId = data.customerId;
     if (!customerId) throw new BadRequestException('A customer is required');
 
-    const normalizedLines = this.normalizeLines(data.lines);
+    const normalizedLines = await this.assertQuoteLines(data.lines, 'creating a quote');
     const displayMode = this.normalizeDisplayMode(data.displayMode);
     const quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, normalizedLines);
     const availabilityIssues = await this.getAvailabilityIssues(normalizedLines);
@@ -129,7 +130,7 @@ export class QuotesService {
                 title: data.projectName || data.title || 'Retail quote opportunity',
                 source: 'Quote desk',
                 stage: 'quoted',
-                expectedValue: this.getLinesTotal(data.lines),
+                expectedValue: this.getLinesTotal(normalizedLines),
                 lastContactAt: new Date(),
                 nextActionAt: new Date(Date.now() + 86400000 * 2),
                 notes: 'Auto-created from quote builder.',
@@ -148,8 +149,8 @@ export class QuotesService {
               leadId,
               lines: normalizedLines,
               quoteNumber,
-              status: 'pending_approval',
-              approvalStatus: 'pending',
+              status: 'draft',
+              approvalStatus: 'approved',
               discountPercent: data.discountPercent || 0,
               displayMode,
               projectName: data.projectName || '',
@@ -161,16 +162,26 @@ export class QuotesService {
               quoteMeta,
               approval: {
                 requestedAt: new Date().toISOString(),
-                reason: 'owner_quote_approval_required',
+                reason: 'quote_ready_no_owner_approval_required',
                 availabilityIssues,
                 discountPercent: data.discountPercent || 0,
                 total: this.getLinesTotal(normalizedLines),
                 displayMode,
+                autoApprovedAt: new Date().toISOString(),
               },
               updatedAt: new Date(),
             },
             include: quoteInclude,
           } as any) as any;
+          await this.syncQuoteLinesTx(tx, quote, normalizedLines);
+          await this.upsertDocumentJobTx(tx, {
+            entityType: 'Quote',
+            entityId: quote.id,
+            documentType: 'quote_pdf',
+            url: `/api/pdf/quote/${quote.id}`,
+            actorUserId: ownerId,
+            metadata: { quoteNumber: quote.quoteNumber, statusSource: 'route_verified_on_request' },
+          });
           return quote;
         }, { timeout: 15000 });
         break;
@@ -184,24 +195,24 @@ export class QuotesService {
     await this.audit(created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId });
     await this.notifications.createMany([
       {
-        title: 'Quote needs approval',
-        message: `${created.quoteNumber} is waiting for owner approval for ${created.customer?.name || 'customer'}.`,
-        type: 'approval',
+        title: 'Quote ready',
+        message: `${created.quoteNumber} is ready to share or confirm for ${created.customer?.name || 'customer'}.`,
+        type: 'quote_ready',
         entityType: 'Quote',
         entityId: created.id,
-        href: `/dashboard/approvals?quote=${created.id}`,
-        targetRole: 'owner',
-        metadata: { quoteNumber: created.quoteNumber, displayMode },
+        href: `/dashboard/quotes/${created.id}`,
+        targetUserId: created.ownerId,
+        metadata: { quoteNumber: created.quoteNumber, displayMode, pdfUrl: `/api/pdf/quote/${created.id}` },
       },
       {
-        title: 'Quote needs approval',
-        message: `${created.quoteNumber} is waiting for admin approval for ${created.customer?.name || 'customer'}.`,
-        type: 'approval',
+        title: 'Quote ready',
+        message: `${created.quoteNumber} is visible to admin/owner without approval blocking.`,
+        type: 'quote_ready',
         entityType: 'Quote',
         entityId: created.id,
-        href: `/dashboard/approvals?quote=${created.id}`,
+        href: `/dashboard/quotes/${created.id}`,
         targetRole: 'admin',
-        metadata: { quoteNumber: created.quoteNumber, displayMode },
+        metadata: { quoteNumber: created.quoteNumber, displayMode, pdfUrl: `/api/pdf/quote/${created.id}` },
       },
     ]);
     return created;
@@ -212,39 +223,58 @@ export class QuotesService {
     
     const updateData: any = { ...data };
     if (data.discountPercent !== undefined || data.lines !== undefined) {
-      const lines = data.lines !== undefined ? this.normalizeLines(data.lines) : this.normalizeLines((await this.findById(id)).lines);
+      const current = await this.findById(id);
+      const lines = data.lines !== undefined ? await this.assertQuoteLines(data.lines, 'updating a quote') : await this.assertQuoteLines(current.lines, 'updating a quote');
       updateData.lines = data.lines !== undefined ? lines : undefined;
       updateData.quoteMeta = data.quoteMeta !== undefined ? this.normalizeQuoteMeta(data.quoteMeta, lines) : undefined;
-      updateData.approvalStatus = 'pending';
-      updateData.status = 'pending_approval';
+      updateData.approvalStatus = 'approved';
+      updateData.status = 'draft';
       updateData.approval = {
         requestedAt: new Date().toISOString(),
-        reason: 'quote_changed_owner_reapproval_required',
+        reason: 'quote_changed_no_owner_reapproval_required',
         availabilityIssues: await this.getAvailabilityIssues(lines),
         discountPercent: data.discountPercent,
         total: this.getLinesTotal(lines),
+        autoApprovedAt: new Date().toISOString(),
       };
     }
     if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
-    if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, this.normalizeLines((await this.findById(id)).lines));
+    if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, await this.assertQuoteLines((await this.findById(id)).lines, 'updating quote metadata'));
     
     const updated = await this.prisma.quote.update({
       where: { id },
       data: updateData,
       include: quoteInclude,
     } as any) as any;
+    if (updateData.lines) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.quoteLine.deleteMany({ where: { quoteId: id } }).catch(() => null);
+        await this.syncQuoteLinesTx(tx, updated, this.normalizeLines(updateData.lines));
+      }, { timeout: 10000 });
+    }
     await this.audit(updated.ownerId, 'quote.update', id, `Updated ${updated.quoteNumber}`, updateData);
-    if (updated.approvalStatus === 'pending') {
-      await this.notifications.create({
-        title: 'Quote changed',
-        message: `${updated.quoteNumber} was changed and needs owner re-approval.`,
-        type: 'approval',
+    await this.notifications.createMany([
+      {
+        title: 'Quote updated',
+        message: `${updated.quoteNumber} was updated and is ready to share or confirm.`,
+        type: 'quote_ready',
         entityType: 'Quote',
         entityId: updated.id,
-        href: `/dashboard/approvals?quote=${updated.id}`,
-        targetRole: 'owner',
-      });
-    }
+        href: `/dashboard/quotes/${updated.id}`,
+        targetUserId: updated.ownerId,
+        metadata: { pdfUrl: `/api/pdf/quote/${updated.id}` },
+      },
+      {
+        title: 'Quote updated',
+        message: `${updated.quoteNumber} was updated and remains unblocked for confirmation.`,
+        type: 'quote_ready',
+        entityType: 'Quote',
+        entityId: updated.id,
+        href: `/dashboard/quotes/${updated.id}`,
+        targetRole: 'admin',
+        metadata: { pdfUrl: `/api/pdf/quote/${updated.id}` },
+      },
+    ]);
     return updated;
   }
 
@@ -291,12 +321,9 @@ export class QuotesService {
 
   async sendQuote(id: string): Promise<any> {
     const quote = await this.findById(id);
-    if (quote.approvalStatus === 'pending') {
-      throw new BadRequestException('Quote needs approval before sending');
-    }
     const sent = await this.prisma.quote.update({
       where: { id },
-      data: { status: 'sent', sentAt: new Date() },
+      data: { status: 'sent', approvalStatus: quote.approvalStatus === 'pending' ? 'approved' : quote.approvalStatus, sentAt: new Date() },
       include: quoteInclude,
     } as any) as any;
     await this.audit(sent.ownerId, 'quote.send', id, `Sent ${sent.quoteNumber}`, {});
@@ -314,86 +341,43 @@ export class QuotesService {
   }
 
   async confirmQuote(id: string) {
-    // Use the with-relations variant: we need `customer.siteAddress` to seed the
-    // dispatch job. DataLoader is not available in service-layer code paths.
     const quote = await this.findByIdWithRelations(id);
-    if (quote.approvalStatus === 'pending') {
-      throw new BadRequestException('Quote needs approval before confirmation');
+    const existingOrder = await (this.prisma as any).salesOrder.findUnique({ where: { quoteId: id } }).catch(() => null);
+    if (!existingOrder) {
+      throw new BadRequestException('Final confirmation must create a Sales Order with payment details. Use createSalesOrderFromQuote instead.');
     }
-    
-    return this.prisma.$transaction(async (tx) => {
-      const confirmed = await tx.quote.update({
-        where: { id },
-        data: { status: 'confirmed', confirmedAt: new Date() },
-        include: quoteInclude,
-      });
-
-      const existingJob = await tx.dispatchJob.findUnique({ where: { quoteId: id } });
-      const existingReservations = await tx.reservation.count({ where: { quoteId: id } });
-      if (!existingReservations) {
-        await this.createReservationsForQuote(tx, quote);
-      }
-      if (!existingJob) {
-        await tx.dispatchJob.create({
-          data: {
-            id: ulid(),
-            quoteId: id,
-            customerId: quote.customerId,
-            siteAddress: quote.customer?.siteAddress || '',
-            status: 'pending',
-            dueDate: new Date(Date.now() + 86400000),
-            ownerId: quote.ownerId,
-            updatedAt: new Date(),
-          },
-        });
-      }
-      
-      await tx.auditEvent.create({
-        data: {
-          id: ulid(),
-          actorUserId: quote.ownerId,
-          action: 'quote.confirm',
-          entityType: 'Quote',
-          entityId: id,
-          summary: `Confirmed ${quote.quoteNumber}`,
-          metadata: {},
-        },
-      });
-      await tx.notification.create({
-        data: {
-          id: ulid(),
-          title: 'Dispatch job opened',
-          message: `${quote.quoteNumber} is confirmed and ready for dispatch planning.`,
-          type: 'dispatch_ready',
-          entityType: 'Quote',
-          entityId: quote.id,
-          href: '/dashboard/dispatch',
-          targetRole: 'dispatch_ops',
-          metadata: { quoteNumber: quote.quoteNumber },
-        },
-      }).catch(() => null);
-      return confirmed;
-    });
+    return this.prisma.quote.update({
+      where: { id },
+      data: {
+        status: 'confirmed',
+        approvalStatus: quote.approvalStatus === 'pending' ? 'approved' : quote.approvalStatus,
+        confirmedAt: quote.confirmedAt || new Date(),
+        updatedAt: new Date(),
+      },
+      include: quoteInclude,
+    } as any) as any;
   }
 
   async createSalesOrderFromQuote(input: CreateSalesOrderInput, actorUserId: string) {
     // Same as confirmQuote: needs `customer.siteAddress`.
     const quote = await this.findByIdWithRelations(input.quoteId);
-    if (quote.approvalStatus === 'pending') {
-      throw new BadRequestException('Quote needs owner approval before sales order conversion');
-    }
     const paymentMode = String(input.paymentMode || '').toLowerCase() === 'credit' ? 'credit' : 'cash';
-    const lines = this.normalizeLines(quote.lines);
+    const lines = await this.assertQuoteLines(quote.lines, 'creating a sales order');
     const totalAmount = this.getLinesTotal(lines);
     const advanceAmount = paymentMode === 'cash' ? Number(input.advanceAmount || 0) : 0;
     const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= totalAmount ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
 
     return this.prisma.$transaction(async (tx) => {
       const existingOrder = await tx.salesOrder.findUnique({ where: { quoteId: quote.id } }).catch(() => null);
-      if (existingOrder) return existingOrder;
+      if (existingOrder) {
+        await this.syncSalesOrderLinesTx(tx, { quote, salesOrder: existingOrder, lines });
+        await this.ensureSalesOrderDocumentsTx(tx, quote, existingOrder, actorUserId);
+        await this.createPurchaseDemandForSalesOrderTx(tx, { quote, salesOrder: existingOrder, lines });
+        return existingOrder;
+      }
 
       const existingReservations = await tx.reservation.count({ where: { quoteId: quote.id } });
-      if (!existingReservations) await this.createReservationsForQuote(tx, quote);
+      if (!existingReservations) await this.createReservationsForQuote(tx, { ...quote, lines });
 
       const existingJob = await tx.dispatchJob.findUnique({ where: { quoteId: quote.id } });
       if (!existingJob) {
@@ -411,11 +395,17 @@ export class QuotesService {
         });
       }
 
-      const count = await tx.salesOrder.count({ where: { orderNumber: { startsWith: `SO/${new Date().getFullYear()}` } } });
+      const salesOrderId = ulid();
+      const orderNumber = await nextDocumentNumber(tx as any, 'sales_order', 'SO', new Date(), {
+        existingNumbers: async (prefixForYear) => (await tx.salesOrder.findMany({
+          where: { orderNumber: { startsWith: prefixForYear } },
+          select: { orderNumber: true },
+        })).map((row: any) => row.orderNumber),
+      });
       const salesOrder = await tx.salesOrder.create({
         data: {
-          id: ulid(),
-          orderNumber: `SO/${new Date().getFullYear()}/${String(count + 1).padStart(4, '0')}`,
+          id: salesOrderId,
+          orderNumber,
           quoteId: quote.id,
           leadId: quote.leadId,
           customerId: quote.customerId,
@@ -427,9 +417,44 @@ export class QuotesService {
           totalAmount,
           lines,
           notes: input.notes || '',
+          documents: {
+            quotePdfUrl: `/api/pdf/quote/${quote.id}`,
+            salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`,
+            quotePdf: { url: `/api/pdf/quote/${quote.id}`, status: 'generated_on_request', checkedAt: new Date().toISOString() },
+            salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request', checkedAt: new Date().toISOString() },
+            generatedAt: new Date().toISOString(),
+            forwardingUse: 'Send sales-order PDF to customer and use it for dispatch marking.',
+          },
           updatedAt: new Date(),
         },
       });
+      await this.syncSalesOrderLinesTx(tx, { quote, salesOrder, lines });
+      await this.ensureSalesOrderDocumentsTx(tx, quote, salesOrder, actorUserId);
+      if (advanceAmount > 0 || paymentMode === 'credit') {
+        await tx.paymentReceipt.create({
+          data: {
+            id: ulid(),
+            receiptNumber: await nextDocumentNumber(tx as any, 'payment_receipt', 'RCPT', new Date(), {
+              existingNumbers: async (prefixForYear) => (await tx.paymentReceipt.findMany({
+                where: { receiptNumber: { startsWith: prefixForYear } },
+                select: { receiptNumber: true },
+              })).map((row: any) => row.receiptNumber),
+            }),
+            salesOrderId: salesOrder.id,
+            customerId: salesOrder.customerId,
+            paymentMode,
+            amount: paymentMode === 'credit' ? 0 : advanceAmount,
+            status: paymentMode === 'credit' ? 'credit_due' : 'posted',
+            receivedAt: new Date(),
+            dueDate: paymentMode === 'credit' ? new Date(Date.now() + 86400000 * 30) : null,
+            reference: '',
+            notes: paymentMode === 'credit' ? 'Credit order opened; collection due date tracked here.' : 'Advance received during sales order conversion.',
+            createdBy: actorUserId,
+            updatedAt: new Date(),
+            metadata: { orderNumber, paymentStatus },
+          },
+        });
+      }
 
       await tx.quote.update({
         where: { id: quote.id },
@@ -443,6 +468,7 @@ export class QuotesService {
         where: { quoteId: quote.id },
         data: { status: 'converted', salesOrderId: salesOrder.id, updatedAt: new Date() },
       }).catch(() => null);
+      await this.createPurchaseDemandForSalesOrderTx(tx, { quote, salesOrder, lines });
       await tx.activity.create({
         data: {
           id: ulid(),
@@ -464,7 +490,7 @@ export class QuotesService {
             entityId: salesOrder.id,
             href: '/dashboard/orders',
             targetRole: 'owner',
-            metadata: { quoteId: quote.id, paymentMode, paymentStatus, totalAmount },
+            metadata: { quoteId: quote.id, paymentMode, paymentStatus, totalAmount, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
           },
           {
             id: ulid(),
@@ -475,7 +501,7 @@ export class QuotesService {
             entityId: salesOrder.id,
             href: '/dashboard/dispatch',
             targetRole: 'dispatch_ops',
-            metadata: { quoteId: quote.id },
+            metadata: { quoteId: quote.id, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
           },
           {
             id: ulid(),
@@ -486,12 +512,186 @@ export class QuotesService {
             entityId: salesOrder.id,
             href: `/dashboard/leads/${quote.leadId}`,
             targetUserId: quote.ownerId,
-            metadata: { quoteId: quote.id },
+            metadata: { quoteId: quote.id, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
           },
         ],
       }).catch(() => null);
       return salesOrder;
     });
+  }
+
+  private async syncQuoteLinesTx(tx: any, quote: any, lines: any[]) {
+    for (const [index, line] of this.normalizeLines(lines).entries()) {
+      const key = this.quoteLineKey(line, index);
+      const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
+      const unitPrice = Number(line.price || line.sellPrice || 0);
+      await tx.quoteLine.upsert({
+        where: { quoteId_lineKey: { quoteId: quote.id, lineKey: key } },
+        update: {
+          lineNo: index + 1,
+          productId: line.productId || null,
+          sku: String(line.sku || line.tileCode || line.productId || `LINE-${index + 1}`),
+          name: String(line.name || line.description || line.sku || `Line ${index + 1}`),
+          category: String(line.category || (this.isTileLine(line) ? 'Tiles' : 'Product')),
+          brand: String(line.brand || ''),
+          finish: line.finish || line.tileSize || line.dimensions || null,
+          area: line.area || line.room || line.section || null,
+          unit: String(line.unit || line.uom || 'PC').toUpperCase(),
+          quantity,
+          unitPrice,
+          lineTotal: quantity * unitPrice,
+          status: 'quoted',
+          isTileSpecial: this.isTileLine(line) && !String(line.productId || '').trim(),
+          metadata: { snapshot: line },
+          updatedAt: new Date(),
+        },
+        create: {
+          id: ulid(),
+          quoteId: quote.id,
+          lineKey: key,
+          lineNo: index + 1,
+          productId: line.productId || null,
+          sku: String(line.sku || line.tileCode || line.productId || `LINE-${index + 1}`),
+          name: String(line.name || line.description || line.sku || `Line ${index + 1}`),
+          category: String(line.category || (this.isTileLine(line) ? 'Tiles' : 'Product')),
+          brand: String(line.brand || ''),
+          finish: line.finish || line.tileSize || line.dimensions || null,
+          area: line.area || line.room || line.section || null,
+          unit: String(line.unit || line.uom || 'PC').toUpperCase(),
+          quantity,
+          unitPrice,
+          lineTotal: quantity * unitPrice,
+          status: 'quoted',
+          isTileSpecial: this.isTileLine(line) && !String(line.productId || '').trim(),
+          metadata: { snapshot: line },
+          updatedAt: new Date(),
+        },
+      });
+    }
+  }
+
+  private async syncSalesOrderLinesTx(tx: any, args: { quote: any; salesOrder: any; lines: any[] }) {
+    const lines = this.normalizeLines(args.salesOrder.lines || args.lines);
+    const reservations = await tx.reservation.findMany({ where: { quoteId: args.quote.id } });
+    const reservedByProduct = new Map<string, number>();
+    const backorderedByProduct = new Map<string, number>();
+    for (const reservation of reservations) {
+      const target = reservation.status === 'reserved' ? reservedByProduct : reservation.status === 'backordered' ? backorderedByProduct : null;
+      if (!target) continue;
+      target.set(reservation.productId, (target.get(reservation.productId) || 0) + Number(reservation.quantity || 0));
+    }
+    const quoteLines = await tx.quoteLine.findMany({ where: { quoteId: args.quote.id } }).catch(() => []);
+    const quoteLineMap = new Map((quoteLines as any[]).map((row) => [row.lineKey, row]));
+
+    for (const [index, line] of lines.entries()) {
+      const productId = String(line.productId || '').trim();
+      const quoteLineKey = this.quoteLineKey(line, index);
+      const key = productId ? quoteLineKey : this.tileDemandKey(args.salesOrder.id, line, index);
+      const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
+      const unitPrice = Number(line.price || line.sellPrice || 0);
+      const reservedQuantity = productId ? Number(reservedByProduct.get(productId) || 0) : 0;
+      const backorderedQuantity = productId ? Number(backorderedByProduct.get(productId) || 0) : quantity;
+      const existing = await tx.salesOrderLine.findUnique({
+        where: { salesOrderId_lineKey: { salesOrderId: args.salesOrder.id, lineKey: key } },
+      }).catch(() => null);
+      const deliveredQuantity = Number(existing?.deliveredQuantity || 0);
+      const dispatchedQuantity = Number(existing?.dispatchedQuantity || 0);
+      const status = deliveredQuantity >= quantity
+        ? 'delivered'
+        : dispatchedQuantity > 0
+          ? 'partial_dispatched'
+          : reservedQuantity > 0 && backorderedQuantity > 0
+            ? 'partial_ready'
+            : backorderedQuantity > 0
+              ? 'pending_inward'
+              : 'ready';
+      const payload = {
+        quoteLineId: (quoteLineMap.get(quoteLineKey) as any)?.id || null,
+        lineNo: index + 1,
+        productId: productId || null,
+        sku: String(line.sku || line.tileCode || productId || `LINE-${index + 1}`),
+        name: String(line.name || line.description || line.sku || `Line ${index + 1}`),
+        category: String(line.category || (this.isTileLine(line) ? 'Tiles' : 'Product')),
+        brand: String(line.brand || ''),
+        finish: line.finish || line.tileSize || line.dimensions || null,
+        area: line.area || line.room || line.section || null,
+        unit: String(line.unit || line.uom || 'PC').toUpperCase(),
+        orderedQuantity: quantity,
+        reservedQuantity,
+        backorderedQuantity,
+        unitPrice,
+        lineTotal: quantity * unitPrice,
+        status,
+        isTileSpecial: this.isTileLine(line) && !productId,
+        metadata: { snapshot: line },
+        updatedAt: new Date(),
+      };
+      await tx.salesOrderLine.upsert({
+        where: { salesOrderId_lineKey: { salesOrderId: args.salesOrder.id, lineKey: key } },
+        update: payload,
+        create: {
+          id: ulid(),
+          salesOrderId: args.salesOrder.id,
+          quoteId: args.quote.id,
+          lineKey: key,
+          createdAt: new Date(),
+          ...payload,
+        },
+      });
+    }
+  }
+
+  private async ensureSalesOrderDocumentsTx(tx: any, quote: any, salesOrder: any, actorUserId: string) {
+    await this.upsertDocumentJobTx(tx, {
+      entityType: 'Quote',
+      entityId: quote.id,
+      documentType: 'quote_pdf',
+      url: `/api/pdf/quote/${quote.id}`,
+      actorUserId,
+      metadata: { quoteNumber: quote.quoteNumber },
+    });
+    await this.upsertDocumentJobTx(tx, {
+      entityType: 'SalesOrder',
+      entityId: salesOrder.id,
+      documentType: 'sales_order_pdf',
+      url: `/api/pdf/order/${salesOrder.id}`,
+      actorUserId,
+      metadata: { orderNumber: salesOrder.orderNumber, quoteNumber: quote.quoteNumber },
+    });
+  }
+
+  private async upsertDocumentJobTx(tx: any, args: { entityType: string; entityId: string; documentType: string; url: string; actorUserId: string; metadata?: any }) {
+    await tx.documentJob.upsert({
+      where: { entityType_entityId_documentType: { entityType: args.entityType, entityId: args.entityId, documentType: args.documentType } },
+      update: {
+        status: 'generated_on_request',
+        url: args.url,
+        error: null,
+        generatedBy: args.actorUserId,
+        generatedAt: new Date(),
+        updatedAt: new Date(),
+        metadata: args.metadata || {},
+      },
+      create: {
+        id: ulid(),
+        entityType: args.entityType,
+        entityId: args.entityId,
+        documentType: args.documentType,
+        status: 'generated_on_request',
+        url: args.url,
+        generatedBy: args.actorUserId,
+        generatedAt: new Date(),
+        updatedAt: new Date(),
+        metadata: args.metadata || {},
+      },
+    });
+  }
+
+  private quoteLineKey(line: any, index: number) {
+    const productId = String(line.productId || '').trim();
+    const tileCode = String(line.tileCode || line.sku || '').trim();
+    const area = String(line.area || line.room || line.section || '').trim();
+    return productId ? `product:${productId}:${area || index}` : `tile:${tileCode || index}:${area || index}`;
   }
 
   async salesOrders(args?: { paymentMode?: string; range?: string; ownerId?: string }) {
@@ -595,11 +795,12 @@ export class QuotesService {
   }
 
   private async generateQuoteNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    const count = await this.prisma.quote.count({
-      where: { quoteNumber: { startsWith: `QT/${year}` } },
+    return nextDocumentNumber(this.prisma as any, 'quote', 'QT', new Date(), {
+      existingNumbers: async (prefixForYear) => (await this.prisma.quote.findMany({
+        where: { quoteNumber: { startsWith: prefixForYear } },
+        select: { quoteNumber: true },
+      })).map((row) => row.quoteNumber),
     });
-    return `QT/${year}/${String(count + 1).padStart(4, '0')}`;
   }
 
   private defaultValidUntil(): Date {
@@ -622,6 +823,104 @@ export class QuotesService {
       area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
       quoteImage: line.quoteImage || line.customImageUrl || '',
     })) : [];
+  }
+
+  private isTileLine(line: any) {
+    return line?.type === 'tile' || line?.nonStock === true || String(line?.category || '').toLowerCase() === 'tiles';
+  }
+
+  private normalizeTileLine(line: any, index: number) {
+    const tileCode = String(line.tileCode || line.sku || '').trim();
+    const tileSize = String(line.tileSize || line.size || line.dimensions || '').trim();
+    const qty = Math.trunc(Number(line.qty || line.quantity || 0));
+    const uom = String(line.uom || line.unit || 'box').toLowerCase() === 'pc' ? 'pc' : 'box';
+    if (!tileCode) throw new BadRequestException(`Tile row ${index + 1} needs a tile code`);
+    if (!tileSize) throw new BadRequestException(`Tile ${tileCode} needs a tile size`);
+    if (!Number.isFinite(qty) || qty <= 0) throw new BadRequestException(`Tile ${tileCode} needs a positive whole-number quantity`);
+    const price = Number(line.price || line.sellPrice || 0);
+    if (!Number.isFinite(price) || price < 0) throw new BadRequestException(`Tile ${tileCode} has an invalid price`);
+    return {
+      ...line,
+      type: 'tile',
+      category: 'Tiles',
+      productId: undefined,
+      sku: tileCode,
+      name: String(line.name || `Tile ${tileCode} ${tileSize}`).trim(),
+      tileCode,
+      tileSize,
+      dimensions: tileSize,
+      uom,
+      unit: uom === 'box' ? 'BOX' : 'PC',
+      pcsPerBox: Number(line.pcsPerBox || 0),
+      qty,
+      quantity: qty,
+      price,
+      sellPrice: price,
+      area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
+      quoteImage: line.quoteImage || line.customImageUrl || '',
+      source: 'tile-intent',
+      inventoryTracked: false,
+      nonStock: true,
+    };
+  }
+
+  private async assertQuoteLines(linesInput: any, action: string) {
+    const lines = this.normalizeLines(linesInput);
+    if (!lines.length) {
+      throw new BadRequestException(`At least one Product Master SKU or tile row is required before ${action}`);
+    }
+
+    const productLines = lines.filter((line: any) => !this.isTileLine(line));
+    const missingProduct = productLines.find((line: any) => !String(line.productId || '').trim());
+    if (missingProduct) {
+      throw new BadRequestException(`Every non-tile quote row must be selected from Product Master before ${action}`);
+    }
+
+    const productIds: string[] = Array.from(new Set(productLines.map((line: any) => String(line.productId || '').trim()).filter(Boolean) as string[]));
+    const products = productIds.length
+      ? await this.prisma.product.findMany({ where: { id: { in: productIds } } })
+      : [];
+    const productMap = new Map(products.map((product) => [product.id, product]));
+
+    return lines.map((line: any, index: number) => {
+      if (this.isTileLine(line)) return this.normalizeTileLine(line, index);
+      const productId = String(line.productId || '').trim();
+      const product = productMap.get(productId) as any;
+      if (!product || product.status !== 'active') {
+        throw new BadRequestException(`${line.name || line.sku || `Line ${index + 1}`} is not an active Product Master SKU`);
+      }
+      const qty = Math.trunc(Number(line.qty || line.quantity || 0));
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new BadRequestException(`${product.sku} needs a positive whole-number quantity`);
+      }
+      const price = Number(line.price || line.sellPrice || product.sellPrice || 0);
+      if (!Number.isFinite(price) || price < 0) {
+        throw new BadRequestException(`${product.sku} has an invalid price`);
+      }
+      const media = line.media || product.media || {};
+      return {
+        ...line,
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        brand: product.brand,
+        finish: product.finish,
+        dimensions: product.dimensions,
+        unit: product.unit,
+        qty,
+        quantity: qty,
+        price,
+        sellPrice: price,
+        floorPrice: Number(product.floorPrice || 0),
+        media,
+        area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
+        quoteImage: line.quoteImage || line.customImageUrl || '',
+        source: 'product-master',
+        inventoryTracked: true,
+        nonStock: false,
+      };
+    });
   }
 
   private normalizeDisplayMode(value?: string) {
@@ -666,24 +965,26 @@ export class QuotesService {
       if (!productId || quantity <= 0) continue;
 
       const balance = await tx.inventoryBalance.findUnique({ where: { productId } });
-      const canReserve = balance && Number(balance.available || 0) >= quantity;
-      await tx.reservation.create({
-        data: {
-          id: ulid(),
-          quoteId: quote.id,
-          productId,
-          quantity,
-          status: canReserve ? 'reserved' : 'backordered',
-          updatedAt: new Date(),
-        },
-      });
+      const available = Math.max(0, Number(balance?.available || 0));
+      const reserveQty = Math.min(quantity, available);
+      const backorderQty = Math.max(0, quantity - reserveQty);
 
-      if (canReserve) {
+      if (reserveQty > 0) {
+        await tx.reservation.create({
+          data: {
+            id: ulid(),
+            quoteId: quote.id,
+            productId,
+            quantity: reserveQty,
+            status: 'reserved',
+            updatedAt: new Date(),
+          },
+        });
         await tx.inventoryBalance.update({
           where: { productId },
           data: {
-            reserved: Number(balance.reserved || 0) + quantity,
-            available: Math.max(0, Number(balance.available || 0) - quantity),
+            reserved: Number(balance.reserved || 0) + reserveQty,
+            available: Math.max(0, available - reserveQty),
             updatedAt: new Date(),
           },
         });
@@ -692,14 +993,113 @@ export class QuotesService {
             id: ulid(),
             productId,
             type: 'reserve',
-            quantity,
+            quantity: reserveQty,
             reason: `Reserved for ${quote.quoteNumber}`,
             relatedQuoteId: quote.id,
             createdBy: quote.ownerId,
           },
         });
       }
+
+      if (backorderQty > 0) {
+        await tx.reservation.create({
+          data: {
+            id: ulid(),
+            quoteId: quote.id,
+            productId,
+            quantity: backorderQty,
+            status: 'backordered',
+            updatedAt: new Date(),
+          },
+        });
+      }
     }
+  }
+
+  private async createPurchaseDemandForSalesOrderTx(tx: any, args: { quote: any; salesOrder: any; lines: any[] }) {
+    const { quote, salesOrder } = args;
+    const backorders = await tx.reservation.findMany({
+      where: { quoteId: quote.id, status: 'backordered' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const productIds = Array.from(new Set(backorders.map((reservation: any) => reservation.productId).filter(Boolean)));
+    const products = productIds.length ? await tx.product.findMany({ where: { id: { in: productIds } } }) : [];
+    const productMap = new Map(products.map((product: any) => [product.id, product]));
+    const rows: any[] = [];
+
+    for (const reservation of backorders) {
+      const product = productMap.get(reservation.productId) as any;
+      if (!product) continue;
+      rows.push({
+        id: ulid(),
+        sourceType: 'backorder_reservation',
+        sourceLineKey: `reservation:${reservation.id}`,
+        sourceOrderId: salesOrder.id,
+        sourceQuoteId: quote.id,
+        sourceReservationId: reservation.id,
+        customerId: quote.customerId,
+        ownerId: quote.ownerId,
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        brand: product.brand,
+        finish: product.finish,
+        unit: product.unit || 'PC',
+        quantity: Number(reservation.quantity || 0),
+        status: 'open',
+        vendorName: product.brand || null,
+        notes: `${salesOrder.orderNumber} shortage for ${quote.quoteNumber}`,
+        metadata: {
+          orderNumber: salesOrder.orderNumber,
+          quoteNumber: quote.quoteNumber,
+          source: 'sales_order_conversion',
+        },
+        updatedAt: new Date(),
+      });
+    }
+
+    this.normalizeLines(salesOrder.lines || args.lines).forEach((line: any, index: number) => {
+      if (!this.isTileLine(line) || String(line.productId || '').trim()) return;
+      const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
+      if (quantity <= 0) return;
+      const sku = String(line.tileCode || line.sku || `TILE-${index + 1}`).trim();
+      rows.push({
+        id: ulid(),
+        sourceType: 'tile_special_order',
+        sourceLineKey: this.tileDemandKey(salesOrder.id, line, index),
+        sourceOrderId: salesOrder.id,
+        sourceQuoteId: quote.id,
+        customerId: quote.customerId,
+        ownerId: quote.ownerId,
+        sku,
+        name: String(line.name || `Tile ${sku}`).trim(),
+        category: 'Tiles',
+        brand: line.brand || 'Tile vendor',
+        finish: line.tileSize || line.dimensions || '',
+        unit: line.unit || line.uom || 'BOX',
+        quantity,
+        status: 'open',
+        vendorName: line.brand || 'Tile vendor',
+        notes: `${salesOrder.orderNumber} tile special order for ${quote.quoteNumber}`,
+        metadata: {
+          orderNumber: salesOrder.orderNumber,
+          quoteNumber: quote.quoteNumber,
+          tileCode: sku,
+          tileSize: line.tileSize || line.dimensions || '',
+          lineIndex: index,
+          source: 'sales_order_conversion',
+        },
+        updatedAt: new Date(),
+      });
+    });
+
+    if (!rows.length) return;
+    await tx.purchaseDemand.createMany({ data: rows, skipDuplicates: true }).catch(() => null);
+  }
+
+  private tileDemandKey(orderId: string, line: any, index: number) {
+    return `tile:${orderId}:${String(line.tileCode || line.sku || index).trim()}:${index}`;
   }
 
   private async releaseReservationsTx(tx: any, quoteId: string, reason: string) {

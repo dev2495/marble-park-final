@@ -92,6 +92,12 @@ export class DispatchResolver {
     return this.dispatch.findAllJobs({ status });
   }
 
+  @Query(() => [GraphQLJSON])
+  async dispatchQueue(@Args('status', { type: () => String, nullable: true }) status: string | undefined, @Context() ctx: GraphqlRequestContext) {
+    await requireSession(this.prisma, ctx);
+    return this.dispatch.dispatchQueue({ status });
+  }
+
   @Query(() => DispatchOutput)
   async dispatchJob(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
     await requireSession(this.prisma, ctx);

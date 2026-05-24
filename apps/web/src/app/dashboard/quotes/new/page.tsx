@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
+import { SelectMenu, SelectMenuTrigger, SelectMenuContent, SelectMenuItem, SelectMenuValue } from '@/components/ui/select-menu';
 
 const GET_CUSTOMERS = gql`
   query GetCustomers { customers { id name email mobile siteAddress city } }
@@ -133,7 +134,7 @@ export default function QuoteBuilderPage() {
 
   const queryError = customerError || searchError;
   return (
-    <div className="grid h-[calc(100vh-10rem)] gap-5 overflow-hidden pb-4 xl:grid-cols-[1fr_0.52fr]">
+    <div className="grid gap-4 pb-4 xl:h-[calc(100vh-10rem)] xl:overflow-hidden xl:grid-cols-[1fr_0.52fr]">
       {queryError ? <div className="xl:col-span-2"><QueryErrorBanner error={queryError} /></div> : null}
       {saveError ? <div className="xl:col-span-2"><QueryErrorBanner error={saveError} /></div> : null}
       {validationError ? (
@@ -158,23 +159,30 @@ export default function QuoteBuilderPage() {
 
         <div className="flex-1 overflow-y-auto p-5 custom-scrollbar lg:p-6">
           <div className="grid gap-4 lg:grid-cols-2">
-            <label className="block space-y-2">
-              <span className="text-xs font-black uppercase tracking-widest text-[#52525b]">Customer</span>
-              <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)} className="h-[3.25rem] w-full rounded-2xl border border-[#e4e4e7]/18 bg-white px-4 text-sm font-bold text-[#18181b] outline-none focus:border-[#2563eb]/45 focus:ring-4 focus:ring-[#2563eb]/10">
-                <option value="">Select customer...</option>
-                {customerData?.customers?.map((customer: any) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
-              </select>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Customer</span>
+              <SelectMenu value={selectedCustomerId || undefined} onValueChange={(v) => setSelectedCustomerId(v)}>
+                <SelectMenuTrigger className="h-11 text-sm" placeholder="Select customer…" />
+                <SelectMenuContent>
+                  {customerData?.customers?.map((customer: any) => (
+                    <SelectMenuItem key={customer.id} value={customer.id}>{customer.name}</SelectMenuItem>
+                  ))}
+                </SelectMenuContent>
+              </SelectMenu>
             </label>
-            <label className="block space-y-2">
-              <span className="text-xs font-black uppercase tracking-widest text-[#52525b]">Project / site</span>
-              <Input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="e.g. Patel Residence bathroom package" className="h-[3.25rem]" />
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Project / site</span>
+              <Input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="e.g. Patel Residence bathroom package" className="h-11" />
             </label>
-            <label className="block space-y-2">
-              <span className="text-xs font-black uppercase tracking-widest text-[#52525b]">PDF type</span>
-              <select value={displayMode} onChange={(event) => setDisplayMode(event.target.value as any)} className="h-[3.25rem] w-full rounded-2xl border border-[#e4e4e7]/18 bg-white px-4 text-sm font-bold text-[#18181b] outline-none focus:border-[#2563eb]/45 focus:ring-4 focus:ring-[#2563eb]/10">
-                <option value="priced">Show prices - quotation</option>
-                <option value="selection">Hide prices - selection summary</option>
-              </select>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">PDF type</span>
+              <SelectMenu value={displayMode} onValueChange={(v) => setDisplayMode(v as any)}>
+                <SelectMenuTrigger className="h-11 text-sm" />
+                <SelectMenuContent>
+                  <SelectMenuItem value="priced">Show prices — quotation</SelectMenuItem>
+                  <SelectMenuItem value="selection">Hide prices — selection summary</SelectMenuItem>
+                </SelectMenuContent>
+              </SelectMenu>
             </label>
             <label className="block space-y-2 lg:col-span-2">
               <span className="text-xs font-black uppercase tracking-widest text-[#52525b]">Default area for new lines</span>

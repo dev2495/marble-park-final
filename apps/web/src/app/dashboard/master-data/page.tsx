@@ -1,10 +1,11 @@
 import Link from 'next/link';
-import { BadgeCheck, Building2, Database, FileImage, Layers3, PackagePlus, Palette, Settings, Users } from 'lucide-react';
+import { BadgeCheck, Building2, Database, FileImage, Grid3X3, Layers3, PackagePlus, Palette, Settings, Users } from 'lucide-react';
 const modules = [
   ['Product Master','Create/edit SKUs and item selling data.','/dashboard/master-data/products',PackagePlus],
   ['Import Center','Upload PDF/Excel, stage rows, submit approvals.','/dashboard/master-data/imports',Database],
   ['Catalogue Image Review','Map extracted images to products and submit approvals.','/dashboard/master-data/catalogue-review',FileImage],
   ['Category Master','Control inventory/catalogue category list.','/dashboard/master-data/categories',Layers3],
+  ['Tile Master','Control tile sizes, UOM and pcs-per-box for tile intent rows.','/dashboard/master-data/tiles',Grid3X3],
   ['Brand Master','Control dropdown brands for SKU and import review.','/dashboard/master-data/brands',BadgeCheck],
   ['Finish Master','Control colour/finish dropdowns for all SKUs.','/dashboard/master-data/finishes',Palette],
   ['Vendor Master','Manage supplier records for inwards.','/dashboard/master-data/vendors',Building2],

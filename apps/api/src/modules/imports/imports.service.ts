@@ -603,7 +603,7 @@ export class ImportsService {
       }
       await pdf.destroy();
       return created;
-    } catch (error) {
+    } catch {
       return 0;
     }
   }

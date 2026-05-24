@@ -11,19 +11,19 @@ import { cn } from "@/lib/utils"
  *   - Shadow only at hover for primary; the rest stays flat.
  */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(37,99,235,0.35)] focus-visible:ring-offset-1 focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--surface)] disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
-        default: "bg-[#2563eb] text-white hover:bg-[#1d4ed8]",
-        destructive: "bg-[#dc2626] text-white hover:bg-red-700",
-        outline: "border border-[#e4e4e7] bg-white text-[#27272a] hover:bg-[#f4f4f5] hover:text-[#18181b]",
-        secondary: "bg-[#f4f4f5] text-[#18181b] hover:bg-[#e4e4e7]",
-        ghost: "text-[#27272a] hover:bg-[#f4f4f5] hover:text-[#18181b]",
-        link: "text-[#1d4ed8] underline-offset-4 hover:underline",
-        success: "bg-[#059669] text-white hover:bg-emerald-700",
-        warning: "bg-[#d97706] text-white hover:bg-amber-700",
-        dark: "bg-[#18181b] text-white hover:bg-[#27272a]",
+        default: "bg-[var(--brand-600)] text-white shadow-[0_10px_22px_-16px_rgba(37,99,235,0.9)] hover:-translate-y-0.5 hover:bg-[var(--brand-700)] hover:shadow-md-soft",
+        destructive: "bg-[var(--danger)] text-white hover:-translate-y-0.5 hover:brightness-95",
+        outline: "border border-[var(--line)] bg-[var(--surface)]/80 text-[var(--ink-2)] shadow-sm-soft hover:-translate-y-0.5 hover:border-[var(--line-strong)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]",
+        secondary: "bg-[var(--bg-soft)] text-[var(--ink)] hover:-translate-y-0.5 hover:bg-[var(--line-soft)]",
+        ghost: "text-[var(--ink-2)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]",
+        link: "text-[var(--brand-700)] underline-offset-4 hover:underline",
+        success: "bg-[var(--success)] text-white hover:-translate-y-0.5 hover:brightness-95",
+        warning: "bg-[var(--warning)] text-white hover:-translate-y-0.5 hover:brightness-95",
+        dark: "bg-[var(--ink)] text-[var(--surface)] hover:-translate-y-0.5 hover:bg-[var(--ink-2)]",
       },
       size: {
         default: "h-9 px-4",

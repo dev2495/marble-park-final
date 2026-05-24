@@ -37,8 +37,8 @@ export default function SalesDeskPage() {
 
   const { data, loading, error, refetch } = useQuery(SALES_DESK, { variables: { ownerId: user?.id || '' }, skip: !ready || !user?.id });
   const [updateStage, { error: stageError }] = useMutation(UPDATE_STAGE, { onCompleted: () => refetch() });
-  const leads = data?.leads || [];
-  const quotes = data?.quotes || [];
+  const leads = useMemo<any[]>(() => data?.leads || [], [data?.leads]);
+  const quotes = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
   const stats = data?.salesDashboard?.stats || {};
   const dueToday = useMemo(() => leads.filter((lead: any) => lead.nextActionAt && new Date(lead.nextActionAt) <= new Date(Date.now() + 86400000)), [leads]);
   const pipeline = leads.reduce((sum: number, lead: any) => sum + Number(lead.expectedValue || 0), 0);

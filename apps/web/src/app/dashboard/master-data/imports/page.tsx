@@ -48,8 +48,8 @@ export default function ImportCenterPage() {
   const [updateRow, { loading: savingRow }] = useMutation(UPDATE_ROW, { onCompleted: () => { refetch(); refetchRows(); setStatus('Row review saved.'); } });
   const [submit] = useMutation(SUBMIT, { onCompleted: () => { refetch(); setStatus('Submitted to owner approval.'); }, onError: (error) => setStatus(error.message) });
   const [apply] = useMutation(APPLY, { onCompleted: () => { refetch(); refetchRows(); setStatus('Approved import applied to product master.'); }, onError: (error) => setStatus(error.message) });
-  const batches = data?.importBatches || [];
-  const rows = rowData?.importRows || [];
+  const batches = useMemo<any[]>(() => data?.importBatches || [], [data?.importBatches]);
+  const rows = useMemo<any[]>(() => rowData?.importRows || [], [rowData?.importRows]);
   const categories = names(masterData?.masterProductCategories, ['Catalogue Products']);
   const brands = names(masterData?.masterProductBrands, ['Imported PDF']);
   const finishes = names(masterData?.masterProductFinishes, ['Standard']);

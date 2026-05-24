@@ -1,4 +1,5 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int, Context, ResolveField, Parent } from '@nestjs/graphql';
+import { GraphQLJSON } from 'graphql-scalars';
 import { InventoryService } from './inventory.service';
 import { ProductOutput } from '../products/products.resolver';
 import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
@@ -116,6 +117,15 @@ export class InventoryResolver {
   ) {
     await requireSession(this.prisma, ctx);
     return this.inventory.findLowStock(take || 100);
+  }
+
+  @Query(() => [GraphQLJSON])
+  async pendingInwardItems(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.inventory.pendingInwardItems(take || 200);
   }
 
   @Query(() => InventoryOutput)

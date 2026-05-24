@@ -55,6 +55,19 @@ class ProductFinishInput {
 }
 
 @InputType()
+class TileSizeInput {
+  @Field({ nullable: true }) id?: string;
+  @Field() name!: string;
+  @Field({ nullable: true }) code?: string;
+  @Field({ nullable: true }) uom?: string;
+  @Field(() => Number, { nullable: true }) pcsPerBox?: number;
+  @Field({ nullable: true }) description?: string;
+  @Field({ nullable: true }) status?: string;
+  @Field(() => Number, { nullable: true }) sortOrder?: number;
+  @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
+}
+
+@InputType()
 class VendorInput {
   @Field({ nullable: true }) id?: string;
   @Field() name!: string;
@@ -190,13 +203,28 @@ export class SystemResolver {
   }
 
   @Query(() => [GraphQLJSON])
+  async tileSizes(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('status', { nullable: true }) status?: string,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff']);
+    return this.system.tileSizes({ status });
+  }
+
+  @Mutation(() => SystemJsonOutput)
+  async saveTileSize(@Args('input') input: TileSizeInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    return { data: await this.system.upsertTileSize(input, user.id) };
+  }
+
+  @Query(() => [GraphQLJSON])
   async vendors(
     @Context() ctx: GraphqlRequestContext,
     @Args('search', { nullable: true }) search?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'dispatch']);
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'dispatch_ops']);
     return this.system.vendors({ search, status, take });
   }
 

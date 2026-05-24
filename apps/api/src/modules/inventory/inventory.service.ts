@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
@@ -81,6 +81,35 @@ export class InventoryService {
 
   async create(data: CreateInventoryInput): Promise<any> {
     const available = data.onHand || 0;
+    const existing = await this.prisma.inventoryBalance.findUnique({
+      where: { productId: data.productId },
+      include: { product: true },
+    } as any) as any;
+    if (existing) {
+      const updated = await this.prisma.inventoryBalance.update({
+        where: { productId: data.productId },
+        data: {
+          onHand: Number(existing.onHand || 0) + available,
+          available: Number(existing.available || 0) + available,
+          updatedAt: new Date(),
+        },
+        include: { product: true },
+      } as any) as any;
+      if (available > 0) {
+        await this.prisma.inventoryMovement.create({
+          data: {
+            id: ulid(),
+            productId: data.productId,
+            type: 'inward',
+            quantity: available,
+            reason: 'Initial/top-up inventory entry',
+            createdBy: 'system',
+          },
+        }).catch(() => null);
+        await this.notifyBackorderReady(data.productId, 'system');
+      }
+      return updated;
+    }
     const created = await this.prisma.inventoryBalance.create({
       data: {
         id: ulid(),
@@ -118,36 +147,61 @@ export class InventoryService {
     return updated;
   }
 
-  async adjustQuantity(id: string, adjustment: number, type: 'inward' | 'outward' | 'damage' | 'adjustment', notes?: string, createdBy = 'system'): Promise<any> {
+  async adjustQuantity(
+    id: string,
+    adjustment: number,
+    type: 'inward' | 'outward' | 'damage' | 'adjustment' | 'reserve' | 'release',
+    notes?: string,
+    createdBy = 'system',
+  ): Promise<any> {
     const balance = await this.findById(id);
+    const quantity = Math.trunc(Number(adjustment || 0));
+    if (!Number.isFinite(quantity) || quantity === 0) throw new BadRequestException('Quantity must be a non-zero whole number');
+    if (type !== 'adjustment' && quantity < 0) throw new BadRequestException('Quantity must be positive for this movement');
     
     let newOnHand = balance.onHand;
     let newAvailable = balance.available;
+    let newReserved = balance.reserved;
     let newDamaged = balance.damaged;
+    const hold = Number(balance.hold || 0);
     
     switch (type) {
       case 'inward':
-        newOnHand += adjustment;
-        newAvailable += adjustment;
+        newOnHand += quantity;
+        newAvailable += quantity;
         break;
       case 'outward':
-        newOnHand = Math.max(0, newOnHand - adjustment);
-        newAvailable = Math.max(0, newAvailable - adjustment);
+        if (quantity > newAvailable) throw new BadRequestException('Cannot consume more than available stock');
+        newOnHand -= quantity;
+        newAvailable -= quantity;
         break;
       case 'damage':
-        newOnHand = Math.max(0, newOnHand - adjustment);
-        newDamaged += adjustment;
+        if (quantity > newAvailable) throw new BadRequestException('Cannot mark more than available stock as damaged');
+        newAvailable -= quantity;
+        newDamaged += quantity;
+        break;
+      case 'reserve':
+        if (quantity > newAvailable) throw new BadRequestException('Cannot reserve more than available stock');
+        newAvailable -= quantity;
+        newReserved += quantity;
+        break;
+      case 'release':
+        if (quantity > newReserved) throw new BadRequestException('Cannot release more than reserved stock');
+        newReserved -= quantity;
+        newAvailable += quantity;
         break;
       case 'adjustment':
-        newOnHand += adjustment;
-        newAvailable = Math.max(0, newAvailable + adjustment);
+        newOnHand = Math.max(0, newOnHand + quantity);
+        newAvailable = Math.max(0, newOnHand - newReserved - newDamaged - hold);
         break;
+      default:
+        throw new BadRequestException('Unsupported inventory movement type');
     }
     
     const [updated]: any = await this.prisma.$transaction([
       this.prisma.inventoryBalance.update({
         where: { id },
-        data: { onHand: newOnHand, available: newAvailable, damaged: newDamaged, updatedAt: new Date() },
+        data: { onHand: newOnHand, available: newAvailable, reserved: newReserved, damaged: newDamaged, updatedAt: new Date() },
         include: { product: true },
       } as any),
       this.prisma.inventoryMovement.create({
@@ -155,13 +209,13 @@ export class InventoryService {
           id: ulid(),
           productId: balance.productId,
           type,
-          quantity: adjustment,
+          quantity,
           reason: notes || 'Manual inventory adjustment',
           createdBy,
         },
       } as any),
     ]);
-    if (type === 'inward' && adjustment > 0) await this.notifyBackorderReady(balance.productId, createdBy);
+    if (type === 'inward' && quantity > 0) await this.notifyBackorderReady(balance.productId, createdBy);
     
     return updated;
   }
@@ -185,20 +239,214 @@ export class InventoryService {
       summary.available += b.available;
       summary.reserved += b.reserved;
       summary.damaged += b.damaged;
-      if (b.available < 5) summary.lowStock++;
+      const threshold = b.reorderPoint ?? b.lowStockThreshold ?? 5;
+      if (Number(threshold) > 0 && b.available <= Number(threshold)) summary.lowStock++;
       if (b.available === 0) summary.outOfStock++;
     }
     
     return summary;
   }
 
+  async pendingInwardItems(take = 200): Promise<any[]> {
+    const limit = Math.max(1, Math.min(500, Number(take) || 200));
+    const [reservations, salesOrders] = await Promise.all([
+      this.prisma.reservation.findMany({
+        where: { status: 'backordered' },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      }),
+      this.prisma.salesOrder.findMany({
+        where: { status: { in: ['open', 'confirmed', 'partial', 'pending'] } as any },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      }),
+    ]);
+
+    const quoteIds = Array.from(new Set([
+      ...reservations.map((reservation) => reservation.quoteId),
+      ...salesOrders.map((order) => order.quoteId),
+    ].filter(Boolean)));
+    const productIds = Array.from(new Set(reservations.map((reservation) => reservation.productId).filter(Boolean)));
+    const [quotes, products, balances] = await Promise.all([
+      quoteIds.length
+        ? this.prisma.quote.findMany({
+            where: { id: { in: quoteIds } },
+            select: { id: true, quoteNumber: true, leadId: true, customerId: true, ownerId: true },
+          })
+        : [],
+      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [],
+      productIds.length ? this.prisma.inventoryBalance.findMany({ where: { productId: { in: productIds } } }) : [],
+    ]);
+
+    const quoteMap = new Map(quotes.map((quote) => [quote.id, quote] as const));
+    const productMap = new Map(products.map((product) => [product.id, product] as const));
+    const balanceMap = new Map(balances.map((balance) => [balance.productId, balance] as const));
+    const orderMap = new Map(salesOrders.map((order) => [order.quoteId, order] as const));
+    const customerIds = Array.from(new Set([
+      ...quotes.map((quote) => quote.customerId),
+      ...salesOrders.map((order) => order.customerId),
+    ].filter(Boolean)));
+    const ownerIds = Array.from(new Set([
+      ...quotes.map((quote) => quote.ownerId),
+      ...salesOrders.map((order) => order.ownerId),
+    ].filter(Boolean)));
+    const [customers, owners] = await Promise.all([
+      customerIds.length ? this.prisma.customer.findMany({ where: { id: { in: customerIds } } }) : [],
+      ownerIds.length ? this.prisma.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true, email: true, role: true, phone: true } }) : [],
+    ]);
+    const customerMap = new Map(customers.map((customer) => [customer.id, customer] as const));
+    const ownerMap = new Map(owners.map((owner) => [owner.id, owner] as const));
+    const demands = await (this.prisma as any).purchaseDemand.findMany({
+      where: {
+        OR: [
+          { sourceReservationId: { in: reservations.map((reservation) => reservation.id) } },
+          { sourceOrderId: { in: salesOrders.map((order) => order.id) } },
+        ],
+      },
+    }).catch(() => []);
+    const demandByReservation = new Map((demands as any[]).map((demand) => [demand.sourceReservationId, demand]));
+    const demandBySourceLine = new Map((demands as any[]).map((demand) => [demand.sourceLineKey, demand]));
+
+    const reservationRows = reservations.map((reservation) => {
+      const product = productMap.get(reservation.productId) as any;
+      const balance = balanceMap.get(reservation.productId) as any;
+      const quote = quoteMap.get(reservation.quoteId) as any;
+      const order = quote ? (orderMap.get(quote.id) as any) : null;
+      const demand = demandByReservation.get(reservation.id) as any;
+      const quantity = Number(reservation.quantity || 0);
+      const available = Number(balance?.available || 0);
+      return {
+        reservationId: reservation.id,
+        status: 'pending_inward',
+        productId: reservation.productId,
+        quoteId: reservation.quoteId,
+        leadId: quote?.leadId || null,
+        orderId: order?.id || null,
+        orderNumber: order?.orderNumber || '',
+        quoteNumber: quote?.quoteNumber || '',
+        customer: quote?.customerId ? customerMap.get(quote.customerId) || null : null,
+        owner: quote?.ownerId ? ownerMap.get(quote.ownerId) || null : null,
+        sku: product?.sku || reservation.productId,
+        name: product?.name || 'Pending product',
+        category: product?.category || '',
+        brand: product?.brand || '',
+        finish: product?.finish || '',
+        quantity,
+        available,
+        shortage: Math.max(0, quantity - available),
+        sellPrice: Number(product?.sellPrice || 0),
+        purchaseStatus: demand?.status || 'demand_pending',
+        vendorName: demand?.vendorName || product?.brand || '',
+        expectedDate: demand?.expectedDate || null,
+        purchaseDemandId: demand?.id || null,
+        createdAt: reservation.createdAt,
+        updatedAt: reservation.updatedAt,
+      };
+    });
+
+    const tileRows = salesOrders.flatMap((order: any) => {
+      const quote = quoteMap.get(order.quoteId) as any;
+      const lines = this.normalizeLines(order.lines) || [];
+      return lines
+        .filter((line: any) => this.isTileLine(line) && !String(line.productId || '').trim() && Number(line.qty || line.quantity || 0) > 0)
+        .map((line: any, index: number) => {
+          const quantity = Number(line.qty || line.quantity || 0);
+          const demand = demandBySourceLine.get(this.tileDemandKey(order.id, line, index)) as any;
+          return {
+            reservationId: `tile-${order.id}-${index}`,
+            status: 'tile_special_order',
+            productId: '',
+            quoteId: order.quoteId,
+            leadId: order.leadId,
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            quoteNumber: quote?.quoteNumber || '',
+            customer: customerMap.get(order.customerId) || null,
+            owner: ownerMap.get(order.ownerId) || null,
+            sku: line.tileCode || line.sku || 'Tile order',
+            name: line.name || `Tile ${line.tileCode || ''} ${line.tileSize || line.dimensions || ''}`.trim(),
+            category: 'Tiles',
+            brand: line.brand || 'Tile selection',
+            finish: line.tileSize || line.dimensions || '',
+            quantity,
+            available: 0,
+            shortage: quantity,
+            sellPrice: Number(line.price || line.sellPrice || 0),
+            purchaseStatus: demand?.status || 'demand_pending',
+            vendorName: demand?.vendorName || line.brand || 'Tile vendor',
+            expectedDate: demand?.expectedDate || null,
+            purchaseDemandId: demand?.id || null,
+            createdAt: order.createdAt,
+            updatedAt: order.updatedAt,
+          };
+        });
+    });
+
+    return [...reservationRows, ...tileRows]
+      .sort((a: any, b: any) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime())
+      .slice(0, limit);
+  }
+
+  private normalizeLines(lines: any) {
+    if (!lines) return [];
+    if (typeof lines === 'string') {
+      try {
+        const parsed = JSON.parse(lines);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return Array.isArray(lines) ? lines : [];
+  }
+
+  private isTileLine(line: any) {
+    return line?.type === 'tile' || line?.nonStock === true || String(line?.category || '').toLowerCase() === 'tiles';
+  }
+
+  private tileDemandKey(orderId: string, line: any, index: number) {
+    return `tile:${orderId}:${String(line.tileCode || line.sku || index).trim()}:${index}`;
+  }
+
   private async notifyBackorderReady(productId: string, actorUserId: string) {
-    const balance = await this.prisma.inventoryBalance.findUnique({ where: { productId }, include: { product: true } as any } as any) as any;
-    if (!balance || Number(balance.onHand || 0) <= 0) return;
-    const reservations = await this.prisma.reservation.findMany({ where: { productId, status: 'backordered' } });
+    const reservations = await this.prisma.reservation.findMany({
+      where: { productId, status: 'backordered' },
+      orderBy: { createdAt: 'asc' },
+    });
     for (const reservation of reservations) {
+      const balance = await this.prisma.inventoryBalance.findUnique({ where: { productId }, include: { product: true } as any } as any) as any;
+      if (!balance || Number(balance.available || 0) < Number(reservation.quantity || 0)) return;
       const quote = await this.prisma.quote.findUnique({ where: { id: reservation.quoteId }, include: { lead: true } as any } as any) as any;
       if (!quote?.leadId) continue;
+      const reservedNow = await this.prisma.$transaction(async (tx) => {
+        const fresh = await tx.inventoryBalance.findUnique({ where: { productId } });
+        if (!fresh || Number(fresh.available || 0) < Number(reservation.quantity || 0)) return false;
+        await tx.inventoryBalance.update({
+          where: { productId },
+          data: {
+            available: Number(fresh.available || 0) - Number(reservation.quantity || 0),
+            reserved: Number(fresh.reserved || 0) + Number(reservation.quantity || 0),
+            updatedAt: new Date(),
+          },
+        });
+        await tx.reservation.update({
+          where: { id: reservation.id },
+          data: { status: 'reserved', updatedAt: new Date() },
+        });
+        await tx.inventoryMovement.create({
+          data: {
+            id: ulid(),
+            productId,
+            type: 'reserve',
+            quantity: Number(reservation.quantity || 0),
+            reason: `Auto-reserved arrived backorder for ${quote.quoteNumber}`,
+            relatedQuoteId: quote.id,
+            createdBy: actorUserId || 'system',
+          },
+        });
+        return true;
+      }, { timeout: 10000 }).catch(() => false);
+      if (!reservedNow) continue;
       await this.prisma.activity.create({
         data: {
           id: ulid(),
@@ -206,7 +454,7 @@ export class InventoryService {
           quoteId: quote.id,
           userId: quote.ownerId,
           type: 'stock_ready',
-          message: `${balance.product?.sku || 'Item'} is now in store. Backorder can move to dispatch tracking.`,
+          message: `${balance.product?.sku || 'Item'} arrived, was auto-reserved, and is now ready for dispatch tracking.`,
         },
       }).catch(() => null);
       await this.prisma.followUpTask.create({
@@ -216,14 +464,14 @@ export class InventoryService {
           ownerId: quote.ownerId,
           dueAt: new Date(),
           status: 'pending',
-          notes: `${balance.product?.name || balance.product?.sku || 'Item'} has arrived. Inform customer and coordinate dispatch.`,
+          notes: `${balance.product?.name || balance.product?.sku || 'Item'} has arrived and is reserved. Inform customer and coordinate dispatch.`,
           updatedAt: new Date(),
         },
       }).catch(() => null);
       await this.notifications.createMany([
         {
-          title: 'Backorder item is in store',
-          message: `${balance.product?.sku || 'Item'} has arrived for ${quote.quoteNumber}. Inform the customer and prepare pending dispatch.`,
+          title: 'Backorder item reserved',
+          message: `${balance.product?.sku || 'Item'} has arrived for ${quote.quoteNumber} and is reserved. Inform the customer and prepare pending dispatch.`,
           type: 'stock_ready',
           entityType: 'Quote',
           entityId: quote.id,
@@ -232,8 +480,8 @@ export class InventoryService {
           metadata: { productId, quoteId: quote.id },
         },
         {
-          title: 'Pending dispatch item arrived',
-          message: `${balance.product?.sku || 'Item'} is now inwarded. Dispatch can create a partial challan for the remaining quantity.`,
+          title: 'Pending dispatch item ready',
+          message: `${balance.product?.sku || 'Item'} is inwarded and reserved. Dispatch can create the remaining challan when scheduled.`,
           type: 'stock_ready',
           entityType: 'Quote',
           entityId: quote.id,

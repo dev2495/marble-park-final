@@ -62,7 +62,6 @@ async function main() {
   assert(Buffer.from(await pdfSelection.arrayBuffer()).subarray(0, 4).toString() === '%PDF', 'selection PDF should be a PDF');
   assert(Buffer.from(await pdfPriced.arrayBuffer()).subarray(0, 4).toString() === '%PDF', 'priced PDF should be a PDF');
 
-  await gql(`mutation($id: ID!, $note: String) { approveQuote(id: $id, note: $note) { id approvalStatus } }`, { id: quote3.id, note: 'Smoke approval for final area quote' }, admin.token);
   const order = (await gql(`mutation($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`, { input: { quoteId: quote3.id, paymentMode: 'credit', notes: 'Credit final order smoke' } }, office.token)).createSalesOrderFromQuote;
   assert(order.paymentMode === 'credit' && order.paymentStatus === 'credit', 'credit order should retain credit tags');
 
@@ -90,7 +89,7 @@ async function main() {
   assert(salesNotices.notifications.some((n) => n.type === 'quote_generated' && String(n.message).includes(quote2.quoteNumber)), 'sales should be notified when office generates quote PDF');
   assert(salesNotices.notifications.some((n) => n.type === 'stock_ready' && String(n.message).includes(backorder.sku)), 'sales should be notified when backorder inward arrives');
   assert(dispatchNotices.notifications.some((n) => n.type === 'stock_ready' && String(n.message).includes(backorder.sku)), 'dispatch should be notified when backorder inward arrives');
-  assert(ownerNotices.notifications.some((n) => n.type === 'approval'), 'owner/admin approval stream should contain quote approval requests');
+  assert(ownerNotices.notifications.some((n) => n.type === 'quote_ready'), 'owner/admin stream should show quote-ready visibility without approval blocking');
   assert(leadState.lead.quotes.length >= 3, 'same lead should maintain 3 generated quote records');
   assert(leadState.lead.activities.some((a) => a.type === 'stock_ready'), 'lead activity should track stock ready event');
 
