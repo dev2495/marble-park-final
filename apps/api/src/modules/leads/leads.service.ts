@@ -160,6 +160,76 @@ export class LeadsService {
     return this.prisma.lead.delete({ where: { id } });
   }
 
+  async timeline(leadId: string) {
+    const lead = await this.findById(leadId);
+    const quoteList: any[] = Array.isArray(lead.quotes) ? lead.quotes : [];
+    const quoteIds = quoteList.map((quote: any) => quote.id).filter(Boolean);
+
+    const [intents, dispatchJobs, challans, salesOrders] = await Promise.all([
+      this.prisma.leadIntent.findMany({ where: { leadId }, orderBy: { createdAt: 'desc' } }),
+      quoteIds.length ? this.prisma.dispatchJob.findMany({ where: { quoteId: { in: quoteIds } } }).catch(() => []) : [],
+      quoteIds.length ? this.prisma.dispatchChallan.findMany({ where: { quoteId: { in: quoteIds } } }).catch(() => []) : [],
+      quoteIds.length ? this.prisma.salesOrder.findMany({ where: { quoteId: { in: quoteIds } } }).catch(() => []) : [],
+    ]);
+    const orderIds = (salesOrders as any[]).map((order) => order.id).filter(Boolean);
+    const challanIds = (challans as any[]).map((challan) => challan.id).filter(Boolean);
+    const [paymentReceipts, returnOrders] = await Promise.all([
+      orderIds.length ? this.prisma.paymentReceipt.findMany({ where: { salesOrderId: { in: orderIds } }, orderBy: { receivedAt: 'desc' } }).catch(() => []) : [],
+      orderIds.length || challanIds.length
+        ? this.prisma.returnOrder.findMany({
+            where: {
+              OR: [
+                ...(orderIds.length ? [{ salesOrderId: { in: orderIds } }] : []),
+                ...(challanIds.length ? [{ challanId: { in: challanIds } }] : []),
+              ],
+            },
+            orderBy: { createdAt: 'desc' },
+          }).catch(() => [])
+        : [],
+    ]);
+
+    const quoteIndex = new Map(quoteList.map((quote: any) => [quote.id, quote]));
+    const heads = quoteList.filter((quote: any) => !quote.supersededByQuoteId);
+    const chains = heads.map((head: any) => {
+      const versions: any[] = [];
+      let current = head;
+      while (current) {
+        versions.push(current);
+        current = current.supersedesQuoteId ? quoteIndex.get(current.supersedesQuoteId) : null;
+      }
+      versions.sort((a: any, b: any) => Number(a.versionNumber || 1) - Number(b.versionNumber || 1));
+      return { headQuoteId: head.id, versions };
+    });
+
+    const entries: Array<{ id: string; kind: string; at: Date; payload: any }> = [];
+    const push = (kind: string, id: string, at: any, payload: any) => {
+      if (!at) return;
+      entries.push({ id: `${kind}:${id}`, kind, at: new Date(at), payload });
+    };
+    for (const intent of intents as any[]) push('intent', intent.id, intent.createdAt, intent);
+    for (const quote of quoteList) push('quote', quote.id, quote.createdAt, quote);
+    for (const activity of (lead.activities || []) as any[]) push('activity', activity.id, activity.createdAt, activity);
+    for (const followUp of (lead.followUps || []) as any[]) push('followup', followUp.id, followUp.createdAt || followUp.dueAt, followUp);
+    for (const job of dispatchJobs as any[]) push('dispatch_job', job.id, job.createdAt, job);
+    for (const challan of challans as any[]) push('challan', challan.id, challan.createdAt, challan);
+    for (const order of salesOrders as any[]) push('order', order.id, order.createdAt, order);
+    for (const receipt of paymentReceipts as any[]) push('payment_receipt', receipt.id, receipt.receivedAt || receipt.createdAt, receipt);
+    for (const returnOrder of returnOrders as any[]) push('return_order', returnOrder.id, returnOrder.createdAt, returnOrder);
+    entries.sort((a, b) => b.at.getTime() - a.at.getTime());
+
+    return {
+      lead,
+      chains,
+      inFlight: {
+        activeIntents: (intents as any[]).filter((intent) => ['draft', 'pending_quote', 'in_quote'].includes(intent.status)),
+        activeQuotes: chains
+          .map((chain) => chain.versions[chain.versions.length - 1])
+          .filter((quote) => quote && !['superseded', 'lost', 'expired', 'won'].includes(quote.status)),
+      },
+      entries,
+    };
+  }
+
   async findIntents(args?: { status?: string; leadId?: string; ownerId?: string }) {
     const where: any = {};
     if (args?.status) where.status = args.status;
@@ -242,6 +312,9 @@ export class LeadsService {
     const intent = await this.prisma.leadIntent.findUnique({ where: { id: intentId } });
     if (!intent) throw new NotFoundException('Lead intent not found');
     if (intent.quoteId) throw new Error('This intent already has a quote');
+    if (['cancelled', 'converted', 'quoted'].includes(intent.status)) {
+      throw new BadRequestException(`Intent is ${intent.status}, cannot generate quote.`);
+    }
     const lead = await this.findById(intent.leadId);
     const rows = this.normalizeRows(intent.rows);
     const lines = await this.intentRowsToQuoteLines(rows);
@@ -259,11 +332,13 @@ export class LeadsService {
         areas: Array.from(new Set(lines.map((line) => line.area || 'General Selection'))),
         remarks: note || intent.notes || '',
       },
+      intentId: intent.id,
+      supersedesQuoteId: (intent as any).referencesQuoteId || null,
     } as any);
     const pdfUrl = `/api/pdf/quote/${quote.id}`;
     await this.prisma.leadIntent.update({
       where: { id: intent.id },
-      data: { status: 'quoted', quoteId: quote.id, updatedAt: new Date() },
+      data: { status: 'converted', quoteId: quote.id, lockedBy: null, lockedAt: null, updatedAt: new Date() } as any,
     });
     await this.prisma.lead.update({
       where: { id: intent.leadId },

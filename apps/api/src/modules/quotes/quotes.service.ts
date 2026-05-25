@@ -16,6 +16,8 @@ export interface CreateQuoteInput {
   discountPercent?: number;
   displayMode?: string;
   quoteMeta?: any;
+  intentId?: string | null;
+  supersedesQuoteId?: string | null;
 }
 
 export interface UpdateQuoteInput {
@@ -37,7 +39,7 @@ export interface CreateSalesOrderInput {
   notes?: string;
 }
 
-const QUOTE_STATUSES = ['draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'confirmed', 'won', 'lost', 'expired'];
+const QUOTE_STATUSES = ['draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'confirmed', 'won', 'lost', 'expired', 'superseded'];
 
 // Eager-include retained ONLY for endpoints that legitimately need the embedded
 // objects in a single round-trip (e.g. internal services that don't go through
@@ -140,10 +142,24 @@ export class QuotesService {
             leadId = lead.id;
           }
 
+          let supersedesId = data.supersedesQuoteId || null;
+          let versionNumber = 1;
+          if (supersedesId) {
+            const parent = await tx.quote.findUnique({ where: { id: supersedesId } });
+            if (!parent) throw new BadRequestException('Parent quote to revise was not found');
+            if (parent.leadId !== leadId) throw new BadRequestException('Revision target belongs to a different lead');
+            if ((parent as any).supersededByQuoteId) {
+              throw new BadRequestException('This quote is already superseded. Revise the current quote version.');
+            }
+            versionNumber = Number((parent as any).versionNumber || 1) + 1;
+            await this.releaseReservationsTx(tx, supersedesId, 'Quote superseded by revision');
+          }
+
+          const { intentId, supersedesQuoteId: _supersedesQuoteId, ...quoteData } = data as any;
           const quote = await tx.quote.create({
             data: {
               id: ulid(),
-              ...data,
+              ...quoteData,
               customerId,
               ownerId,
               leadId,
@@ -160,6 +176,9 @@ export class QuotesService {
               notes: data.notes || '',
               versions: [],
               quoteMeta,
+              intentId: intentId || null,
+              supersedesQuoteId: supersedesId,
+              versionNumber,
               approval: {
                 requestedAt: new Date().toISOString(),
                 reason: 'quote_ready_no_owner_approval_required',
@@ -173,6 +192,12 @@ export class QuotesService {
             },
             include: quoteInclude,
           } as any) as any;
+          if (supersedesId) {
+            await tx.quote.update({
+              where: { id: supersedesId },
+              data: { supersededByQuoteId: quote.id, status: 'superseded', updatedAt: new Date() } as any,
+            });
+          }
           await this.syncQuoteLinesTx(tx, quote, normalizedLines);
           await this.upsertDocumentJobTx(tx, {
             entityType: 'Quote',
@@ -300,7 +325,7 @@ export class QuotesService {
         data: updateData,
         include: quoteInclude,
       } as any) as any;
-      if (['lost', 'expired'].includes(status)) {
+      if (['lost', 'expired', 'superseded'].includes(status)) {
         await this.releaseReservationsTx(tx, id, `Quote marked ${status}`);
       }
       await tx.auditEvent.create({

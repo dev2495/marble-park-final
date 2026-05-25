@@ -28,6 +28,9 @@ export class LeadOutput {
   @Field(() => Date, { nullable: true })
   nextActionAt?: Date;
 
+  @Field(() => Date, { nullable: true })
+  reopenedAt?: Date;
+
   // FKs exposed for DataLoader-driven field resolution.
   @Field({ nullable: true })
   customerId?: string;
@@ -172,6 +175,16 @@ export class LeadsResolver {
       throw new Error('This lead is restricted');
     }
     return lead;
+  }
+
+  @Query(() => GraphQLJSON, { name: 'leadTimeline' })
+  async leadTimeline(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireSession(this.prisma, ctx);
+    const lead = await this.leads.findById(id);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && lead.ownerId !== user.id) {
+      throw new Error('This lead is restricted');
+    }
+    return this.leads.timeline(id);
   }
 
   @Mutation(() => LeadOutput)

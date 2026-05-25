@@ -97,16 +97,16 @@ model Customer {
 }
 
 model DispatchChallan {
-  id              String       @id
-  challanNumber   String       @unique
-  quote           Quote        @relation(fields: [quoteId], references: [id])
+  id              String      @id
+  challanNumber   String      @unique
+  quote           Quote       @relation(fields: [quoteId], references: [id])
   quoteId         String
-  dispatchJob     DispatchJob  @relation(fields: [dispatchJobId], references: [id])
+  dispatchJob     DispatchJob @relation(fields: [dispatchJobId], references: [id])
   dispatchJobId   String
-  customer        Customer     @relation(fields: [customerId], references: [id])
+  customer        Customer    @relation(fields: [customerId], references: [id])
   customerId      String
   status          String
-  createdAt       DateTime     @default(now())
+  createdAt       DateTime    @default(now())
   packedAt        DateTime?
   dispatchedAt    DateTime?
   deliveredAt     DateTime?
@@ -196,22 +196,22 @@ model ImportRow {
 }
 
 model InventoryBalance {
-  id                 String   @id
-  product            Product  @relation(fields: [productId], references: [id])
-  productId          String   @unique
-  onHand             Int
-  reserved           Int
-  available          Int
-  damaged            Int
-  hold               Int
+  id                String   @id
+  product           Product  @relation(fields: [productId], references: [id])
+  productId         String   @unique
+  onHand            Int
+  reserved          Int
+  available         Int
+  damaged           Int
+  hold              Int
   /// When `available` drops at or below this number the product is flagged as
   /// "low stock" on dashboards. 0 disables the alert. Default = 5 covers
   /// "almost empty" for retail showrooms; sales managers override per SKU.
-  lowStockThreshold  Int      @default(5)
+  lowStockThreshold Int      @default(5)
   /// Optional explicit reorder point. If non-null and `available` <= this,
   /// the product is flagged for purchase planning.
-  reorderPoint       Int?
-  updatedAt          DateTime
+  reorderPoint      Int?
+  updatedAt         DateTime
 }
 
 model InventoryInwardBatch {
@@ -244,9 +244,9 @@ model InventoryMovement {
 }
 
 model PurchaseDemand {
-  id                  String   @id
-  sourceType          String   @default("sales_order")
-  sourceLineKey       String   @unique
+  id                  String    @id
+  sourceType          String    @default("sales_order")
+  sourceLineKey       String    @unique
   sourceOrderId       String?
   sourceQuoteId       String?
   sourceReservationId String?
@@ -258,18 +258,18 @@ model PurchaseDemand {
   category            String
   brand               String
   finish              String?
-  unit                String   @default("PC")
+  unit                String    @default("PC")
   quantity            Int
-  orderedQuantity     Int      @default(0)
-  receivedQuantity    Int      @default(0)
-  status              String   @default("open")
-  priority            Int      @default(0)
+  orderedQuantity     Int       @default(0)
+  receivedQuantity    Int       @default(0)
+  status              String    @default("open")
+  priority            Int       @default(0)
   preferredVendorId   String?
   vendorName          String?
   expectedDate        DateTime?
-  notes               String   @default("")
-  metadata            Json     @default("{}")
-  createdAt           DateTime @default(now())
+  notes               String    @default("")
+  metadata            Json      @default("{}")
+  createdAt           DateTime  @default(now())
   updatedAt           DateTime
 
   @@index([sourceOrderId])
@@ -282,20 +282,20 @@ model PurchaseDemand {
 }
 
 model PurchaseOrder {
-  id             String   @id
-  poNumber       String   @unique
-  vendorId       String?
-  vendorName     String
-  status         String   @default("draft")
-  expectedDate   DateTime?
-  sentAt         DateTime?
-  orderedAt      DateTime?
-  closedAt       DateTime?
-  createdBy      String
-  notes          String   @default("")
-  metadata       Json     @default("{}")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime
+  id           String    @id
+  poNumber     String    @unique
+  vendorId     String?
+  vendorName   String
+  status       String    @default("draft")
+  expectedDate DateTime?
+  sentAt       DateTime?
+  orderedAt    DateTime?
+  closedAt     DateTime?
+  createdBy    String
+  notes        String    @default("")
+  metadata     Json      @default("{}")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime
 
   @@index([vendorId])
   @@index([vendorName])
@@ -305,24 +305,24 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderLine {
-  id               String   @id
-  purchaseOrderId  String
-  purchaseDemandId String?
-  productId        String?
-  sku              String
-  name             String
-  category         String
-  brand            String
-  finish           String?
-  unit             String   @default("PC")
-  orderedQuantity  Int
-  receivedQuantity Int      @default(0)
-  cancelledQuantity Int     @default(0)
-  unitCost         Float    @default(0)
-  status           String   @default("ordered")
-  metadata         Json     @default("{}")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime
+  id                String   @id
+  purchaseOrderId   String
+  purchaseDemandId  String?
+  productId         String?
+  sku               String
+  name              String
+  category          String
+  brand             String
+  finish            String?
+  unit              String   @default("PC")
+  orderedQuantity   Int
+  receivedQuantity  Int      @default(0)
+  cancelledQuantity Int      @default(0)
+  unitCost          Float    @default(0)
+  status            String   @default("ordered")
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime
 
   @@index([purchaseOrderId])
   @@index([purchaseDemandId])
@@ -331,20 +331,20 @@ model PurchaseOrderLine {
 }
 
 model GoodsReceiptNote {
-  id               String   @id
-  grnNumber        String   @unique
-  purchaseOrderId  String?
-  vendorId         String?
-  vendorName       String
-  supplierChallan  String?
-  supplierBill     String?
-  receivedDate     DateTime
-  receivedBy       String
-  status           String   @default("posted")
-  notes            String   @default("")
-  attachments      Json     @default("[]")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime
+  id              String   @id
+  grnNumber       String   @unique
+  purchaseOrderId String?
+  vendorId        String?
+  vendorName      String
+  supplierChallan String?
+  supplierBill    String?
+  receivedDate    DateTime
+  receivedBy      String
+  status          String   @default("posted")
+  notes           String   @default("")
+  attachments     Json     @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
 
   @@index([purchaseOrderId])
   @@index([vendorName])
@@ -387,6 +387,7 @@ model Lead {
   lastContactAt DateTime
   nextActionAt  DateTime
   notes         String
+  reopenedAt    DateTime?
   updatedAt     DateTime
   activities    Activity[]
   quotes        Quote[]
@@ -400,25 +401,31 @@ model Lead {
 }
 
 model LeadIntent {
-  id             String   @id
-  leadId         String
-  customerId     String
-  ownerId        String
-  createdBy      String
-  status         String
-  intentType     String
-  source         String
-  notes          String
-  followUpReason String?
-  rows           Json
-  quoteId        String?
-  salesOrderId   String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime
+  id                String    @id
+  leadId            String
+  customerId        String
+  ownerId           String
+  createdBy         String
+  status            String
+  intentType        String
+  source            String
+  notes             String
+  followUpReason    String?
+  rows              Json
+  quoteId           String?
+  referencesQuoteId String?
+  lockedBy          String?
+  lockedAt          DateTime?
+  submittedAt       DateTime?
+  salesOrderId      String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime
 
   @@index([leadId])
   @@index([ownerId])
   @@index([status])
+  @@index([referencesQuoteId])
+  @@index([lockedBy])
   @@index([createdAt(sort: Desc)])
 }
 
@@ -505,25 +512,25 @@ model TileSize {
 }
 
 model Product {
-  id          String            @id
-  sku         String            @unique
-  name        String
-  category    String
-  brand       String
-  finish      String
-  dimensions  String
-  unit        String
-  tags        Json
-  sellPrice   Float
-  floorPrice  Float
-  taxClass    String
-  status      String
-  media       Json
-  sourceRefs  Json
-  description String
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime
-  balances    InventoryBalance?
+  id           String            @id
+  sku          String            @unique
+  name         String
+  category     String
+  brand        String
+  finish       String
+  dimensions   String
+  unit         String
+  tags         Json
+  sellPrice    Float
+  floorPrice   Float
+  taxClass     String
+  status       String
+  media        Json
+  sourceRefs   Json
+  description  String
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime
+  balances     InventoryBalance?
   reservations Reservation[]
 
   @@index([brand])
@@ -534,35 +541,39 @@ model Product {
 }
 
 model Quote {
-  id              String            @id
-  quoteNumber     String            @unique
-  lead            Lead              @relation(fields: [leadId], references: [id])
-  leadId          String
-  customer        Customer          @relation(fields: [customerId], references: [id])
-  customerId      String
-  owner           User              @relation(fields: [ownerId], references: [id])
-  ownerId         String
-  title           String
-  status          String
-  approvalStatus  String
-  discountPercent Float
-  displayMode     String            @default("priced")
-  projectName     String
-  createdAt       DateTime          @default(now())
-  validUntil      DateTime
-  sentAt          DateTime?
-  confirmedAt     DateTime?
-  coverImage      String
-  notes           String
-  lines           Json
-  versions        Json
-  quoteMeta       Json              @default("{}")
-  approval        Json?
-  updatedAt       DateTime
-  activities      Activity[]
-  reservations    Reservation[]
-  dispatchJobs    DispatchJob?
-  dispatchChallan DispatchChallan[]
+  id                  String            @id
+  quoteNumber         String            @unique
+  lead                Lead              @relation(fields: [leadId], references: [id])
+  leadId              String
+  customer            Customer          @relation(fields: [customerId], references: [id])
+  customerId          String
+  owner               User              @relation(fields: [ownerId], references: [id])
+  ownerId             String
+  title               String
+  status              String
+  approvalStatus      String
+  discountPercent     Float
+  displayMode         String            @default("priced")
+  projectName         String
+  createdAt           DateTime          @default(now())
+  validUntil          DateTime
+  sentAt              DateTime?
+  confirmedAt         DateTime?
+  coverImage          String
+  notes               String
+  lines               Json
+  versions            Json
+  quoteMeta           Json              @default("{}")
+  approval            Json?
+  intentId            String?
+  supersedesQuoteId   String?
+  supersededByQuoteId String?
+  versionNumber       Int               @default(1)
+  updatedAt           DateTime
+  activities          Activity[]
+  reservations        Reservation[]
+  dispatchJobs        DispatchJob?
+  dispatchChallan     DispatchChallan[]
 
   @@index([leadId])
   @@index([customerId])
@@ -570,6 +581,9 @@ model Quote {
   @@index([status])
   @@index([approvalStatus])
   @@index([validUntil])
+  @@index([intentId])
+  @@index([supersedesQuoteId])
+  @@index([supersededByQuoteId])
   @@index([createdAt(sort: Desc)])
 }
 
@@ -627,26 +641,26 @@ model SalesOrder {
 }
 
 model QuoteLine {
-  id              String   @id
-  quoteId         String
-  lineKey         String
-  lineNo          Int
-  productId       String?
-  sku             String
-  name            String
-  category        String
-  brand           String
-  finish          String?
-  area            String?
-  unit            String   @default("PC")
-  quantity        Int
-  unitPrice       Float    @default(0)
-  lineTotal       Float    @default(0)
-  status          String   @default("quoted")
-  isTileSpecial   Boolean  @default(false)
-  metadata        Json     @default("{}")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime
+  id            String   @id
+  quoteId       String
+  lineKey       String
+  lineNo        Int
+  productId     String?
+  sku           String
+  name          String
+  category      String
+  brand         String
+  finish        String?
+  area          String?
+  unit          String   @default("PC")
+  quantity      Int
+  unitPrice     Float    @default(0)
+  lineTotal     Float    @default(0)
+  status        String   @default("quoted")
+  isTileSpecial Boolean  @default(false)
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
 
   @@unique([quoteId, lineKey])
   @@index([quoteId])
@@ -694,21 +708,21 @@ model SalesOrderLine {
 }
 
 model DocumentJob {
-  id             String    @id
-  entityType     String
-  entityId       String
-  documentType   String
-  status         String    @default("pending")
-  url            String?
-  storageKey     String?
-  contentType    String    @default("application/pdf")
-  error          String?
-  retryCount     Int       @default(0)
-  generatedBy    String?
-  generatedAt    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime
-  metadata       Json      @default("{}")
+  id           String    @id
+  entityType   String
+  entityId     String
+  documentType String
+  status       String    @default("pending")
+  url          String?
+  storageKey   String?
+  contentType  String    @default("application/pdf")
+  error        String?
+  retryCount   Int       @default(0)
+  generatedBy  String?
+  generatedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime
+  metadata     Json      @default("{}")
 
   @@unique([entityType, entityId, documentType])
   @@index([entityType, entityId])
@@ -718,21 +732,21 @@ model DocumentJob {
 }
 
 model PaymentReceipt {
-  id             String   @id
-  receiptNumber  String   @unique
-  salesOrderId   String
-  customerId     String
-  paymentMode    String
-  amount         Float
-  status         String   @default("posted")
-  receivedAt     DateTime
-  dueDate        DateTime?
-  reference      String?
-  notes          String   @default("")
-  createdBy      String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime
-  metadata       Json     @default("{}")
+  id            String    @id
+  receiptNumber String    @unique
+  salesOrderId  String
+  customerId    String
+  paymentMode   String
+  amount        Float
+  status        String    @default("posted")
+  receivedAt    DateTime
+  dueDate       DateTime?
+  reference     String?
+  notes         String    @default("")
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime
+  metadata      Json      @default("{}")
 
   @@index([salesOrderId])
   @@index([customerId])
@@ -748,16 +762,16 @@ model SequenceCounter {
 }
 
 model StockLocation {
-  id          String   @id
-  code        String   @unique
-  name        String
-  type        String   @default("showroom")
-  status      String   @default("active")
-  address     String?
-  sortOrder   Int      @default(0)
-  metadata    Json     @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime
+  id        String   @id
+  code      String   @unique
+  name      String
+  type      String   @default("showroom")
+  status    String   @default("active")
+  address   String?
+  sortOrder Int      @default(0)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime
 
   @@index([status])
   @@index([type])
@@ -815,7 +829,7 @@ model StockCountSession {
   approvedAt  DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime
-  metadata     Json      @default("{}")
+  metadata    Json      @default("{}")
 
   @@index([status])
   @@index([locationId])
@@ -823,17 +837,17 @@ model StockCountSession {
 }
 
 model StockCountLine {
-  id              String   @id
-  stockCountId    String
-  productId       String
+  id               String   @id
+  stockCountId     String
+  productId        String
   expectedQuantity Int
-  countedQuantity Int
-  variance        Int
-  reason          String   @default("")
-  status          String   @default("counted")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime
-  metadata        Json     @default("{}")
+  countedQuantity  Int
+  variance         Int
+  reason           String   @default("")
+  status           String   @default("counted")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime
+  metadata         Json     @default("{}")
 
   @@unique([stockCountId, productId])
   @@index([stockCountId])
@@ -861,20 +875,20 @@ model StockAdjustmentApproval {
 }
 
 model ProductVendor {
-  id             String   @id
-  productId      String
-  vendorId       String
-  vendorSku      String?
-  vendorName     String
-  leadTimeDays   Int      @default(0)
-  minOrderQty    Int      @default(1)
-  packMultiple   Int      @default(1)
-  lastCost       Float    @default(0)
-  preferred      Boolean  @default(false)
-  status         String   @default("active")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime
-  metadata       Json     @default("{}")
+  id           String   @id
+  productId    String
+  vendorId     String
+  vendorSku    String?
+  vendorName   String
+  leadTimeDays Int      @default(0)
+  minOrderQty  Int      @default(1)
+  packMultiple Int      @default(1)
+  lastCost     Float    @default(0)
+  preferred    Boolean  @default(false)
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+  metadata     Json     @default("{}")
 
   @@unique([productId, vendorId])
   @@index([productId])
@@ -884,38 +898,38 @@ model ProductVendor {
 }
 
 model ReorderPolicy {
-  id              String   @id
-  productId       String   @unique
+  id                String   @id
+  productId         String   @unique
   preferredVendorId String?
-  minQuantity     Int      @default(0)
-  maxQuantity     Int      @default(0)
-  reorderPoint    Int      @default(0)
-  reorderQuantity Int      @default(0)
-  leadTimeDays    Int      @default(0)
-  packMultiple    Int      @default(1)
-  status          String   @default("active")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime
-  metadata        Json     @default("{}")
+  minQuantity       Int      @default(0)
+  maxQuantity       Int      @default(0)
+  reorderPoint      Int      @default(0)
+  reorderQuantity   Int      @default(0)
+  leadTimeDays      Int      @default(0)
+  packMultiple      Int      @default(1)
+  status            String   @default("active")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime
+  metadata          Json     @default("{}")
 
   @@index([preferredVendorId])
   @@index([status])
 }
 
 model DispatchPackage {
-  id              String    @id
-  dispatchJobId   String
-  challanId       String
-  packageNumber   String
-  boxCount        Int       @default(1)
-  status          String    @default("packed")
-  packedBy        String?
-  packedAt        DateTime?
-  remarks         String    @default("")
-  photos          Json      @default("[]")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime
-  metadata        Json      @default("{}")
+  id            String    @id
+  dispatchJobId String
+  challanId     String
+  packageNumber String
+  boxCount      Int       @default(1)
+  status        String    @default("packed")
+  packedBy      String?
+  packedAt      DateTime?
+  remarks       String    @default("")
+  photos        Json      @default("[]")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime
+  metadata      Json      @default("{}")
 
   @@unique([challanId, packageNumber])
   @@index([dispatchJobId])
@@ -924,24 +938,24 @@ model DispatchPackage {
 }
 
 model DispatchLine {
-  id                String   @id
-  dispatchJobId     String
-  challanId         String?
-  salesOrderId      String?
-  salesOrderLineId  String?
-  dispatchKey       String
-  productId         String?
-  sku               String
-  name              String
-  orderedQuantity   Int
-  packedQuantity    Int      @default(0)
-  dispatchedQuantity Int     @default(0)
-  deliveredQuantity Int      @default(0)
-  returnedQuantity  Int      @default(0)
-  status            String   @default("packed")
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime
-  metadata          Json     @default("{}")
+  id                 String   @id
+  dispatchJobId      String
+  challanId          String?
+  salesOrderId       String?
+  salesOrderLineId   String?
+  dispatchKey        String
+  productId          String?
+  sku                String
+  name               String
+  orderedQuantity    Int
+  packedQuantity     Int      @default(0)
+  dispatchedQuantity Int      @default(0)
+  deliveredQuantity  Int      @default(0)
+  returnedQuantity   Int      @default(0)
+  status             String   @default("packed")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime
+  metadata           Json     @default("{}")
 
   @@index([dispatchJobId])
   @@index([challanId])
@@ -973,18 +987,18 @@ model Shipment {
 }
 
 model DeliveryProof {
-  id             String   @id
-  shipmentId     String?
-  challanId      String
-  receivedByName String
+  id              String   @id
+  shipmentId      String?
+  challanId       String
+  receivedByName  String
   receivedByPhone String?
-  proofType      String   @default("manual")
-  proofUrl       String?
-  latitude       Float?
-  longitude      Float?
-  capturedAt     DateTime @default(now())
-  createdBy      String
-  metadata       Json     @default("{}")
+  proofType       String   @default("manual")
+  proofUrl        String?
+  latitude        Float?
+  longitude       Float?
+  capturedAt      DateTime @default(now())
+  createdBy       String
+  metadata        Json     @default("{}")
 
   @@index([shipmentId])
   @@index([challanId])
@@ -992,21 +1006,21 @@ model DeliveryProof {
 }
 
 model ReturnOrder {
-  id             String   @id
-  returnNumber   String   @unique
-  salesOrderId   String?
-  challanId      String?
-  customerId     String?
-  status         String   @default("draft")
-  reason         String
-  refundMode     String?
-  refundAmount   Float    @default(0)
-  createdBy      String
-  approvedBy     String?
-  receivedAt     DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime
-  metadata       Json     @default("{}")
+  id           String    @id
+  returnNumber String    @unique
+  salesOrderId String?
+  challanId    String?
+  customerId   String?
+  status       String    @default("draft")
+  reason       String
+  refundMode   String?
+  refundAmount Float     @default(0)
+  createdBy    String
+  approvedBy   String?
+  receivedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime
+  metadata     Json      @default("{}")
 
   @@index([salesOrderId])
   @@index([challanId])
@@ -1016,17 +1030,17 @@ model ReturnOrder {
 }
 
 model ReturnLine {
-  id             String   @id
-  returnOrderId  String
-  productId      String?
-  sku            String
-  name           String
-  quantity       Int
-  disposition    String   @default("inspect")
-  status         String   @default("pending")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime
-  metadata       Json     @default("{}")
+  id            String   @id
+  returnOrderId String
+  productId     String?
+  sku           String
+  name          String
+  quantity      Int
+  disposition   String   @default("inspect")
+  status        String   @default("pending")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+  metadata      Json     @default("{}")
 
   @@index([returnOrderId])
   @@index([productId])
@@ -1046,29 +1060,29 @@ model SourceFile {
 }
 
 model User {
-  id                 String         @id
-  name               String
-  email              String         @unique
-  passwordHash       String
-  role               String
-  phone              String
-  active             Boolean        @default(true)
+  id                String         @id
+  name              String
+  email             String         @unique
+  passwordHash      String
+  role              String
+  phone             String
+  active            Boolean        @default(true)
   /// Optional uploaded avatar URL. When null the UI falls back to a
   /// deterministic colour + initials block derived from `id`.
-  avatarUrl          String?
+  avatarUrl         String?
   /// One-line bio shown on the profile page. Not validated; kept short
   /// (<= 280 chars) in the resolver.
-  bio                String?
+  bio               String?
   /// Audit trail for password rotations. Used by the profile page to show
   /// "last changed N days ago" + by future password-expiry policies.
-  passwordChangedAt  DateTime?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
-  leads              Lead[]
-  quotes             Quote[]
-  activities         Activity[]
-  followUps          FollowUpTask[]
-  dispatchJobs       DispatchJob[]
+  passwordChangedAt DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  leads             Lead[]
+  quotes            Quote[]
+  activities        Activity[]
+  followUps         FollowUpTask[]
+  dispatchJobs      DispatchJob[]
 }
 
 model Vendor {

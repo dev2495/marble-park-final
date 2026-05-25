@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Download, ImagePlus, Save, Send } from 'lucide-react';
+import { ArrowLeft, Download, ImagePlus, PenLine, Save, Send, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
@@ -13,6 +13,7 @@ const QUOTE_DETAIL = gql`
   query QuoteDetail($id: ID!) {
     quote(id: $id) {
       id quoteNumber title projectName status approvalStatus discountPercent displayMode createdAt validUntil sentAt confirmedAt notes lines quoteMeta customer owner lead approval coverImage
+      versionNumber supersedesQuoteId supersededByQuoteId intentId
     }
   }
 `;
@@ -20,6 +21,7 @@ const QUOTE_DETAIL = gql`
 const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id displayMode lines quoteMeta approvalStatus status } }`;
 const SEND_QUOTE = gql`mutation SendQuote($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
 const CREATE_SALES_ORDER = gql`mutation CreateSalesOrderFromQuote($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`;
+const START_REVISION_FROM_QUOTE = gql`mutation StartRevisionFromQuote($quoteId: String!) { startQuoteRevision(quoteId: $quoteId) }`;
 
 function money(value: number) { return `₹${Math.round(Number(value || 0)).toLocaleString('en-IN')}`; }
 function productImage(line: any) {
@@ -50,6 +52,7 @@ function groupLines(lines: any[]) {
 
 export default function QuoteDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const id = String(params.id);
   const [paymentMode, setPaymentMode] = useState('cash');
   const [advanceAmount, setAdvanceAmount] = useState('0');
@@ -80,7 +83,13 @@ export default function QuoteDetailPage() {
       setOrderMessage(error.message);
     },
   });
-  const mutationError = updateError || sendError || createOrderError;
+  const [startRevision, { loading: revising, error: reviseError }] = useMutation(START_REVISION_FROM_QUOTE, {
+    onCompleted: (data) => {
+      const intent = data?.startQuoteRevision;
+      if (intent?.id) router.push(`/dashboard/intents/${intent.id}`);
+    },
+  });
+  const mutationError = updateError || sendError || createOrderError || reviseError;
   const quote = data?.quote;
 
   useEffect(() => {
@@ -153,15 +162,43 @@ export default function QuoteDetailPage() {
         <div>
           <Link href="/dashboard/quotes" className="inline-flex items-center gap-2 text-sm font-black text-[#71717a]"><ArrowLeft className="h-4 w-4" /> Back to quote register</Link>
           <p className="mt-6 text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">{quote.status} · {quote.approvalStatus} · {displayMode === 'selection' ? 'selection summary' : 'priced quote'}</p>
-          <h1 className="mt-2 max-w-4xl font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">{quote.quoteNumber}</h1>
+          <h1 className="mt-2 flex max-w-4xl flex-wrap items-center gap-2 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">
+            {quote.quoteNumber}
+            <span className="rounded-full bg-[#2563eb] px-2.5 py-0.5 text-sm font-bold text-white">v{quote.versionNumber || 1}</span>
+            {quote.supersededByQuoteId ? <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-bold text-slate-700">Superseded</span> : null}
+            {quote.supersedesQuoteId ? <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-800">Replaces prior</span> : null}
+          </h1>
           <p className="mt-3 max-w-2xl text-sm text-[#52525b]">{quote.title || quote.projectName || 'Retail quotation'} for {quote.customer?.name || 'Customer'}.</p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button disabled={savingQuote} onClick={saveQuote} size="lg" className="bg-[#dbeafe] text-[#18181b] hover:bg-[#eff6ff]"><Save className="mr-2 h-5 w-5" /> Save quote layout</Button>
+          {!quote.supersededByQuoteId && !['lost', 'expired', 'won'].includes(quote.status) ? (
+            <Button size="lg" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}>
+              <PenLine className="mr-2 h-5 w-5" /> {revising ? 'Starting...' : 'Revise quote'}
+            </Button>
+          ) : null}
+          <Button disabled={savingQuote || quote.status === 'superseded'} onClick={saveQuote} size="lg" className="bg-[#dbeafe] text-[#18181b] hover:bg-[#eff6ff]"><Save className="mr-2 h-5 w-5" /> Save quote layout</Button>
           <Button asChild size="lg" className="bg-[#2563eb] text-white hover:bg-[#1d4ed8]"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button>
-          {quote.status !== 'sent' && quote.status !== 'confirmed' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
+          {quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
         </div>
       </div>
+      {quote.supersededByQuoteId ? (
+        <div className="relative mt-4 flex flex-wrap items-center gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+          <Sparkles className="h-4 w-4" />
+          <span>This quote has been superseded by a newer revision. View the active version:</span>
+          <Link href={`/dashboard/quotes/${quote.supersededByQuoteId}`} className="rounded-full bg-amber-700 px-2.5 py-0.5 text-xs font-bold text-white hover:bg-amber-800">
+            Go to current version
+          </Link>
+        </div>
+      ) : null}
+      {quote.supersedesQuoteId ? (
+        <div className="relative mt-3 flex flex-wrap items-center gap-3 rounded-r4 border border-violet-200 bg-violet-50 p-3 text-sm font-semibold text-violet-900">
+          <PenLine className="h-4 w-4" />
+          <span>This is a revision. View the prior version:</span>
+          <Link href={`/dashboard/quotes/${quote.supersedesQuoteId}`} className="rounded-full bg-violet-700 px-2.5 py-0.5 text-xs font-bold text-white hover:bg-violet-800">
+            See previous version
+          </Link>
+        </div>
+      ) : null}
     </section>
 
     {displayMode === 'selection' ? (
@@ -244,7 +281,7 @@ export default function QuoteDetailPage() {
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Customer</h2><p className="mt-4 text-lg font-semibold text-[#18181b]">{quote.customer?.name || 'Customer'}</p><p className="mt-2 text-sm font-bold text-[#52525b]">{quote.customer?.mobile || quote.customer?.phone}</p><p className="mt-2 text-sm font-bold text-[#52525b]">{quote.customer?.siteAddress || quote.customer?.city}</p></div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Totals</h2>{showPrices ? <div className="mt-5 space-y-3 text-sm font-bold text-[#27272a]"><div className="flex justify-between"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between"><span>Discount</span><span>{money(quoteDiscount)}</span></div><div className="flex justify-between"><span>GST 18%</span><span>{money(tax)}</span></div><div className="flex justify-between border-t border-[#e4e4e7]/10 pt-4 text-2xl font-semibold text-[#18181b]"><span>Total</span><span>{money(total)}</span></div></div> : <p className="mt-4 rounded-2xl bg-[#eff6ff]/70 p-4 text-sm font-black text-[#1d4ed8]">Selection summary mode hides all prices in the PDF.</p>}</div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">PDF terms</h2><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Terms</span><textarea value={terms} onChange={(event)=>setTerms(event.target.value)} className="min-h-28 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 py-3 text-xs font-bold" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Bank details</span><textarea value={bankDetails} onChange={(event)=>setBankDetails(event.target.value)} className="min-h-24 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 py-3 text-xs font-bold" /></label></div>
-        <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert to sales order</h2><p className="mt-2 text-sm font-bold text-[#52525b]">Use after final customer confirmation. Cash orders capture advance/full payment; credit orders are tagged for owner reports. No owner approval is required at this step.</p><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Advance / full paid</span><input type="number" value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label>}{orderMessage && <div className="mt-3 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[#2563eb] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder} onClick={()=>createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),notes:'Created from quote detail'}}})}>Create sales order</Button></div>
+        <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert to sales order</h2><p className="mt-2 text-sm font-bold text-[#52525b]">Use after final customer confirmation. Cash orders capture advance/full payment; credit orders are tagged for owner reports. No owner approval is required at this step.</p><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Advance / full paid</span><input type="number" value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label>}{orderMessage && <div className="mt-3 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[#2563eb] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder || quote.status === 'superseded'} onClick={()=>createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),notes:'Created from quote detail'}}})}>Create sales order</Button></div>
       </aside>
     </section>
   </div>;
