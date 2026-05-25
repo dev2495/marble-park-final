@@ -25,6 +25,7 @@ function run(command, args) {
 if (isWebService) {
   await run('npm', ['run', 'start', '--workspace=apps/web', '--', '-p', port]);
 } else {
+  await run('npm', ['run', 'db:generate', '--workspace=apps/api']);
   await run('npm', ['run', 'db:migrate:deploy', '--workspace=apps/api']);
   await run('npm', ['run', 'start', '--workspace=apps/api']);
 }
