@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { motion } from 'framer-motion';
@@ -17,6 +17,7 @@ const PROCUREMENT = gql`
     purchaseOrders(take: 80)
     goodsReceiptNotes(take: 20)
     vendors(status: "active", take: 150)
+    stockLocations(status: "active")
   }
 `;
 
@@ -55,6 +56,7 @@ export default function ProcurementPage() {
   const [receiveMessage, setReceiveMessage] = useState('');
   const [supplierChallan, setSupplierChallan] = useState('');
   const [supplierBill, setSupplierBill] = useState('');
+  const [receiveLocationId, setReceiveLocationId] = useState('');
 
   const { data, loading, error, refetch } = useQuery(PROCUREMENT, { pollInterval: 60000, notifyOnNetworkStatusChange: false });
   const [createPo, { loading: creatingPo, error: createPoError }] = useMutation(CREATE_PO, { onCompleted: () => { setSelectedDemand({}); setVendorId(''); setVendorName(''); setExpectedDate(''); setPoNotes(''); refetch(); } });
@@ -65,10 +67,17 @@ export default function ProcurementPage() {
   const purchaseOrders = useMemo<any[]>(() => data?.purchaseOrders || [], [data?.purchaseOrders]);
   const grns = useMemo<any[]>(() => data?.goodsReceiptNotes || [], [data?.goodsReceiptNotes]);
   const vendors = useMemo<any[]>(() => data?.vendors || [], [data?.vendors]);
+  const locations = useMemo<any[]>(() => data?.stockLocations || [], [data?.stockLocations]);
+  const defaultLocation = useMemo(() => locations.find((location) => location.defaultStockScope) || locations[0], [locations]);
+  const receiveLocation = useMemo(() => locations.find((location) => location.id === receiveLocationId) || defaultLocation, [defaultLocation, locations, receiveLocationId]);
   const activePo = useMemo(() => purchaseOrders.find((po) => po.id === activePoId) || purchaseOrders.find((po) => ['ordered', 'partial_received'].includes(po.status)) || purchaseOrders[0], [purchaseOrders, activePoId]);
   const selectedIds = Object.entries(selectedDemand).filter(([, checked]) => checked).map(([id]) => id);
   const selectedRows = demands.filter((row) => selectedIds.includes(row.id));
   const selectedValue = selectedRows.reduce((sum, row) => sum + Number(row.quantity || 0) * Number(row.metadata?.unitCost || 0), 0);
+
+  useEffect(() => {
+    if (!receiveLocationId && defaultLocation?.id) setReceiveLocationId(defaultLocation.id);
+  }, [defaultLocation?.id, receiveLocationId]);
 
   const submitPo = () => {
     if (!selectedIds.length) return;
@@ -92,7 +101,13 @@ export default function ProcurementPage() {
         const remaining = Math.max(0, Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0));
         const typed = receiveRows[line.id];
         const receivedQuantity = typed === undefined ? remaining : Number(typed || 0);
-        return { purchaseOrderLineId: line.id, receivedQuantity, damagedQuantity: 0, location: 'Showroom / inward bay' };
+        return {
+          purchaseOrderLineId: line.id,
+          receivedQuantity,
+          damagedQuantity: 0,
+          location: receiveLocation ? `${receiveLocation.code} · ${receiveLocation.name}` : 'Default plant',
+          locationId: receiveLocation?.id,
+        };
       })
       .filter((line: any) => Number(line.receivedQuantity || 0) > 0);
     if (!lines.length) return;
@@ -102,6 +117,7 @@ export default function ProcurementPage() {
           purchaseOrderId: activePo.id,
           supplierChallan: supplierChallan || undefined,
           supplierBill: supplierBill || undefined,
+          locationId: receiveLocation?.id || undefined,
           lines: JSON.stringify(lines),
           notes: 'Received from procurement desk.',
         },
@@ -121,7 +137,7 @@ export default function ProcurementPage() {
         <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-200">Procurement control</p>
-            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.03em]">Turn shortages into vendor orders, then receive against PO.</h1>
+            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.03em] text-white">Turn shortages into vendor orders, then receive against PO.</h1>
             <p className="mt-3 max-w-3xl text-sm font-medium leading-6 text-blue-100">
               Sales orders create purchase demand automatically. Inventory teams group those rows into a PO, record ETA, receive GRN, and the system allocates arrived stock back to waiting customers.
             </p>
@@ -225,6 +241,9 @@ export default function ProcurementPage() {
               </select>
               <Input value={supplierChallan} onChange={(event) => setSupplierChallan(event.target.value)} placeholder="Supplier challan no." />
               <Input value={supplierBill} onChange={(event) => setSupplierBill(event.target.value)} placeholder="Supplier bill no." />
+              <select value={receiveLocation?.id || ''} onChange={(event) => setReceiveLocationId(event.target.value)} className="h-11 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink)]">
+                {locations.map((location) => <option key={location.id} value={location.id}>{location.defaultStockScope ? 'Default · ' : ''}{location.code} · {location.name}</option>)}
+              </select>
               <Button onClick={submitReceive} disabled={!activePo || receivingPo}><Truck className="mr-2 h-4 w-4" /> Post GRN</Button>
             </div>
 

@@ -67,6 +67,23 @@ async function main() {
   const vendorList = (await gql(`query { vendors(status: "active", take: 200) }`, {}, token)).vendors;
   assert(vendorList.some((row) => row.id === vendor.id), 'GRN vendor dropdown source must include saved Vendor Master record');
 
+  const plant = (await gql(
+    `mutation($input: StockLocationInput!) { createStockLocation(input: $input) }`,
+    {
+      input: {
+        code: sku.replace('PROD-HARDEN-', 'PLANT-').slice(0, 24),
+        name: `Production Smoke Plant ${sku}`,
+        type: 'plant',
+        status: 'active',
+        sortOrder: 1,
+        defaultStockScope: true,
+        address: 'Production hardening smoke plant',
+      },
+    },
+    token,
+  )).createStockLocation;
+  assert(plant.id && plant.defaultStockScope, 'settings plant mutation should create a default stock scope');
+
   const grn = (await gql(
     `mutation($input: ManualGoodsReceiptInput!) { createManualGoodsReceipt(input: $input) }`,
     {
@@ -74,8 +91,9 @@ async function main() {
         vendorId: vendor.id,
         vendorName: vendor.name,
         supplierChallan: `CH-${sku}`,
+        locationId: plant.id,
         reason: 'Production-hardening vendor dropdown smoke',
-        lines: JSON.stringify([{ productId: product.id, receivedQuantity: 4, damagedQuantity: 0, unitCost: 5200, location: 'MAIN' }]),
+        lines: JSON.stringify([{ productId: product.id, receivedQuantity: 4, damagedQuantity: 0, unitCost: 5200, location: plant.name, locationId: plant.id }]),
       },
     },
     token,
@@ -83,21 +101,27 @@ async function main() {
   assert(grn.vendorId === vendor.id && grn.vendorName === vendor.name, 'manual GRN must persist Vendor Master id and name');
 
   const locationsAfterGrn = (await gql(`query { stockLocations }`, {}, token)).stockLocations;
-  const mainLocation = locationsAfterGrn.find((row) => row.code === 'MAIN') || locationsAfterGrn[0];
-  assert(mainLocation?.id, 'GRN should create or reuse a stock location');
+  const smokeLocation = locationsAfterGrn.find((row) => row.id === plant.id);
+  assert(smokeLocation?.defaultStockScope, 'created plant should remain the default stock location');
+  const afterGrnLocationStock = (await gql(
+    `query($locationId: String, $productId: String) { stockLocationBalances(locationId: $locationId, productId: $productId) }`,
+    { locationId: plant.id, productId: product.id },
+    token,
+  )).stockLocationBalances;
+  assert(afterGrnLocationStock.some((row) => row.locationId === plant.id && row.onHand === 4), 'manual GRN should post stock into the selected plant');
   const grnLedger = (await gql(
     `query($productId: String) { stockLedgerEntries(productId: $productId, take: 20) }`,
     { productId: product.id },
     token,
   )).stockLedgerEntries;
-  assert(grnLedger.some((row) => row.type === 'grn_receipt' && row.direction === 'in'), 'manual GRN should post a stock ledger receipt');
+  assert(grnLedger.some((row) => row.type === 'grn_receipt' && row.direction === 'in' && row.locationId === plant.id), 'manual GRN should post a plant-scoped stock ledger receipt');
 
   const count = (await gql(
     `mutation($input: StockCountInput!) { createStockCountSession(input: $input) }`,
     {
       input: {
         scope: 'selected_skus',
-        locationId: mainLocation.id,
+        locationId: plant.id,
         notes: 'Production hardening count smoke',
         submit: true,
         lines: JSON.stringify([{ productId: product.id, countedQuantity: 5, reason: 'physical recount smoke' }]),
@@ -161,7 +185,7 @@ async function main() {
         salesOrderId: order.id,
         challanId: challan.id,
         customerId: customer.id,
-        locationId: mainLocation.id,
+        locationId: plant.id,
         receive: true,
         reason: 'Production hardening return smoke',
         refundMode: 'store_credit',
@@ -174,16 +198,17 @@ async function main() {
   assert(returnOrder.returnNumber?.startsWith('RT/'), 'return order should receive a controlled return number');
 
   const finalData = await gql(
-    `query($productId: String) {
+    `query($productId: String, $locationId: String) {
       inventoryBalances(productId: $productId) { id productId onHand available reserved damaged product { sku } }
       documentJobs(take: 60)
       paymentReceipts(take: 60)
       stockCountSessions(take: 20)
       returnOrders(take: 20)
       stockLedgerEntries(productId: $productId, take: 80)
+      stockLocationBalances(locationId: $locationId, productId: $productId)
       productionReadinessSummary
     }`,
-    { productId: product.id },
+    { productId: product.id, locationId: plant.id },
     token,
   );
 
@@ -195,6 +220,8 @@ async function main() {
   assert(finalData.stockCountSessions.some((session) => session.id === approvedCount.id && session.status === 'approved'), 'approved stock count should be queryable');
   assert(finalData.returnOrders.some((row) => row.id === returnOrder.id), 'return order should be queryable');
   assert(finalData.stockLedgerEntries.some((row) => row.referenceType === 'ReturnOrder' && row.referenceId === returnOrder.id), 'return should post stock ledger entry');
+  assert(finalData.stockLedgerEntries.some((row) => row.type === 'dispatch' && row.direction === 'out' && row.locationId === plant.id), 'dispatch should consume from the default plant stock scope');
+  assert(finalData.stockLocationBalances.some((row) => row.locationId === plant.id && row.onHand >= 5), 'final plant stock should reflect GRN, count, dispatch and return');
   assert(finalData.productionReadinessSummary.score >= 95, 'production readiness score should stay above 95');
   assert(finalData.productionReadinessSummary.dispatch.shipments >= 1, 'dispatch shipment records should be counted');
   assert(finalData.productionReadinessSummary.returns.returns >= 1, 'return records should be counted');
@@ -203,6 +230,7 @@ async function main() {
     ok: true,
     sku,
     vendorId: vendor.id,
+    plant: { id: plant.id, code: plant.code, name: plant.name },
     grnNumber: grn.grnNumber,
     countNumber: approvedCount.countNumber,
     quoteNumber: quote.quoteNumber,

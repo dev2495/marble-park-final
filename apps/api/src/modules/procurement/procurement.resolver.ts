@@ -39,6 +39,9 @@ class ReceivePurchaseOrderInput {
   @Field({ nullable: true })
   notes?: string;
 
+  @Field({ nullable: true })
+  locationId?: string;
+
   @Field(() => String, { nullable: true })
   lines?: string;
 }
@@ -65,6 +68,9 @@ class ManualGoodsReceiptInput {
 
   @Field({ nullable: true })
   notes?: string;
+
+  @Field({ nullable: true })
+  locationId?: string;
 
   @Field(() => String, { nullable: true })
   lines?: string;

@@ -10,7 +10,7 @@ COPY package*.json ./
 RUN npm install --legacy-peer-deps
 
 COPY . .
-RUN npm run db:generate && npm run build
+RUN npm run db:generate --workspace=apps/api && npm run build:api
 
 ENV NODE_ENV=production
-CMD ["sh", "-c", "npm run db:migrate:deploy && npm run start"]
+CMD ["sh", "-c", "npm run db:migrate:deploy --workspace=apps/api && npm run start --workspace=apps/api"]

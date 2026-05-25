@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { ClipboardCheck, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -8,10 +8,12 @@ import { Input } from '@/components/ui/input';
 import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
 
 const DATA = gql`
-  query StockCountPage($search: String) {
+  query StockCountPage($search: String, $locationId: String) {
     inventoryBalances(search: $search, take: 80) {
       id productId onHand available product { id sku name brand category }
     }
+    stockLocations(status: "active")
+    stockLocationBalances(locationId: $locationId, take: 250)
     stockCountSessions(take: 40)
   }
 `;
@@ -30,13 +32,18 @@ const APPROVE = gql`
 
 export default function StockCountPage() {
   const [search, setSearch] = useState('');
+  const [locationId, setLocationId] = useState('');
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
-  const { data, loading, error, refetch } = useQuery(DATA, { variables: { search: search || undefined }, fetchPolicy: 'cache-and-network' });
+  const { data, loading, error, refetch } = useQuery(DATA, { variables: { search: search || undefined, locationId: locationId || undefined }, fetchPolicy: 'cache-and-network' });
   const [create, { loading: creating, error: createError }] = useMutation(CREATE, { onCompleted: () => { setCounts({}); setNotes(''); refetch(); } });
   const [approve, { loading: approving, error: approveError }] = useMutation(APPROVE, { onCompleted: () => refetch() });
 
   const balances = useMemo<any[]>(() => data?.inventoryBalances || [], [data?.inventoryBalances]);
+  const locations = useMemo<any[]>(() => data?.stockLocations || [], [data?.stockLocations]);
+  const defaultLocation = useMemo(() => locations.find((location) => location.defaultStockScope) || locations[0], [locations]);
+  const selectedLocation = useMemo(() => locations.find((location) => location.id === locationId) || defaultLocation, [defaultLocation, locationId, locations]);
+  const locationBalances = useMemo<Map<string, any>>(() => new Map((data?.stockLocationBalances || []).map((row: any) => [row.productId, row])), [data?.stockLocationBalances]);
   const sessions = useMemo<any[]>(() => data?.stockCountSessions || [], [data?.stockCountSessions]);
   const selectedLines = useMemo(() => balances
     .filter((row) => counts[row.productId] !== undefined && counts[row.productId] !== '')
@@ -44,8 +51,12 @@ export default function StockCountPage() {
 
   const submit = () => {
     if (!selectedLines.length) return;
-    create({ variables: { input: { scope: 'selected_skus', notes, submit: true, lines: JSON.stringify(selectedLines) } } });
+    create({ variables: { input: { scope: selectedLocation ? 'plant_location' : 'selected_skus', locationId: selectedLocation?.id || undefined, notes, submit: true, lines: JSON.stringify(selectedLines) } } });
   };
+
+  useEffect(() => {
+    if (!locationId && defaultLocation?.id) setLocationId(defaultLocation.id);
+  }, [defaultLocation?.id, locationId]);
 
   return (
     <div className="space-y-6 pb-10">
@@ -61,9 +72,14 @@ export default function StockCountPage() {
       <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="mp-panel overflow-hidden">
           <div className="border-b border-[var(--line)] p-5">
-            <div className="flex h-10 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3">
-              <Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" />
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search SKU for counting..." className="w-full bg-transparent text-sm outline-none" />
+            <div className="grid gap-3 lg:grid-cols-[1fr_18rem]">
+              <div className="flex h-10 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3">
+                <Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" />
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search SKU for counting..." className="w-full bg-transparent text-sm outline-none" />
+              </div>
+              <select value={selectedLocation?.id || ''} onChange={(event) => setLocationId(event.target.value)} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink)]">
+                {locations.map((location) => <option key={location.id} value={location.id}>{location.defaultStockScope ? 'Default · ' : ''}{location.code} · {location.name}</option>)}
+              </select>
             </div>
           </div>
           {loading && !balances.length ? <div className="p-5"><QueryLoading label="Loading SKUs..." /></div> : null}
@@ -72,7 +88,9 @@ export default function StockCountPage() {
               <div key={row.id} className="grid gap-3 p-4 md:grid-cols-[1fr_8rem] md:items-center">
                 <div>
                   <p className="text-sm font-bold text-[var(--ink)]">{row.product?.sku} · {row.product?.name}</p>
-                  <p className="mt-1 text-xs font-medium text-[var(--ink-4)]">Book on hand {row.onHand} · Available {row.available}</p>
+                  <p className="mt-1 text-xs font-medium text-[var(--ink-4)]">
+                    {selectedLocation ? `${selectedLocation.code} book ${locationBalances.get(row.productId)?.onHand ?? 0}` : `Book on hand ${row.onHand}`} · Total available {row.available}
+                  </p>
                 </div>
                 <Input type="number" min={0} value={counts[row.productId] || ''} onChange={(event) => setCounts((current) => ({ ...current, [row.productId]: event.target.value }))} placeholder="Counted" />
               </div>

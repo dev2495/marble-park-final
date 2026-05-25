@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
@@ -36,6 +36,7 @@ const INVENTORY_BALANCES = gql`
       }
     }
     vendors(status: "active", take: 150)
+    stockLocations(status: "active")
   }
 `;
 
@@ -107,6 +108,7 @@ export default function InventoryInwardsPage() {
   const [quantity, setQuantity] = useState('');
   const [vendorId, setVendorId] = useState('');
   const [vendorName, setVendorName] = useState('');
+  const [locationId, setLocationId] = useState('');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [message, setMessage] = useState('');
@@ -121,6 +123,7 @@ export default function InventoryInwardsPage() {
       setQuantity('');
       setVendorId('');
       setVendorName('');
+      setLocationId('');
       setReference('');
       setNotes('');
       void refetch();
@@ -129,12 +132,19 @@ export default function InventoryInwardsPage() {
 
   const balances = useMemo<Balance[]>(() => data?.inventoryBalances || [], [data?.inventoryBalances]);
   const vendors = useMemo<any[]>(() => data?.vendors || [], [data?.vendors]);
+  const locations = useMemo<any[]>(() => data?.stockLocations || [], [data?.stockLocations]);
+  const defaultLocation = useMemo(() => locations.find((location) => location.defaultStockScope) || locations[0], [locations]);
+  const selectedLocation = useMemo(() => locations.find((location) => location.id === locationId) || defaultLocation, [defaultLocation, locationId, locations]);
   const selected = useMemo(() => balances.find((item) => item.id === selectedId) || balances[0], [balances, selectedId]);
   const selectedProduct = selected?.product;
   const qty = Number(quantity || 0);
   const preview = previewBalance(selected, movementType, qty);
   const movement = movementOptions.find((item) => item.type === movementType) || movementOptions[0];
   const MovementIcon = movement.icon;
+
+  useEffect(() => {
+    if (!locationId && defaultLocation?.id) setLocationId(defaultLocation.id);
+  }, [defaultLocation?.id, locationId]);
 
   const submitMovement = async () => {
     if (!selected || !qty) return;
@@ -145,9 +155,16 @@ export default function InventoryInwardsPage() {
           vendorName: vendorName || reference || 'Manual vendor receipt',
           vendorId: vendorId || undefined,
           supplierChallan: reference || undefined,
+          locationId: selectedLocation?.id || undefined,
           reason: 'manual_vendor_receipt_without_po',
           notes: notes || undefined,
-          lines: JSON.stringify([{ productId: selected.productId, receivedQuantity: qty, damagedQuantity: 0, location: 'Showroom / inward bay' }]),
+          lines: JSON.stringify([{
+            productId: selected.productId,
+            receivedQuantity: qty,
+            damagedQuantity: 0,
+            location: selectedLocation ? `${selectedLocation.code} · ${selectedLocation.name}` : 'Default plant',
+            locationId: selectedLocation?.id,
+          }]),
         },
       },
     });
@@ -311,6 +328,16 @@ export default function InventoryInwardsPage() {
                 <Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Vendor challan or bill number" />
               </label>
               <label className="space-y-2 sm:col-span-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Receive into plant / stock location</span>
+                <select
+                  value={selectedLocation?.id || ''}
+                  onChange={(event) => setLocationId(event.target.value)}
+                  className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--ink)] shadow-sm-soft outline-none transition-colors focus:border-[var(--brand-400)] focus:ring-2 focus:ring-[var(--ring)]"
+                >
+                  {locations.map((location) => <option key={location.id} value={location.id}>{location.defaultStockScope ? 'Default · ' : ''}{location.code} · {location.name}</option>)}
+                </select>
+              </label>
+              <label className="space-y-2 sm:col-span-2">
                 <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Notes</span>
                 <textarea
                   value={notes}
@@ -338,7 +365,7 @@ export default function InventoryInwardsPage() {
                 <ArrowDownCircle className="mr-2 h-4 w-4" />
                 {saving ? 'Posting...' : 'Post manual GRN'}
               </Button>
-              <Button type="button" variant="outline" onClick={() => { setQuantity(''); setVendorId(''); setVendorName(''); setReference(''); setNotes(''); setMessage(''); }}>Clear</Button>
+              <Button type="button" variant="outline" onClick={() => { setQuantity(''); setVendorId(''); setVendorName(''); setLocationId(defaultLocation?.id || ''); setReference(''); setNotes(''); setMessage(''); }}>Clear</Button>
             </div>
           </div>
         </div>

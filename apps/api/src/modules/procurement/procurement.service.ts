@@ -17,6 +17,7 @@ export interface ReceivePurchaseOrderInput {
   supplierBill?: string;
   receivedDate?: Date;
   notes?: string;
+  locationId?: string;
   lines?: any;
 }
 
@@ -28,6 +29,7 @@ export interface ManualGoodsReceiptInput {
   receivedDate?: Date;
   reason?: string;
   notes?: string;
+  locationId?: string;
   lines?: any;
 }
 
@@ -262,6 +264,9 @@ export class ProcurementService {
     const lineMap = new Map(poLines.map((line: any) => [line.id, line]));
 
     const grn = await this.prisma.$transaction(async (tx: any) => {
+      const receiptLocation = input.locationId
+        ? await this.resolveStockLocationTx(tx, input.locationId)
+        : await this.ensureDefaultLocationTx(tx);
       const note = await tx.goodsReceiptNote.create({
         data: {
           id: ulid(),
@@ -300,9 +305,9 @@ export class ProcurementService {
             receivedQuantity: received,
             acceptedQuantity: accepted,
             damagedQuantity: damaged,
-            location: row.location || '',
+            location: row.location || receiptLocation.name,
             unitCost: Number(row.unitCost || line.unitCost || 0),
-            metadata: { purchaseDemandId: line.purchaseDemandId, note: row.note || '' },
+            metadata: { purchaseDemandId: line.purchaseDemandId, note: row.note || '', locationId: receiptLocation.id },
           },
         });
 
@@ -334,6 +339,9 @@ export class ProcurementService {
             quantity: accepted,
             reason: `GRN ${grnNumber} against ${po.poNumber}`,
             actorUserId,
+            locationId: receiptLocation.id,
+            referenceId: note.id,
+            sourceDocumentNo: grnNumber,
           });
         }
       }
@@ -371,6 +379,9 @@ export class ProcurementService {
     const grnNumber = await this.generateGrnNumber();
 
     const grn = await this.prisma.$transaction(async (tx: any) => {
+      const receiptLocation = input.locationId
+        ? await this.resolveStockLocationTx(tx, input.locationId)
+        : await this.ensureDefaultLocationTx(tx);
       const note = await tx.goodsReceiptNote.create({
         data: {
           id: ulid(),
@@ -405,9 +416,9 @@ export class ProcurementService {
             receivedQuantity: received,
             acceptedQuantity: accepted,
             damagedQuantity: damaged,
-            location: row.location || '',
+            location: row.location || receiptLocation.name,
             unitCost: Number(row.unitCost || 0),
-            metadata: { manualReason: input.reason || '' },
+            metadata: { manualReason: input.reason || '', locationId: receiptLocation.id },
           },
         });
 
@@ -417,6 +428,9 @@ export class ProcurementService {
             quantity: accepted,
             reason: `Manual GRN ${grnNumber} from ${vendorName}`,
             actorUserId,
+            locationId: receiptLocation.id,
+            referenceId: note.id,
+            sourceDocumentNo: grnNumber,
           });
         }
       }
@@ -577,8 +591,13 @@ export class ProcurementService {
     return notes.map((note) => ({ ...note, lines: byGrn.get(note.id) || [] }));
   }
 
-  private async addAcceptedStockTx(tx: any, args: { productId: string; quantity: number; reason: string; actorUserId: string }) {
-    const location = await this.ensureDefaultLocationTx(tx);
+  private async addAcceptedStockTx(
+    tx: any,
+    args: { productId: string; quantity: number; reason: string; actorUserId: string; locationId?: string; referenceId?: string; sourceDocumentNo?: string },
+  ) {
+    const location = args.locationId
+      ? await this.resolveStockLocationTx(tx, args.locationId)
+      : await this.ensureDefaultLocationTx(tx);
     const current = await tx.inventoryBalance.findUnique({ where: { productId: args.productId } });
     if (current) {
       await tx.inventoryBalance.update({
@@ -647,6 +666,8 @@ export class ProcurementService {
         quantity: args.quantity,
         direction: 'in',
         referenceType: 'GoodsReceiptNote',
+        referenceId: args.referenceId || null,
+        sourceDocumentNo: args.sourceDocumentNo || null,
         reason: args.reason,
         createdBy: args.actorUserId,
         metadata: { source: 'procurement_service' },
@@ -799,18 +820,34 @@ export class ProcurementService {
   }
 
   private async ensureDefaultLocationTx(tx: any) {
-    return tx.stockLocation.upsert({
-      where: { code: 'MAIN' },
-      update: { status: 'active', updatedAt: new Date() },
-      create: {
+    const locations = await tx.stockLocation.findMany({
+      where: { status: 'active' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    }).catch(() => []);
+    const flagged = locations.find((location: any) => location.metadata?.defaultStockScope);
+    if (flagged) return flagged;
+    const activePlant = locations.find((location: any) => location.type === 'plant');
+    if (activePlant) return activePlant;
+    const existing = locations.find((location: any) => location.code === 'MAIN') || await tx.stockLocation.findFirst({ where: { code: 'MAIN' } }).catch(() => null);
+    if (existing) return existing;
+    return tx.stockLocation.create({
+      data: {
         id: ulid(),
         code: 'MAIN',
-        name: 'Main Showroom / Godown',
-        type: 'showroom',
+        name: 'Main Plant / Godown',
+        type: 'plant',
         status: 'active',
         sortOrder: 1,
+        metadata: { defaultStockScope: true },
         updatedAt: new Date(),
       },
     });
+  }
+
+  private async resolveStockLocationTx(tx: any, locationId: string) {
+    const location = await tx.stockLocation.findUnique({ where: { id: locationId } }).catch(() => null);
+    if (!location) throw new BadRequestException('Selected plant / stock location was not found');
+    if (location.status !== 'active') throw new BadRequestException('Selected plant / stock location is inactive');
+    return location;
   }
 }

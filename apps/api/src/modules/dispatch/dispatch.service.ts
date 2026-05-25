@@ -580,6 +580,7 @@ export class DispatchService {
         data: {
           id: ulid(),
           productId,
+          locationId: await this.defaultLocationIdTx(tx),
           type: 'dispatch',
           quantity,
           direction: 'out',
@@ -832,19 +833,33 @@ export class DispatchService {
   }
 
   private async ensureDefaultLocationTx(tx: any) {
-    const existing = await tx.stockLocation.findFirst({ where: { code: 'MAIN' } }).catch(() => null);
+    const locations = await tx.stockLocation.findMany({
+      where: { status: 'active' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    }).catch(() => []);
+    const flagged = locations.find((location: any) => location.metadata?.defaultStockScope);
+    if (flagged) return flagged;
+    const activePlant = locations.find((location: any) => location.type === 'plant');
+    if (activePlant) return activePlant;
+    const existing = locations.find((location: any) => location.code === 'MAIN') || await tx.stockLocation.findFirst({ where: { code: 'MAIN' } }).catch(() => null);
     if (existing) return existing;
     return tx.stockLocation.create({
       data: {
         id: ulid(),
         code: 'MAIN',
-        name: 'Main Showroom / Godown',
-        type: 'showroom',
+        name: 'Main Plant / Godown',
+        type: 'plant',
         status: 'active',
         sortOrder: 1,
+        metadata: { defaultStockScope: true },
         updatedAt: new Date(),
       },
     });
+  }
+
+  private async defaultLocationIdTx(tx: any) {
+    const location = await this.ensureDefaultLocationTx(tx);
+    return location.id;
   }
 
   private async applyDefaultLocationDispatchTx(

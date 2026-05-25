@@ -35,9 +35,87 @@ export class OperationsService {
     await this.ensureDefaultLocation();
     const where: any = {};
     if (args?.status && args.status !== 'all') where.status = args.status;
-    return (this.prisma as any).stockLocation.findMany({
+    const rows = await (this.prisma as any).stockLocation.findMany({
       where,
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    return rows.map((row: any) => this.decorateLocation(row));
+  }
+
+  async stockLocationBalances(args?: { locationId?: string; productId?: string; take?: number }) {
+    const where: any = {};
+    if (args?.locationId) where.locationId = args.locationId;
+    if (args?.productId) where.productId = args.productId;
+    const rows = await (this.prisma as any).stockBalanceByLocation.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      take: this.limit(args?.take, 250),
+    }).catch(() => []);
+    const [products, locations] = await Promise.all([
+      rows.length ? this.prisma.product.findMany({ where: { id: { in: Array.from(new Set(rows.map((row: any) => row.productId))) } } }) : [],
+      rows.length ? (this.prisma as any).stockLocation.findMany({ where: { id: { in: Array.from(new Set(rows.map((row: any) => row.locationId))) } } }).catch(() => []) : [],
+    ]);
+    const productMap = new Map(products.map((product: any) => [product.id, product] as const));
+    const locationMap = new Map((locations as any[]).map((location) => [location.id, this.decorateLocation(location)] as const));
+    return rows.map((row: any) => ({ ...row, product: productMap.get(row.productId) || null, location: locationMap.get(row.locationId) || null }));
+  }
+
+  async createStockLocation(input: any, actorUserId: string) {
+    const normalized = this.normalizeLocationInput(input);
+    return this.prisma.$transaction(async (tx: any) => {
+      if (normalized.defaultStockScope) await this.clearDefaultStockScopeTx(tx);
+      const location = await tx.stockLocation.create({
+        data: {
+          id: ulid(),
+          ...normalized.data,
+          metadata: normalized.metadata,
+          updatedAt: new Date(),
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(),
+          actorUserId,
+          action: 'stock_location.create',
+          entityType: 'StockLocation',
+          entityId: location.id,
+          summary: `Created ${location.name} (${location.code})`,
+          metadata: { defaultStockScope: normalized.defaultStockScope },
+        },
+      }).catch(() => null);
+      return this.decorateLocation(location);
+    });
+  }
+
+  async updateStockLocation(id: string, input: any, actorUserId: string) {
+    const existing = await (this.prisma as any).stockLocation.findUnique({ where: { id } }).catch(() => null);
+    if (!existing) throw new NotFoundException('Stock location not found');
+    const normalized = this.normalizeLocationInput(input, existing);
+    if (existing.metadata?.defaultStockScope && normalized.data.status && normalized.data.status !== 'active') {
+      throw new BadRequestException('Choose another default plant before disabling this one');
+    }
+    return this.prisma.$transaction(async (tx: any) => {
+      if (normalized.defaultStockScope) await this.clearDefaultStockScopeTx(tx);
+      const updated = await tx.stockLocation.update({
+        where: { id },
+        data: {
+          ...normalized.data,
+          metadata: normalized.metadata,
+          updatedAt: new Date(),
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(),
+          actorUserId,
+          action: 'stock_location.update',
+          entityType: 'StockLocation',
+          entityId: updated.id,
+          summary: `Updated ${updated.name} (${updated.code})`,
+          metadata: { defaultStockScope: normalized.defaultStockScope },
+        },
+      }).catch(() => null);
+      return this.decorateLocation(updated);
     });
   }
 
@@ -238,7 +316,9 @@ export class OperationsService {
           select: { returnNumber: true },
         })).map((row: any) => row.returnNumber),
       });
-      const returnLocation = input.locationId ? { id: input.locationId } : await this.ensureDefaultLocationTx(tx);
+      const returnLocation = input.locationId
+        ? await this.resolveStockLocationTx(tx, input.locationId)
+        : await this.ensureDefaultLocationTx(tx);
       const order = await tx.returnOrder.create({
         data: {
           id: ulid(),
@@ -380,16 +460,25 @@ export class OperationsService {
   }
 
   private async ensureDefaultLocationTx(tx: any) {
-    const existing = await tx.stockLocation.findFirst({ where: { code: 'MAIN' } }).catch(() => null);
+    const locations = await tx.stockLocation.findMany({
+      where: { status: 'active' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    }).catch(() => []);
+    const flagged = locations.find((location: any) => location.metadata?.defaultStockScope);
+    if (flagged) return flagged;
+    const activePlant = locations.find((location: any) => location.type === 'plant');
+    if (activePlant) return activePlant;
+    const existing = locations.find((location: any) => location.code === 'MAIN') || await tx.stockLocation.findFirst({ where: { code: 'MAIN' } }).catch(() => null);
     if (existing) return existing;
     return tx.stockLocation.create({
       data: {
         id: ulid(),
         code: 'MAIN',
-        name: 'Main Showroom / Godown',
-        type: 'showroom',
+        name: 'Main Plant / Godown',
+        type: 'plant',
         status: 'active',
         sortOrder: 1,
+        metadata: { defaultStockScope: true },
         updatedAt: new Date(),
       },
     });
@@ -427,6 +516,68 @@ export class OperationsService {
         updatedAt: new Date(),
       },
     });
+  }
+
+  private async resolveStockLocationTx(tx: any, locationId: string) {
+    const location = await tx.stockLocation.findUnique({ where: { id: locationId } }).catch(() => null);
+    if (!location) throw new BadRequestException('Selected plant / stock location was not found');
+    if (location.status !== 'active') throw new BadRequestException('Selected plant / stock location is inactive');
+    return location;
+  }
+
+  private async clearDefaultStockScopeTx(tx: any) {
+    const rows = await tx.stockLocation.findMany().catch(() => []);
+    for (const row of rows) {
+      if (!row.metadata?.defaultStockScope) continue;
+      await tx.stockLocation.update({
+        where: { id: row.id },
+        data: { metadata: { ...(row.metadata || {}), defaultStockScope: false }, updatedAt: new Date() },
+      });
+    }
+  }
+
+  private normalizeLocationInput(input: any, existing?: any) {
+    const rawName = String(input?.name ?? existing?.name ?? '').trim();
+    if (!rawName) throw new BadRequestException('Plant / location name is required');
+    const generatedCode = rawName
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 18) || 'PLANT';
+    const code = String(input?.code ?? existing?.code ?? generatedCode)
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 24);
+    if (!code) throw new BadRequestException('Plant / location code is required');
+    const type = String(input?.type ?? existing?.type ?? 'plant').trim().toLowerCase();
+    const allowedTypes = ['plant', 'showroom', 'godown', 'warehouse', 'yard'];
+    if (!allowedTypes.includes(type)) throw new BadRequestException('Plant type must be plant, showroom, godown, warehouse, or yard');
+    const status = String(input?.status ?? existing?.status ?? 'active').trim().toLowerCase();
+    if (!['active', 'inactive'].includes(status)) throw new BadRequestException('Plant status must be active or inactive');
+    const baseMetadata = { ...(existing?.metadata || {}), ...(input?.metadata || {}) };
+    const defaultStockScope = input?.defaultStockScope === undefined
+      ? Boolean(baseMetadata.defaultStockScope)
+      : Boolean(input.defaultStockScope);
+    const metadata = { ...baseMetadata, defaultStockScope };
+    return {
+      defaultStockScope,
+      metadata,
+      data: {
+        code,
+        name: rawName,
+        type,
+        status,
+        address: input?.address ?? existing?.address ?? null,
+        sortOrder: Math.max(0, Math.trunc(Number(input?.sortOrder ?? existing?.sortOrder ?? 0))),
+      },
+    };
+  }
+
+  private decorateLocation(row: any) {
+    const metadata = row?.metadata || {};
+    return { ...row, defaultStockScope: Boolean(metadata.defaultStockScope) };
   }
 
   private async decorateStockCount(id: string, tx?: any) {

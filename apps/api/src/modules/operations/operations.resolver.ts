@@ -27,6 +27,18 @@ class ReturnOrderInput {
   @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
 }
 
+@InputType()
+class StockLocationInput {
+  @Field({ nullable: true }) code?: string;
+  @Field() name!: string;
+  @Field({ nullable: true }) type?: string;
+  @Field({ nullable: true }) status?: string;
+  @Field({ nullable: true }) address?: string;
+  @Field({ nullable: true }) sortOrder?: number;
+  @Field({ nullable: true }) defaultStockScope?: boolean;
+  @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
+}
+
 @Resolver()
 export class OperationsResolver {
   constructor(private operations: OperationsService, private prisma: PrismaService) {}
@@ -59,6 +71,33 @@ export class OperationsResolver {
   async stockLocations(@Context() ctx: GraphqlRequestContext, @Args('status', { nullable: true }) status?: string) {
     await requireSession(this.prisma, ctx);
     return this.operations.stockLocations({ status });
+  }
+
+  @Query(() => [GraphQLJSON])
+  async stockLocationBalances(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('locationId', { nullable: true }) locationId?: string,
+    @Args('productId', { nullable: true }) productId?: string,
+    @Args('take', { nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.operations.stockLocationBalances({ locationId, productId, take });
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async createStockLocation(@Args('input') input: StockLocationInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    return this.operations.createStockLocation(input as any, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async updateStockLocation(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: StockLocationInput,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    return this.operations.updateStockLocation(id, input as any, user.id);
   }
 
   @Query(() => [GraphQLJSON])
