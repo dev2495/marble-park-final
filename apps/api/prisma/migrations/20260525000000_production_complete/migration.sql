@@ -13,39 +13,6 @@ ALTER TABLE "Session" ADD COLUMN IF NOT EXISTS "lastSeenAt" TIMESTAMP(3);
 CREATE UNIQUE INDEX IF NOT EXISTS "Session_tokenHash_key" ON "Session"("tokenHash");
 
 -- ---------------------------------------------------------------------------
--- PurchaseOrder against an existing Vendor.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS "PurchaseOrder" (
-  "id"           TEXT PRIMARY KEY,
-  "poNumber"     TEXT NOT NULL,
-  "vendorId"     TEXT NOT NULL,
-  "status"       TEXT NOT NULL DEFAULT 'draft',
-  "orderDate"    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "expectedDate" TIMESTAMP(3),
-  "receivedDate" TIMESTAMP(3),
-  "totalAmount"  DOUBLE PRECISION NOT NULL DEFAULT 0,
-  "notes"        TEXT,
-  "lines"        JSONB NOT NULL DEFAULT '[]',
-  "createdBy"    TEXT NOT NULL,
-  "createdAt"    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt"    TIMESTAMP(3) NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS "PurchaseOrder_poNumber_key" ON "PurchaseOrder"("poNumber");
-CREATE INDEX IF NOT EXISTS "PurchaseOrder_vendorId_idx" ON "PurchaseOrder"("vendorId");
-CREATE INDEX IF NOT EXISTS "PurchaseOrder_status_idx" ON "PurchaseOrder"("status");
-CREATE INDEX IF NOT EXISTS "PurchaseOrder_orderDate_idx" ON "PurchaseOrder"("orderDate" DESC);
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.table_constraints
-    WHERE constraint_name = 'PurchaseOrder_vendorId_fkey'
-  ) THEN
-    ALTER TABLE "PurchaseOrder"
-      ADD CONSTRAINT "PurchaseOrder_vendorId_fkey"
-      FOREIGN KEY ("vendorId") REFERENCES "Vendor"("id") ON DELETE RESTRICT;
-  END IF;
-END $$;
-
--- ---------------------------------------------------------------------------
 -- Payment recorded against a SalesOrder.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS "Payment" (
