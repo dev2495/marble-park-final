@@ -174,9 +174,23 @@ async function fetchOrderViaPrisma(id) {
   }
 }
 
+function defaultApiUrl() {
+  return (
+    process.env.ORDER_PDF_API_URL ||
+    process.env.QUOTE_PDF_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.API_URL ||
+    process.env.GRAPHQL_URL ||
+    (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_ID || process.env.RAILWAY_SERVICE_NAME
+      ? 'https://api-production-bc49.up.railway.app/graphql'
+      : '')
+  );
+}
+
 async function fetchOrder(id, apiUrl) {
-  if (apiUrl) {
-    return fetchOrderViaGraphql(id, apiUrl);
+  const resolvedApiUrl = apiUrl || defaultApiUrl();
+  if (resolvedApiUrl) {
+    return fetchOrderViaGraphql(id, resolvedApiUrl);
   }
   return fetchOrderViaPrisma(id);
 }
