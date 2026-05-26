@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import * as bcrypt from 'bcrypt';
 import { ulid } from 'ulid';
+import { sanitizePermissionOverrides } from '../auth/rbac';
 
 export interface CreateUserInput {
   name: string;
@@ -12,6 +13,7 @@ export interface CreateUserInput {
   phone: string;
   avatarUrl?: string | null;
   bio?: string | null;
+  permissionOverrides?: any;
 }
 
 export interface UpdateUserInput {
@@ -23,6 +25,7 @@ export interface UpdateUserInput {
   password?: string;
   avatarUrl?: string | null;
   bio?: string | null;
+  permissionOverrides?: any;
 }
 
 export interface UpdateMyProfileInput {
@@ -42,13 +45,12 @@ export interface ChangeMyPasswordInput {
 export class UsersService {
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
+  private readonly allowedRoles = new Set(['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff']);
+
   async findAll() {
     return this.prisma.user.findMany({
       where: {
-        AND: [
-          { email: { not: { contains: '.deleted-' } } },
-          { email: { not: { contains: '@removed.local' } } },
-        ],
+        email: { not: { contains: '.deleted' } },
       },
       orderBy: { name: 'asc' },
     });
@@ -61,15 +63,15 @@ export class UsersService {
   }
 
   async findByEmail(email: string) {
-    return this.prisma.user.findUnique({ where: { email: this.normalizeEmail(email) } });
+    return this.prisma.user.findUnique({ where: { email } });
   }
 
   async create(data: CreateUserInput): Promise<any> {
     if (!data.name?.trim()) throw new BadRequestException('Name is required');
     if (!data.email?.trim()) throw new BadRequestException('Email is required');
     if (!data.password || data.password.length < 8) throw new BadRequestException('Password must be at least 8 characters');
-    const email = this.normalizeEmail(data.email);
-    const role = this.normalizeRole(data.role);
+    if (!this.allowedRoles.has(data.role)) throw new BadRequestException('Invalid role');
+    const email = data.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new BadRequestException('Another user already uses that email');
     const passwordHash = await bcrypt.hash(data.password, 12);
@@ -79,10 +81,11 @@ export class UsersService {
         name: data.name.trim().slice(0, 80),
         email,
         passwordHash,
-        role,
+        role: data.role,
         phone: data.phone?.trim() || '',
         avatarUrl: data.avatarUrl || null,
         bio: typeof data.bio === 'string' ? data.bio.slice(0, 280) : null,
+        permissionOverrides: sanitizePermissionOverrides(data.permissionOverrides) as any,
         passwordChangedAt: new Date(),
       },
     } as any) as any;
@@ -92,7 +95,7 @@ export class UsersService {
       entityType: 'User',
       entityId: created.id,
       summary: `User ${created.name} (${created.email}) created with role ${created.role}`,
-      metadata: { role: created.role, email: created.email },
+      metadata: { role: created.role, email: created.email, permissionOverrides: created.permissionOverrides || {} },
     });
     return created;
   }
@@ -102,12 +105,16 @@ export class UsersService {
     const patch: any = {};
     if (typeof data.name === 'string' && data.name.trim()) patch.name = data.name.trim().slice(0, 80);
     if (typeof data.phone === 'string') patch.phone = data.phone.trim().slice(0, 24);
-    if (typeof data.role === 'string' && data.role.trim()) patch.role = this.normalizeRole(data.role);
+    if (typeof data.role === 'string' && data.role.trim()) {
+      if (!this.allowedRoles.has(data.role.trim())) throw new BadRequestException('Invalid role');
+      patch.role = data.role.trim();
+    }
     if (typeof data.active === 'boolean') patch.active = data.active;
     if (typeof data.bio === 'string') patch.bio = data.bio.slice(0, 280);
     if (data.avatarUrl !== undefined) patch.avatarUrl = data.avatarUrl || null;
-    if (typeof data.email === 'string' && data.email.trim() && this.normalizeEmail(data.email) !== before.email) {
-      const email = this.normalizeEmail(data.email);
+    if (data.permissionOverrides !== undefined) patch.permissionOverrides = sanitizePermissionOverrides(data.permissionOverrides) as any;
+    if (typeof data.email === 'string' && data.email.trim() && data.email.trim().toLowerCase() !== before.email) {
+      const email = data.email.trim().toLowerCase();
       const existing = await this.prisma.user.findUnique({ where: { email } });
       if (existing && existing.id !== id) throw new BadRequestException('Another user already uses that email');
       patch.email = email;
@@ -123,16 +130,19 @@ export class UsersService {
       data: patch,
     });
     // Detect role / active changes specifically — they're the high-impact ones.
-    const roleChanged = patch.role && patch.role !== before.role;
+    const roleChanged = data.role && data.role !== before.role;
     const activeChanged = typeof data.active === 'boolean' && data.active !== before.active;
-    if (roleChanged) {
+    const permissionsChanged = data.permissionOverrides !== undefined;
+    if (roleChanged || permissionsChanged) {
       await this.audit.record({
         actorUserId: 'system',
-        action: 'user.role.change',
+        action: permissionsChanged && !roleChanged ? 'user.permissions.change' : 'user.role.change',
         entityType: 'User',
         entityId: id,
-        summary: `${updated.name} role changed: ${before.role} → ${updated.role}`,
-        metadata: { from: before.role, to: updated.role },
+        summary: roleChanged
+          ? `${updated.name} role changed: ${before.role} → ${updated.role}`
+          : `${updated.name} permission overrides changed`,
+        metadata: { from: before.role, to: updated.role, permissionOverrides: (updated as any).permissionOverrides || {} },
       });
     } else if (activeChanged) {
       await this.audit.record({
@@ -164,24 +174,16 @@ export class UsersService {
 
   async delete(id: string) {
     const user = await this.findById(id);
-    await this.prisma.session.deleteMany({ where: { userId: id } }).catch(() => null);
-    await this.prisma.passwordResetToken.deleteMany({ where: { userId: id } }).catch(() => null);
-    let result: any;
-    try {
-      result = await this.prisma.user.delete({ where: { id } });
-    } catch {
-      result = await this.prisma.user.update({
-        where: { id },
-        data: {
-          active: false,
-          name: 'Removed user',
-          email: `removed-${id.toLowerCase()}-${Date.now()}@removed.local`,
-          phone: '',
-          avatarUrl: null,
-          bio: null,
-        } as any,
-      });
-    }
+    const result = await this.prisma.user.update({
+      where: { id },
+      data: {
+        active: false,
+        email: `${user.email}.deleted-${Date.now()}`,
+        avatarUrl: null,
+        bio: null,
+        permissionOverrides: {},
+      } as any,
+    });
     await this.audit.record({
       actorUserId: 'system',
       action: 'user.delete',
@@ -194,35 +196,6 @@ export class UsersService {
 
   async verifyPassword(user: { passwordHash: string }, password: string) {
     return bcrypt.compare(password, user.passwordHash);
-  }
-
-  private normalizeEmail(email: string) {
-    return String(email || '').trim().toLowerCase();
-  }
-
-  private normalizeRole(role: string) {
-    const raw = String(role || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-    const aliases: Record<string, string> = {
-      administrator: 'admin',
-      admin_user: 'admin',
-      sales_manager: 'sales_manager',
-      salesmanager: 'sales_manager',
-      sales_user: 'sales',
-      salesman: 'sales',
-      inventory: 'inventory_manager',
-      inventory_user: 'inventory_manager',
-      inventory_staff: 'inventory_manager',
-      dispatch: 'dispatch_ops',
-      dispatch_user: 'dispatch_ops',
-      dispatch_staff: 'dispatch_ops',
-      office: 'office_staff',
-      office_user: 'office_staff',
-      office_staff: 'office_staff',
-    };
-    const normalized = aliases[raw] || raw;
-    const allowed = new Set(['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff']);
-    if (!allowed.has(normalized)) throw new BadRequestException(`Invalid user role: ${role}`);
-    return normalized;
   }
 
   /**

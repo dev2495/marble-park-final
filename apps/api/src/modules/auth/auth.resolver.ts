@@ -1,4 +1,4 @@
-import { Resolver, Mutation, Args, Query, Context, InputType, Field, ObjectType } from '@nestjs/graphql';
+import { Resolver, Mutation, Args, Context, InputType, Field, ObjectType } from '@nestjs/graphql';
 import { AuthService } from './auth.service';
 
 import { IsEmail, IsString, IsNotEmpty } from 'class-validator';
@@ -79,20 +79,4 @@ export class AuthResolver {
     return true;
   }
 
-  @Query(() => AuthResult)
-  async me(@Args('token') token: string) {
-    const session = await this.auth.validateSession(token);
-    if (!session) {
-      return { authenticated: false };
-    }
-    return {
-      authenticated: true,
-      user: {
-        id: session.userId,
-        name: session.name,
-        email: session.email,
-        role: session.role,
-      },
-    };
-  }
 }

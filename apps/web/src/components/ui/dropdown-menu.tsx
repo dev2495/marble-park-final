@@ -26,7 +26,7 @@ const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        'z-50 min-w-[12rem] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1.5 text-[var(--ink-2)] shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)]',
+        'z-50 min-w-[12rem] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)]/95 p-1.5 text-[var(--ink-2)] shadow-md-soft backdrop-blur-xl',
         'data-[state=open]:animate-fade-in data-[state=open]:animate-slide-in',
         'data-[side=bottom]:slide-in-from-top-1 data-[side=top]:slide-in-from-bottom-1',
         className,
@@ -47,7 +47,9 @@ const DropdownMenuItem = React.forwardRef<
       'relative flex cursor-pointer select-none items-center gap-2.5 rounded-md px-2.5 py-2 text-sm outline-none transition-colors',
       'focus:bg-[var(--bg-soft)] focus:text-[var(--ink)] data-[highlighted]:bg-[var(--bg-soft)] data-[highlighted]:text-[var(--ink)]',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
-      danger ? 'text-[var(--danger)] focus:bg-[var(--danger-bg)] focus:text-[var(--danger)] data-[highlighted]:bg-[var(--danger-bg)] data-[highlighted]:text-[var(--danger)]' : 'text-[var(--ink-2)]',
+      danger
+        ? 'text-[var(--danger)] focus:bg-[var(--danger-bg)] focus:text-[var(--danger)] data-[highlighted]:bg-[var(--danger-bg)] data-[highlighted]:text-[var(--danger)]'
+        : 'text-[var(--ink-2)]',
       inset ? 'pl-8' : '',
       className,
     )}
@@ -85,7 +87,7 @@ const DropdownMenuRadioItem = React.forwardRef<
     ref={ref}
     className={cn(
       'relative flex cursor-pointer select-none items-center rounded-md py-2 pl-8 pr-2.5 text-sm outline-none transition-colors',
-      'focus:bg-[var(--bg-soft)] focus:text-[var(--ink)] data-[highlighted]:bg-[var(--bg-soft)]',
+      'text-[var(--ink-2)] focus:bg-[var(--bg-soft)] focus:text-[var(--ink)] data-[highlighted]:bg-[var(--bg-soft)] data-[highlighted]:text-[var(--ink)]',
       className,
     )}
     {...props}

@@ -63,12 +63,12 @@ const ROLE_COLOR: Record<string, string> = {
 export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string; user: any }) {
   const { data, loading, error, refetch } = useQuery(ADMIN_DASH);
 
-  const users: any[] = data?.users || [];
-  const approvalQuotes: any[] = data?.quotes || [];
-  const importBatches: any[] = (data?.importBatches || []).filter((b: any) => b.status === 'pending_approval');
-  const imageTasks: any[] = data?.catalogReviewTasks || [];
-  const customers: any[] = data?.customers || [];
-  const ownerStats = data?.ownerDashboard?.stats || {};
+  const users = useMemo<any[]>(() => data?.users || [], [data?.users]);
+  const approvalQuotes = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
+  const importBatches = useMemo<any[]>(() => (data?.importBatches || []).filter((b: any) => b.status === 'pending_approval'), [data?.importBatches]);
+  const imageTasks = useMemo<any[]>(() => data?.catalogReviewTasks || [], [data?.catalogReviewTasks]);
+  const customers = useMemo<any[]>(() => data?.customers || [], [data?.customers]);
+  const ownerStats = useMemo(() => data?.ownerDashboard?.stats || {}, [data?.ownerDashboard?.stats]);
   const orderStats = data?.salesOrderStats || {};
 
   // ── Users by role + active/inactive

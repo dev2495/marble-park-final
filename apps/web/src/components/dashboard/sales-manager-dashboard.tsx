@@ -35,9 +35,9 @@ export function SalesManagerDashboard({ effectiveRole, user }: { effectiveRole: 
   const { data, loading, error, refetch } = useQuery(SM_DASH);
 
   const stats = data?.ownerDashboard?.stats || {};
-  const team: any[] = data?.ownerDashboard?.userPerformance || [];
-  const quotes: any[] = data?.quotes || [];
-  const leads: any[] = data?.leads || [];
+  const team = useMemo<any[]>(() => data?.ownerDashboard?.userPerformance || [], [data?.ownerDashboard?.userPerformance]);
+  const quotes = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
+  const leads = useMemo<any[]>(() => data?.leads || [], [data?.leads]);
   const orderStats = data?.salesOrderStats || {};
 
   // ── Weighted forecast: each open lead's expected value × stage weight.

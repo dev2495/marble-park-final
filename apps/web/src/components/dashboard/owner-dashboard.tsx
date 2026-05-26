@@ -60,14 +60,14 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
   });
 
   const stats = data?.ownerDashboard?.stats || {};
-  const userPerformance: any[] = data?.ownerDashboard?.userPerformance || [];
-  const recentQuotes: any[] = data?.ownerDashboard?.recentQuotes || [];
-  const recentLeads: any[] = data?.ownerDashboard?.recentLeads || [];
-  const orderStats = data?.salesOrderStats || {};
-  const approvalsQueue: any[] = data?.quotes || [];
-  const leads: any[] = data?.leads || [];
-  const followups: any[] = data?.salesDashboard?.pendingFollowups || [];
-  const lowStock: any[] = data?.lowStockBalances || [];
+  const userPerformance = useMemo<any[]>(() => data?.ownerDashboard?.userPerformance || [], [data?.ownerDashboard?.userPerformance]);
+  const recentQuotes = useMemo<any[]>(() => data?.ownerDashboard?.recentQuotes || [], [data?.ownerDashboard?.recentQuotes]);
+  const recentLeads = useMemo<any[]>(() => data?.ownerDashboard?.recentLeads || [], [data?.ownerDashboard?.recentLeads]);
+  const orderStats = useMemo(() => data?.salesOrderStats || {}, [data?.salesOrderStats]);
+  const approvalsQueue = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
+  const leads = useMemo<any[]>(() => data?.leads || [], [data?.leads]);
+  const followups = useMemo<any[]>(() => data?.salesDashboard?.pendingFollowups || [], [data?.salesDashboard?.pendingFollowups]);
+  const lowStock = useMemo<any[]>(() => data?.lowStockBalances || [], [data?.lowStockBalances]);
 
   // ── Derived: pipeline by stage ────────────────────────────────────
   const pipelineByStage = useMemo(() => {

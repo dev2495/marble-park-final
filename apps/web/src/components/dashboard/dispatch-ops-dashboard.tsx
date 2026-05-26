@@ -38,8 +38,8 @@ const STATUS_TONE: Record<string, Tone> = {
 export function DispatchOpsDashboard({ effectiveRole, user }: { effectiveRole: string; user: any }) {
   const { data, loading, error, refetch } = useQuery(DISP_DASH);
 
-  const jobs: any[] = data?.dispatchJobs || [];
-  const challans: any[] = data?.dispatchChallans || [];
+  const jobs = useMemo<any[]>(() => data?.dispatchJobs || [], [data?.dispatchJobs]);
+  const challans = useMemo<any[]>(() => data?.dispatchChallans || [], [data?.dispatchChallans]);
 
   // ── Job counts by status
   const jobsByStatus = useMemo(() => {
@@ -50,8 +50,8 @@ export function DispatchOpsDashboard({ effectiveRole, user }: { effectiveRole: s
   }, [jobs]);
 
   // ── Today's loads
-  const today = new Date();
   const todaysJobs = useMemo(() => {
+    const today = new Date();
     const start = new Date(today); start.setHours(0, 0, 0, 0);
     const end = new Date(today); end.setHours(23, 59, 59, 999);
     return jobs.filter((j) => {
@@ -62,6 +62,7 @@ export function DispatchOpsDashboard({ effectiveRole, user }: { effectiveRole: s
 
   // ── Overdue jobs (due < today AND not delivered)
   const overdue = useMemo(() => {
+    const today = new Date();
     const start = new Date(today); start.setHours(0, 0, 0, 0);
     return jobs.filter((j) => {
       if (j.status === 'delivered') return false;
@@ -73,6 +74,7 @@ export function DispatchOpsDashboard({ effectiveRole, user }: { effectiveRole: s
   // ── Challans by status (7-day trend)
   const challansTrend = useMemo(() => {
     const buckets = new Map<string, { day: string; packed: number; dispatched: number; delivered: number }>();
+    const today = new Date();
     for (let i = 6; i >= 0; i -= 1) {
       const d = new Date(today); d.setDate(today.getDate() - i);
       buckets.set(d.toISOString().slice(0, 10), { day: d.toISOString().slice(0, 10), packed: 0, dispatched: 0, delivered: 0 });

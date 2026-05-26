@@ -1,7 +1,7 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int, Context } from '@nestjs/graphql';
 import { ProductsService } from './products.service';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ObjectType()
@@ -177,7 +177,7 @@ export class ProductsResolver {
 
   @Mutation(() => ProductOutput)
   async createProduct(@Args('input') input: CreateProductInput, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'products.manage');
     return this.products.create(input as any);
   }
 
@@ -187,13 +187,13 @@ export class ProductsResolver {
     @Args('input') input: UpdateProductInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'products.manage');
     return this.products.update(id, input as any);
   }
 
   @Mutation(() => ProductOutput)
   async deleteProduct(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'products.manage');
     return this.products.delete(id);
   }
 }

@@ -45,13 +45,14 @@ async function main() {
   const quote = quoteData.createQuote;
   assert(quote.approvalStatus === 'approved', 'quote should be ready without owner approval before send/confirm');
   await gql(`mutation($id: ID!) { sendQuote(id: $id) { id status sentAt } }`, { id: quote.id }, token);
-  await gql(`mutation($id: ID!) { confirmQuote(id: $id) { id status confirmedAt } }`, { id: quote.id }, token);
+  const order = (await gql(`mutation($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`, { input: { quoteId: quote.id, paymentMode: 'cash', advanceAmount: 19800, notes: 'E2E canonical quote-to-sales-order conversion.' } }, token)).createSalesOrderFromQuote;
+  assert(order.orderNumber?.startsWith('SO/'), 'sales order should be created from final confirmation');
 
   const afterReserve = await gql(`query($id: ID!) { inventoryBalance(id: $id) { id onHand available reserved } dispatchJobs { id quoteId status } }`, { id: inventoryId }, token);
   assert(afterReserve.inventoryBalance.onHand === 5, 'onHand should remain before dispatch');
-  assert(afterReserve.inventoryBalance.reserved >= 2, 'reserved should increase after confirm');
+  assert(afterReserve.inventoryBalance.reserved >= 2, 'reserved should increase after sales-order conversion');
   const job = afterReserve.dispatchJobs.find((row) => row.quoteId === quote.id);
-  assert(job, 'dispatch job should exist after quote confirm');
+  assert(job, 'dispatch job should exist after sales-order conversion');
 
   const challanData = await gql(`mutation($input: CreateChallanInput!) { createChallan(input: $input) { id challanNumber status } }`, { input: { jobId: job.id, transporter: 'E2E Transport', vehicleNo: 'E2E-001', driverName: 'E2E Driver', driverPhone: '9000000000' } }, token);
   const challan = challanData.createChallan;

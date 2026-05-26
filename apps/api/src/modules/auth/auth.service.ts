@@ -129,8 +129,8 @@ export class AuthService {
 
   async createSession(
     userId: string,
-    ipAddress?: string,
-    userAgent?: string,
+    _ipAddress?: string,
+    _userAgent?: string,
   ) {
     const token = ulid();
     const expiresAt = new Date();

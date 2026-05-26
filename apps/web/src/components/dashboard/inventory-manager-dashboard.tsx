@@ -37,8 +37,8 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
 
   const stats = data?.inventoryDashboard?.stats || {};
   const summary = data?.inventoryDashboard?.summary || {};
-  const lowStock: any[] = data?.lowStockBalances || [];
-  const balances: any[] = data?.inventoryBalances || [];
+  const lowStock = useMemo<any[]>(() => data?.lowStockBalances || [], [data?.lowStockBalances]);
+  const balances = useMemo<any[]>(() => data?.inventoryBalances || [], [data?.inventoryBalances]);
 
   // ── By category breakdown (value)
   const byCategory = useMemo(() => {

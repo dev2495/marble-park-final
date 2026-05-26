@@ -20,13 +20,13 @@ import { UserAvatar } from '@/components/user-avatar';
 export type Tone = 'brand' | 'success' | 'warning' | 'danger' | 'violet' | 'sky' | 'neutral';
 
 const TONE_TEXT: Record<Tone, string> = {
-  brand:   'text-[#1d4ed8]',
-  success: 'text-[#047857]',
-  warning: 'text-[#b45309]',
-  danger:  'text-[#b91c1c]',
-  violet:  'text-[#6d28d9]',
-  sky:     'text-[#0369a1]',
-  neutral: 'text-[#52525b]',
+  brand:   'text-[var(--brand-700)]',
+  success: 'text-[var(--success)]',
+  warning: 'text-[var(--warning)]',
+  danger:  'text-[var(--danger)]',
+  violet:  'text-violet-600 dark:text-violet-300',
+  sky:     'text-sky-700 dark:text-sky-300',
+  neutral: 'text-[var(--ink-3)]',
 };
 
 // ── Number countup ──────────────────────────────────────────────────────
@@ -135,27 +135,27 @@ export function KpiTile({
   return (
     <Wrap
       {...wrapProps}
-      className={`mp-kpi-tint-${tone} group block rounded-r5 border border-[#e4e4e7] p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-[#d4d4d8] hover:shadow-md-soft`}
+      className={`mp-kpi-tint-${tone} group block rounded-r5 border border-[var(--line)] p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--line-strong)] hover:shadow-md-soft`}
     >
       <div className="flex items-start justify-between gap-3">
-        <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">{label}</p>
+        <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">{label}</p>
         <span className={`mp-kpi-icon-${tone} grid h-7 w-7 place-items-center rounded-md`}>
           <Icon className="h-3.5 w-3.5" strokeWidth={1.8} />
         </span>
       </div>
       <div className="mt-4">
-        <p className="font-display text-3xl font-bold leading-none tabular-nums tracking-[-0.02em] text-[#18181b]">
+        <p className="font-display text-3xl font-bold leading-none tabular-nums tracking-[-0.02em] text-[var(--ink)]">
           {loading ? '—' : showCountup ? <Countup value={value as number} format={format} /> : value}
         </p>
         {trend ? (
           <div className="mt-2 flex items-center gap-1.5">
-            <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${trend.delta >= 0 ? 'bg-[#d1fae5] text-[#047857]' : 'bg-[#fecaca] text-[#b91c1c]'}`}>
+            <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${trend.delta >= 0 ? 'bg-[var(--success-bg)] text-[var(--success)]' : 'bg-[var(--danger-bg)] text-[var(--danger)]'}`}>
               {trend.delta >= 0 ? '▲' : '▼'} {Math.abs(trend.delta).toFixed(1)}%
             </span>
-            <span className="text-[10px] text-[#71717a]">{trend.label}</span>
+            <span className="text-[10px] text-[var(--ink-4)]">{trend.label}</span>
           </div>
         ) : null}
-        {caption ? <p className="mt-2 truncate text-xs text-[#52525b]">{caption}</p> : null}
+        {caption ? <p className="mt-2 truncate text-xs text-[var(--ink-3)]">{caption}</p> : null}
       </div>
       {href ? (
         <div className={`mt-4 flex items-center gap-1 text-xs font-medium ${TONE_TEXT[tone]} opacity-0 transition-opacity group-hover:opacity-100`}>
@@ -187,8 +187,8 @@ export function Panel({
     <section className={`mp-panel ${className}`}>
       <header className={`flex items-start justify-between gap-3 px-5 pb-3 pt-5 ${band}`}>
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-[#18181b]">{title}</h3>
-          {subtitle ? <p className="mt-0.5 text-xs text-[#71717a]">{subtitle}</p> : null}
+          <h3 className="text-sm font-semibold text-[var(--ink)]">{title}</h3>
+          {subtitle ? <p className="mt-0.5 text-xs text-[var(--ink-4)]">{subtitle}</p> : null}
         </div>
         {rightAction}
       </header>
@@ -200,7 +200,7 @@ export function Panel({
 // ── Empty state ─────────────────────────────────────────────────────────
 export function EmptyState({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-r4 border border-dashed border-[#e4e4e7] bg-[#fafafa] p-6 text-center text-sm text-[#71717a] ${className}`}>
+    <div className={`rounded-r4 border border-dashed border-[var(--line)] bg-[var(--bg-soft)] p-6 text-center text-sm text-[var(--ink-4)] ${className}`}>
       {children}
     </div>
   );
@@ -211,7 +211,7 @@ export function QuickAction({ href, icon: Icon, label, tone = 'neutral' }: { hre
   return (
     <Link
       href={href}
-      className={`inline-flex items-center gap-2 rounded-md border border-[#e4e4e7] bg-white px-3 py-1.5 text-xs font-medium text-[#27272a] transition-colors hover:bg-[#f4f4f5] hover:text-[#18181b]`}
+      className={`inline-flex items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-xs font-medium text-[var(--ink-2)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]`}
     >
       <span className={`mp-kpi-icon-${tone} grid h-5 w-5 place-items-center rounded`}>
         <Icon className="h-3 w-3" strokeWidth={2} />
@@ -249,13 +249,13 @@ export function GreetingStrip({
       <div className="flex items-center gap-4">
         <UserAvatar user={user || { name: display }} size="lg" ringed />
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">
+          <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">
             {role.replace('_', ' ')} workspace
           </p>
-          <h1 className="mt-0.5 font-display text-2xl font-bold leading-tight tracking-[-0.02em] text-[#18181b] sm:text-3xl">
+          <h1 className="mt-0.5 font-display text-2xl font-bold leading-tight tracking-[-0.02em] text-[var(--ink)] sm:text-3xl">
             {greeting}
           </h1>
-          {subtitle ? <p className="mt-1 text-sm text-[#52525b]">{subtitle}</p> : null}
+          {subtitle ? <p className="mt-1 text-sm text-[var(--ink-3)]">{subtitle}</p> : null}
         </div>
       </div>
       {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}

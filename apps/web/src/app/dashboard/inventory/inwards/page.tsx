@@ -1,10 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
-  Boxes, ClipboardList, FileCheck2, PackageCheck, PackagePlus, Search, Trash2, Truck,
+  ArrowDownCircle, Boxes, ClipboardList, PackageCheck, PackagePlus, Search,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
 import { cn } from '@/lib/utils';
 
 const INVENTORY_BALANCES = gql`
-  query GrnInventoryBalances($search: String, $take: Int) {
+  query InwardInventoryBalances($search: String, $take: Int) {
     inventoryBalances(search: $search, take: $take) {
       id
       productId
@@ -35,22 +35,18 @@ const INVENTORY_BALANCES = gql`
         sellPrice
       }
     }
+    vendors(status: "active", take: 150)
+    stockLocations(status: "active")
   }
 `;
 
-const ADJUST_INVENTORY = gql`
-  mutation ReceiveInventory($id: ID!, $adjustment: Float!, $type: String!, $notes: String) {
-    adjustInventory(id: $id, adjustment: $adjustment, type: $type, notes: $notes) {
-      id
-      onHand
-      available
-      reserved
-      damaged
-      updatedAt
-      product { id sku name category brand finish unit }
-    }
+const CREATE_MANUAL_GRN = gql`
+  mutation CreateManualGoodsReceipt($input: ManualGoodsReceiptInput!) {
+    createManualGoodsReceipt(input: $input)
   }
 `;
+
+type MovementType = 'inward';
 
 type Balance = {
   id: string;
@@ -59,9 +55,7 @@ type Balance = {
   available: number;
   reserved: number;
   damaged: number;
-  lowStockThreshold?: number;
-  reorderPoint?: number | null;
-  updatedAt?: string;
+  updatedAt: string;
   product?: {
     id: string;
     sku?: string;
@@ -75,111 +69,121 @@ type Balance = {
   } | null;
 };
 
-type GrnLine = {
-  balanceId: string;
-  quantity: string;
-  rate: string;
-  location: string;
-  notes: string;
-};
+const movementOptions: Array<{ type: MovementType; label: string; caption: string; icon: any; tone: string }> = [
+  { type: 'inward', label: 'Manual vendor GRN', caption: 'Receipt without a PO, with supplier reference and audit trail.', icon: PackagePlus, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+];
 
 function money(value?: number) {
   return `₹${Number(value || 0).toLocaleString('en-IN')}`;
 }
 
-function qty(value?: number) {
-  return Number(value || 0).toLocaleString('en-IN');
+function Stat({ label, value, accent }: { label: string; value: number; accent?: string }) {
+  return (
+    <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3 shadow-sm-soft">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">{label}</p>
+      <p className={cn('mt-1 font-display text-2xl font-bold tabular-nums text-[var(--ink)]', accent)}>{Number(value || 0).toLocaleString('en-IN')}</p>
+    </div>
+  );
+}
+
+function previewBalance(balance: Balance | undefined, type: MovementType, quantity: number) {
+  if (!balance || !quantity) return null;
+  const next = {
+    onHand: Number(balance.onHand || 0),
+    available: Number(balance.available || 0),
+    reserved: Number(balance.reserved || 0),
+    damaged: Number(balance.damaged || 0),
+  };
+  if (type === 'inward') {
+    next.onHand += quantity;
+    next.available += quantity;
+  }
+  return next;
 }
 
 export default function InventoryInwardsPage() {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState('');
-  const [vendor, setVendor] = useState('');
-  const [grnRef, setGrnRef] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [remarks, setRemarks] = useState('');
-  const [rows, setRows] = useState<GrnLine[]>([]);
+  const [movementType, setMovementType] = useState<MovementType>('inward');
+  const [quantity, setQuantity] = useState('');
+  const [vendorId, setVendorId] = useState('');
+  const [vendorName, setVendorName] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [reference, setReference] = useState('');
+  const [notes, setNotes] = useState('');
   const [message, setMessage] = useState('');
 
   const { data, loading, error, refetch } = useQuery(INVENTORY_BALANCES, {
     variables: { search: search || undefined, take: 80 },
     fetchPolicy: 'cache-and-network',
   });
-  const [receiveInventory, { loading: saving, error: saveError }] = useMutation(ADJUST_INVENTORY);
+  const [createManualGrn, { loading: saving, error: saveError }] = useMutation(CREATE_MANUAL_GRN, {
+    onCompleted: () => {
+      setMessage('Manual GRN posted. Inventory balances are updated and any waiting backorder was auto-allocated.');
+      setQuantity('');
+      setVendorId('');
+      setVendorName('');
+      setLocationId('');
+      setReference('');
+      setNotes('');
+      void refetch();
+    },
+  });
 
-  const balances: Balance[] = data?.inventoryBalances || [];
+  const balances = useMemo<Balance[]>(() => data?.inventoryBalances || [], [data?.inventoryBalances]);
+  const vendors = useMemo<any[]>(() => data?.vendors || [], [data?.vendors]);
+  const locations = useMemo<any[]>(() => data?.stockLocations || [], [data?.stockLocations]);
+  const defaultLocation = useMemo(() => locations.find((location) => location.defaultStockScope) || locations[0], [locations]);
+  const selectedLocation = useMemo(() => locations.find((location) => location.id === locationId) || defaultLocation, [defaultLocation, locationId, locations]);
   const selected = useMemo(() => balances.find((item) => item.id === selectedId) || balances[0], [balances, selectedId]);
-  const byId = useMemo(() => new Map(balances.map((item) => [item.id, item] as const)), [balances]);
+  const selectedProduct = selected?.product;
+  const qty = Number(quantity || 0);
+  const preview = previewBalance(selected, movementType, qty);
+  const movement = movementOptions.find((item) => item.type === movementType) || movementOptions[0];
+  const MovementIcon = movement.icon;
 
-  const addSelectedLine = () => {
-    if (!selected) return;
+  useEffect(() => {
+    if (!locationId && defaultLocation?.id) setLocationId(defaultLocation.id);
+  }, [defaultLocation?.id, locationId]);
+
+  const submitMovement = async () => {
+    if (!selected || !qty) return;
     setMessage('');
-    setRows((current) => {
-      if (current.some((line) => line.balanceId === selected.id)) return current;
-      return [...current, { balanceId: selected.id, quantity: '', rate: selected.product?.sellPrice ? String(selected.product.sellPrice) : '', location: '', notes: '' }];
+    await createManualGrn({
+      variables: {
+        input: {
+          vendorName: vendorName || reference || 'Manual vendor receipt',
+          vendorId: vendorId || undefined,
+          supplierChallan: reference || undefined,
+          locationId: selectedLocation?.id || undefined,
+          reason: 'manual_vendor_receipt_without_po',
+          notes: notes || undefined,
+          lines: JSON.stringify([{
+            productId: selected.productId,
+            receivedQuantity: qty,
+            damagedQuantity: 0,
+            location: selectedLocation ? `${selectedLocation.code} · ${selectedLocation.name}` : 'Default plant',
+            locationId: selectedLocation?.id,
+          }]),
+        },
+      },
     });
-  };
-
-  const updateLine = (index: number, patch: Partial<GrnLine>) => {
-    setRows((current) => current.map((line, i) => (i === index ? { ...line, ...patch } : line)));
-  };
-
-  const removeLine = (index: number) => {
-    setRows((current) => current.filter((_, i) => i !== index));
-  };
-
-  const totalQty = rows.reduce((sum, line) => sum + Math.max(0, Number(line.quantity || 0)), 0);
-  const totalValue = rows.reduce((sum, line) => sum + Math.max(0, Number(line.quantity || 0)) * Math.max(0, Number(line.rate || 0)), 0);
-  const selectedUnit = selected?.product?.unit || 'PC';
-
-  const submitGrn = async () => {
-    setMessage('');
-    const validRows = rows.filter((line) => Number(line.quantity || 0) > 0 && byId.has(line.balanceId));
-    if (!validRows.length) {
-      setMessage('Add at least one SKU with received quantity before posting GRN.');
-      return;
-    }
-    if (!grnRef.trim()) {
-      setMessage('GRN / challan reference is required for audit trail.');
-      return;
-    }
-
-    await Promise.all(validRows.map((line) => {
-      const balance = byId.get(line.balanceId);
-      const product = balance?.product;
-      const notes = [
-        `GRN: ${grnRef.trim()}`,
-        vendor.trim() ? `Vendor: ${vendor.trim()}` : '',
-        invoiceDate ? `Date: ${invoiceDate}` : '',
-        line.location.trim() ? `Location: ${line.location.trim()}` : '',
-        line.rate ? `Rate: ${line.rate}` : '',
-        remarks.trim(),
-        line.notes.trim(),
-        product?.sku ? `SKU: ${product.sku}` : '',
-      ].filter(Boolean).join(' • ');
-      return receiveInventory({ variables: { id: line.balanceId, adjustment: Number(line.quantity), type: 'inward', notes } });
-    }));
-
-    setMessage(`GRN ${grnRef.trim()} posted. ${qty(totalQty)} units received and inventory availability updated.`);
-    setRows([]);
-    setRemarks('');
-    await refetch();
   };
 
   return (
     <div className="space-y-6 pb-10">
-      <section className="mp-hero relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(16,185,129,0.18),transparent_28%),radial-gradient(circle_at_92%_12%,rgba(59,130,246,0.14),transparent_28%)]" />
-        <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+      <section className="mp-card rounded-r6 border border-[var(--line)] p-6">
+        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Goods receipt note</p>
-            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[var(--ink)]">Receive vendor stock against existing SKUs.</h1>
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">GRN receiving</p>
+            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[var(--ink)]">Receive vendor stock against PO, or post a controlled manual GRN.</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
-              This is only for inward/GRN entry. Quote confirmation reserves stock automatically, dispatch consumes stock automatically, and exceptions live in Inventory controls.
+              Sales shortages should normally flow through Procurement → PO → GRN. Use manual GRN only for a verified vendor receipt that was not created from a purchase order.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline"><Link href="/dashboard/inventory"><Boxes className="mr-2 h-4 w-4" /> Inventory controls</Link></Button>
+            <Button asChild><Link href="/dashboard/procurement"><ClipboardList className="mr-2 h-4 w-4" /> Procurement desk</Link></Button>
+            <Button asChild variant="outline"><Link href="/dashboard/inventory"><Boxes className="mr-2 h-4 w-4" /> Inventory list</Link></Button>
             <Button asChild variant="outline"><Link href="/dashboard/master-data/imports"><ClipboardList className="mr-2 h-4 w-4" /> Catalogue imports</Link></Button>
           </div>
         </div>
@@ -187,13 +191,13 @@ export default function InventoryInwardsPage() {
 
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {saveError ? <QueryErrorBanner error={saveError} /> : null}
-      {message ? <div className={cn('rounded-r4 border p-4 text-sm font-semibold', message.includes('posted') ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800')}>{message}</div> : null}
+      {message ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{message}</div> : null}
 
-      <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+      <section className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="mp-panel overflow-hidden">
           <div className="border-b border-[var(--line)] p-5">
-            <h2 className="text-lg font-semibold text-[var(--ink)]">Pick SKU to receive</h2>
-            <p className="mt-1 text-sm text-[var(--ink-4)]">Search existing inventory SKUs. New SKU creation stays in Product Master.</p>
+            <h2 className="text-lg font-semibold text-[var(--ink)]">Select inventory SKU</h2>
+            <p className="mt-1 text-sm text-[var(--ink-4)]">Search by SKU, name or brand, then post a movement.</p>
             <div className="mt-4 flex h-10 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 shadow-sm-soft">
               <Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" />
               <input
@@ -211,7 +215,7 @@ export default function InventoryInwardsPage() {
             <div className="p-8 text-center">
               <PackageCheck className="mx-auto h-10 w-10 text-[var(--ink-5)]" />
               <h3 className="mt-3 text-lg font-semibold text-[var(--ink)]">No inventory SKUs found</h3>
-              <p className="mx-auto mt-2 max-w-sm text-sm text-[var(--ink-4)]">Create the SKU in Product Master first, then receive it here.</p>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-[var(--ink-4)]">Create the SKU in Product Master first. Inventory inward can only receive stock against known SKUs.</p>
               <Button asChild className="mt-5"><Link href="/dashboard/master-data/products">Open Product Master</Link></Button>
             </div>
           ) : (
@@ -253,115 +257,117 @@ export default function InventoryInwardsPage() {
           <div className="mp-panel p-5">
             <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
               <div className="min-w-0">
-                <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Selected for GRN</p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--ink)]">{selected?.product?.name || 'Choose a SKU'}</h2>
-                <p className="mt-1 text-sm text-[var(--ink-4)]"><span className="font-semibold text-[var(--ink-2)]">{selected?.product?.sku || '—'}</span> · {selected?.product?.brand || 'No brand'} · {selected?.product?.category || 'No category'}</p>
+                <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Selected SKU</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--ink)]">{selectedProduct?.name || 'Choose a SKU'}</h2>
+                <p className="mt-1 text-sm text-[var(--ink-4)]"><span className="font-semibold text-[var(--ink-2)]">{selectedProduct?.sku || '—'}</span> · {selectedProduct?.brand || 'No brand'} · {selectedProduct?.category || 'No category'}</p>
               </div>
-              <span className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-xs font-semibold text-[var(--ink-3)]">{selectedUnit}</span>
+              <span className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-xs font-semibold text-[var(--ink-3)]">{selectedProduct?.unit || 'PC'}</span>
             </div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-4">
-              <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">On hand</p><p className="mt-1 font-display text-2xl font-bold tabular-nums text-[var(--ink)]">{qty(selected?.onHand)}</p></div>
-              <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">Available</p><p className="mt-1 font-display text-2xl font-bold tabular-nums text-emerald-600">{qty(selected?.available)}</p></div>
-              <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">Reserved</p><p className="mt-1 font-display text-2xl font-bold tabular-nums text-blue-600">{qty(selected?.reserved)}</p></div>
-              <div className="rounded-r3 border border-[var(--line)] bg-[var(--surface)]/78 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">Damaged</p><p className="mt-1 font-display text-2xl font-bold tabular-nums text-red-600">{qty(selected?.damaged)}</p></div>
-            </div>
-            <Button type="button" onClick={addSelectedLine} disabled={!selected} className="mt-5"><PackagePlus className="mr-2 h-4 w-4" /> Add selected SKU to GRN</Button>
+
+            {selected ? (
+              <div className="mt-5 grid gap-3 sm:grid-cols-4">
+                <Stat label="On hand" value={selected.onHand} />
+                <Stat label="Available" value={selected.available} accent="text-emerald-600" />
+                <Stat label="Reserved" value={selected.reserved} accent="text-blue-600" />
+                <Stat label="Damaged" value={selected.damaged} accent="text-red-600" />
+              </div>
+            ) : null}
           </div>
 
           <div className="mp-panel p-5">
             <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700"><Truck className="h-5 w-5" /></div>
+              <div className={cn('grid h-10 w-10 place-items-center rounded-md border', movement.tone)}><MovementIcon className="h-5 w-5" /></div>
               <div>
-                <h3 className="text-lg font-semibold text-[var(--ink)]">GRN header</h3>
-                <p className="text-sm text-[var(--ink-4)]">Saved in inventory movement notes for audit and vendor traceability.</p>
+                <h3 className="text-lg font-semibold text-[var(--ink)]">Post stock movement</h3>
+                <p className="text-sm text-[var(--ink-4)]">{movement.caption}</p>
               </div>
             </div>
+
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <label className="space-y-2 sm:col-span-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Movement type</span>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {movementOptions.map((option) => {
+                    const Icon = option.icon;
+                    const active = movementType === option.type;
+                    return (
+                      <button
+                        key={option.type}
+                        type="button"
+                        onClick={() => setMovementType(option.type)}
+                        className={cn('rounded-r3 border p-3 text-left transition-all', active ? `${option.tone} shadow-sm-soft` : 'border-[var(--line)] bg-[var(--surface)] hover:bg-[var(--bg-soft)]')}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <p className="mt-2 text-sm font-semibold">{option.label}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </label>
+
               <label className="space-y-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Vendor / supplier</span>
-                <Input value={vendor} onChange={(event) => setVendor(event.target.value)} placeholder="e.g. Hindware distributor" />
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Quantity</span>
+                <Input type="number" min={1} step={1} value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="e.g. 12" />
               </label>
               <label className="space-y-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">GRN / challan ref</span>
-                <Input value={grnRef} onChange={(event) => setGrnRef(event.target.value)} placeholder="GRN-0001 / bill no." />
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Vendor master</span>
+                <select
+                  value={vendorId}
+                  onChange={(event) => {
+                    setVendorId(event.target.value);
+                    setVendorName(vendors.find((vendor) => vendor.id === event.target.value)?.name || '');
+                  }}
+                  className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--ink)] shadow-sm-soft outline-none transition-colors focus:border-[var(--brand-400)] focus:ring-2 focus:ring-[var(--ring)]"
+                >
+                  <option value="">Select supplier from Vendor Master</option>
+                  {vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}
+                </select>
               </label>
               <label className="space-y-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Invoice date</span>
-                <Input type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} />
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Supplier challan / bill</span>
+                <Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Vendor challan or bill number" />
               </label>
               <label className="space-y-2 sm:col-span-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">GRN remarks</span>
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Receive into plant / stock location</span>
+                <select
+                  value={selectedLocation?.id || ''}
+                  onChange={(event) => setLocationId(event.target.value)}
+                  className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--ink)] shadow-sm-soft outline-none transition-colors focus:border-[var(--brand-400)] focus:ring-2 focus:ring-[var(--ring)]"
+                >
+                  {locations.map((location) => <option key={location.id} value={location.id}>{location.defaultStockScope ? 'Default · ' : ''}{location.code} · {location.name}</option>)}
+                </select>
+              </label>
+              <label className="space-y-2 sm:col-span-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Notes</span>
                 <textarea
-                  value={remarks}
-                  onChange={(event) => setRemarks(event.target.value)}
-                  placeholder="Transport details, received by, storage note, pending invoice differences..."
-                  className="min-h-[72px] w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] shadow-sm-soft outline-none transition-colors placeholder:text-[var(--ink-5)] focus:border-[var(--brand-400)] focus:ring-2 focus:ring-[var(--ring)]"
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  placeholder="Supplier name, storage location, approval note, or customer reservation context"
+                  className="min-h-[86px] w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] shadow-sm-soft outline-none transition-colors placeholder:text-[var(--ink-5)] focus:border-[var(--brand-400)] focus:ring-2 focus:ring-[var(--ring)]"
                 />
               </label>
             </div>
-          </div>
-        </div>
-      </section>
 
-      <section className="mp-panel p-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">GRN lines</p>
-            <h2 className="mt-2 text-2xl font-semibold text-[var(--ink)]">Received SKUs</h2>
-            <p className="mt-1 text-sm text-[var(--ink-4)]">Each line posts one inward movement. Backordered quote items auto-reserve when matching stock arrives.</p>
-          </div>
-          <div className="grid gap-2 text-sm sm:grid-cols-2">
-            <div className="rounded-r3 border border-[var(--line)] bg-[var(--bg-soft)] px-4 py-2"><span className="text-[var(--ink-4)]">Total qty</span><b className="ml-2 text-[var(--ink)]">{qty(totalQty)}</b></div>
-            <div className="rounded-r3 border border-[var(--line)] bg-[var(--bg-soft)] px-4 py-2"><span className="text-[var(--ink-4)]">Approx value</span><b className="ml-2 text-[var(--ink)]">{money(totalValue)}</b></div>
-          </div>
-        </div>
+            {preview ? (
+              <div className="mt-5 rounded-r4 border border-[var(--line)] bg-[var(--bg-soft)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Balance preview after save</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-4">
+                  <Stat label="On hand" value={preview.onHand} />
+                  <Stat label="Available" value={preview.available} accent="text-emerald-600" />
+                  <Stat label="Reserved" value={preview.reserved} accent="text-blue-600" />
+                  <Stat label="Damaged" value={preview.damaged} accent="text-red-600" />
+                </div>
+              </div>
+            ) : null}
 
-        <div className="mt-5 overflow-x-auto custom-scrollbar">
-          <table className="w-full min-w-[980px] text-left">
-            <thead className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">
-              <tr>
-                <th className="px-3 py-2">SKU</th>
-                <th className="px-3 py-2 text-center">Current avail</th>
-                <th className="px-3 py-2">Qty received</th>
-                <th className="px-3 py-2">Rate</th>
-                <th className="px-3 py-2">Location</th>
-                <th className="px-3 py-2">Line note</th>
-                <th className="px-3 py-2 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--line-soft)]">
-              {rows.length ? rows.map((line, index) => {
-                const balance = byId.get(line.balanceId);
-                const product = balance?.product;
-                return (
-                  <tr key={line.balanceId}>
-                    <td className="px-3 py-3">
-                      <div className="font-semibold text-[var(--ink)]">{product?.sku || 'NO-SKU'}</div>
-                      <div className="text-xs text-[var(--ink-4)]">{product?.name || 'Unnamed SKU'} · {product?.brand || 'No brand'}</div>
-                    </td>
-                    <td className="px-3 py-3 text-center font-semibold tabular-nums text-[var(--ink)]">{qty(balance?.available)}</td>
-                    <td className="px-3 py-3"><Input type="number" min={1} step={1} value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} placeholder="0" /></td>
-                    <td className="px-3 py-3"><Input type="number" min={0} step={0.01} value={line.rate} onChange={(event) => updateLine(index, { rate: event.target.value })} placeholder="Rate" /></td>
-                    <td className="px-3 py-3"><Input value={line.location} onChange={(event) => updateLine(index, { location: event.target.value })} placeholder="Rack / bay" /></td>
-                    <td className="px-3 py-3"><Input value={line.notes} onChange={(event) => updateLine(index, { notes: event.target.value })} placeholder="Optional" /></td>
-                    <td className="px-3 py-3 text-right"><Button type="button" variant="ghost" size="sm" onClick={() => removeLine(index)}><Trash2 className="h-4 w-4" /></Button></td>
-                  </tr>
-                );
-              }) : (
-                <tr>
-                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-[var(--ink-4)]">No GRN lines yet. Select a SKU and add it to this receipt.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <Button onClick={submitGrn} disabled={!rows.length || saving}>
-            <FileCheck2 className="mr-2 h-4 w-4" />
-            {saving ? 'Posting GRN...' : 'Post GRN inward'}
-          </Button>
-          <Button type="button" variant="outline" onClick={() => { setRows([]); setMessage(''); }}>Clear lines</Button>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <Button onClick={submitMovement} disabled={!selected || !qty || !vendorName || saving}>
+                <ArrowDownCircle className="mr-2 h-4 w-4" />
+                {saving ? 'Posting...' : 'Post manual GRN'}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => { setQuantity(''); setVendorId(''); setVendorName(''); setLocationId(defaultLocation?.id || ''); setReference(''); setNotes(''); setMessage(''); }}>Clear</Button>
+            </div>
+          </div>
         </div>
       </section>
     </div>

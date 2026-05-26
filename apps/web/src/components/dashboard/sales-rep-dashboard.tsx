@@ -39,9 +39,9 @@ export function SalesRepDashboard({ effectiveRole, user }: { effectiveRole: stri
   });
 
   const stats = data?.salesDashboard?.stats || {};
-  const followups: any[] = data?.salesDashboard?.pendingFollowups || [];
-  const leads: any[] = data?.leads || [];
-  const myQuotes: any[] = data?.quotes || [];
+  const followups = useMemo<any[]>(() => data?.salesDashboard?.pendingFollowups || [], [data?.salesDashboard?.pendingFollowups]);
+  const leads = useMemo<any[]>(() => data?.leads || [], [data?.leads]);
+  const myQuotes = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
 
   const pipelineValue = useMemo(() => leads.reduce((s, l) => s + Number(l.expectedValue || 0), 0), [leads]);
   const wonQuotes = useMemo(() => myQuotes.filter((q) => q.status === 'confirmed'), [myQuotes]);

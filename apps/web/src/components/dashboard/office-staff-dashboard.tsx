@@ -35,10 +35,14 @@ const OFFICE_DASH = gql`
 export function OfficeStaffDashboard({ effectiveRole, user }: { effectiveRole: string; user: any }) {
   const { data, loading, error, refetch } = useQuery(OFFICE_DASH);
 
-  const intentsPending: any[] = data?.leadIntents || [];
-  const approvedQuotes: any[] = data?.approvedQuotes || [];
+  // Apollo dedupes identical query field names — we need to issue them
+  // separately. Workaround: use the existing approvals page query pattern.
+  // For dashboard pragmatism we fetch one batch and derive both buckets.
+  const intentsPending = useMemo<any[]>(() => data?.leadIntents || [], [data?.leadIntents]);
+  const pendingApproval = useMemo<any[]>(() => data?.pendingApprovalQuotes || [], [data?.pendingApprovalQuotes]);
+  const approvedQuotes = useMemo<any[]>(() => data?.approvedQuotes || [], [data?.approvedQuotes]);
   const orderStats = data?.salesOrderStats || {};
-  const recentQuotes: any[] = data?.ownerDashboard?.recentQuotes || [];
+  const recentQuotes = useMemo<any[]>(() => data?.ownerDashboard?.recentQuotes || [], [data?.ownerDashboard?.recentQuotes]);
 
   const quotesTrend = useMemo(() => {
     const buckets = new Map<string, number>();
@@ -60,7 +64,7 @@ export function OfficeStaffDashboard({ effectiveRole, user }: { effectiveRole: s
 
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
     { label: 'Intents to quote', value: intentsPending.length, caption: intentsPending.length ? 'Sales captured, awaiting your quote' : 'Inbox zero', icon: ListChecks, tone: intentsPending.length ? 'brand' : 'success', href: '/dashboard/intents', numeric: true },
-    { label: 'Quotes ready', value: approvedQuotes.length, caption: 'Confirmed quotes ready to convert to orders', icon: ClipboardCheck, tone: approvedQuotes.length ? 'success' : 'neutral', href: '/dashboard/quotes', numeric: true },
+    { label: 'Pending approval', value: pendingApproval.length, caption: 'Quotes generated, owner approval pending', icon: ClipboardCheck, tone: pendingApproval.length ? 'warning' : 'neutral', href: '/dashboard/approvals', numeric: true },
     { label: 'Orders booked · MTD', value: orderStats.totalOrders || 0, caption: `${moneyShort(orderStats.totalValue || 0)} this month`, icon: ShoppingBag, tone: 'success', href: '/dashboard/orders', numeric: true },
     { label: 'Cash advance · MTD', value: Number(orderStats.cashAdvance || 0), caption: 'Collected on cash orders', icon: IndianRupee, tone: 'violet', href: '/dashboard/orders', numeric: true, format: moneyShort },
   ];

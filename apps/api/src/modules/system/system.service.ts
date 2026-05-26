@@ -84,6 +84,30 @@ export class SystemService {
       throw new Error('Invalid reset confirmation');
     }
 
+    await (this.prisma as any).returnLine.deleteMany().catch(() => null);
+    await (this.prisma as any).returnOrder.deleteMany().catch(() => null);
+    await (this.prisma as any).deliveryProof.deleteMany().catch(() => null);
+    await (this.prisma as any).shipment.deleteMany().catch(() => null);
+    await (this.prisma as any).dispatchLine.deleteMany().catch(() => null);
+    await (this.prisma as any).dispatchPackage.deleteMany().catch(() => null);
+    await (this.prisma as any).stockAdjustmentApproval.deleteMany().catch(() => null);
+    await (this.prisma as any).stockCountLine.deleteMany().catch(() => null);
+    await (this.prisma as any).stockCountSession.deleteMany().catch(() => null);
+    await (this.prisma as any).stockLedgerEntry.deleteMany().catch(() => null);
+    await (this.prisma as any).stockBalanceByLocation.deleteMany().catch(() => null);
+    await (this.prisma as any).stockLocation.deleteMany().catch(() => null);
+    await (this.prisma as any).productVendor.deleteMany().catch(() => null);
+    await (this.prisma as any).reorderPolicy.deleteMany().catch(() => null);
+    await (this.prisma as any).paymentReceipt.deleteMany().catch(() => null);
+    await (this.prisma as any).documentJob.deleteMany().catch(() => null);
+    await (this.prisma as any).salesOrderLine.deleteMany().catch(() => null);
+    await (this.prisma as any).quoteLine.deleteMany().catch(() => null);
+    await (this.prisma as any).goodsReceiptLine.deleteMany().catch(() => null);
+    await (this.prisma as any).goodsReceiptNote.deleteMany().catch(() => null);
+    await (this.prisma as any).purchaseOrderLine.deleteMany().catch(() => null);
+    await (this.prisma as any).purchaseOrder.deleteMany().catch(() => null);
+    await (this.prisma as any).purchaseDemand.deleteMany().catch(() => null);
+    await (this.prisma as any).sequenceCounter.deleteMany().catch(() => null);
     await this.prisma.dispatchChallan.deleteMany();
     await this.prisma.dispatchJob.deleteMany();
     await this.prisma.reservation.deleteMany();
@@ -108,12 +132,13 @@ export class SystemService {
     await this.prisma.productBrand.deleteMany();
     await this.prisma.productCategory.deleteMany();
     await this.prisma.productFinish.deleteMany();
+    await (this.prisma as any).tileSize.deleteMany();
     await this.prisma.passwordResetToken.deleteMany();
     await this.prisma.session.deleteMany();
 
     const passwordHash = await bcrypt.hash(process.env.CLIENT_RESET_ADMIN_PASSWORD || 'password123', 10);
     await this.prisma.user.deleteMany({ where: { email: { not: 'admin@marblepark.com' } } });
-    const admin = await this.prisma.user.upsert({
+    await this.prisma.user.upsert({
       where: { email: 'admin@marblepark.com' },
       update: { name: 'Marble Park Admin', role: 'admin', phone: '9820098199', active: true, passwordHash },
       create: {
@@ -161,11 +186,24 @@ export class SystemService {
   async reviewTasks(args?: { status?: string; take?: number }) {
     const where: any = {};
     if (args?.status) where.status = args.status;
-    return this.prisma.catalogReviewTask.findMany({
+    const tasks = await this.prisma.catalogReviewTask.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take: args?.take || 100,
     });
+    return tasks.map((task) => this.withCurrentCatalogueImageUrl(task));
+  }
+
+  private withCurrentCatalogueImageUrl(task: any) {
+    if (!task?.imagePath) return task;
+    const baseUrl = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || process.env.PUBLIC_APP_URL || '').replace(/\/+$/, '');
+    if (!baseUrl) return task;
+    const imageUrl = String(task.imageUrl || '');
+    if (imageUrl && !/localhost:3002|127\.0\.0\.1:3002/.test(imageUrl)) return task;
+    return {
+      ...task,
+      imageUrl: `${baseUrl}/catalogue-images/imports/${path.basename(task.imagePath)}`,
+    };
   }
 
   async mapReviewTask(id: string, productId: string, actorUserId: string) {
@@ -254,6 +292,16 @@ export class SystemService {
     });
   }
 
+  async tileSizes(args?: { status?: string }) {
+    await this.backfillTileSizes();
+    const where: any = {};
+    if (args?.status) where.status = args.status;
+    return (this.prisma as any).tileSize.findMany({
+      where,
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
   async upsertProductCategory(input: any, actorUserId: string) {
     const name = String(input.name || '').trim();
     if (!name) throw new Error('Category name is required');
@@ -287,6 +335,32 @@ export class SystemService {
     const value = await this.upsertProductMasterValue('finish', input);
     await this.audit(actorUserId, 'master.finish.save', 'ProductFinish', value.id, `Saved product finish ${value.name}`, value);
     return value;
+  }
+
+  async upsertTileSize(input: any, actorUserId: string) {
+    const name = String(input.name || '').trim();
+    if (!name) throw new Error('Tile size name is required');
+    const uom = String(input.uom || 'BOX').trim().toUpperCase() === 'PC' ? 'PC' : 'BOX';
+    const data = {
+      name,
+      code: input.code || this.slugCode(name),
+      uom,
+      pcsPerBox: Math.max(0, Math.trunc(Number(input.pcsPerBox || 0))),
+      description: input.description || '',
+      status: input.status || 'active',
+      sortOrder: Number(input.sortOrder || 0),
+      metadata: input.metadata || {},
+      updatedAt: new Date(),
+    };
+    const tileSize = input.id
+      ? await (this.prisma as any).tileSize.update({ where: { id: input.id }, data })
+      : await (this.prisma as any).tileSize.upsert({
+          where: { name },
+          update: data,
+          create: { id: ulid(), ...data },
+        });
+    await this.audit(actorUserId, 'master.tile_size.save', 'TileSize', tileSize.id, `Saved tile size ${tileSize.name}`, data);
+    return tileSize;
   }
 
   async vendors(args?: { search?: string; status?: string; take?: number }) {
@@ -442,6 +516,39 @@ export class SystemService {
           name,
           code: this.slugCode(name),
           description: `Backfilled from existing product ${kind}`,
+          status: 'active',
+          sortOrder: 100,
+          metadata: { source: 'product-backfill' },
+          updatedAt: new Date(),
+        },
+      });
+      existingNames.add(name);
+    }
+  }
+
+  private async backfillTileSizes() {
+    const tileDelegate = (this.prisma as any).tileSize;
+    const [existing, tileProducts] = await Promise.all([
+      tileDelegate.findMany({ select: { name: true } }),
+      this.prisma.product.findMany({
+        where: { category: { equals: 'Tiles', mode: 'insensitive' } as any },
+        select: { dimensions: true, unit: true },
+        distinct: ['dimensions'],
+      } as any),
+    ]);
+    const existingNames = new Set(existing.map((row: any) => row.name));
+    for (const product of tileProducts as any[]) {
+      const name = String(product.dimensions || '').trim();
+      if (!name || existingNames.has(name)) continue;
+      const uom = String(product.unit || 'BOX').toUpperCase() === 'PC' ? 'PC' : 'BOX';
+      await tileDelegate.create({
+        data: {
+          id: ulid(),
+          name,
+          code: this.slugCode(name),
+          uom,
+          pcsPerBox: 0,
+          description: 'Backfilled from tile products in Product Master',
           status: 'active',
           sortOrder: 100,
           metadata: { source: 'product-backfill' },

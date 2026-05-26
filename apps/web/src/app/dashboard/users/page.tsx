@@ -23,6 +23,8 @@ const USERS = gql`
       active
       avatarUrl
       bio
+      permissionOverrides
+      effectivePermissions
       passwordChangedAt
       createdAt
     }
@@ -35,13 +37,13 @@ const USERS = gql`
 
 const CREATE_USER = gql`
   mutation CreateUser($input: CreateUserInput!) {
-    createUser(input: $input) { id name email role phone active avatarUrl bio passwordChangedAt createdAt }
+    createUser(input: $input) { id name email role phone active avatarUrl bio permissionOverrides effectivePermissions passwordChangedAt createdAt }
   }
 `;
 
 const UPDATE_USER = gql`
   mutation UpdateUser($id: ID!, $input: UpdateUserInput!) {
-    updateUser(id: $id, input: $input) { id name email role phone active avatarUrl bio passwordChangedAt createdAt }
+    updateUser(id: $id, input: $input) { id name email role phone active avatarUrl bio permissionOverrides effectivePermissions passwordChangedAt createdAt }
   }
 `;
 
@@ -61,8 +63,52 @@ const roles = [
   ['office_staff', 'Office Staff'],
 ];
 
-const emptyCreate = { name: '', email: '', phone: '', role: 'sales', password: '', avatarUrl: '', bio: '' };
-const emptyEdit = { name: '', email: '', phone: '', role: 'sales', active: true, avatarUrl: '', bio: '' };
+const permissionGroups = [
+  {
+    title: 'Security',
+    description: 'User access, settings, approvals and audit trail.',
+    items: [
+      ['users.manage', 'Manage users'],
+      ['settings.manage', 'System settings'],
+      ['audit.view', 'Audit trail'],
+      ['approvals.manage', 'Approvals'],
+    ],
+  },
+  {
+    title: 'Master data',
+    description: 'SKU, catalogue imports, brands, finishes, vendors and product masters.',
+    items: [
+      ['products.manage', 'Create/edit SKUs'],
+      ['master_data.manage', 'Masters: category, brand, finish, vendor'],
+      ['catalogue.import', 'Catalogue import/review'],
+    ],
+  },
+  {
+    title: 'Stock and buying',
+    description: 'Plant, GRN, stock count, inventory and purchase controls.',
+    items: [
+      ['inventory.manage', 'Inventory adjustments'],
+      ['stock_locations.manage', 'Plant/location master'],
+      ['stock_counts.manage', 'Stock count approval'],
+      ['procurement.manage', 'Purchase orders'],
+      ['goods_receipts.manage', 'GRN receiving'],
+    ],
+  },
+  {
+    title: 'Operations',
+    description: 'Dispatch, returns, payments, reports and duplicate-customer override.',
+    items: [
+      ['dispatch.manage', 'Dispatch/challan'],
+      ['returns.manage', 'Returns'],
+      ['payments.manage', 'Payments'],
+      ['reports.view', 'Reports/readiness'],
+      ['customers.force_create', 'Force-create duplicate customers'],
+    ],
+  },
+] as const;
+
+const emptyCreate = { name: '', email: '', phone: '', role: 'sales', password: '', avatarUrl: '', bio: '', permissionOverrides: {} as Record<string, boolean> };
+const emptyEdit = { name: '', email: '', phone: '', role: 'sales', active: true, avatarUrl: '', bio: '', permissionOverrides: {} as Record<string, boolean> };
 
 function generatePassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
@@ -71,6 +117,17 @@ function generatePassword() {
 
 function roleLabel(role?: string) {
   return roles.find(([value]) => value === role)?.[1] || (role || 'User').replace(/_/g, ' ');
+}
+
+function checkedCount(overrides?: Record<string, boolean>) {
+  return Object.values(overrides || {}).filter(Boolean).length;
+}
+
+function togglePermission(overrides: Record<string, boolean> | undefined, key: string) {
+  const next = { ...(overrides || {}) };
+  if (next[key]) delete next[key];
+  else next[key] = true;
+  return next;
 }
 
 function formatDate(value?: string | null) {
@@ -87,6 +144,56 @@ function Field({ label, children, className = '' }: { label: string; children: R
   );
 }
 
+function PermissionOverrides({
+  value,
+  effective,
+  onChange,
+}: {
+  value: Record<string, boolean>;
+  effective?: string[];
+  onChange: (next: Record<string, boolean>) => void;
+}) {
+  const effectiveSet = new Set(effective || []);
+  return (
+    <div className="rounded-r4 border border-[var(--line)] bg-[var(--bg-soft)] p-4">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h4 className="text-sm font-semibold text-[var(--ink)]">Extra rights above role</h4>
+          <p className="mt-1 text-xs leading-5 text-[var(--ink-4)]">Grant only the specific controls this user needs. Their base role still decides the default workspace.</p>
+        </div>
+        <span className="w-max rounded-full bg-[var(--surface)] px-2.5 py-1 text-[11px] font-bold text-[var(--ink-3)]">{checkedCount(value)} overrides</span>
+      </div>
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        {permissionGroups.map((group) => (
+          <div key={group.title} className="rounded-r3 border border-[var(--line)] bg-[var(--surface)] p-3">
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--ink-3)]">{group.title}</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--ink-5)]">{group.description}</p>
+            <div className="mt-3 space-y-2">
+              {group.items.map(([key, label]) => {
+                const grantedByRole = effectiveSet.has(key) && !value?.[key];
+                return (
+                  <label key={key} className="flex items-start gap-2 rounded-md border border-transparent p-2 transition hover:border-[var(--line)] hover:bg-[var(--bg-soft)]">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(value?.[key])}
+                      onChange={() => onChange(togglePermission(value, key))}
+                      className="mt-0.5 h-4 w-4 rounded border-[var(--line)] text-[var(--brand-600)] focus:ring-[var(--ring)]"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-semibold text-[var(--ink)]">{label}</span>
+                      {grantedByRole ? <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600">Already included in role</span> : null}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function UsersPage() {
   const { data, loading, error, refetch } = useQuery(USERS, { fetchPolicy: 'cache-and-network' });
   const [createUser, { loading: creating, error: createError }] = useMutation(CREATE_USER);
@@ -98,12 +205,9 @@ export default function UsersPage() {
   const [resetPassword, setResetPassword] = useState('');
   const [message, setMessage] = useState('');
 
-  const users = (data?.users || []).filter((user: any) => {
-    const email = String(user.email || '').toLowerCase();
-    return !email.includes('.deleted-') && !email.endsWith('@removed.local');
-  });
+  const users = useMemo<any[]>(() => data?.users || [], [data?.users]);
   const selected = useMemo(() => users.find((user: any) => user.id === selectedId) || users[0], [users, selectedId]);
-  const performance = data?.ownerDashboard?.userPerformance || [];
+  const performance = useMemo<any[]>(() => data?.ownerDashboard?.userPerformance || [], [data?.ownerDashboard?.userPerformance]);
   const performanceByUser = useMemo(() => new Map(performance.map((row: any) => [row.id, row])), [performance]);
 
   useEffect(() => {
@@ -116,10 +220,11 @@ export default function UsersPage() {
       active: Boolean(selected.active),
       avatarUrl: selected.avatarUrl || '',
       bio: selected.bio || '',
+      permissionOverrides: selected.permissionOverrides || {},
     });
     setResetPassword('');
     setMessage('');
-  }, [selected?.id]);
+  }, [selected]);
 
   async function submitCreate(event: React.FormEvent) {
     event.preventDefault();
@@ -128,67 +233,47 @@ export default function UsersPage() {
       setMessage('Enter or generate a password of at least 8 characters.');
       return;
     }
-    try {
-      const { data: result } = await createUser({ variables: { input: { ...createForm, email: createForm.email.trim().toLowerCase() } } });
-      setCreateForm(emptyCreate);
-      setSelectedId(result?.createUser?.id || '');
-      setMessage('User created. Share the password securely outside the system.');
-      await refetch();
-    } catch {
-      setMessage('');
-    }
+    const { data: result } = await createUser({ variables: { input: { ...createForm, email: createForm.email.trim().toLowerCase() } } });
+    setCreateForm(emptyCreate);
+    setSelectedId(result?.createUser?.id || '');
+    setMessage('User created. Share the password securely outside the system.');
+    await refetch();
   }
 
   async function submitEdit(event: React.FormEvent) {
     event.preventDefault();
     if (!selected) return;
     setMessage('');
-    try {
-      await updateUser({ variables: { id: selected.id, input: { ...editForm, email: editForm.email.trim().toLowerCase() } } });
-      setMessage('User details saved.');
-      await refetch();
-    } catch {
-      setMessage('');
-    }
+    await updateUser({ variables: { id: selected.id, input: { ...editForm, email: editForm.email.trim().toLowerCase() } } });
+    setMessage('User details saved.');
+    await refetch();
   }
 
   async function submitResetPassword() {
     if (!selected || !resetPassword) return;
     setMessage('');
-    try {
-      await updateUser({ variables: { id: selected.id, input: { password: resetPassword } } });
-      setResetPassword('');
-      setMessage(`Password reset for ${selected.name}. Share the new password securely.`);
-      await refetch();
-    } catch {
-      setMessage('');
-    }
+    await updateUser({ variables: { id: selected.id, input: { password: resetPassword } } });
+    setResetPassword('');
+    setMessage(`Password reset for ${selected.name}. Share the new password securely.`);
+    await refetch();
   }
 
   async function toggleAccess(user = selected) {
     if (!user) return;
     setMessage('');
-    try {
-      await updateUser({ variables: { id: user.id, input: { active: !user.active } } });
-      setMessage(`${user.name} ${user.active ? 'disabled' : 'enabled'}.`);
-      await refetch();
-    } catch {
-      setMessage('');
-    }
+    await updateUser({ variables: { id: user.id, input: { active: !user.active } } });
+    setMessage(`${user.name} ${user.active ? 'disabled' : 'enabled'}.`);
+    await refetch();
   }
 
   async function removeUser() {
     if (!selected) return;
     if (!window.confirm(`Remove ${selected.name} from active team access? Their past quotes/orders stay in history.`)) return;
     setMessage('');
-    try {
-      await deleteUser({ variables: { id: selected.id } });
-      setSelectedId('');
-      setMessage('User removed from team access.');
-      await refetch();
-    } catch {
-      setMessage('');
-    }
+    await deleteUser({ variables: { id: selected.id } });
+    setSelectedId('');
+    setMessage('User removed from active team access.');
+    await refetch();
   }
 
   const activeUsers = users.filter((user: any) => user.active).length;
@@ -229,7 +314,7 @@ export default function UsersPage() {
         </div>
       ) : null}
 
-      <section className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
+      <section className="grid gap-5 xl:grid-cols-[0.72fr_1.28fr]">
         <form onSubmit={submitCreate} className="mp-panel p-5 lg:p-6">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><UserPlus className="h-5 w-5" /></div>
@@ -247,6 +332,10 @@ export default function UsersPage() {
                 {roles.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </Field>
+            <PermissionOverrides
+              value={createForm.permissionOverrides}
+              onChange={(permissionOverrides) => setCreateForm({ ...createForm, permissionOverrides })}
+            />
             <Field label="Temporary password">
               <div className="flex gap-2">
                 <Input required minLength={8} type="text" value={createForm.password} onChange={(event) => setCreateForm({ ...createForm, password: event.target.value })} placeholder="Enter or generate password" />
@@ -261,7 +350,7 @@ export default function UsersPage() {
           </div>
         </form>
 
-        <div className="mp-panel min-w-0 overflow-hidden">
+        <div className="mp-panel overflow-hidden">
           <div className="flex flex-col gap-3 border-b border-[var(--line)] p-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">Team access</h2>
@@ -269,8 +358,8 @@ export default function UsersPage() {
             </div>
             <Users className="h-7 w-7 text-[var(--success)]" />
           </div>
-          <div className="grid min-h-[34rem] min-w-0 2xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-            <div className="min-w-0 border-b border-[var(--line)] p-3 2xl:border-b-0 2xl:border-r">
+          <div className="grid min-h-[34rem] lg:grid-cols-[0.92fr_1.08fr]">
+            <div className="border-b border-[var(--line)] p-3 lg:border-b-0 lg:border-r">
               {loading && !users.length ? <p className="p-8 text-center text-sm text-[var(--ink-4)]">Loading users…</p> : null}
               <div className="max-h-[42rem] space-y-2 overflow-y-auto pr-1 custom-scrollbar">
                 {users.map((user: any) => {
@@ -291,7 +380,7 @@ export default function UsersPage() {
                             <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', user.active ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-600')}>{user.active ? 'Active' : 'Disabled'}</span>
                           </div>
                           <p className="truncate text-xs font-medium text-[var(--ink-4)]">{user.email}</p>
-                          <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-5)]">{roleLabel(user.role)} · ₹{Math.round(perf.quoteValue || 0).toLocaleString('en-IN')} pipeline</p>
+                          <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-5)]">{roleLabel(user.role)} · {checkedCount(user.permissionOverrides)} extra rights · ₹{Math.round(perf.quoteValue || 0).toLocaleString('en-IN')} pipeline</p>
                         </div>
                         <MoreHorizontal className="h-4 w-4 text-[var(--ink-5)]" />
                       </div>
@@ -301,23 +390,24 @@ export default function UsersPage() {
               </div>
             </div>
 
-            <div className="min-w-0 p-5">
+            <div className="p-5">
               {selected ? (
                 <div className="space-y-5">
                   <div className="flex items-start gap-4">
                     <UserAvatar user={{ ...selected, avatarUrl: editForm.avatarUrl }} size="xl" ringed />
                     <div className="min-w-0 flex-1">
                       <h3 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">{selected.name}</h3>
-                      <p className="mt-1 truncate text-sm text-[var(--ink-4)]">{selected.email}</p>
+                      <p className="mt-1 text-sm text-[var(--ink-4)]">{selected.email}</p>
                       <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
                         <span className="rounded-full bg-[var(--brand-50)] px-3 py-1 text-[var(--brand-800)]">{roleLabel(selected.role)}</span>
+                        <span className="rounded-full bg-[var(--bg-soft)] px-3 py-1 text-[var(--ink-3)]">{checkedCount(selected.permissionOverrides)} extra rights</span>
                         <span className="rounded-full bg-[var(--bg-soft)] px-3 py-1 text-[var(--ink-3)]">Joined {formatDate(selected.createdAt)}</span>
                         <span className="rounded-full bg-[var(--bg-soft)] px-3 py-1 text-[var(--ink-3)]">Password {formatDate(selected.passwordChangedAt)}</span>
                       </div>
                     </div>
                   </div>
 
-                  <form onSubmit={submitEdit} className="grid gap-4 lg:grid-cols-2">
+                  <form onSubmit={submitEdit} className="grid gap-4 md:grid-cols-2">
                     <Field label="Full name"><Input value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} required /></Field>
                     <Field label="Email"><Input value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} type="email" required /></Field>
                     <Field label="Phone"><Input value={editForm.phone} onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })} /></Field>
@@ -326,6 +416,13 @@ export default function UsersPage() {
                         {roles.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                       </select>
                     </Field>
+                    <div className="md:col-span-2">
+                      <PermissionOverrides
+                        value={editForm.permissionOverrides || {}}
+                        effective={selected.effectivePermissions || []}
+                        onChange={(permissionOverrides) => setEditForm({ ...editForm, permissionOverrides })}
+                      />
+                    </div>
                     <Field label="Avatar URL" className="md:col-span-2"><Input value={editForm.avatarUrl} onChange={(event) => setEditForm({ ...editForm, avatarUrl: event.target.value })} placeholder="Optional image URL" /></Field>
                     <Field label="Bio / internal note" className="md:col-span-2">
                       <textarea value={editForm.bio} onChange={(event) => setEditForm({ ...editForm, bio: event.target.value.slice(0, 280) })} rows={3} className="w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--brand-400)] focus:ring-2 focus:ring-[var(--ring)]" />

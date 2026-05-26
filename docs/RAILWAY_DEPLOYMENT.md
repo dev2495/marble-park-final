@@ -20,6 +20,7 @@ Settings:
 - Root directory: `/`
 - Build command: `npm ci && npm run db:generate --workspace=apps/api && npm run build:api`
 - Start command: `npm run db:migrate:deploy --workspace=apps/api && npm run start --workspace=apps/api`
+- If the service uses a Dockerfile instead of build/start commands, set `RAILWAY_DOCKERFILE_PATH=apps/api/Dockerfile`.
 - Generate a Railway public domain.
 - Add a volume mounted at `/data` for extracted catalogue images.
 
@@ -53,6 +54,7 @@ Settings:
 - Root directory: `/`
 - Build command: `npm ci && NEXT_PUBLIC_API_URL=https://${{api.RAILWAY_PUBLIC_DOMAIN}}/graphql npm run build:web`
 - Start command: `npm run start --workspace=apps/web -- -p $PORT`
+- If the service uses a Dockerfile instead of build/start commands, set `RAILWAY_DOCKERFILE_PATH=apps/web/Dockerfile`.
 - Generate a Railway public domain.
 
 Variables:

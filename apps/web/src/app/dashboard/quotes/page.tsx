@@ -29,7 +29,6 @@ const QUOTES = gql`
 `;
 
 const SEND_QUOTE = gql`mutation SendQuote($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
-const CONFIRM_QUOTE = gql`mutation ConfirmQuote($id: ID!) { confirmQuote(id: $id) { id status confirmedAt } }`;
 
 function money(value: number) {
   return `₹${Math.round(Number(value || 0)).toLocaleString('en-IN')}`;
@@ -63,7 +62,6 @@ export default function QuotesRegisterPage() {
   const ownerId = user?.role === 'sales' ? user.id : undefined;
   const { data, loading, error, refetch } = useQuery(QUOTES, { variables: { ownerId }, skip: !ready });
   const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
-  const [confirmQuote, { loading: confirming, error: confirmError }] = useMutation(CONFIRM_QUOTE, { onCompleted: () => refetch() });
 
   const quotes = useMemo(() => {
     const rows = data?.quotes || [];
@@ -129,7 +127,6 @@ export default function QuotesRegisterPage() {
         <QueryErrorBanner error={error} onRetry={() => refetch()} />
       ) : null}
       {sendError ? <QueryErrorBanner error={sendError} /> : null}
-      {confirmError ? <QueryErrorBanner error={confirmError} /> : null}
 
       <section className="overflow-hidden rounded-r5 border border-[#e4e4e7]/10 bg-white/80 shadow-xl shadow-[#475569]/8">
         <div className="hidden grid-cols-[1.2fr_1fr_0.72fr_0.55fr_1.25fr] gap-4 border-b border-[#e4e4e7]/10 bg-[#eff6ff]/75 px-5 py-4 text-xs font-medium uppercase tracking-widest text-[#52525b] lg:grid">
@@ -158,7 +155,7 @@ export default function QuotesRegisterPage() {
                   <Button asChild variant="outline" size="sm"><Link href={`/dashboard/quotes/${quote.id}`}><Eye className="mr-2 h-4 w-4" /> View</Link></Button>
                   <Button asChild variant="outline" size="sm"><a href={pdfHref} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> PDF</a></Button>
                   {quote.status !== 'sent' && quote.status !== 'confirmed' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="sm"><Send className="mr-2 h-4 w-4" /> Send</Button>}
-                  {quote.status !== 'confirmed' && <Button disabled={confirming} onClick={() => confirmQuote({ variables: { id: quote.id } })} size="sm"><ShieldCheck className="mr-2 h-4 w-4" /> Confirm</Button>}
+                  {quote.status !== 'confirmed' && <Button asChild size="sm"><Link href={`/dashboard/quotes/${quote.id}`}><ShieldCheck className="mr-2 h-4 w-4" /> Convert to SO</Link></Button>}
                 </div>
               </article>
             );

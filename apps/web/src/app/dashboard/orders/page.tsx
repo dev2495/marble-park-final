@@ -95,8 +95,9 @@ export default function OrdersPage() {
           {!loading && !orders.length && <div className="p-10 text-center text-sm font-bold text-[#52525b] dark:text-[#94a3b8]">No orders in this filter.</div>}
           {orders.map((order: any) => {
             const docs = order.documents || {};
-            const salesOrderPdfUrl = docs.salesOrderPdfUrl || `/api/pdf/order/${order.id}`;
-            const quotePdfUrl = docs.quotePdfUrl || `/api/pdf/quote/${order.quoteId}`;
+            const salesOrderPdfUrl = docs.salesOrderPdf?.url || docs.salesOrderPdfUrl || `/api/pdf/order/${order.id}`;
+            const quotePdfUrl = docs.quotePdf?.url || docs.quotePdfUrl || `/api/pdf/quote/${order.quoteId}`;
+            const salesOrderPdfStatus = docs.salesOrderPdf?.status || 'generated_on_request';
             return (
               <article key={order.id} className="grid gap-4 p-5 lg:grid-cols-[0.9fr_1fr_0.7fr_0.7fr_0.9fr] lg:items-center">
                 <div>
@@ -124,6 +125,9 @@ export default function OrdersPage() {
                   </a>
                   <span className="inline-flex items-center rounded-2xl bg-[#f8fafc] px-3 py-2 text-xs font-black uppercase tracking-wider text-[#475569] ring-1 ring-[#e2e8f0] dark:bg-white/8 dark:text-[#cbd5e1] dark:ring-white/10">
                     <Truck className="mr-2 h-4 w-4" /> {order.status}
+                  </span>
+                  <span className="inline-flex items-center rounded-2xl bg-[#ecfdf5] px-3 py-2 text-xs font-black uppercase tracking-wider text-[#047857] ring-1 ring-[#bbf7d0]">
+                    PDF {salesOrderPdfStatus.replaceAll('_', ' ')}
                   </span>
                 </div>
               </article>

@@ -60,6 +60,18 @@ export class QuoteOutput {
   @Field({ nullable: true })
   leadId?: string;
 
+  @Field({ nullable: true })
+  intentId?: string;
+
+  @Field({ nullable: true })
+  supersedesQuoteId?: string;
+
+  @Field({ nullable: true })
+  supersededByQuoteId?: string;
+
+  @Field(() => Number, { nullable: true })
+  versionNumber?: number;
+
   @Field(() => GraphQLJSON, { nullable: true })
   lines?: any;
 
@@ -110,6 +122,12 @@ export class CreateQuoteInput {
 
   @Field(() => String, { nullable: true })
   quoteMeta?: string;
+
+  @Field(() => String, { nullable: true })
+  intentId?: string;
+
+  @Field(() => String, { nullable: true })
+  supersedesQuoteId?: string;
 }
 
 @InputType()
