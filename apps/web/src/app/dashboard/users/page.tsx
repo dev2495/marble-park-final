@@ -304,7 +304,7 @@ export default function UsersPage() {
         </div>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {createError ? <QueryErrorBanner error={createError} /> : null}
       {updateError ? <QueryErrorBanner error={updateError} /> : null}
       {deleteError ? <QueryErrorBanner error={deleteError} /> : null}

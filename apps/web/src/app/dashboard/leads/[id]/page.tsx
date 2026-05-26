@@ -205,7 +205,7 @@ export default function LeadDetailPage() {
 
   return (
     <div className="space-y-5 pb-12">
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {mutationError ? <QueryErrorBanner error={mutationError} /> : null}
 
       {/* Sticky hero — customer + project + state + actions */}

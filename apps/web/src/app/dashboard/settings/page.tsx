@@ -196,7 +196,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {saveError ? <QueryErrorBanner error={saveError} /> : null}
       {resetError ? <QueryErrorBanner error={resetError} /> : null}
       {createLocationError ? <QueryErrorBanner error={createLocationError} /> : null}

@@ -23,7 +23,7 @@ export default function StockLedgerPage() {
         <h1 className="mt-2 font-display text-3xl font-bold tracking-[-0.02em] text-[var(--ink)]">Every GRN, dispatch, return and count variance lands in one movement trail.</h1>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {loading && !ledger.length ? <QueryLoading label="Loading stock ledger..." /> : null}
 
       <section className="grid gap-3 md:grid-cols-3">

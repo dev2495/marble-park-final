@@ -36,7 +36,7 @@ export default function PaymentsPage() {
         <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">This closes the audit gap where confirmed demand existed without a ledger-level payment trail.</p>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {loading && !receipts.length ? <QueryLoading label="Loading payment ledger..." /> : null}
 
       <section className="grid gap-3 md:grid-cols-4">

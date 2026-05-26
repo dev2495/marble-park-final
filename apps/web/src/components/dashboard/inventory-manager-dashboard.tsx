@@ -80,7 +80,7 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
 
   return (
     <div className="space-y-6">
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       <GreetingStrip
         role={effectiveRole}

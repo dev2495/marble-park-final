@@ -131,7 +131,7 @@ export default function ReportsPage() {
           ))}
         </div>
 
-        {error ? <div className="mt-4"><QueryErrorBanner error={error} onRetry={() => refetch()} /></div> : null}
+        {error && !data ? <div className="mt-4"><QueryErrorBanner error={error} onRetry={() => refetch()} /></div> : null}
 
         <div className="mt-5 overflow-x-auto">
           {loading && !rows.length ? (

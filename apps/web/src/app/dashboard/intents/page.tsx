@@ -88,7 +88,7 @@ export default function IntentDeskPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {generateError ? <QueryErrorBanner error={generateError} /> : null}
 
       <section className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-gradient-to-br from-blue-50 via-white to-emerald-50/40 p-6 shadow-sm-soft">

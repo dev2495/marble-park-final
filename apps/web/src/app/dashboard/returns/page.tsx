@@ -56,7 +56,7 @@ export default function ReturnsPage() {
         <p className="mt-2 text-sm text-[var(--ink-3)]">Returned stock can go back to available stock or damaged stock based on inspection disposition.</p>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {createError ? <QueryErrorBanner error={createError} /> : null}
 
       <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">

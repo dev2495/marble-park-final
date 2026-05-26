@@ -98,7 +98,7 @@ export function SalesRepDashboard({ effectiveRole, user }: { effectiveRole: stri
 
   return (
     <div className="space-y-6">
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       <GreetingStrip
         role={effectiveRole}

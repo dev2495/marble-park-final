@@ -158,7 +158,7 @@ export default function CustomersPage() {
         )}
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {loading && !data ? <div role="status" aria-live="polite" className="col-span-full rounded-r5 bg-white/70 p-12 text-center font-bold text-[#52525b]">Loading customers...</div> : customers.map((customer: any) => (

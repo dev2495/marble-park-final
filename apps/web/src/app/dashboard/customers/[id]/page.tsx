@@ -173,7 +173,7 @@ export default function CustomerDetailPage() {
   };
 
   if (loading && !customer) return <div className="p-8 text-sm text-[var(--ink-4)]">Loading customer…</div>;
-  if (error) return <QueryErrorBanner error={error} onRetry={() => refetch()} />;
+  if (error && !customer) return <QueryErrorBanner error={error} onRetry={() => refetch()} />;
   if (!customer) return <p className="p-8 text-sm text-[var(--ink-4)]">Customer not found.</p>;
 
   return (

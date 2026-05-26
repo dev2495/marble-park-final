@@ -37,7 +37,7 @@ export default function DocumentCenterPage() {
         </div>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {loading && !jobs.length ? <QueryLoading label="Loading documents..." /> : null}
 
       <section className="grid gap-3 md:grid-cols-4">

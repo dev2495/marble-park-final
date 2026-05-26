@@ -51,7 +51,7 @@ export default function TileMasterPage() {
 
   return (
     <div className="space-y-7 pb-10">
-      {error ? <QueryErrorBanner error={error} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} /> : null}
       {saveError ? <QueryErrorBanner error={saveError} /> : null}
 
       <section className="mp-card relative overflow-hidden rounded-r6 border border-[var(--line)] p-7">

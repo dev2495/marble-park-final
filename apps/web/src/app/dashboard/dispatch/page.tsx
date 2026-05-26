@@ -47,7 +47,7 @@ export default function DispatchPage() {
 
   return (
     <div className="space-y-7 pb-10">
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {createError ? <QueryErrorBanner error={createError} /> : null}
       {updateError ? <QueryErrorBanner error={updateError} /> : null}
 

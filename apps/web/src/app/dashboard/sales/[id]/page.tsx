@@ -77,7 +77,7 @@ export default function SalesOrderDetailPage() {
   };
 
   if (loading && !order) return <p className="p-8 text-sm text-[var(--ink-4)]">Loading order…</p>;
-  if (error) return <QueryErrorBanner error={error} onRetry={() => refetch()} />;
+  if (error && !order) return <QueryErrorBanner error={error} onRetry={() => refetch()} />;
   if (!order) return <p className="p-8 text-sm text-[var(--ink-4)]">Order not found.</p>;
 
   return (

@@ -117,7 +117,7 @@ export default function SystemAuditPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       <section className="mp-card rounded-r6 p-6 text-[#18181b] dark:text-[#f8fafc]">
         <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a] dark:text-[#94a3b8]">Owner system audit</p>

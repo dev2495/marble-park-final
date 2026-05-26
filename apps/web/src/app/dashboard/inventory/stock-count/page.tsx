@@ -65,7 +65,7 @@ export default function StockCountPage() {
         <h1 className="mt-2 font-display text-3xl font-bold tracking-[-0.02em] text-[var(--ink)]">Count sessions separate physical variance from casual manual adjustment.</h1>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {createError ? <QueryErrorBanner error={createError} /> : null}
       {approveError ? <QueryErrorBanner error={approveError} /> : null}
 

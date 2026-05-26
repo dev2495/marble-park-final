@@ -92,9 +92,9 @@ export default function InventoryPage() {
         </div>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
-      {dashboardError ? <QueryErrorBanner error={dashboardError} /> : null}
-      {lowStockError ? <QueryErrorBanner error={lowStockError} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {dashboardError && !dashboardData ? <QueryErrorBanner error={dashboardError} /> : null}
+      {lowStockError && !lowStockData ? <QueryErrorBanner error={lowStockError} /> : null}
 
       {lowStockRows.length > 0 ? (
         <section className="mp-card rounded-r5 border border-red-200/70 bg-red-50/60 p-5">

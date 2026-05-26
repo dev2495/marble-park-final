@@ -116,14 +116,14 @@ export default function QuotesRegisterPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
             {['all', 'draft', 'sent', 'confirmed', 'lost'].map((item) => (
-              <button key={item} onClick={() => setStatus(item)} className={`rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-wider ${status === item ? 'bg-[#18181b] text-white' : 'bg-white/75 text-[#27272a]'}`}>{item}</button>
+              <button key={item} onClick={() => setStatus(item)} className={`rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-wider ${status === item ? 'bg-[var(--surface-3)] text-[var(--bg)]' : 'bg-[var(--surface)] text-[var(--ink-2)] hover:bg-[var(--bg-soft)]'}`}>{item}</button>
             ))}
           </div>
           <Button asChild><Link href="/dashboard/quotes/new"><Plus className="mr-2 h-4 w-4" /> Build quote</Link></Button>
         </div>
       </section>
 
-      {error ? (
+      {error && !data ? (
         <QueryErrorBanner error={error} onRetry={() => refetch()} />
       ) : null}
       {sendError ? <QueryErrorBanner error={sendError} /> : null}

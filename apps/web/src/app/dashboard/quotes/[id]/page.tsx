@@ -156,7 +156,7 @@ export default function QuoteDetailPage() {
   if (!quote) return <div className="mp-card rounded-r5 p-10 text-center font-bold text-[#52525b]">Quote not found.</div>;
 
   return <div className="space-y-6 pb-10">
-    {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+    {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
     {mutationError ? <QueryErrorBanner error={mutationError} /> : null}
     <section className="relative overflow-hidden rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]">
       <div className="absolute inset-0 hidden" />

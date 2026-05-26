@@ -427,7 +427,7 @@ export default function LeadPipelinePage() {
         </div>
       </section>
 
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       {/* View body */}
       {view === 'pipeline' ? (
@@ -470,8 +470,8 @@ function ViewTab({ active, onClick, icon: Icon, label }: { active: boolean; onCl
       onClick={onClick}
       className={
         active
-          ? 'inline-flex items-center gap-1.5 rounded-lg bg-[var(--ink)] px-3 py-1.5 text-xs font-bold text-white shadow-sm'
-          : 'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-[var(--ink-3)] hover:text-[var(--ink)]'
+          ? 'inline-flex items-center gap-1.5 rounded-lg bg-[var(--surface-3)] px-3 py-1.5 text-xs font-bold text-[var(--bg)] shadow-sm'
+          : 'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-[var(--ink-2)] hover:text-[var(--ink)]'
       }
     >
       <Icon className="h-3.5 w-3.5" /> {label}
@@ -543,7 +543,7 @@ function Pill({ active, onClick, label, icon: Icon, danger }: { active: boolean;
   if (active) {
     cls = danger
       ? 'inline-flex items-center gap-1.5 rounded-full border border-rose-600 bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white'
-      : 'inline-flex items-center gap-1.5 rounded-full border border-[var(--ink)] bg-[var(--ink)] px-2.5 py-1.5 text-xs font-semibold text-white';
+      : 'inline-flex items-center gap-1.5 rounded-full border border-[var(--surface-3)] bg-[var(--surface-3)] px-2.5 py-1.5 text-xs font-semibold text-[var(--bg)]';
   }
   return (
     <button type="button" onClick={onClick} className={cls}>

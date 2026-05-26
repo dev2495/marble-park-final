@@ -97,7 +97,7 @@ export default function TargetsPage() {
         ) : null}
       </section>
 
-      {monthlyError ? <QueryErrorBanner error={monthlyError} onRetry={() => refetchMonthly()} /> : null}
+      {monthlyError && !monthlyData ? <QueryErrorBanner error={monthlyError} onRetry={() => refetchMonthly()} /> : null}
 
       {canSet ? (
         <section className="rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-5 shadow-sm-soft">

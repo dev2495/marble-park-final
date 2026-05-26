@@ -60,6 +60,8 @@ const retryLink = new RetryLink({
       // Retry true network failures, not GraphQL/validation errors.
       const message = String(error?.message || '').toLowerCase();
       if (message.includes('failed to fetch')) return true;
+      if (message.includes('load failed')) return true;
+      if (message.includes('request failed')) return true;
       if (message.includes('networkerror')) return true;
       if (error?.statusCode && [502, 503, 504].includes(error.statusCode)) return true;
       return false;

@@ -24,7 +24,7 @@ export default function PendingInwardPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {error && !data ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       <section className="relative overflow-hidden rounded-r6 border border-[var(--line)] bg-gradient-to-br from-amber-50 via-white to-blue-50 p-6 shadow-sm-soft">
         <div className="absolute right-8 top-6 h-28 w-28 rounded-full bg-amber-300/30 blur-3xl" />
