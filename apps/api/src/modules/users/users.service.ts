@@ -49,6 +49,9 @@ export class UsersService {
 
   async findAll() {
     return this.prisma.user.findMany({
+      where: {
+        email: { not: { contains: '.deleted' } },
+      },
       orderBy: { name: 'asc' },
     });
   }
