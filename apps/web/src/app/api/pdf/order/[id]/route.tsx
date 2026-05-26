@@ -66,7 +66,13 @@ function localApiEnv() {
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
-    const apiUrl = process.env.ORDER_PDF_API_URL || process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql';
+    const apiUrl =
+      process.env.ORDER_PDF_API_URL ||
+      process.env.QUOTE_PDF_API_URL ||
+      process.env.NEXT_PUBLIC_API_URL ||
+      process.env.API_URL ||
+      process.env.GRAPHQL_URL ||
+      (process.env.RAILWAY_ENVIRONMENT ? 'https://api-production-bc49.up.railway.app/graphql' : 'http://localhost:4000/graphql');
     const buffer = await renderSalesOrderPdf(id, req.url, apiUrl);
 
     return new NextResponse(buffer as unknown as BodyInit, {

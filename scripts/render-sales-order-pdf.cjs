@@ -176,11 +176,7 @@ async function fetchOrderViaPrisma(id) {
 
 async function fetchOrder(id, apiUrl) {
   if (apiUrl) {
-    try {
-      return await fetchOrderViaGraphql(id, apiUrl);
-    } catch (error) {
-      if (!process.env.DATABASE_URL) throw error;
-    }
+    return fetchOrderViaGraphql(id, apiUrl);
   }
   return fetchOrderViaPrisma(id);
 }
