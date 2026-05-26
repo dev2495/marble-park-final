@@ -2,7 +2,7 @@ import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int,
 import { GraphQLJSON } from 'graphql-scalars';
 import { InventoryService } from './inventory.service';
 import { ProductOutput } from '../products/products.resolver';
-import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 
 @InputType()
@@ -136,7 +136,7 @@ export class InventoryResolver {
 
   @Mutation(() => InventoryOutput)
   async createInventory(@Args('input') input: CreateInventoryInput, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.inventory.create(input as any);
   }
 
@@ -146,7 +146,7 @@ export class InventoryResolver {
     @Args('input') input: UpdateInventoryInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.inventory.update(id, input as any);
   }
 
@@ -158,7 +158,7 @@ export class InventoryResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('notes', { nullable: true }) notes?: string,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.inventory.adjustQuantity(id, adjustment, type as any, notes, user.id);
   }
 }

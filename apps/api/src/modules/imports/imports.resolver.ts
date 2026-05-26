@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ImportsService } from './imports.service';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requireRoles } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 
@@ -66,19 +66,19 @@ export class ImportsResolver {
 
   @Query(() => [GraphQLJSON])
   async importBatches(@Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
     return this.imports.listBatches();
   }
 
   @Query(() => [GraphQLJSON])
   async importRows(@Args('importBatchId') importBatchId: string, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
     return this.imports.listRows(importBatchId);
   }
 
   @Mutation(() => ImportOutput)
   async processExcelImport(@Args('filePath') filePath: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     const result = await this.imports.processExcelImport(filePath, user.id);
     return { id: `excel-${Date.now()}`, result };
   }
@@ -89,7 +89,7 @@ export class ImportsResolver {
     @Args('contentBase64') contentBase64: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     const filePath = writeUploadToTemp(filename, contentBase64);
     const result = await this.imports.processExcelImport(filePath, user.id);
     return { id: `excel-${Date.now()}`, result };
@@ -97,7 +97,7 @@ export class ImportsResolver {
 
   @Mutation(() => ImportOutput)
   async processPdfImport(@Args('filePath') filePath: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     const result = await this.imports.processPdfImport(filePath, user.id);
     return { id: `pdf-${Date.now()}`, result };
   }
@@ -108,7 +108,7 @@ export class ImportsResolver {
     @Args('contentBase64') contentBase64: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     const filePath = writeUploadToTemp(filename, contentBase64);
     const result = await this.imports.processPdfImport(filePath, user.id);
     return { id: `pdf-${Date.now()}`, result };
@@ -116,7 +116,7 @@ export class ImportsResolver {
 
   @Mutation(() => ImportOutput)
   async beginImportUpload(@Args('filename') filename: string, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
     const uploadId = ulid();
     const filePath = uploadTempPath(uploadId, filename);
     fs.rmSync(filePath, { force: true });
@@ -131,7 +131,7 @@ export class ImportsResolver {
     @Args('contentBase64') contentBase64: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
     const filePath = uploadTempPath(uploadId, filename);
     fs.appendFileSync(filePath, Buffer.from(contentBase64, 'base64'));
     return { id: uploadId, result: { uploadedBytes: fs.statSync(filePath).size } };
@@ -144,7 +144,7 @@ export class ImportsResolver {
     @Args('kind') kind: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     const filePath = uploadTempPath(uploadId, filename);
     if (!fs.existsSync(filePath)) {
       throw new Error('Uploaded file was not found. Please upload again.');
@@ -181,21 +181,21 @@ export class ImportsResolver {
     @Args('input') input: UpdateImportRowInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
     const result = await this.imports.updateImportRow(id, input);
     return { id, result };
   }
 
   @Mutation(() => ImportOutput)
   async applyImportBatch(@Args('importBatchId') importBatchId: string, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
     const result = await this.imports.applyImportBatch(importBatchId);
     return { id: importBatchId, result };
   }
 
   @Mutation(() => ImportOutput)
   async submitImportBatchForApproval(@Args('importBatchId') importBatchId: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     const result = await this.imports.submitImportBatchForApproval(importBatchId, user.id);
     return { id: importBatchId, result };
   }
@@ -206,7 +206,7 @@ export class ImportsResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('note', { nullable: true }) note?: string,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'approvals.manage');
     const result = await this.imports.approveImportBatch(importBatchId, user.id, note);
     return { id: importBatchId, result };
   }

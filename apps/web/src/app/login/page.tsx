@@ -29,8 +29,8 @@ const LOGIN_MUTATION = gql`
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('admin@marblepark.com');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -174,9 +174,7 @@ export default function LoginPage() {
             </form>
 
             <div className="mt-8 border-t border-white/10 pt-6 text-center text-xs leading-5 text-slate-400">
-              <p>
-                Credentials are created by your admin. Demo login: <span className="font-semibold text-slate-200">admin@marblepark.com / password123</span>.
-              </p>
+              <p>Credentials are issued from User Management by an authorised admin or owner.</p>
             </div>
           </div>
         </section>

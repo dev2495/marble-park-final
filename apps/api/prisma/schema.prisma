@@ -1073,6 +1073,9 @@ model User {
   /// One-line bio shown on the profile page. Not validated; kept short
   /// (<= 280 chars) in the resolver.
   bio               String?
+  /// Per-user RBAC changes layered on top of the base role. Keys map to
+  /// explicit permissions such as users.manage or products.manage.
+  permissionOverrides Json           @default("{}")
   /// Audit trail for password rotations. Used by the profile page to show
   /// "last changed N days ago" + by future password-expiry policies.
   passwordChangedAt DateTime?

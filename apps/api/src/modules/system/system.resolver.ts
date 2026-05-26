@@ -1,6 +1,6 @@
 import { Args, Context, Field, InputType, Mutation, ObjectType, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requireRoles } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemService } from './system.service';
 
@@ -90,13 +90,13 @@ export class SystemResolver {
 
   @Query(() => SystemJsonOutput)
   async appSettings(@Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'settings.manage');
     return { data: await this.system.getSettings() };
   }
 
   @Mutation(() => SystemJsonOutput)
   async updateAppSettings(@Args('input') input: UpdateSettingsInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'settings.manage');
     return { data: await this.system.updateSettings(input, user.id) };
   }
 
@@ -113,7 +113,7 @@ export class SystemResolver {
     @Args('entityId', { nullable: true }) entityId?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'audit.view');
     return this.system.auditEvents({ entityType, entityId, take });
   }
 
@@ -123,7 +123,7 @@ export class SystemResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
     return this.system.reviewTasks({ status, take });
   }
 
@@ -133,7 +133,7 @@ export class SystemResolver {
     @Args('productId') productId: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     return { data: await this.system.mapReviewTask(id, productId, user.id) };
   }
 
@@ -143,7 +143,7 @@ export class SystemResolver {
     @Args('productId') productId: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     return { data: await this.system.submitReviewTaskForApproval(id, productId, user.id) };
   }
 
@@ -153,7 +153,7 @@ export class SystemResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('note', { nullable: true }) note?: string,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'approvals.manage');
     return { data: await this.system.approveReviewTask(id, user.id, note) };
   }
 
@@ -168,7 +168,7 @@ export class SystemResolver {
 
   @Mutation(() => SystemJsonOutput)
   async saveProductCategory(@Args('input') input: ProductCategoryInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'master_data.manage');
     return { data: await this.system.upsertProductCategory(input, user.id) };
   }
 
@@ -183,7 +183,7 @@ export class SystemResolver {
 
   @Mutation(() => SystemJsonOutput)
   async saveProductBrand(@Args('input') input: ProductBrandInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'master_data.manage');
     return { data: await this.system.upsertProductBrand(input, user.id) };
   }
 
@@ -198,7 +198,7 @@ export class SystemResolver {
 
   @Mutation(() => SystemJsonOutput)
   async saveProductFinish(@Args('input') input: ProductFinishInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'master_data.manage');
     return { data: await this.system.upsertProductFinish(input, user.id) };
   }
 
@@ -213,7 +213,7 @@ export class SystemResolver {
 
   @Mutation(() => SystemJsonOutput)
   async saveTileSize(@Args('input') input: TileSizeInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'master_data.manage');
     return { data: await this.system.upsertTileSize(input, user.id) };
   }
 
@@ -230,7 +230,7 @@ export class SystemResolver {
 
   @Mutation(() => SystemJsonOutput)
   async saveVendor(@Args('input') input: VendorInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'master_data.manage');
     return { data: await this.system.upsertVendor(input, user.id) };
   }
 }

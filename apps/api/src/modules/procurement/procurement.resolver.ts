@@ -1,6 +1,6 @@
 import { Args, Context, Field, ID, InputType, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProcurementService } from './procurement.service';
 
@@ -127,7 +127,7 @@ export class ProcurementResolver {
 
   @Mutation(() => GraphQLJSON)
   async createPurchaseOrder(@Args('input') input: CreatePurchaseOrderInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'procurement.manage');
     return this.procurement.createPurchaseOrder(input as any, user.id);
   }
 
@@ -137,19 +137,19 @@ export class ProcurementResolver {
     @Args('status') status: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'procurement.manage');
     return this.procurement.updatePurchaseOrderStatus(id, status, user.id);
   }
 
   @Mutation(() => GraphQLJSON)
   async receivePurchaseOrder(@Args('input') input: ReceivePurchaseOrderInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'goods_receipts.manage');
     return this.procurement.receivePurchaseOrder(input as any, user.id);
   }
 
   @Mutation(() => GraphQLJSON)
   async createManualGoodsReceipt(@Args('input') input: ManualGoodsReceiptInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'goods_receipts.manage');
     return this.procurement.createManualGoodsReceipt(input as any, user.id);
   }
 }

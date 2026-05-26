@@ -348,7 +348,7 @@ export default function SettingsPage() {
           </div>
           <ul className="mt-5 space-y-2 text-sm font-semibold text-[var(--ink-3)]">
             <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Login screen does not expose default credentials.</li>
-            <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Users are managed by admin/owner roles only.</li>
+            <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Users are managed by authorised access managers with audit trail.</li>
             <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Document prefixes are configurable before client testing.</li>
             <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Theme preference is saved per browser.</li>
           </ul>

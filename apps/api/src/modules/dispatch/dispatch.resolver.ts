@@ -1,7 +1,7 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context } from '@nestjs/graphql';
 import { DispatchService } from './dispatch.service';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ObjectType()
@@ -110,13 +110,13 @@ export class DispatchResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('dispatchJobId', { nullable: true }) dispatchJobId?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'dispatch_ops', 'inventory_manager', 'office_staff']);
+    await requirePermission(this.prisma, ctx, 'dispatch.manage', ['admin', 'owner', 'sales_manager', 'dispatch_ops', 'inventory_manager', 'office_staff']);
     return this.dispatch.findAllChallans({ status, dispatchJobId });
   }
 
   @Mutation(() => DispatchOutput)
   async createDispatchJob(@Args('input') input: CreateDispatchJobInput, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'dispatch_ops', 'office_staff']);
+    await requirePermission(this.prisma, ctx, 'dispatch.manage');
     return this.dispatch.createJob(input as any);
   }
 
@@ -126,13 +126,13 @@ export class DispatchResolver {
     @Args('status') status: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'dispatch_ops']);
+    await requirePermission(this.prisma, ctx, 'dispatch.manage');
     return this.dispatch.updateJobStatus(id, status);
   }
 
   @Mutation(() => DispatchOutput)
   async createChallan(@Args('input') input: CreateChallanInput, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'dispatch_ops']);
+    await requirePermission(this.prisma, ctx, 'dispatch.manage');
     return this.dispatch.createChallan(input as any);
   }
 
@@ -142,7 +142,7 @@ export class DispatchResolver {
     @Args('status') status: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'dispatch_ops']);
+    await requirePermission(this.prisma, ctx, 'dispatch.manage');
     return this.dispatch.updateChallanStatus(id, status);
   }
 }

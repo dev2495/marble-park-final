@@ -154,7 +154,7 @@ export class CustomersResolver {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
     // Only owners/admins may force-create past the duplicate guard.
     const sanitized = { ...input };
-    if (sanitized.forceCreate && !['admin', 'owner'].includes(user.role)) {
+    if (sanitized.forceCreate && !user.effectivePermissions.includes('customers.force_create')) {
       sanitized.forceCreate = false;
     }
     return this.customers.create(sanitized as any);

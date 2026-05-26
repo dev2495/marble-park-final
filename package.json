@@ -28,6 +28,7 @@
     "system:upgrade": "node scripts/upgrade-retail-os.mjs",
     "smoke:quote-notifications": "node scripts/e2e-quote-area-notification-smoke.mjs",
     "smoke:production-hardening": "node scripts/e2e-production-hardening-smoke.mjs",
+    "smoke:rbac-users": "node scripts/e2e-rbac-user-management-smoke.mjs",
     "smoke:readiness": "node scripts/e2e-readiness-import-smoke.mjs",
     "reset:client-data": "node scripts/reset-client-test-data.mjs"
   },

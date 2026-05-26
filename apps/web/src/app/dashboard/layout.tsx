@@ -20,7 +20,7 @@ import { ThemeToggle, ThemeToggleButton } from '@/components/theme-toggle';
 
 const ME_QUERY = gql`
   query LayoutMe {
-    me { id name email avatarUrl role }
+    me { id name email avatarUrl role effectivePermissions permissionOverrides }
   }
 `;
 
@@ -47,12 +47,12 @@ const MARK_NOTIFICATION_READ = gql`
   }
 `;
 
-const navSections: Array<{ title: string; items: Array<{ name: string; href: string; icon: any; roles: string[] }> }> = [
+const navSections: Array<{ title: string; items: Array<{ name: string; href: string; icon: any; roles: string[]; permission?: string }> }> = [
   {
     title: 'Operate',
     items: [
       { name: 'Command Center', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
-      { name: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck, roles: ['admin', 'owner'] },
+      { name: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck, roles: ['admin', 'owner'], permission: 'approvals.manage' },
       { name: 'Sales Desk', href: '/dashboard/sales', icon: Briefcase, roles: ['admin', 'owner', 'sales_manager', 'sales'] },
     ],
   },
@@ -63,31 +63,31 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
       { name: 'Intents', href: '/dashboard/intents', icon: ListChecks, roles: ['admin', 'owner', 'sales_manager', 'office_staff'] },
       { name: 'Quotes', href: '/dashboard/quotes', icon: FileSpreadsheet, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
       { name: 'Orders', href: '/dashboard/orders', icon: Receipt, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops'] },
-      { name: 'Payments', href: '/dashboard/payments', icon: CreditCard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
+      { name: 'Payments', href: '/dashboard/payments', icon: CreditCard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'], permission: 'payments.manage' },
       { name: 'Documents', href: '/dashboard/documents', icon: FileText, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
     ],
   },
   {
     title: 'Stock',
     items: [
-      { name: 'Catalogue', href: '/dashboard/products', icon: Bath, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'office_staff'] },
-      { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes, roles: ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff'] },
-      { name: 'Pending Inward', href: '/dashboard/pending-inward', icon: PackageSearch, roles: ['admin', 'owner', 'dispatch_ops', 'inventory_manager', 'sales_manager', 'sales', 'office_staff'] },
-      { name: 'Procurement', href: '/dashboard/procurement', icon: ClipboardList, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'] },
-      { name: 'Stock Count', href: '/dashboard/inventory/stock-count', icon: ClipboardCheck, roles: ['admin', 'owner', 'inventory_manager'] },
-      { name: 'Stock Ledger', href: '/dashboard/inventory/ledger', icon: MapPinned, roles: ['admin', 'owner', 'inventory_manager'] },
-      { name: 'Dispatch', href: '/dashboard/dispatch', icon: Truck, roles: ['admin', 'owner', 'dispatch_ops', 'sales_manager', 'office_staff'] },
-      { name: 'Returns', href: '/dashboard/returns', icon: RotateCcw, roles: ['admin', 'owner', 'inventory_manager', 'dispatch_ops', 'sales_manager'] },
+      { name: 'Catalogue', href: '/dashboard/products', icon: Bath, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'office_staff'], permission: 'products.manage' },
+      { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes, roles: ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff'], permission: 'inventory.manage' },
+      { name: 'Pending Inward', href: '/dashboard/pending-inward', icon: PackageSearch, roles: ['admin', 'owner', 'dispatch_ops', 'inventory_manager', 'sales_manager', 'sales', 'office_staff'], permission: 'goods_receipts.manage' },
+      { name: 'Procurement', href: '/dashboard/procurement', icon: ClipboardList, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'procurement.manage' },
+      { name: 'Stock Count', href: '/dashboard/inventory/stock-count', icon: ClipboardCheck, roles: ['admin', 'owner', 'inventory_manager'], permission: 'stock_counts.manage' },
+      { name: 'Stock Ledger', href: '/dashboard/inventory/ledger', icon: MapPinned, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
+      { name: 'Dispatch', href: '/dashboard/dispatch', icon: Truck, roles: ['admin', 'owner', 'dispatch_ops', 'sales_manager', 'office_staff'], permission: 'dispatch.manage' },
+      { name: 'Returns', href: '/dashboard/returns', icon: RotateCcw, roles: ['admin', 'owner', 'inventory_manager', 'dispatch_ops', 'sales_manager'], permission: 'returns.manage' },
     ],
   },
   {
     title: 'People & Data',
     items: [
       { name: 'Customers', href: '/dashboard/customers', icon: Users, roles: ['admin', 'owner', 'sales_manager', 'sales', 'dispatch_ops', 'office_staff'] },
-      { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: ['admin', 'owner'] },
-      { name: 'System Audit', href: '/dashboard/audit', icon: BadgeCheck, roles: ['admin', 'owner'] },
-      { name: 'Master Data', href: '/dashboard/master-data', icon: Settings, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'] },
-      { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'owner'] },
+      { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: ['admin', 'owner'], permission: 'users.manage' },
+      { name: 'System Audit', href: '/dashboard/audit', icon: BadgeCheck, roles: ['admin', 'owner'], permission: 'audit.view' },
+      { name: 'Master Data', href: '/dashboard/master-data', icon: Settings, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'master_data.manage' },
+      { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'owner'], permission: 'settings.manage' },
     ],
   },
   {
@@ -180,9 +180,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setRoleOverride(localStorage.getItem('role_override') || '');
   }, [router]);
 
-  const effectiveRole = user?.role === 'admin' && roleOverride ? roleOverride : user?.role || 'owner';
+  const { data: meData } = useQuery(ME_QUERY, { skip: !user, fetchPolicy: 'cache-and-network' });
+  const me = meData?.me || user;
+  const previewingRole = user?.role === 'admin' && roleOverride;
+  const effectiveRole = previewingRole ? roleOverride : me?.role || user?.role || 'owner';
+  const effectivePermissions = previewingRole ? [] : (me?.effectivePermissions || user?.effectivePermissions || []);
+  const can = (permission: string) => effectivePermissions.includes(permission);
   const visibleSections = navSections
-    .map((section) => ({ ...section, items: section.items.filter((item) => item.roles.includes(effectiveRole)) }))
+    .map((section) => ({ ...section, items: section.items.filter((item) => item.roles.includes(effectiveRole) || (item.permission && can(item.permission))) }))
     .filter((section) => section.items.length > 0);
   const isNavActive = (href: string) =>
     href === '/dashboard' ? pathname === '/dashboard' : pathname === href || pathname.startsWith(`${href}/`);
@@ -197,8 +202,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     skip: !user,
     pollInterval: 60000,
   });
-  const { data: meData } = useQuery(ME_QUERY, { skip: !user, fetchPolicy: 'cache-and-network' });
-  const me = meData?.me || user;
   const [markNotificationRead] = useMutation(MARK_NOTIFICATION_READ, { onCompleted: () => refetchNotifications() });
 
   const handleLogout = () => {
@@ -476,7 +479,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </>
                   ) : null}
 
-                  {['admin', 'owner'].includes(user?.role) ? (
+                  {can('settings.manage') ? (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => router.push('/dashboard/settings')}>

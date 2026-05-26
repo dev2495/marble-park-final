@@ -1,7 +1,9 @@
-import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context, ResolveField, Parent } from '@nestjs/graphql';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
+import { GraphQLJSON } from 'graphql-scalars';
+import { effectivePermissionsForUser } from '../auth/rbac';
 
 @ObjectType()
 export class UserOutput {
@@ -29,6 +31,12 @@ export class UserOutput {
   @Field({ nullable: true })
   bio?: string;
 
+  @Field(() => GraphQLJSON)
+  permissionOverrides!: any;
+
+  @Field(() => [String])
+  effectivePermissions!: string[];
+
   @Field(() => Date, { nullable: true })
   passwordChangedAt?: Date;
 
@@ -52,6 +60,15 @@ export class CreateUserInput {
 
   @Field()
   phone!: string;
+
+  @Field({ nullable: true, description: '/catalogue-images/manual/<file>.png from /api/upload, or null to remove' })
+  avatarUrl?: string;
+
+  @Field({ nullable: true })
+  bio?: string;
+
+  @Field(() => GraphQLJSON, { nullable: true })
+  permissionOverrides?: any;
 }
 
 @InputType()
@@ -79,6 +96,9 @@ export class UpdateUserInput {
 
   @Field({ nullable: true })
   bio?: string;
+
+  @Field(() => GraphQLJSON, { nullable: true })
+  permissionOverrides?: any;
 }
 
 @InputType()
@@ -117,12 +137,17 @@ export class PasswordChangeResult {
   passwordChangedAt!: Date;
 }
 
-@Resolver()
+@Resolver(() => UserOutput)
 export class UsersResolver {
   constructor(
     private users: UsersService,
     private prisma: PrismaService,
   ) {}
+
+  @ResolveField('effectivePermissions', () => [String])
+  effectivePermissions(@Parent() user: any) {
+    return effectivePermissionsForUser(user);
+  }
 
   /** Current signed-in user — hydrates the profile page + sidebar avatar. */
   @Query(() => UserOutput, { name: 'me', description: 'Current authenticated user.' })
@@ -133,19 +158,19 @@ export class UsersResolver {
 
   @Query(() => [UserOutput])
   async getUsers(@Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'users.manage');
     return this.users.findAll();
   }
 
   @Query(() => [UserOutput], { name: 'users' })
   async usersList(@Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'users.manage');
     return this.users.findAll();
   }
 
   @Query(() => UserOutput)
   async user(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'users.manage');
     return this.users.findById(id);
   }
 
@@ -154,7 +179,7 @@ export class UsersResolver {
     @Args('input') input: CreateUserInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'users.manage');
     return this.users.create(input);
   }
 
@@ -164,7 +189,7 @@ export class UsersResolver {
     @Args('input') input: UpdateUserInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'users.manage');
     return this.users.update(id, input);
   }
 
@@ -173,7 +198,7 @@ export class UsersResolver {
     @Args('id', { type: () => ID }) id: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'users.manage');
     return this.users.delete(id);
   }
 

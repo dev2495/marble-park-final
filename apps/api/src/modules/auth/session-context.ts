@@ -1,6 +1,7 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AppDataLoaders } from '../common/dataloaders';
+import { PermissionKey, effectivePermissionsForUser, hasPermission } from './rbac';
 
 export type GraphqlRequestContext = {
   req?: {
@@ -14,6 +15,8 @@ export type SessionUser = {
   name: string;
   email: string;
   role: string;
+  permissionOverrides: Record<string, boolean>;
+  effectivePermissions: PermissionKey[];
 };
 
 function bearerToken(ctx: GraphqlRequestContext): string {
@@ -43,6 +46,8 @@ export async function getSessionUser(prisma: PrismaService, ctx: GraphqlRequestC
     name: user.name,
     email: user.email,
     role: user.role,
+    permissionOverrides: (user as any).permissionOverrides || {},
+    effectivePermissions: effectivePermissionsForUser(user as any),
   };
 }
 
@@ -57,6 +62,30 @@ export async function requireRoles(
     throw new ForbiddenException('This action is restricted');
   }
   return user;
+}
+
+export async function requirePermission(
+  prisma: PrismaService,
+  ctx: GraphqlRequestContext,
+  permission: PermissionKey,
+  fallbackRoles: string[] = [],
+): Promise<SessionUser> {
+  const user = await getSessionUser(prisma, ctx);
+  if (!user) throw new UnauthorizedException('Login required');
+  if (fallbackRoles.includes(user.role) || hasPermission(user, permission)) return user;
+  throw new ForbiddenException('This action is restricted');
+}
+
+export async function requireAnyPermission(
+  prisma: PrismaService,
+  ctx: GraphqlRequestContext,
+  permissions: PermissionKey[],
+  fallbackRoles: string[] = [],
+): Promise<SessionUser> {
+  const user = await getSessionUser(prisma, ctx);
+  if (!user) throw new UnauthorizedException('Login required');
+  if (fallbackRoles.includes(user.role) || permissions.some((permission) => hasPermission(user, permission))) return user;
+  throw new ForbiddenException('This action is restricted');
 }
 
 export async function requireSession(

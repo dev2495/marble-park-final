@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import * as bcrypt from 'bcrypt';
 import { ulid } from 'ulid';
+import { sanitizePermissionOverrides } from '../auth/rbac';
 
 export interface CreateUserInput {
   name: string;
@@ -10,6 +11,9 @@ export interface CreateUserInput {
   password: string;
   role: string;
   phone: string;
+  avatarUrl?: string | null;
+  bio?: string | null;
+  permissionOverrides?: any;
 }
 
 export interface UpdateUserInput {
@@ -21,6 +25,7 @@ export interface UpdateUserInput {
   password?: string;
   avatarUrl?: string | null;
   bio?: string | null;
+  permissionOverrides?: any;
 }
 
 export interface UpdateMyProfileInput {
@@ -39,6 +44,8 @@ export interface ChangeMyPasswordInput {
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService, private audit: AuditService) {}
+
+  private readonly allowedRoles = new Set(['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff']);
 
   async findAll() {
     return this.prisma.user.findMany({
@@ -60,6 +67,7 @@ export class UsersService {
     if (!data.name?.trim()) throw new BadRequestException('Name is required');
     if (!data.email?.trim()) throw new BadRequestException('Email is required');
     if (!data.password || data.password.length < 8) throw new BadRequestException('Password must be at least 8 characters');
+    if (!this.allowedRoles.has(data.role)) throw new BadRequestException('Invalid role');
     const email = data.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new BadRequestException('Another user already uses that email');
@@ -72,6 +80,9 @@ export class UsersService {
         passwordHash,
         role: data.role,
         phone: data.phone?.trim() || '',
+        avatarUrl: data.avatarUrl || null,
+        bio: typeof data.bio === 'string' ? data.bio.slice(0, 280) : null,
+        permissionOverrides: sanitizePermissionOverrides(data.permissionOverrides) as any,
         passwordChangedAt: new Date(),
       },
     } as any) as any;
@@ -81,7 +92,7 @@ export class UsersService {
       entityType: 'User',
       entityId: created.id,
       summary: `User ${created.name} (${created.email}) created with role ${created.role}`,
-      metadata: { role: created.role, email: created.email },
+      metadata: { role: created.role, email: created.email, permissionOverrides: created.permissionOverrides || {} },
     });
     return created;
   }
@@ -91,10 +102,14 @@ export class UsersService {
     const patch: any = {};
     if (typeof data.name === 'string' && data.name.trim()) patch.name = data.name.trim().slice(0, 80);
     if (typeof data.phone === 'string') patch.phone = data.phone.trim().slice(0, 24);
-    if (typeof data.role === 'string' && data.role.trim()) patch.role = data.role.trim();
+    if (typeof data.role === 'string' && data.role.trim()) {
+      if (!this.allowedRoles.has(data.role.trim())) throw new BadRequestException('Invalid role');
+      patch.role = data.role.trim();
+    }
     if (typeof data.active === 'boolean') patch.active = data.active;
     if (typeof data.bio === 'string') patch.bio = data.bio.slice(0, 280);
     if (data.avatarUrl !== undefined) patch.avatarUrl = data.avatarUrl || null;
+    if (data.permissionOverrides !== undefined) patch.permissionOverrides = sanitizePermissionOverrides(data.permissionOverrides) as any;
     if (typeof data.email === 'string' && data.email.trim() && data.email.trim().toLowerCase() !== before.email) {
       const email = data.email.trim().toLowerCase();
       const existing = await this.prisma.user.findUnique({ where: { email } });
@@ -114,14 +129,17 @@ export class UsersService {
     // Detect role / active changes specifically — they're the high-impact ones.
     const roleChanged = data.role && data.role !== before.role;
     const activeChanged = typeof data.active === 'boolean' && data.active !== before.active;
-    if (roleChanged) {
+    const permissionsChanged = data.permissionOverrides !== undefined;
+    if (roleChanged || permissionsChanged) {
       await this.audit.record({
         actorUserId: 'system',
-        action: 'user.role.change',
+        action: permissionsChanged && !roleChanged ? 'user.permissions.change' : 'user.role.change',
         entityType: 'User',
         entityId: id,
-        summary: `${updated.name} role changed: ${before.role} → ${updated.role}`,
-        metadata: { from: before.role, to: updated.role },
+        summary: roleChanged
+          ? `${updated.name} role changed: ${before.role} → ${updated.role}`
+          : `${updated.name} permission overrides changed`,
+        metadata: { from: before.role, to: updated.role, permissionOverrides: (updated as any).permissionOverrides || {} },
       });
     } else if (activeChanged) {
       await this.audit.record({
@@ -153,7 +171,16 @@ export class UsersService {
 
   async delete(id: string) {
     const user = await this.findById(id);
-    const result = await this.prisma.user.update({ where: { id }, data: { active: false, email: `${user.email}.deleted-${Date.now()}` } });
+    const result = await this.prisma.user.update({
+      where: { id },
+      data: {
+        active: false,
+        email: `${user.email}.deleted-${Date.now()}`,
+        avatarUrl: null,
+        bio: null,
+        permissionOverrides: {},
+      } as any,
+    });
     await this.audit.record({
       actorUserId: 'system',
       action: 'user.delete',

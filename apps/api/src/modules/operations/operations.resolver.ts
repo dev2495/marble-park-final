@@ -1,6 +1,6 @@
 import { Args, Context, Field, ID, InputType, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { OperationsService } from './operations.service';
 
@@ -86,7 +86,7 @@ export class OperationsResolver {
 
   @Mutation(() => GraphQLJSON)
   async createStockLocation(@Args('input') input: StockLocationInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'stock_locations.manage');
     return this.operations.createStockLocation(input as any, user.id);
   }
 
@@ -96,7 +96,7 @@ export class OperationsResolver {
     @Args('input') input: StockLocationInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'stock_locations.manage');
     return this.operations.updateStockLocation(id, input as any, user.id);
   }
 
@@ -123,13 +123,13 @@ export class OperationsResolver {
 
   @Mutation(() => GraphQLJSON)
   async createStockCountSession(@Args('input') input: StockCountInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager']);
+    const user = await requirePermission(this.prisma, ctx, 'stock_counts.manage');
     return this.operations.createStockCountSession(input as any, user.id);
   }
 
   @Mutation(() => GraphQLJSON)
   async approveStockCountSession(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'stock_counts.manage');
     return this.operations.approveStockCountSession(id, user.id);
   }
 
@@ -145,13 +145,13 @@ export class OperationsResolver {
 
   @Mutation(() => GraphQLJSON)
   async createReturnOrder(@Args('input') input: ReturnOrderInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'dispatch_ops']);
+    const user = await requirePermission(this.prisma, ctx, 'returns.manage');
     return this.operations.createReturnOrder(input as any, user.id);
   }
 
   @Query(() => GraphQLJSON)
   async productionReadinessSummary(@Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'reports.view');
     return this.operations.productionReadinessSummary();
   }
 }
