@@ -12,6 +12,21 @@ export class ReportsResolver {
     return requireRoles(this.prisma, ctx, ['owner', 'admin', 'sales_manager', 'inventory_manager', 'office_staff']);
   }
 
+  // New comprehensive reports board — single query per tab returns everything
+  // needed to render that tab. 30s cache, parallel sub-queries inside.
+  @Query(() => GraphQLJSON, { name: 'reportsBoard' })
+  async reportsBoard(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('tab') tab: string,
+    @Args('from', { nullable: true }) from?: Date,
+    @Args('to', { nullable: true }) to?: Date,
+    @Args('compare', { nullable: true }) compare?: boolean,
+    @Args('segment', { nullable: true }) segment?: string,
+  ) {
+    await this.gate(ctx);
+    return this.reports.boardData(tab as any, { from, to, compare, segment: segment as any });
+  }
+
   @Query(() => GraphQLJSON, { name: 'reportMonthlySalesByCategory' })
   async reportMonthlySalesByCategory(
     @Context() ctx: GraphqlRequestContext,
