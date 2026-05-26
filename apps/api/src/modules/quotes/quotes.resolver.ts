@@ -122,12 +122,6 @@ export class CreateQuoteInput {
 
   @Field(() => String, { nullable: true })
   quoteMeta?: string;
-
-  @Field(() => String, { nullable: true })
-  intentId?: string;
-
-  @Field(() => String, { nullable: true })
-  supersedesQuoteId?: string;
 }
 
 @InputType()
@@ -307,6 +301,12 @@ export class QuotesResolver {
   ) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
     return this.quotes.salesOrders({ paymentMode, range, ownerId: isPrivileged(user) || user.role === 'office_staff' || user.role === 'dispatch_ops' ? undefined : user.id });
+  }
+
+  @Query(() => GraphQLJSON, { name: 'salesOrder', nullable: true })
+  async salesOrderById(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops', 'inventory_manager']);
+    return this.prisma.salesOrder.findUnique({ where: { id } });
   }
 
   @Query(() => GraphQLJSON)

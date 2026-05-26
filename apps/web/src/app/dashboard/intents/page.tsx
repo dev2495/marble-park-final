@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { Filter, Hammer, Lock, RefreshCw, Search, Sparkles, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
+import { HelpButton } from '@/components/help/help-button';
 
 const INTENTS = gql`
   query Intents($status: String, $pendingOnly: Boolean, $mineOnly: Boolean) {
@@ -99,6 +101,7 @@ export default function IntentDeskPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <HelpButton topicId="leads" variant="inline" label="Help" />
             <Button variant="outline" size="sm" onClick={() => refetch()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh</Button>
           </div>
         </div>

@@ -581,14 +581,18 @@ export class ProcurementService {
     const demands = demandIds.length ? await (this.prisma as any).purchaseDemand.findMany({ where: { id: { in: demandIds } } }) : [];
     const demandMap = new Map(demands.map((demand: any) => [demand.id, demand]));
     const linesByPo = this.groupBy(lines.map((line: any) => ({ ...line, demand: line.purchaseDemandId ? demandMap.get(line.purchaseDemandId) || null : null })), 'purchaseOrderId');
-    return orders.map((order) => ({ ...order, lines: linesByPo.get(order.id) || [] }));
+    return orders.map((order) => ({
+      ...order,
+      vendorName: this.vendorDisplayName(order),
+      lines: linesByPo.get(order.id) || [],
+    }));
   }
 
   private async decorateGrns(notes: any[]) {
     const grnIds = notes.map((note) => note.id);
     const lines = grnIds.length ? await (this.prisma as any).goodsReceiptLine.findMany({ where: { goodsReceiptNoteId: { in: grnIds } } }) : [];
     const byGrn = this.groupBy(lines, 'goodsReceiptNoteId');
-    return notes.map((note) => ({ ...note, lines: byGrn.get(note.id) || [] }));
+    return notes.map((note) => ({ ...note, vendorName: this.vendorDisplayName(note), lines: byGrn.get(note.id) || [] }));
   }
 
   private async addAcceptedStockTx(
@@ -789,6 +793,11 @@ export class ProcurementService {
       grouped.set(groupKey, [...(grouped.get(groupKey) || []), row]);
     }
     return grouped;
+  }
+
+  private vendorDisplayName(row: any) {
+    const value = String(row?.vendorName || row?.metadata?.vendorName || '').trim();
+    return value || 'Vendor confirmation pending';
   }
 
   private whole(value: any, label: string) {

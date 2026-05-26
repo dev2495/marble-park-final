@@ -80,11 +80,34 @@ export class InventoryService {
   }
 
   async create(data: CreateInventoryInput): Promise<any> {
-    const available = data.onHand || 0;
+    const onHand = Math.trunc(Number(data.onHand || 0));
+    if (!Number.isFinite(onHand) || onHand < 0) throw new BadRequestException('On-hand stock must be zero or a positive whole number');
+    const existing = await this.prisma.inventoryBalance.findUnique({
+      where: { productId: data.productId },
+      include: { product: true },
+    } as any) as any;
+    if (existing) {
+      const reserved = Number(existing.reserved || 0);
+      const damaged = Number(existing.damaged || 0);
+      const hold = Number(existing.hold || 0);
+      const updated = await this.prisma.inventoryBalance.update({
+        where: { productId: data.productId },
+        data: {
+          onHand,
+          available: Math.max(0, onHand - reserved - damaged - hold),
+          updatedAt: new Date(),
+        },
+        include: { product: true },
+      } as any) as any;
+      if (onHand > Number(existing.onHand || 0)) await this.notifyBackorderReady(data.productId, 'system');
+      return updated;
+    }
+    const available = onHand;
     const created = await this.prisma.inventoryBalance.create({
       data: {
         id: ulid(),
-        ...data,
+        productId: data.productId,
+        onHand,
         available,
         reserved: 0,
         damaged: 0,

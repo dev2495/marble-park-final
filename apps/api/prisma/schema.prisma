@@ -605,11 +605,15 @@ model Reservation {
 }
 
 model Session {
-  id        String   @id
-  token     String   @unique
-  userId    String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id         String    @id
+  token      String    @unique
+  tokenHash  String?   @unique
+  userId     String
+  expiresAt  DateTime
+  ipAddress  String?
+  userAgent  String?
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
 
   @@index([userId])
   @@index([expiresAt])
@@ -1107,4 +1111,96 @@ model Vendor {
 
   @@index([name])
   @@index([status])
+}
+
+model Payment {
+  id           String   @id
+  salesOrderId String
+  customerId   String?
+  amount       Float
+  mode         String
+  reference    String?
+  paidAt       DateTime @default(now())
+  notes        String?
+  recordedBy   String
+  direction    String   @default("incoming")
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  @@index([salesOrderId])
+  @@index([customerId])
+  @@index([mode])
+  @@index([paidAt(sort: Desc)])
+}
+
+model Communication {
+  id          String   @id
+  customerId  String?
+  leadId      String?
+  type        String
+  direction   String   @default("outbound")
+  summary     String
+  body        String?
+  occurredAt  DateTime @default(now())
+  recordedBy  String
+  attachments Json     @default("[]")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([customerId, occurredAt(sort: Desc)])
+  @@index([leadId, occurredAt(sort: Desc)])
+  @@index([type])
+}
+
+model ReturnRecord {
+  id              String   @id
+  returnNumber    String   @unique
+  salesOrderId    String?
+  challanId       String?
+  customerId      String
+  status          String   @default("pending")
+  reason          String
+  reasonCategory  String?
+  refundAmount    Float    @default(0)
+  refundPaymentId String?
+  lines           Json     @default("[]")
+  notes           String?
+  recordedBy      String
+  receivedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
+
+  @@index([salesOrderId])
+  @@index([challanId])
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+}
+
+model SalesTarget {
+  id        String   @id
+  userId    String
+  month     String
+  amount    Float
+  notes     String?
+  setBy     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+
+  @@unique([userId, month])
+  @@index([month])
+}
+
+model PortalToken {
+  id         String    @id
+  token      String    @unique
+  customerId String
+  scope      String    @default("read")
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdBy  String
+  createdAt  DateTime  @default(now())
+
+  @@index([customerId])
+  @@index([expiresAt])
 }

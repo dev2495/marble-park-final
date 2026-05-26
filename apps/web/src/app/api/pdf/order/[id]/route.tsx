@@ -16,11 +16,11 @@ function rendererPath() {
   return found;
 }
 
-function renderSalesOrderPdf(id: string, requestUrl: string) {
+function renderSalesOrderPdf(id: string, requestUrl: string, apiUrl: string) {
   return new Promise<Buffer>((resolve, reject) => {
     execFile(
       process.execPath,
-      [rendererPath(), id, requestUrl],
+      [rendererPath(), id, requestUrl, apiUrl],
       { encoding: 'buffer', maxBuffer: 80 * 1024 * 1024, env: { ...process.env, ...localApiEnv() } },
       (error, stdout, stderr) => {
         if (error) {
@@ -66,7 +66,8 @@ function localApiEnv() {
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
-    const buffer = await renderSalesOrderPdf(id, req.url);
+    const apiUrl = process.env.ORDER_PDF_API_URL || process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql';
+    const buffer = await renderSalesOrderPdf(id, req.url, apiUrl);
 
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {

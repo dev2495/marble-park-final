@@ -1,9 +1,16 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { AuditService } from '../audit/audit.service';
 import { ulid } from 'ulid';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 
 export interface LoginInput {
   email: string;
@@ -18,6 +25,23 @@ export interface SessionPayload {
   role: string;
 }
 
+// SHA-256 hash a token for at-rest storage. Plain Buffer→hex.
+export function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+// In-process rate-limiter for login. Resets when the API restarts; that is
+// acceptable for the small operator team Marble Park serves. For multi-node
+// deploys, swap the Map for a shared store (Redis) — the surface is small.
+type Attempt = { count: number; firstAt: number };
+const LOGIN_ATTEMPTS = new Map<string, Attempt>();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_PER_WINDOW = 8;
+
+function rateLimitKey(email: string, ip?: string) {
+  return `${(email || '').toLowerCase()}::${ip || 'unknown'}`;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -27,10 +51,32 @@ export class AuthService {
   ) {}
 
   async login(input: LoginInput, ipAddress?: string, userAgent?: string) {
+    const key = rateLimitKey(input.email, ipAddress);
+    const now = Date.now();
+    const slot = LOGIN_ATTEMPTS.get(key);
+    if (slot && now - slot.firstAt < LOGIN_WINDOW_MS && slot.count >= LOGIN_MAX_PER_WINDOW) {
+      await this.audit.record({
+        actorUserId: 'anonymous',
+        action: 'auth.login.ratelimited',
+        entityType: 'User',
+        entityId: input.email || 'unknown',
+        summary: `Login rate-limited for ${input.email || 'unknown email'}`,
+        metadata: { email: input.email, ipAddress, userAgent },
+      });
+      throw new HttpException('Too many login attempts. Try again in 15 minutes.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    const bumpAttempts = () => {
+      const current = LOGIN_ATTEMPTS.get(key);
+      if (!current || now - current.firstAt >= LOGIN_WINDOW_MS) {
+        LOGIN_ATTEMPTS.set(key, { count: 1, firstAt: now });
+      } else {
+        current.count += 1;
+      }
+    };
+
     const user = await this.users.findByEmail(input.email);
     if (!user) {
-      // Record a failed-login attempt against an anonymous actor so admins
-      // can spot brute-force or typo storms in the audit log.
+      bumpAttempts();
       await this.audit.record({
         actorUserId: 'anonymous',
         action: 'auth.login.failed',
@@ -44,6 +90,7 @@ export class AuthService {
 
     const valid = await this.users.verifyPassword(user, input.password);
     if (!valid) {
+      bumpAttempts();
       await this.audit.record({
         actorUserId: user.id,
         action: 'auth.login.failed',
@@ -67,6 +114,8 @@ export class AuthService {
       throw new UnauthorizedException('Account is disabled');
     }
 
+    // Successful login — reset the counter for this key.
+    LOGIN_ATTEMPTS.delete(key);
     const token = await this.createSession(user.id, ipAddress, userAgent);
     await this.audit.record({
       actorUserId: user.id,
@@ -104,9 +153,13 @@ export class AuthService {
   }
 
   async validateSession(token: string): Promise<SessionPayload | null> {
-    const session = await this.prisma.session.findUnique({
-      where: { token },
-    });
+    // Prefer hashed lookup (post-migration); fall back to plaintext during
+    // the transition window where legacy sessions exist without a hash row.
+    const hashed = hashToken(token);
+    let session = await this.prisma.session.findFirst({ where: { tokenHash: hashed } as any });
+    if (!session) {
+      session = await this.prisma.session.findUnique({ where: { token } });
+    }
 
     if (!session || session.expiresAt < new Date()) {
       if (session) {
@@ -117,6 +170,11 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({ where: { id: session.userId } });
     if (!user) return null;
+
+    // Best-effort lastSeenAt — silent on failure.
+    await this.prisma.session
+      .update({ where: { id: session.id }, data: { lastSeenAt: new Date() } as any })
+      .catch(() => {});
 
     return {
       id: session.id,
@@ -129,10 +187,10 @@ export class AuthService {
 
   async createSession(
     userId: string,
-    _ipAddress?: string,
-    _userAgent?: string,
+    ipAddress?: string,
+    userAgent?: string,
   ) {
-    const token = ulid();
+    const token = ulid() + ulid();
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
@@ -141,7 +199,11 @@ export class AuthService {
         id: ulid(),
         userId,
         token,
+        tokenHash: hashToken(token),
         expiresAt,
+        ipAddress: ipAddress || null,
+        userAgent: userAgent || null,
+        lastSeenAt: new Date(),
       } as any,
     });
 
@@ -154,14 +216,15 @@ export class AuthService {
       return { success: true };
     }
 
-    const token = ulid();
+    const token = ulid() + ulid();
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 1);
 
     await this.prisma.passwordResetToken.create({
       data: {
+        id: ulid(),
         userId: user.id,
-        token,
+        token: hashToken(token),
         expiresAt,
       } as any,
     });
@@ -170,19 +233,23 @@ export class AuthService {
   }
 
   async resetPassword(token: string, newPassword: string) {
+    const hashed = hashToken(token);
     const resetToken = await this.prisma.passwordResetToken.findUnique({
-      where: { token },
+      where: { token: hashed },
     });
 
     if (!resetToken || resetToken.expiresAt < new Date()) {
       throw new BadRequestException('Invalid or expired token');
     }
+    if (newPassword.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters');
+    }
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    
+
     await this.prisma.user.update({
       where: { id: resetToken.userId },
-      data: { passwordHash },
+      data: { passwordHash, passwordChangedAt: new Date() } as any,
     });
 
     await this.prisma.passwordResetToken.delete({ where: { id: resetToken.id } });

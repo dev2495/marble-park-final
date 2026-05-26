@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
+import { HelpButton } from '@/components/help/help-button';
 import { UserAvatar } from '@/components/user-avatar';
 
 const LEAD_TIMELINE = gql`
@@ -237,6 +238,7 @@ export default function LeadDetailPage() {
             </div>
           </div>
           <div className="hidden lg:flex items-center gap-2">
+            <HelpButton topicId="leads" variant="inline" label="Help" />
             <Button size="sm" variant="outline" onClick={() => handleNewRound('followup')} disabled={creating}>
               <Plus className="mr-1.5 h-3.5 w-3.5" /> New round
             </Button>
@@ -248,6 +250,7 @@ export default function LeadDetailPage() {
           <Button size="sm" variant="outline" className="flex-1" onClick={() => handleNewRound('followup')} disabled={creating}>
             <Plus className="mr-1.5 h-3.5 w-3.5" /> New round
           </Button>
+          <HelpButton topicId="leads" />
         </div>
       </section>
 
@@ -372,10 +375,8 @@ function TimelineDot({ kind }: { kind: string }) {
       return <Truck className="h-3 w-3 text-sky-700" />;
     case 'order':
       return <ShoppingBag className="h-3 w-3 text-emerald-700" />;
-    case 'payment_receipt':
+    case 'payment':
       return <Wallet className="h-3 w-3 text-emerald-700" />;
-    case 'return_order':
-      return <Package className="h-3 w-3 text-rose-700" />;
     default:
       return <History className="h-3 w-3 text-[var(--ink-4)]" />;
   }
@@ -467,10 +468,8 @@ function TimelineCard(props: {
       return <BasicCard at={at} title={`Challan ${entry.payload.challanNumber}`} body={`Status: ${entry.payload.status}`} />;
     case 'order':
       return <BasicCard at={at} title={`Sales order ${entry.payload.orderNumber}`} body={`${money(entry.payload.totalAmount)} · ${entry.payload.paymentStatus}`} link={`/dashboard/sales/${entry.payload.id}`} />;
-    case 'payment_receipt':
-      return <BasicCard at={at} title={`Payment receipt ${money(entry.payload.amount)}`} body={`${entry.payload.paymentMode}${entry.payload.reference ? ` · ${entry.payload.reference}` : ''}`} />;
-    case 'return_order':
-      return <BasicCard at={at} title={`Return ${entry.payload.returnNumber || entry.payload.status}`} body={`${entry.payload.reason || 'Return'} · Refund ${money(entry.payload.refundAmount || 0)}`} />;
+    case 'payment':
+      return <BasicCard at={at} title={`${entry.payload.direction === 'refund' ? 'Refund' : 'Payment'} ${money(entry.payload.amount)}`} body={`${entry.payload.mode}${entry.payload.reference ? ` · ${entry.payload.reference}` : ''}`} />;
     case 'activity':
     default:
       return <BasicCard at={at} title={entry.payload.type} body={entry.payload.message} muted />;

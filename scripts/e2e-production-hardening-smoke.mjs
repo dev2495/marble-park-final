@@ -170,13 +170,38 @@ async function main() {
 
   const job = (await gql(`query { dispatchJobs { id quoteId status } }`, {}, token)).dispatchJobs.find((row) => row.quoteId === quote.id);
   assert(job, 'sales order conversion should create dispatch job');
+  const queuedJob = (await gql(`query { dispatchQueue }`, {}, token)).dispatchQueue.find((row) => row.id === job.id);
+  const readyLine = queuedJob?.readyLines?.[0] || queuedJob?.lines?.find((row) => row.status === 'ready');
+  assert(readyLine && Number(readyLine.dispatchableQty || 0) >= 1, 'dispatch queue should expose at least one ready line for challan creation');
   const challan = (await gql(
     `mutation($input: CreateChallanInput!) { createChallan(input: $input) { id challanNumber status } }`,
-    { input: { jobId: job.id, transporter: 'Production Smoke Transport', vehicleNo: 'SMOKE-95', driverName: 'Smoke Driver', driverPhone: '9000000095' } },
+    {
+      input: {
+        jobId: job.id,
+        transporter: 'Production Smoke Transport',
+        vehicleNo: 'SMOKE-95',
+        driverName: 'Smoke Driver',
+        driverPhone: '9000000095',
+        lines: JSON.stringify([{ ...readyLine, dispatchQty: 1 }]),
+      },
+    },
     token,
   )).createChallan;
   await gql(`mutation($id: ID!, $status: String!) { updateChallanStatus(id: $id, status: $status) { id status } }`, { id: challan.id, status: 'dispatched' }, token);
-  await gql(`mutation($id: ID!, $status: String!) { updateChallanStatus(id: $id, status: $status) { id status } }`, { id: challan.id, status: 'delivered' }, token);
+  await gql(
+    `mutation($id: ID!, $status: String!, $proof: JSON) { updateChallanStatus(id: $id, status: $status, proof: $proof) { id status } }`,
+    {
+      id: challan.id,
+      status: 'delivered',
+      proof: {
+        receiverName: 'Production Smoke Receiver',
+        receiverContact: '9000000096',
+        signatureUrl: '/uploads/proofs/production-smoke-signature.png',
+        notes: 'Production hardening proof smoke.',
+      },
+    },
+    token,
+  );
 
   const returnOrder = (await gql(
     `mutation($input: ReturnOrderInput!) { createReturnOrder(input: $input) }`,

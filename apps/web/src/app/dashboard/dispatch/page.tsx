@@ -14,7 +14,7 @@ const GET_DISPATCH_QUEUE = gql`
   }
 `;
 const CREATE_CHALLAN = gql`mutation CreateChallan($input: CreateChallanInput!) { createChallan(input: $input) { id status challanNumber } }`;
-const UPDATE_CHALLAN = gql`mutation UpdateChallan($id: ID!, $status: String!) { updateChallanStatus(id: $id, status: $status) { id status } }`;
+const UPDATE_CHALLAN = gql`mutation UpdateChallan($id: ID!, $status: String!, $proof: JSON) { updateChallanStatus(id: $id, status: $status, proof: $proof) { id status } }`;
 
 const columns = [
   { id: 'pending', title: 'Pending allocation', icon: Clock },
@@ -29,6 +29,7 @@ function jobLines(job: any) {
 
 export default function DispatchPage() {
   const [dispatchQty, setDispatchQty] = useState<Record<string, number>>({});
+  const [deliveryProof, setDeliveryProof] = useState<Record<string, { receiverName: string; receiverContact: string; photoUrl: string; signatureUrl: string; notes: string }>>({});
   const { data, loading, error, refetch } = useQuery(GET_DISPATCH_QUEUE, { pollInterval: 30000 });
   const [createChallan, { loading: creating, error: createError }] = useMutation(CREATE_CHALLAN, { onCompleted: () => refetch() });
   const [updateChallan, { loading: updating, error: updateError }] = useMutation(UPDATE_CHALLAN, { onCompleted: () => refetch() });
@@ -36,6 +37,13 @@ export default function DispatchPage() {
   const readyCount = jobs.reduce((sum: number, job: any) => sum + (job.readyLines?.length || 0), 0);
   const pendingCount = jobs.reduce((sum: number, job: any) => sum + (job.pendingInwardLines?.length || 0), 0);
   const invalidCount = jobs.reduce((sum: number, job: any) => sum + (job.invalidLines?.length || 0), 0);
+
+  const updateProof = (challanId: string, patch: Partial<{ receiverName: string; receiverContact: string; photoUrl: string; signatureUrl: string; notes: string }>) => {
+    setDeliveryProof((current) => {
+      const existing = current[challanId] || { receiverName: '', receiverContact: '', photoUrl: '', signatureUrl: '', notes: '' };
+      return { ...current, [challanId]: { ...existing, ...patch } };
+    });
+  };
 
   return (
     <div className="space-y-7 pb-10">
@@ -164,13 +172,73 @@ export default function DispatchPage() {
                           </div>
                         );
                       })}
-                      {job.challans?.map((challan: any) => (
-                        <div key={challan.id} className="flex flex-wrap items-center gap-2 rounded-r4 bg-[var(--bg-soft)] p-2">
-                          <span className="rounded-full bg-[var(--ink)] px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white">{challan.challanNumber} · {challan.status}</span>
-                          {challan.status === 'pending' && <Button size="sm" disabled={updating} onClick={() => updateChallan({ variables: { id: challan.id, status: 'dispatched' } })}>Dispatch</Button>}
-                          {challan.status === 'dispatched' && <Button size="sm" disabled={updating} onClick={() => updateChallan({ variables: { id: challan.id, status: 'delivered' } })}>Deliver</Button>}
-                        </div>
-                      ))}
+                      {job.challans?.map((challan: any) => {
+                        const proof = deliveryProof[challan.id] || { receiverName: '', receiverContact: '', photoUrl: '', signatureUrl: '', notes: '' };
+                        const proofReady = proof.receiverName.trim() && (proof.photoUrl.trim() || proof.signatureUrl.trim());
+                        return (
+                          <div key={challan.id} className="rounded-r4 bg-[var(--bg-soft)] p-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full bg-[var(--ink)] px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white">{challan.challanNumber} · {challan.status}</span>
+                              {challan.status === 'pending' && <Button size="sm" disabled={updating} onClick={() => updateChallan({ variables: { id: challan.id, status: 'dispatched' } })}>Dispatch</Button>}
+                            </div>
+                            {challan.status === 'dispatched' ? (
+                              <div className="mt-3 grid gap-2">
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <input
+                                    value={proof.receiverName}
+                                    onChange={(event) => updateProof(challan.id, { receiverName: event.target.value })}
+                                    placeholder="Receiver name"
+                                    className="h-9 rounded-md border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--ink)] outline-none focus:border-[var(--brand-400)]"
+                                  />
+                                  <input
+                                    value={proof.receiverContact}
+                                    onChange={(event) => updateProof(challan.id, { receiverContact: event.target.value })}
+                                    placeholder={`Contact ${job.customer?.mobile || ''}`.trim()}
+                                    className="h-9 rounded-md border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--ink)] outline-none focus:border-[var(--brand-400)]"
+                                  />
+                                  <input
+                                    value={proof.photoUrl}
+                                    onChange={(event) => updateProof(challan.id, { photoUrl: event.target.value })}
+                                    placeholder="Proof photo URL"
+                                    className="h-9 rounded-md border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--ink)] outline-none focus:border-[var(--brand-400)]"
+                                  />
+                                  <input
+                                    value={proof.signatureUrl}
+                                    onChange={(event) => updateProof(challan.id, { signatureUrl: event.target.value })}
+                                    placeholder="Signature URL"
+                                    className="h-9 rounded-md border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--ink)] outline-none focus:border-[var(--brand-400)]"
+                                  />
+                                </div>
+                                <textarea
+                                  value={proof.notes}
+                                  onChange={(event) => updateProof(challan.id, { notes: event.target.value })}
+                                  placeholder="Delivery note"
+                                  className="min-h-[60px] rounded-md border border-[var(--line)] bg-white px-3 py-2 text-xs font-semibold text-[var(--ink)] outline-none focus:border-[var(--brand-400)]"
+                                />
+                                <Button
+                                  size="sm"
+                                  disabled={updating || !proofReady}
+                                  onClick={() => updateChallan({
+                                    variables: {
+                                      id: challan.id,
+                                      status: 'delivered',
+                                      proof: {
+                                        receiverName: proof.receiverName.trim(),
+                                        receiverContact: proof.receiverContact.trim() || job.customer?.mobile || '',
+                                        photoUrl: proof.photoUrl.trim() || undefined,
+                                        signatureUrl: proof.signatureUrl.trim() || undefined,
+                                        notes: proof.notes.trim() || undefined,
+                                      },
+                                    },
+                                  })}
+                                >
+                                  Deliver with proof
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   </motion.article>
                 ))}

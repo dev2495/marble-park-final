@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
+import { nextDocumentNumber } from '../common/sequence';
 
 export interface CreateQuoteInput {
   leadId: string;
@@ -15,6 +16,16 @@ export interface CreateQuoteInput {
   discountPercent?: number;
   displayMode?: string;
   quoteMeta?: any;
+  /**
+   * The intent this quote was generated from (lifecycle audit + chain).
+   */
+  intentId?: string | null;
+  /**
+   * Parent quote that this quote supersedes. When non-null, the create
+   * transaction atomically releases the parent's reservations and marks the
+   * parent as `superseded`, then computes versionNumber = parent.versionNumber + 1.
+   */
+  supersedesQuoteId?: string | null;
 }
 
 export interface UpdateQuoteInput {
@@ -139,10 +150,48 @@ export class QuotesService {
             leadId = lead.id;
           }
 
+          // Resolve supersede chain: validate parent quote, release its
+          // reservations atomically so the new quote can claim them, mark the
+          // parent as superseded, and compute the new versionNumber.
+          let supersedesId: string | null = data.supersedesQuoteId || null;
+          let versionNumber = 1;
+          if (supersedesId) {
+            const parent = await tx.quote.findUnique({ where: { id: supersedesId } });
+            if (!parent) throw new BadRequestException('Parent quote to supersede was not found');
+            if (parent.leadId !== leadId) throw new BadRequestException('Supersede target belongs to a different lead');
+            if (parent.supersededByQuoteId) {
+              throw new BadRequestException('Parent quote was already superseded. Revise the head of the chain instead.');
+            }
+            versionNumber = (parent.versionNumber || 1) + 1;
+            // Release reservations from the parent — same in-transaction so
+            // there's never a window where stock is double-claimed.
+            const parentReservations = await tx.reservation.findMany({ where: { quoteId: supersedesId, status: 'reserved' } });
+            for (const reservation of parentReservations) {
+              await tx.reservation.update({ where: { id: reservation.id }, data: { status: 'released', updatedAt: new Date() } });
+              const balance = await tx.inventoryBalance.findUnique({ where: { productId: reservation.productId } });
+              if (balance) {
+                const reserved = Math.max(0, Number(balance.reserved || 0) - Number(reservation.quantity || 0));
+                const damaged = Number(balance.damaged || 0);
+                const hold = Number(balance.hold || 0);
+                const onHand = Number(balance.onHand || 0);
+                await tx.inventoryBalance.update({
+                  where: { productId: reservation.productId },
+                  data: {
+                    reserved,
+                    available: Math.max(0, onHand - reserved - damaged - hold),
+                    updatedAt: new Date(),
+                  },
+                });
+              }
+            }
+          }
+
+          const { intentId, supersedesQuoteId: _ignored, ...rest } = data as any;
+
           const quote = await tx.quote.create({
             data: {
               id: ulid(),
-              ...data,
+              ...rest,
               customerId,
               ownerId,
               leadId,
@@ -159,6 +208,9 @@ export class QuotesService {
               notes: data.notes || '',
               versions: [],
               quoteMeta,
+              intentId: intentId || null,
+              supersedesQuoteId: supersedesId,
+              versionNumber,
               approval: {
                 requestedAt: new Date().toISOString(),
                 reason: 'quote_ready_no_owner_approval_required',
@@ -172,6 +224,41 @@ export class QuotesService {
             },
             include: quoteInclude,
           } as any) as any;
+
+          // Forward-link the parent → new quote and freeze its status.
+          if (supersedesId) {
+            await tx.quote.update({
+              where: { id: supersedesId },
+              data: { supersededByQuoteId: quote.id, status: 'superseded', updatedAt: new Date() },
+            });
+          }
+
+          await (tx as any).documentJob.upsert({
+            where: { entityType_entityId_documentType: { entityType: 'Quote', entityId: quote.id, documentType: 'quote_pdf' } },
+            update: {
+              status: 'generated',
+              url: `/api/pdf/quote/${quote.id}`,
+              contentType: 'application/pdf',
+              generatedBy: ownerId,
+              generatedAt: new Date(),
+              updatedAt: new Date(),
+              metadata: { quoteNumber: quote.quoteNumber, displayMode },
+            },
+            create: {
+              id: ulid(),
+              entityType: 'Quote',
+              entityId: quote.id,
+              documentType: 'quote_pdf',
+              status: 'generated',
+              url: `/api/pdf/quote/${quote.id}`,
+              contentType: 'application/pdf',
+              generatedBy: ownerId,
+              generatedAt: new Date(),
+              updatedAt: new Date(),
+              metadata: { quoteNumber: quote.quoteNumber, displayMode },
+            },
+          });
+
           return quote;
         }, { timeout: 15000 });
         break;
@@ -450,6 +537,101 @@ export class QuotesService {
         },
       });
 
+      if (advanceAmount > 0) {
+        const receiptNumber = await nextDocumentNumber(tx, 'payment_receipt', 'RCPT', new Date(), {
+          existingNumbers: async (prefix) => {
+            const rows = await (tx as any).paymentReceipt.findMany({
+              where: { receiptNumber: { startsWith: prefix } },
+              select: { receiptNumber: true },
+            });
+            return rows.map((row: any) => row.receiptNumber);
+          },
+        });
+        await (tx as any).paymentReceipt.create({
+          data: {
+            id: ulid(),
+            receiptNumber,
+            salesOrderId: salesOrder.id,
+            customerId: quote.customerId,
+            paymentMode,
+            amount: advanceAmount,
+            status: 'posted',
+            receivedAt: new Date(),
+            reference: receiptNumber,
+            notes: input.notes || 'Advance collected during order confirmation.',
+            createdBy: actorUserId,
+            updatedAt: new Date(),
+            metadata: { quoteId: quote.id, orderNumber },
+          },
+        });
+        await (tx as any).payment.create({
+          data: {
+            id: ulid(),
+            salesOrderId: salesOrder.id,
+            customerId: quote.customerId,
+            amount: advanceAmount,
+            mode: paymentMode,
+            reference: receiptNumber,
+            paidAt: new Date(),
+            notes: input.notes || 'Advance collected during order confirmation.',
+            recordedBy: actorUserId,
+            direction: 'incoming',
+            metadata: { source: 'sales_order_confirmation', receiptNumber },
+          },
+        });
+      }
+
+      await (tx as any).documentJob.upsert({
+        where: { entityType_entityId_documentType: { entityType: 'Quote', entityId: quote.id, documentType: 'quote_pdf' } },
+        update: {
+          status: 'generated',
+          url: `/api/pdf/quote/${quote.id}`,
+          contentType: 'application/pdf',
+          generatedBy: actorUserId,
+          generatedAt: new Date(),
+          updatedAt: new Date(),
+          metadata: { quoteNumber: quote.quoteNumber, salesOrderId },
+        },
+        create: {
+          id: ulid(),
+          entityType: 'Quote',
+          entityId: quote.id,
+          documentType: 'quote_pdf',
+          status: 'generated',
+          url: `/api/pdf/quote/${quote.id}`,
+          contentType: 'application/pdf',
+          generatedBy: actorUserId,
+          generatedAt: new Date(),
+          updatedAt: new Date(),
+          metadata: { quoteNumber: quote.quoteNumber, salesOrderId },
+        },
+      });
+      await (tx as any).documentJob.upsert({
+        where: { entityType_entityId_documentType: { entityType: 'SalesOrder', entityId: salesOrder.id, documentType: 'sales_order_pdf' } },
+        update: {
+          status: 'generated',
+          url: `/api/pdf/order/${salesOrder.id}`,
+          contentType: 'application/pdf',
+          generatedBy: actorUserId,
+          generatedAt: new Date(),
+          updatedAt: new Date(),
+          metadata: { orderNumber, quoteId: quote.id },
+        },
+        create: {
+          id: ulid(),
+          entityType: 'SalesOrder',
+          entityId: salesOrder.id,
+          documentType: 'sales_order_pdf',
+          status: 'generated',
+          url: `/api/pdf/order/${salesOrder.id}`,
+          contentType: 'application/pdf',
+          generatedBy: actorUserId,
+          generatedAt: new Date(),
+          updatedAt: new Date(),
+          metadata: { orderNumber, quoteId: quote.id },
+        },
+      });
+
       await tx.quote.update({
         where: { id: quote.id },
         data: { status: 'confirmed', lines, confirmedAt: quote.confirmedAt || new Date(), updatedAt: new Date() },
@@ -677,12 +859,13 @@ export class QuotesService {
   private async assertProductMasterLines(linesInput: any, action: string) {
     const lines = this.normalizeLines(linesInput);
     if (!lines.length) {
-      throw new BadRequestException(`At least one Product Master item is required before ${action}`);
+      throw new BadRequestException(`At least one quote item is required before ${action}`);
     }
 
-    const productIds: string[] = Array.from(new Set(lines.map((line: any) => String(line.productId || '').trim()).filter(Boolean) as string[]));
-    if (productIds.length === 0 || lines.some((line: any) => !String(line.productId || '').trim())) {
-      throw new BadRequestException(`Every quote row must be selected from Product Master before ${action}`);
+    const productRows = lines.filter((line: any) => !this.isTileOrNonStockLine(line));
+    const productIds: string[] = Array.from(new Set(productRows.map((line: any) => String(line.productId || '').trim()).filter(Boolean) as string[]));
+    if (productRows.some((line: any) => !String(line.productId || '').trim())) {
+      throw new BadRequestException(`Every non-tile quote row must be selected from Product Master before ${action}`);
     }
 
     const products = await this.prisma.product.findMany({
@@ -691,6 +874,7 @@ export class QuotesService {
     const productMap = new Map(products.map((product) => [product.id, product]));
 
     return lines.map((line: any, index: number) => {
+      if (this.isTileOrNonStockLine(line)) return this.normalizeTileOrNonStockLine(line);
       const productId = String(line.productId || '').trim();
       const product = productMap.get(productId) as any;
       if (!product || product.status !== 'active') {
@@ -725,6 +909,41 @@ export class QuotesService {
         quoteImage: line.quoteImage || line.customImageUrl || '',
       };
     });
+  }
+
+  private isTileOrNonStockLine(line: any) {
+    return line?.type === 'tile' || line?.nonStock === true || line?.inventoryTracked === false || String(line?.category || '').toLowerCase() === 'tiles';
+  }
+
+  private normalizeTileOrNonStockLine(line: any) {
+    const qty = Math.trunc(Number(line.qty || line.quantity || 0));
+    if (!Number.isFinite(qty) || qty <= 0) throw new BadRequestException(`${line.name || line.sku || 'Tile item'} needs a positive whole-number quantity`);
+    const price = Number(line.price || line.sellPrice || 0);
+    if (!Number.isFinite(price) || price < 0) throw new BadRequestException(`${line.name || line.sku || 'Tile item'} has an invalid price`);
+    const tileCode = String(line.tileCode || line.sku || line.name || '').trim();
+    const tileSize = String(line.tileSize || line.size || line.dimensions || line.finish || '').trim();
+    return {
+      ...line,
+      type: line.type || 'tile',
+      category: line.category || 'Tiles',
+      productId: undefined,
+      sku: tileCode || 'TILE-CODE-PENDING',
+      name: String(line.name || `Tile ${tileCode || ''} ${tileSize || ''}`).trim(),
+      tileCode,
+      tileSize,
+      dimensions: tileSize,
+      qty,
+      quantity: qty,
+      uom: line.uom || 'box',
+      unit: String(line.unit || line.uom || 'BOX').toUpperCase(),
+      price,
+      sellPrice: price,
+      area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
+      quoteImage: line.quoteImage || line.customImageUrl || '',
+      source: line.source || 'tile-intent',
+      inventoryTracked: false,
+      nonStock: true,
+    };
   }
 
   private normalizeDisplayMode(value?: string) {

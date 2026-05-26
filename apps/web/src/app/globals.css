@@ -20,12 +20,10 @@
 @layer base {
   :root {
     /* ─── LIGHT — refined zinc + indigo tints ─── */
-    --bg:           #f3f6fb;          /* canvas — airy blue/violet wash */
-    --bg-soft:      #eef3fb;          /* canvas tint */
+    --bg:           #f7f8fb;          /* canvas — very subtle bluish off-white */
+    --bg-soft:      #f0f2f7;          /* canvas tint */
     --surface:      #ffffff;          /* card surface */
-    --surface-2:    #f8fbff;          /* secondary surface (cards on subtle tint) */
-    --surface-glow: rgba(99, 102, 241, 0.08);
-    --surface-glow-2: rgba(14, 165, 233, 0.08);
+    --surface-2:    #fafbfd;          /* secondary surface (cards on subtle tint) */
     --surface-3:    #1a1b23;          /* inverted */
 
     --ink:          #18181b;
@@ -61,8 +59,8 @@
 
     --sh-flat:      0 1px 0 rgba(24, 24, 27, 0.04);
     --sh-sm:        0 1px 2px rgba(24, 24, 27, 0.05);
-    --sh-md:        0 10px 26px -18px rgba(15, 23, 42, 0.26);
-    --sh-lg:        0 24px 70px -34px rgba(15, 23, 42, 0.28);
+    --sh-md:        0 4px 12px -4px rgba(24, 24, 27, 0.08);
+    --sh-lg:        0 12px 32px -12px rgba(24, 24, 27, 0.12);
 
     --r2: 4px; --r3: 6px; --r4: 8px; --r5: 12px; --r6: 16px; --rp: 999px;
 
@@ -105,8 +103,6 @@
     --surface:      #1f2129;          /* card surface */
     --surface-2:    #262833;          /* one-step elevated */
     --surface-3:    #fafafa;
-    --surface-glow: rgba(99, 102, 241, 0.15);
-    --surface-glow-2: rgba(56, 189, 248, 0.10);
 
     --ink:          #fafafa;
     --ink-2:        #e4e4e7;
@@ -174,17 +170,17 @@
 @layer base {
   *, *::before, *::after {
     transition-property: background-color, border-color, color, fill, stroke;
-    transition-duration: 260ms;
+    transition-duration: 220ms;
     transition-timing-function: cubic-bezier(.22, 1, .36, 1);
   }
-  /* Disable global colour tweens during page load and snapshot transitions.
-     The theme swap is handled by one composed transition, not 500 elements
-     repainting independently. */
-  .preload *, .preload *::before, .preload *::after,
-  html.theme-view-transition *, html.theme-view-transition *::before, html.theme-view-transition *::after,
-  html.theme-switching *, html.theme-switching *::before, html.theme-switching *::after {
-    transition: none !important;
+  :root.theme-transitioning *,
+  :root.theme-transitioning *::before,
+  :root.theme-transitioning *::after {
+    transition-duration: 520ms;
+    transition-timing-function: cubic-bezier(.22, 1, .36, 1);
   }
+  /* Disable the global transition during page load to avoid wash-in */
+  .preload *, .preload *::before, .preload *::after { transition: none !important; }
 
   * { border-color: var(--line, #e4e6ec); }
   html, body { background: var(--bg); }
@@ -199,10 +195,9 @@
     /* Light mode body — stronger brand + violet washes so the canvas
        doesn't read as clinical white. Subtle, but visibly tinted. */
     background-image:
-      radial-gradient(900px 520px at 18% -12%, rgba(124, 58, 237, 0.13), transparent 56%),
-      radial-gradient(900px 560px at 78% 8%, rgba(56, 189, 248, 0.11), transparent 58%),
-      radial-gradient(950px 620px at 95% 115%, rgba(245, 158, 11, 0.08), transparent 55%),
-      linear-gradient(180deg, #f8fbff 0%, var(--bg) 46%, #eef3fb 100%);
+      radial-gradient(1100px 600px at 10% -15%, rgba(59, 130, 246, 0.10), transparent 55%),
+      radial-gradient(1100px 600px at 100% 110%, rgba(124, 58, 237, 0.08), transparent 55%),
+      linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 100%);
     background-attachment: fixed;
   }
   ::selection { background: var(--brand-600); color: #ffffff; }
@@ -221,96 +216,56 @@
       radial-gradient(900px 500px at 50% 50%, rgba(59, 130, 246, 0.05), transparent 70%),
       linear-gradient(180deg, #16171f 0%, #1a1c25 50%, #14151b 100%);
   }
+}
 
-  html.theme-switching::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    z-index: 2147483647;
-    pointer-events: none;
-    opacity: 0;
-    background:
-      radial-gradient(620px 440px at var(--theme-x, 92%) var(--theme-y, 4rem), rgba(96, 165, 250, 0.42), transparent 62%),
-      radial-gradient(900px 620px at 50% 28%, rgba(168, 85, 247, 0.18), transparent 72%),
-      linear-gradient(135deg, rgba(255,255,255,0.28), rgba(15,23,42,0.14));
-    animation: mp-theme-ripple 680ms var(--eo);
-  }
+/* ─── Lead pipeline card drag/drop ─── */
+.mp-lead-card[data-dragging] { pointer-events: none; }
+@keyframes mp-card-land {
+  0%   { transform: translateY(-6px) scale(1.02); box-shadow: 0 24px 50px -25px rgba(15,23,42,0.45); }
+  60%  { transform: translateY(2px)  scale(0.99); }
+  100% { transform: translateY(0)    scale(1); box-shadow: 0 1px 0 rgba(15,23,42,0.02); }
+}
+.mp-lead-card.mp-card-landing { animation: mp-card-land 360ms cubic-bezier(.22,1,.36,1); }
+@keyframes mp-card-appear {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.mp-lead-card { animation: mp-card-appear 220ms cubic-bezier(.22,1,.36,1); }
 
-  @keyframes mp-theme-ripple {
-    0% { opacity: 0; transform: scale(0.96); filter: blur(12px); }
-    36% { opacity: 0.82; }
-    100% { opacity: 0; transform: scale(1.05); filter: blur(0); }
-  }
+@keyframes mp-theme-in {
+  from { opacity: 0; filter: blur(8px) saturate(1.08); transform: scale(1.008); }
+  to { opacity: 1; filter: blur(0) saturate(1); transform: scale(1); }
+}
 
-  html.theme-view-transition {
-    view-transition-name: root;
-  }
+@keyframes mp-theme-out {
+  from { opacity: 1; filter: blur(0) saturate(1); transform: scale(1); }
+  to { opacity: 0; filter: blur(6px) saturate(0.96); transform: scale(0.996); }
+}
 
-  ::view-transition-group(root) {
-    animation-duration: 760ms;
-    animation-timing-function: var(--eo);
-  }
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 520ms;
+  animation-timing-function: cubic-bezier(.22, 1, .36, 1);
+  mix-blend-mode: normal;
+}
 
+::view-transition-old(root) { animation-name: mp-theme-out; }
+::view-transition-new(root) { animation-name: mp-theme-in; }
+
+@media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root),
   ::view-transition-new(root) {
-    animation-duration: 760ms;
-    animation-timing-function: var(--eo);
-    block-size: 100%;
-    inline-size: 100%;
-    mix-blend-mode: normal;
-  }
-
-  ::view-transition-old(root) {
-    animation-name: mp-theme-old;
-  }
-
-  ::view-transition-new(root) {
-    animation-name: mp-theme-new;
-    transform-origin: var(--theme-x, 92vw) var(--theme-y, 2rem);
-  }
-
-  @keyframes mp-theme-old {
-    0% { opacity: 1; filter: blur(0); transform: scale(1); }
-    42% { opacity: 0.94; }
-    100% { opacity: 0; filter: blur(7px); transform: scale(1.012); }
-  }
-
-  @keyframes mp-theme-new {
-    0% {
-      clip-path: circle(0 at var(--theme-x, 92vw) var(--theme-y, 2rem));
-      opacity: 0.92;
-      filter: blur(10px) saturate(1.08);
-      transform: scale(0.992);
-    }
-    58% {
-      opacity: 1;
-      filter: blur(2px) saturate(1.03);
-    }
-    100% {
-      clip-path: circle(150vmax at var(--theme-x, 92vw) var(--theme-y, 2rem));
-      opacity: 1;
-      filter: blur(0) saturate(1);
-      transform: scale(1);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; }
-    html.theme-switching::before { display: none; }
-    ::view-transition-old(root), ::view-transition-new(root) { animation: none !important; }
+    animation-duration: 1ms;
   }
 }
 
 @layer components {
   /* ── Cards ── */
   .mp-card {
-    background:
-      radial-gradient(720px 260px at 8% 0%, var(--surface-glow), transparent 58%),
-      radial-gradient(520px 240px at 100% 0%, var(--surface-glow-2), transparent 62%),
-      linear-gradient(180deg, rgba(255,255,255,0.92), var(--surface) 78%);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r5);
-    box-shadow: var(--sh-md);
+    box-shadow: var(--sh-flat);
   }
 
   .mp-dark-panel {
@@ -320,19 +275,14 @@
   }
 
   .mp-shell-panel {
-    background:
-      radial-gradient(520px 220px at 10% 0%, var(--surface-glow), transparent 64%),
-      var(--surface);
+    background: var(--surface);
     border: 1px solid var(--line);
     box-shadow: var(--sh-sm);
   }
 
   /* ── Hero (subtle tint, not flat) ── */
   .mp-hero {
-    background:
-      radial-gradient(900px 340px at 12% 0%, rgba(124,58,237,0.12), transparent 58%),
-      radial-gradient(760px 320px at 92% 12%, rgba(56,189,248,0.12), transparent 58%),
-      linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+    background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
     border: 1px solid var(--line);
     border-radius: var(--r6);
     padding: 24px;
@@ -340,9 +290,7 @@
   }
 
   .mp-kpi {
-    background:
-      radial-gradient(360px 140px at 12% 0%, var(--surface-glow), transparent 60%),
-      var(--surface);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r5);
     padding: 18px 20px;
@@ -354,13 +302,13 @@
   .mp-mono { font-family: var(--f-mono); }
 
   /* ── Tinted KPI cards — more visible in light mode now ── */
-  .mp-kpi-tint-brand    { background: radial-gradient(420px 180px at 0% 0%, rgba(59,130,246,0.18), transparent 62%), linear-gradient(155deg, #eef5ff 0%, #ffffff 72%); box-shadow: inset 0 1px 0 #c7d6f7, var(--sh-md); }
-  .mp-kpi-tint-success  { background: radial-gradient(420px 180px at 0% 0%, rgba(16,185,129,0.16), transparent 62%), linear-gradient(155deg, #ecfdf5 0%, #ffffff 72%); box-shadow: inset 0 1px 0 #bbf2d6, var(--sh-md); }
-  .mp-kpi-tint-warning  { background: radial-gradient(420px 180px at 0% 0%, rgba(245,158,11,0.17), transparent 62%), linear-gradient(155deg, #fff7df 0%, #ffffff 72%); box-shadow: inset 0 1px 0 #fcd58b, var(--sh-md); }
-  .mp-kpi-tint-danger   { background: radial-gradient(420px 180px at 0% 0%, rgba(239,68,68,0.15), transparent 62%), linear-gradient(155deg, #fff1f2 0%, #ffffff 72%); box-shadow: inset 0 1px 0 #fcb1b1, var(--sh-md); }
-  .mp-kpi-tint-violet   { background: radial-gradient(420px 180px at 0% 0%, rgba(124,58,237,0.18), transparent 62%), linear-gradient(155deg, #f3efff 0%, #ffffff 72%); box-shadow: inset 0 1px 0 #d6c2fb, var(--sh-md); }
-  .mp-kpi-tint-sky      { background: radial-gradient(420px 180px at 0% 0%, rgba(14,165,233,0.17), transparent 62%), linear-gradient(155deg, #eaf7ff 0%, #ffffff 72%); box-shadow: inset 0 1px 0 #95d2f8, var(--sh-md); }
-  .mp-kpi-tint-neutral  { background: radial-gradient(420px 180px at 0% 0%, rgba(100,116,139,0.10), transparent 62%), linear-gradient(155deg, #f7faff 0%, #ffffff 72%); box-shadow: inset 0 1px 0 #e4e6ec, var(--sh-md); }
+  .mp-kpi-tint-brand    { background: linear-gradient(160deg, #eef4ff 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #c7d6f7, var(--sh-flat); }
+  .mp-kpi-tint-success  { background: linear-gradient(160deg, #ecfdf5 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #bbf2d6, var(--sh-flat); }
+  .mp-kpi-tint-warning  { background: linear-gradient(160deg, #fffaeb 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #fcd58b, var(--sh-flat); }
+  .mp-kpi-tint-danger   { background: linear-gradient(160deg, #fff1f2 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #fcb1b1, var(--sh-flat); }
+  .mp-kpi-tint-violet   { background: linear-gradient(160deg, #f4f0ff 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #d6c2fb, var(--sh-flat); }
+  .mp-kpi-tint-sky      { background: linear-gradient(160deg, #eaf6ff 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #95d2f8, var(--sh-flat); }
+  .mp-kpi-tint-neutral  { background: linear-gradient(160deg, #f7f8fb 0%, #ffffff 70%); box-shadow: inset 0 1px 0 #e4e6ec, var(--sh-flat); }
 
   /* Dark tints — soft glow on the top edge, gradient back to surface. */
   :root.dark .mp-kpi-tint-brand    { background: linear-gradient(160deg, rgba(59,130,246,0.16) 0%, var(--surface) 65%); box-shadow: inset 0 1px 0 rgba(59,130,246,0.35), var(--sh-flat); }
@@ -390,13 +338,10 @@
 
   /* ── Section panel ── */
   .mp-panel {
-    background:
-      radial-gradient(760px 240px at 6% 0%, var(--surface-glow), transparent 60%),
-      radial-gradient(560px 220px at 100% 0%, var(--surface-glow-2), transparent 64%),
-      var(--surface);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r5);
-    box-shadow: var(--sh-md);
+    box-shadow: var(--sh-flat);
     overflow: hidden;
   }
   .mp-panel-band-brand   { background: linear-gradient(180deg, #eef4ff 0%, var(--surface) 60%); border-top: 1px solid #c7d6f7; }
@@ -405,16 +350,6 @@
   .mp-panel-band-danger  { background: linear-gradient(180deg, #fff1f2 0%, var(--surface) 60%); border-top: 1px solid #fcb1b1; }
   .mp-panel-band-violet  { background: linear-gradient(180deg, #f4f0ff 0%, var(--surface) 60%); border-top: 1px solid #d6c2fb; }
   .mp-panel-band-sky     { background: linear-gradient(180deg, #eaf6ff 0%, var(--surface) 60%); border-top: 1px solid #95d2f8; }
-
-  :root.dark .mp-card,
-  :root.dark .mp-shell-panel,
-  :root.dark .mp-kpi,
-  :root.dark .mp-panel {
-    background:
-      radial-gradient(760px 240px at 8% 0%, var(--surface-glow), transparent 62%),
-      radial-gradient(560px 220px at 100% 0%, var(--surface-glow-2), transparent 66%),
-      var(--surface);
-  }
 
   :root.dark .mp-panel-band-brand   { background: linear-gradient(180deg, rgba(59,130,246,0.10) 0%, var(--surface) 60%); border-top: 1px solid rgba(59,130,246,0.28); }
   :root.dark .mp-panel-band-success { background: linear-gradient(180deg, rgba(16,185,129,0.10) 0%, var(--surface) 60%); border-top: 1px solid rgba(16,185,129,0.28); }
@@ -497,7 +432,6 @@
 
 :root.dark [class*="bg-[#eff6ff]"] { background-color: rgba(59,130,246,0.12) !important; }
 :root.dark [class*="bg-[#dbeafe]"] { background-color: rgba(59,130,246,0.22) !important; }
-:root.dark [class*="bg-[#eef4ff]"] { background-color: rgba(59,130,246,0.18) !important; }
 :root.dark [class*="text-[#1d4ed8]"] { color: #93c5fd !important; }
 :root.dark [class*="text-[#2563eb]"] { color: #60a5fa !important; }
 :root.dark [class*="text-[#1e40af]"] { color: #93c5fd !important; }
@@ -507,74 +441,6 @@
 :root.dark [class*="bg-white/75"] { background-color: rgba(31,33,41,0.75) !important; }
 :root.dark [class*="bg-white/72"] { background-color: rgba(31,33,41,0.72) !important; }
 :root.dark [class*="bg-white/80"] { background-color: rgba(31,33,41,0.80) !important; }
-
-.mp-app-shell {
-  background:
-    radial-gradient(800px 460px at 15% -10%, rgba(124,58,237,0.11), transparent 58%),
-    radial-gradient(840px 480px at 86% 4%, rgba(14,165,233,0.10), transparent 60%),
-    linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 100%);
-}
-
-.mp-topbar {
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.86), rgba(255,255,255,0.76));
-  border-color: var(--line);
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03), 0 18px 40px -36px rgba(15, 23, 42, 0.25);
-}
-
-.mp-sidebar {
-  background:
-    radial-gradient(420px 280px at 0% 0%, rgba(124,58,237,0.10), transparent 62%),
-    linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,251,255,0.96));
-  border-color: var(--line);
-}
-
-.mp-nav-active {
-  background: linear-gradient(135deg, #eef4ff 0%, #f6f1ff 100%);
-  color: #1e3a8a;
-  box-shadow: inset 0 0 0 1px rgba(37,99,235,0.18), 0 10px 24px -18px rgba(37,99,235,0.38);
-}
-
-.mp-nav-inactive {
-  color: var(--ink-3);
-}
-.mp-nav-inactive:hover {
-  background: rgba(255,255,255,0.72);
-  color: var(--ink);
-}
-
-:root.dark .mp-app-shell {
-  background:
-    radial-gradient(900px 540px at 10% -12%, rgba(99,102,241,0.19), transparent 58%),
-    radial-gradient(840px 480px at 92% 6%, rgba(56,189,248,0.10), transparent 62%),
-    linear-gradient(180deg, #151721 0%, #1a1c25 48%, #14151b 100%);
-}
-
-:root.dark .mp-topbar {
-  background: linear-gradient(180deg, rgba(31,33,41,0.88), rgba(31,33,41,0.78));
-  border-color: var(--line);
-}
-
-:root.dark .mp-sidebar {
-  background:
-    radial-gradient(480px 320px at 0% 0%, rgba(99,102,241,0.14), transparent 62%),
-    linear-gradient(180deg, rgba(31,33,41,0.96), rgba(24,26,34,0.98));
-  border-color: var(--line);
-}
-
-:root.dark .mp-nav-active {
-  background: linear-gradient(135deg, rgba(59,130,246,0.25), rgba(124,58,237,0.22));
-  color: #eff6ff !important;
-  box-shadow: inset 0 0 0 1px rgba(147,197,253,0.30), 0 12px 28px -18px rgba(96,165,250,0.70);
-}
-:root.dark .mp-nav-active svg,
-:root.dark .mp-nav-active span { color: #eff6ff !important; stroke: #bfdbfe !important; }
-
-:root.dark .mp-nav-inactive { color: var(--ink-3); }
-:root.dark .mp-nav-inactive:hover {
-  background: rgba(255,255,255,0.06);
-  color: var(--ink);
-}
 
 /* ── Icon-pop helpers ──
  * Drop-in classes you can hang on any lucide icon's parent to get a vivid

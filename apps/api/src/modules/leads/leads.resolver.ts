@@ -28,9 +28,6 @@ export class LeadOutput {
   @Field(() => Date, { nullable: true })
   nextActionAt?: Date;
 
-  @Field(() => Date, { nullable: true })
-  reopenedAt?: Date;
-
   // FKs exposed for DataLoader-driven field resolution.
   @Field({ nullable: true })
   customerId?: string;
@@ -115,6 +112,27 @@ export class UpdateLeadInput {
 }
 
 @InputType()
+export class LeadBoardFiltersInput {
+  @Field(() => String, { nullable: true }) ownerId?: string;
+  @Field(() => String, { nullable: true }) source?: string;
+  @Field(() => String, { nullable: true }) city?: string;
+  @Field(() => Number, { nullable: true }) valueMin?: number;
+  @Field(() => Number, { nullable: true }) valueMax?: number;
+  @Field(() => String, { nullable: true, description: 'fresh | stale | very_stale' }) ageBucket?: string;
+  @Field(() => Boolean, { nullable: true }) reopenedOnly?: boolean;
+  @Field(() => Boolean, { nullable: true }) hasRevision?: boolean;
+  @Field(() => String, { nullable: true }) search?: string;
+}
+
+@InputType()
+export class BulkUpdateLeadsInput {
+  @Field(() => [String]) ids!: string[];
+  @Field(() => String, { nullable: true }) ownerId?: string;
+  @Field(() => String, { nullable: true }) stage?: string;
+  @Field(() => String, { nullable: true }) notes?: string;
+}
+
+@InputType()
 export class CreateLeadIntentInput {
   @Field(() => String)
   leadId!: string;
@@ -177,16 +195,6 @@ export class LeadsResolver {
     return lead;
   }
 
-  @Query(() => GraphQLJSON, { name: 'leadTimeline' })
-  async leadTimeline(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireSession(this.prisma, ctx);
-    const lead = await this.leads.findById(id);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && lead.ownerId !== user.id) {
-      throw new Error('This lead is restricted');
-    }
-    return this.leads.timeline(id);
-  }
-
   @Mutation(() => LeadOutput)
   async createLead(@Args('input') input: CreateLeadInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
@@ -218,6 +226,31 @@ export class LeadsResolver {
     const existing = await this.leads.findById(id);
     if (!isPrivileged(user) && user.role !== 'office_staff' && existing.ownerId !== user.id) throw new Error('This lead is restricted');
     return this.leads.updateStage(id, stage);
+  }
+
+  @Query(() => GraphQLJSON, { name: 'leadsBoard' })
+  async leadsBoard(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('filters', { type: () => LeadBoardFiltersInput, nullable: true }) filters?: LeadBoardFiltersInput,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    return this.leads.boardData((filters || {}) as any, { id: user.id, role: user.role });
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async bulkUpdateLeads(@Args('input') input: BulkUpdateLeadsInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager']);
+    return this.leads.bulkUpdate(input.ids, { ownerId: input.ownerId, stage: input.stage, notes: input.notes }, { id: user.id, role: user.role });
+  }
+
+  @Query(() => GraphQLJSON, { name: 'leadTimeline' })
+  async leadTimeline(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireSession(this.prisma, ctx);
+    const lead = await this.leads.findById(id);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && lead.ownerId !== user.id) {
+      throw new Error('This lead is restricted');
+    }
+    return this.leads.timeline(id);
   }
 
   @Query(() => [GraphQLJSON])

@@ -214,7 +214,9 @@ export class DispatchService {
     const contactPhone = data.contactPhone || data.driverPhone || job.customer?.mobile || '';
     if (!contactPhone) throw new BadRequestException('A driver/contact phone is required');
 
-    const challanLines = this.normalizeLines(data.lines) || [];
+    const selectedLines = this.normalizeLines(data.lines) || [];
+    const quoteLines = this.normalizeLines(job.quote?.lines) || [];
+    const challanLines = selectedLines.length ? selectedLines : quoteLines;
     if (!challanLines.length) throw new BadRequestException('Select at least one ready item to create a challan');
     await this.assertDispatchableLines(challanLines, job.quoteId);
     const challan = await this.prisma.dispatchChallan.create({
@@ -253,11 +255,30 @@ export class DispatchService {
     return challan;
   }
 
-  async updateChallanStatus(id: string, status: string) {
+  async updateChallanStatus(id: string, status: string, proof?: { receiverName?: string; receiverContact?: string; photoUrl?: string; signatureUrl?: string; notes?: string } | null) {
     const challan = await this.prisma.dispatchChallan.findUnique({ where: { id } });
     if (!challan) throw new NotFoundException('Challan not found');
-    
+
+    if (status === 'delivered') {
+      const proofPayload = proof || (challan as any).proof || null;
+      const receiverName = String(proofPayload?.receiverName || '').trim();
+      const hasVisualProof = Boolean(
+        String(proofPayload?.photoUrl || '').trim() ||
+        String(proofPayload?.signatureUrl || '').trim(),
+      );
+      if (!receiverName || !hasVisualProof) {
+        throw new BadRequestException('Delivery proof is required (receiver name + photo or signature).');
+      }
+    }
+
     const data: any = { status };
+    if (proof) {
+      data.proof = {
+        ...(challan as any).proof,
+        ...proof,
+        recordedAt: new Date().toISOString(),
+      };
+    }
     if (status === 'dispatched') {
       data.dispatchedAt = new Date();
     } else if (status === 'delivered') {
@@ -368,6 +389,7 @@ export class DispatchService {
 
       const balance = await tx.inventoryBalance.findUnique({ where: { productId } });
       if (!balance) continue;
+      const location = await this.resolveDispatchLocationTx(tx, line.locationId || line.stockLocationId || line.location?.id);
 
       const onHand = Math.max(0, Number(balance.onHand || 0) - quantity);
       const reserved = Math.max(0, Number(balance.reserved || 0) - quantity);
@@ -395,6 +417,37 @@ export class DispatchService {
           createdBy: 'dispatch',
         },
       });
+      if (location) {
+        const locationBalance = await tx.stockBalanceByLocation.findUnique({
+          where: { productId_locationId: { productId, locationId: location.id } },
+        }).catch(() => null);
+        if (locationBalance) {
+          await tx.stockBalanceByLocation.update({
+            where: { productId_locationId: { productId, locationId: location.id } },
+            data: {
+              onHand: Math.max(0, Number(locationBalance.onHand || 0) - quantity),
+              reserved: Math.max(0, Number(locationBalance.reserved || 0) - quantity),
+              updatedAt: new Date(),
+            },
+          });
+        }
+        await tx.stockLedgerEntry.create({
+          data: {
+            id: ulid(),
+            productId,
+            locationId: location.id,
+            type: 'dispatch',
+            quantity,
+            direction: 'out',
+            referenceType: 'DispatchChallan',
+            referenceId: challan.id,
+            sourceDocumentNo: challan.challanNumber,
+            reason: `Dispatched on ${challan.challanNumber}`,
+            createdBy: 'dispatch',
+            metadata: { quoteId: challan.quoteId, dispatchJobId: challan.dispatchJobId },
+          },
+        }).catch(() => null);
+      }
 
       let remainingToDispatch = quantity;
       while (remainingToDispatch > 0) {
@@ -456,7 +509,7 @@ export class DispatchService {
       const reservedQty = Number(reservedByProduct.get(productId) || 0);
       const dispatchable = Math.min(remainingOrderQty, reservedQty);
       if (quantity > dispatchable) {
-        throw new BadRequestException(`${line.name || line.sku || 'Line item'} is not ready to dispatch. Requested ${quantity}, ready ${dispatchable}, pending inward ${Math.max(0, remainingOrderQty - dispatchable)}`);
+        throw new BadRequestException(`${line.name || line.sku || 'Line item'} is not inwards yet and cannot be dispatched. Requested ${quantity}, ready ${dispatchable}, pending inward ${Math.max(0, remainingOrderQty - dispatchable)}`);
       }
     }
   }
@@ -483,5 +536,28 @@ export class DispatchService {
       }
     }
     return grouped;
+  }
+
+  private async resolveDispatchLocationTx(tx: any, locationId?: string | null) {
+    if (locationId) {
+      const requested = await tx.stockLocation.findUnique({ where: { id: locationId } }).catch(() => null);
+      if (requested) return requested;
+    }
+    const locations = await tx.stockLocation.findMany({ where: { status: 'active' } }).catch(() => []);
+    const flagged = locations.find((location: any) => location.metadata?.defaultStockScope);
+    if (flagged) return flagged;
+    if (locations[0]) return locations[0];
+    return tx.stockLocation.create({
+      data: {
+        id: ulid(),
+        code: 'MAIN',
+        name: 'Main Plant / Godown',
+        type: 'plant',
+        status: 'active',
+        sortOrder: 0,
+        metadata: { defaultStockScope: true },
+        updatedAt: new Date(),
+      },
+    });
   }
 }

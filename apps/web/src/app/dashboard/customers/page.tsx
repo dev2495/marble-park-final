@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { gql, useMutation, useQuery, useLazyQuery } from '@apollo/client';
 import { AlertTriangle, Building2, Mail, MapPin, Phone, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -161,7 +162,7 @@ export default function CustomersPage() {
 
       <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {loading && !data ? <div role="status" aria-live="polite" className="col-span-full rounded-r5 bg-white/70 p-12 text-center font-bold text-[#52525b]">Loading customers...</div> : customers.map((customer: any) => (
-          <article key={customer.id} className="mp-card rounded-r5 p-5 transition hover:-translate-y-1 hover:shadow-2xl">
+          <Link key={customer.id} href={`/dashboard/customers/${customer.id}`} className="mp-card rounded-r5 p-5 transition hover:-translate-y-1 hover:shadow-2xl block">
             <div className="flex items-start gap-4">
               <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#18181b] text-lg font-black text-[#ffffff]"><Building2 className="h-6 w-6" /></div>
               <div className="min-w-0">
@@ -174,7 +175,7 @@ export default function CustomersPage() {
               {customer.email && <p className="flex items-center gap-3"><Mail className="h-4 w-4 text-[#2563eb]" />{customer.email}</p>}
               {(customer.city || customer.siteAddress) && <p className="flex items-start gap-3"><MapPin className="mt-0.5 h-4 w-4 text-[#2563eb]" />{[customer.siteAddress, customer.city].filter(Boolean).join(', ')}</p>}
             </div>
-          </article>
+          </Link>
         ))}
       </section>
     </div>

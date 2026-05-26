@@ -135,7 +135,23 @@ function aggregateChallanQty(challans) {
   return byProduct;
 }
 
-async function fetchOrder(id) {
+async function fetchOrderViaGraphql(id, apiUrl) {
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      query: `query SalesOrderPdfPayload($id: ID!) { salesOrderPdfPayload(id: $id) }`,
+      variables: { id },
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.errors?.length || !payload.data?.salesOrderPdfPayload?.order) {
+    throw new Error(payload.errors?.[0]?.message || 'Sales order not found');
+  }
+  return payload.data.salesOrderPdfPayload;
+}
+
+async function fetchOrderViaPrisma(id) {
   const { PrismaClient } = require('@prisma/client');
   const prisma = new PrismaClient();
   try {
@@ -156,6 +172,17 @@ async function fetchOrder(id) {
   } finally {
     await prisma.$disconnect();
   }
+}
+
+async function fetchOrder(id, apiUrl) {
+  if (apiUrl) {
+    try {
+      return await fetchOrderViaGraphql(id, apiUrl);
+    } catch (error) {
+      if (!process.env.DATABASE_URL) throw error;
+    }
+  }
+  return fetchOrderViaPrisma(id);
 }
 
 function buildDocument(payload, requestUrl) {
@@ -267,9 +294,9 @@ function buildDocument(payload, requestUrl) {
 }
 
 async function main() {
-  const [, , id, requestUrl] = process.argv;
-  if (!id || !requestUrl) throw new Error('Usage: render-sales-order-pdf.cjs <orderId> <requestUrl>');
-  const payload = await fetchOrder(id);
+  const [, , id, requestUrl, apiUrl] = process.argv;
+  if (!id || !requestUrl) throw new Error('Usage: render-sales-order-pdf.cjs <orderId> <requestUrl> [apiUrl]');
+  const payload = await fetchOrder(id, apiUrl);
   const buffer = await renderToBuffer(buildDocument(payload, requestUrl));
   process.stdout.write(buffer);
 }

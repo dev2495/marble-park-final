@@ -18,12 +18,17 @@ import { ImportsModule } from './modules/imports/imports.module';
 import { ProductsModule } from './modules/products/products.module';
 import { SystemModule } from './modules/system/system.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { SearchModule } from './modules/search/search.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { CommunicationsModule } from './modules/communications/communications.module';
+import { ReturnsModule } from './modules/returns/returns.module';
+import { TargetsModule } from './modules/targets/targets.module';
+import { PortalModule } from './modules/portal/portal.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { IntentsModule } from './modules/intents/intents.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { OperationsModule } from './modules/operations/operations.module';
-import { AuditModule } from './modules/audit/audit.module';
-import { IntentsModule } from './modules/intents/intents.module';
-
-import { SearchModule } from './modules/search/search.module';
 
 @Module({
   imports: [
@@ -56,11 +61,17 @@ import { SearchModule } from './modules/search/search.module';
     ImportsModule,
     SearchModule,
     SystemModule,
-    ProcurementModule,
-    OperationsModule,
     NotificationsModule,
     AuditModule,
+    PaymentsModule,
+    CommunicationsModule,
+    ReturnsModule,
+    TargetsModule,
+    PortalModule,
+    ReportsModule,
     IntentsModule,
+    ProcurementModule,
+    OperationsModule,
   ],
 })
 export class AppModule {}
