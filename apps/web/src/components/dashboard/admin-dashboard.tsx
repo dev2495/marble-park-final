@@ -8,7 +8,7 @@ import {
   PieChart, Pie,
 } from 'recharts';
 import {
-  Activity, AlertCircle, BadgeCheck, ClipboardCheck, Database, FileCheck, FileSpreadsheet,
+  Activity, AlertCircle, BadgeCheck, ClipboardCheck, Database, FileSpreadsheet,
   KeyRound, Plus, Settings, Shield, ShieldCheck, UserCheck, UserCog, Users, UserX, ServerCog,
   History, Boxes, IndianRupee,
 } from 'lucide-react';
@@ -39,8 +39,6 @@ const ADMIN_DASH = gql`
     quotes(status: "pending_approval") {
       id quoteNumber lines customer owner createdAt
     }
-    importBatches
-    catalogReviewTasks(status: "needs_mapping", take: 200)
     customers(search: "") { id }
     salesOrderStats(range: "month")
   }
@@ -65,8 +63,6 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
 
   const users = useMemo<any[]>(() => data?.users || [], [data?.users]);
   const approvalQuotes = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
-  const importBatches = useMemo<any[]>(() => (data?.importBatches || []).filter((b: any) => b.status === 'pending_approval'), [data?.importBatches]);
-  const imageTasks = useMemo<any[]>(() => data?.catalogReviewTasks || [], [data?.catalogReviewTasks]);
   const customers = useMemo<any[]>(() => data?.customers || [], [data?.customers]);
   const ownerStats = useMemo(() => data?.ownerDashboard?.stats || {}, [data?.ownerDashboard?.stats]);
   const orderStats = data?.salesOrderStats || {};
@@ -92,26 +88,24 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
   }, [users]);
 
   // ── Approval queue summary (cross-team)
-  const totalApprovals = approvalQuotes.length + importBatches.length + imageTasks.length;
+  const totalApprovals = approvalQuotes.length;
   const approvalBreakdown = [
     { label: 'Quote approvals', count: approvalQuotes.length, icon: FileSpreadsheet, tone: 'brand' as Tone, href: '/dashboard/approvals' },
-    { label: 'Import approvals', count: importBatches.length, icon: Database, tone: 'violet' as Tone, href: '/dashboard/approvals' },
-    { label: 'Image mapping', count: imageTasks.length, icon: FileCheck, tone: 'sky' as Tone, href: '/dashboard/approvals' },
+    { label: 'Excel imports', count: 0, icon: Database, tone: 'violet' as Tone, href: '/dashboard/master-data/imports' },
   ];
 
   // ── Data hygiene — quick heuristics
   const hygiene = useMemo(() => {
     const items: Array<{ label: string; count: number; tone: Tone; href: string }> = [];
-    items.push({ label: 'Catalogue image coverage', count: Number(ownerStats.catalogueImageCoverage || 0), tone: (ownerStats.catalogueImageCoverage || 0) > 80 ? 'success' : 'warning', href: '/dashboard/master-data/catalogue-review' });
+    items.push({ label: 'Product image coverage', count: Number(ownerStats.catalogueImageCoverage || 0), tone: (ownerStats.catalogueImageCoverage || 0) > 80 ? 'success' : 'warning', href: '/dashboard/master-data/products' });
     items.push({ label: 'Total customers', count: customers.length, tone: 'neutral', href: '/dashboard/customers' });
     items.push({ label: 'Total catalogue SKUs', count: Number(ownerStats.totalProducts || 0), tone: 'neutral', href: '/dashboard/products' });
-    items.push({ label: 'Image review queue', count: imageTasks.length, tone: imageTasks.length > 0 ? 'warning' : 'success', href: '/dashboard/master-data/catalogue-review' });
     return items;
-  }, [ownerStats, customers, imageTasks]);
+  }, [ownerStats, customers]);
 
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
     { label: 'Active users', value: activeUsers.length, caption: `${users.length} total · ${inactiveUsers.length} disabled`, icon: Users, tone: 'success', href: '/dashboard/users', numeric: true },
-    { label: 'Approvals across all teams', value: totalApprovals, caption: `${approvalQuotes.length} quotes · ${importBatches.length} imports · ${imageTasks.length} images`, icon: ClipboardCheck, tone: totalApprovals ? 'warning' : 'neutral', href: '/dashboard/approvals', numeric: true },
+    { label: 'Approvals across all teams', value: totalApprovals, caption: `${approvalQuotes.length} quote exceptions`, icon: ClipboardCheck, tone: totalApprovals ? 'warning' : 'neutral', href: '/dashboard/approvals', numeric: true },
     { label: 'New users · 30d', value: recentUsers.length, caption: recentUsers.length ? 'Recent joiners' : 'No new joiners', icon: UserCheck, tone: 'brand', href: '/dashboard/users', numeric: true },
     { label: 'Business revenue · MTD', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} orders · admin view`, icon: IndianRupee, tone: 'violet', href: '/dashboard/orders', numeric: true, format: moneyShort },
   ];
@@ -324,7 +318,7 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
               { label: 'Postgres', state: 'Healthy', tone: 'success' as Tone },
               { label: 'GraphQL API', state: 'Healthy', tone: 'success' as Tone },
               { label: 'PDF renderer', state: 'Healthy', tone: 'success' as Tone },
-              { label: 'Catalogue extractor', state: 'Idle', tone: 'neutral' as Tone },
+              { label: 'Excel product import', state: 'Healthy', tone: 'success' as Tone },
             ].map((s) => (
               <li key={s.label} className="flex items-center justify-between rounded-r3 border border-[#f4f4f5] bg-white px-3 py-2">
                 <div className="flex items-center gap-2.5">

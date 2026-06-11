@@ -2,46 +2,75 @@
 
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { useState } from 'react';
-import { CheckCircle2, Database, FileImage, FileSpreadsheet, ShieldAlert } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 
 const APPROVALS = gql`
   query OwnerApprovals {
-    quotes(status: "pending_approval") { id quoteNumber title projectName discountPercent lines customer owner approvalStatus approval }
-    importBatches
-    catalogReviewTasks(status: "pending_approval", take: 80)
+    quotes(status: "pending_approval") { id quoteNumber title projectName discountPercent lines customer owner approvalStatus approval createdAt }
   }
 `;
 const APPROVE_QUOTE = gql`mutation ApproveQuote($id: ID!, $note: String) { approveQuote(id: $id, note: $note) { id status approvalStatus } }`;
-const APPROVE_IMPORT = gql`mutation ApproveImport($importBatchId: String!, $note: String) { approveImportBatch(importBatchId: $importBatchId, note: $note) { id result } }`;
-const APPROVE_CATALOG = gql`mutation ApproveCatalog($id: String!, $note: String) { approveCatalogReviewTask(id: $id, note: $note) { data } }`;
 
-function total(lines: any[]) { return (Array.isArray(lines) ? lines : []).reduce((sum, line) => sum + Number(line.qty || line.quantity || 0) * Number(line.price || line.sellPrice || 0), 0); }
+function total(lines: any[]) {
+  return (Array.isArray(lines) ? lines : []).reduce((sum, line) => sum + Number(line.qty || line.quantity || 0) * Number(line.price || line.sellPrice || 0), 0);
+}
 function money(value: number) { return `₹${Math.round(value || 0).toLocaleString('en-IN')}`; }
 
 export default function ApprovalsPage() {
-  const [tab, setTab] = useState<'quotes'|'imports'|'images'>('quotes');
-  const { data, loading, error, refetch } = useQuery(APPROVALS);
+  const { data, loading, error, refetch } = useQuery(APPROVALS, { fetchPolicy: 'cache-and-network' });
   const [approveQuote, { loading: approvingQuote, error: approveQuoteError }] = useMutation(APPROVE_QUOTE, { onCompleted: () => refetch() });
-  const [approveImport, { loading: approvingImport, error: approveImportError }] = useMutation(APPROVE_IMPORT, { onCompleted: () => refetch() });
-  const [approveCatalog, { loading: approvingCatalog, error: approveCatalogError }] = useMutation(APPROVE_CATALOG, { onCompleted: () => refetch() });
-  const mutationError = approveQuoteError || approveImportError || approveCatalogError;
   const quotes = data?.quotes || [];
-  const imports = (data?.importBatches || []).filter((batch: any) => batch.status === 'pending_approval');
-  const catalogTasks = data?.catalogReviewTasks || [];
-  const totalPending = quotes.length + imports.length + catalogTasks.length;
 
-  return <div className="space-y-6 pb-10">
-    {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
-    {mutationError ? <QueryErrorBanner error={mutationError} /> : null}
-    <section className="rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]"><p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Owner approval desk</p><h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">All approvals, separated by workflow.</h1><p className="mt-4 max-w-2xl text-sm text-[#52525b]">Quote approvals, catalogue imports and extracted image mappings live here only for admin and owner.</p></section>
-    <section className="grid gap-4 md:grid-cols-4">{[['Total pending', totalPending], ['Quotes', quotes.length], ['Imports', imports.length], ['Images', catalogTasks.length]].map(([label, value]) => <div key={label} className="mp-card rounded-r5 p-5"><p className="text-xs font-medium uppercase tracking-widest text-[#52525b]">{label}</p><p className="mt-2 text-3xl font-semibold text-[#18181b]">{loading ? '...' : value}</p></div>)}</section>
-    <section className="mp-card flex flex-wrap gap-2 rounded-r5 p-3">{[['quotes','Quote approvals',quotes.length,FileSpreadsheet],['imports','Import approvals',imports.length,Database],['images','Image approvals',catalogTasks.length,FileImage]].map(([id,label,count,Icon]: any)=><button key={id} onClick={()=>setTab(id)} className={`flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-black ${tab===id?'bg-[#18181b] text-white':'bg-white/70 text-[#27272a]'}`}><Icon className="h-4 w-4"/>{label}<span className="rounded-full bg-[#eff6ff] px-2 py-0.5 text-[10px] text-[#1d4ed8]">{count}</span></button>)}</section>
-    {!loading && totalPending === 0 && <div className="mp-card grid min-h-64 place-items-center rounded-r5 p-8 text-center"><div><ShieldAlert className="mx-auto h-10 w-10 text-[#2563eb]" /><h2 className="mt-4 text-2xl font-semibold text-[#18181b]">No approvals pending</h2><p className="mt-2 text-sm font-bold text-[#52525b]">Approval requests will appear here automatically.</p></div></div>}
-    {tab === 'quotes' && <section className="space-y-3">{quotes.map((quote: any) => <article key={quote.id} className="mp-card grid gap-4 rounded-r5 p-5 lg:grid-cols-[1fr_0.7fr_0.55fr_auto] lg:items-center"><div><Link href={`/dashboard/quotes/${quote.id}`} className="text-xl font-semibold text-[#18181b] hover:underline">{quote.quoteNumber}</Link><p className="mt-1 text-sm font-bold text-[#52525b]">{quote.title || quote.projectName || 'Retail quotation'}</p>{quote.approval?.availabilityIssues?.length > 0 && <p className="mt-2 rounded-2xl bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Availability warning: {quote.approval.availabilityIssues.length} short item(s)</p>}</div><div><p className="font-semibold text-[#18181b]">{quote.customer?.name || 'Customer'}</p><p className="text-xs font-bold text-[#52525b]">Owner: {quote.owner?.name || 'Unassigned'}</p></div><div className="text-right"><p className="text-2xl font-semibold text-[#18181b]">{money(total(quote.lines))}</p><p className="text-xs font-black uppercase tracking-wider text-[#2563eb]">Discount {quote.discountPercent || 0}%</p></div><Button disabled={approvingQuote} onClick={() => approveQuote({ variables: { id: quote.id, note: 'Approved from owner approval desk' } })}><CheckCircle2 className="mr-2 h-4 w-4" /> Approve quote</Button></article>)}</section>}
-    {tab === 'imports' && <section className="space-y-3">{imports.map((batch: any) => <article key={batch.id} className="mp-card flex flex-wrap items-center justify-between gap-4 rounded-r5 p-5"><div><p className="text-xl font-semibold text-[#18181b]">{batch.brand || 'Catalogue import'} · {batch.rowCount} rows</p><p className="mt-1 text-xs font-bold text-[#52525b]">{batch.id} · {batch.status}</p></div><Button disabled={approvingImport} onClick={() => approveImport({ variables: { importBatchId: batch.id, note: 'Approved from owner approval desk' } })}><CheckCircle2 className="mr-2 h-4 w-4" /> Approve import</Button></article>)}</section>}
-    {tab === 'images' && <section className="space-y-3">{catalogTasks.map((task: any) => <article key={task.id} className="mp-card flex flex-wrap items-center justify-between gap-4 rounded-r5 p-5"><div className="flex items-center gap-4">{task.imageUrl && <img src={task.imageUrl} alt="catalogue task" className="h-24 w-28 rounded-2xl bg-white object-contain" />}<div><p className="text-xl font-semibold text-[#18181b]">{task.detectedSku || 'Image mapping'} · {task.status}</p><p className="mt-1 text-xs font-bold text-[#52525b]">Product: {task.mappedProductId || 'not mapped'} · {task.id}</p></div></div><Button disabled={approvingCatalog || !task.mappedProductId} onClick={() => approveCatalog({ variables: { id: task.id, note: 'Approved from owner approval desk' } })}><CheckCircle2 className="mr-2 h-4 w-4" /> Approve image</Button></article>)}</section>}
-  </div>;
+  return (
+    <div className="space-y-6 pb-10">
+      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {approveQuoteError ? <QueryErrorBanner error={approveQuoteError} /> : null}
+
+      <section className="mp-card rounded-r6 border border-[var(--line)] p-6">
+        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Owner / admin approval desk</p>
+            <h1 className="mt-3 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">Only real exception approvals live here.</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
+              Normal quote-to-sales-order confirmation does not need owner approval. This desk is reserved for quotes that the pricing rules explicitly flag. Excel imports and image uploads now apply through Product Master with audit history instead of owner approval queues.
+            </p>
+          </div>
+          <Button asChild variant="outline"><Link href="/dashboard/audit">Open audit log</Link></Button>
+        </div>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <div className="mp-card rounded-r5 p-5"><p className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Pending quote approvals</p><p className="mt-2 font-display text-4xl font-bold text-[var(--ink)]">{loading ? '...' : quotes.length}</p></div>
+        <div className="mp-card rounded-r5 p-5"><p className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Excel import approvals</p><p className="mt-2 font-display text-4xl font-bold text-[var(--ink)]">Removed</p></div>
+        <div className="mp-card rounded-r5 p-5"><p className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Image review approvals</p><p className="mt-2 font-display text-4xl font-bold text-[var(--ink)]">Removed</p></div>
+      </section>
+
+      {!loading && !quotes.length ? (
+        <div className="mp-card grid min-h-64 place-items-center rounded-r5 p-8 text-center">
+          <div>
+            <ShieldAlert className="mx-auto h-10 w-10 text-[var(--brand-700)]" />
+            <h2 className="mt-4 text-2xl font-semibold text-[var(--ink)]">No approvals pending</h2>
+            <p className="mt-2 text-sm font-medium text-[var(--ink-4)]">When pricing policy flags a quote, it will appear here for owner/admin decision.</p>
+          </div>
+        </div>
+      ) : null}
+
+      <section className="space-y-3">
+        {quotes.map((quote: any) => (
+          <article key={quote.id} className="mp-card grid gap-4 rounded-r5 p-5 lg:grid-cols-[1fr_0.7fr_0.55fr_auto] lg:items-center">
+            <div>
+              <Link href={`/dashboard/quotes/${quote.id}`} className="text-xl font-semibold text-[var(--ink)] hover:underline">{quote.quoteNumber}</Link>
+              <p className="mt-1 text-sm font-medium text-[var(--ink-4)]">{quote.title || quote.projectName || 'Retail quotation'}</p>
+              {quote.approval?.availabilityIssues?.length > 0 ? <p className="mt-2 rounded-2xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">Availability warning: {quote.approval.availabilityIssues.length} short item(s)</p> : null}
+            </div>
+            <div><p className="font-semibold text-[var(--ink)]">{quote.customer?.name || 'Customer'}</p><p className="text-xs text-[var(--ink-4)]">Owner: {quote.owner?.name || 'Unassigned'}</p></div>
+            <div className="text-right"><p className="text-2xl font-semibold text-[var(--ink)]">{money(total(quote.lines))}</p><p className="text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]">Discount {quote.discountPercent || 0}%</p></div>
+            <Button disabled={approvingQuote} onClick={() => approveQuote({ variables: { id: quote.id, note: 'Approved from owner approval desk' } })}><CheckCircle2 className="mr-2 h-4 w-4" /> Approve quote</Button>
+          </article>
+        ))}
+      </section>
+    </div>
+  );
 }

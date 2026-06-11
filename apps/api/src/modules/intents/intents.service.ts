@@ -424,11 +424,22 @@ export class IntentsService {
     }
 
     const productIds = Array.from(new Set(productRows.map((row) => row.productId).filter(Boolean)));
-    const products = productIds.length
+    type IntentProductRow = {
+      id: string;
+      sku: string;
+      name: string;
+      category: string;
+      brand: string;
+      finish: string | null;
+      unit: string;
+      sellPrice: any;
+      media: any;
+    };
+    const products: IntentProductRow[] = productIds.length
       ? await this.prisma.product.findMany({
           where: { id: { in: productIds }, status: 'active' },
           select: { id: true, sku: true, name: true, category: true, brand: true, finish: true, unit: true, sellPrice: true, media: true },
-        })
+        }) as IntentProductRow[]
       : [];
     const productMap = new Map(products.map((product) => [product.id, product]));
     const missingIds = productIds.filter((id) => !productMap.has(id));

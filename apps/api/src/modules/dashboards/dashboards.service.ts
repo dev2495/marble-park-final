@@ -13,7 +13,7 @@ export class DashboardsService {
       sentQuotes,
       confirmedQuotes,
       totalProducts,
-      catalogueImages,
+      productsForImageCoverage,
       totalCustomers,
       totalUsers,
       activeDispatchJobs,
@@ -25,19 +25,16 @@ export class DashboardsService {
       this.prisma.quote.count({ where: { status: 'sent' } }),
       this.prisma.quote.count({ where: { status: 'confirmed' } }),
       this.prisma.product.count(),
-      this.prisma.product.count({
-        where: {
-          media: {
-            path: ['source'],
-            equals: 'pdf-catalogue-extract',
-          } as any,
-        },
-      }),
+      this.prisma.product.findMany({ select: { media: true } }),
       this.prisma.customer.count(),
       this.prisma.user.count({ where: { active: true } }),
       this.prisma.dispatchJob.count({ where: { status: { not: 'delivered' } } as any }),
       this.prisma.dispatchJob.count({ where: { status: 'pending' } }),
     ]);
+    const catalogueImages = (productsForImageCoverage as any[]).filter((product) => {
+      const media: any = product.media || {};
+      return Boolean(media.primary || (Array.isArray(media.gallery) && media.gallery.length));
+    }).length;
 
     const allQuotes = await this.prisma.quote.findMany({
       include: { customer: true, owner: true },

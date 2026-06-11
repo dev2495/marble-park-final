@@ -29,7 +29,11 @@ function jobLines(job: any) {
 
 export default function DispatchPage() {
   const [dispatchQty, setDispatchQty] = useState<Record<string, number>>({});
-  const { data, loading, error, refetch } = useQuery(GET_DISPATCH_QUEUE, { pollInterval: 60000, notifyOnNetworkStatusChange: false });
+  const { data, loading, error, refetch } = useQuery(GET_DISPATCH_QUEUE, {
+    pollInterval: 120000,
+    skipPollAttempt: () => typeof document !== 'undefined' && document.hidden,
+    notifyOnNetworkStatusChange: false,
+  });
   const [createChallan, { loading: creating, error: createError }] = useMutation(CREATE_CHALLAN, { onCompleted: () => refetch() });
   const [updateChallan, { loading: updating, error: updateError }] = useMutation(UPDATE_CHALLAN, { onCompleted: () => refetch() });
   const jobs = data?.dispatchQueue || [];

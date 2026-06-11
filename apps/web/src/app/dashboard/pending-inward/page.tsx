@@ -17,7 +17,11 @@ function money(value: number) {
 }
 
 export default function PendingInwardPage() {
-  const { data, loading, error, refetch } = useQuery(PENDING_INWARD, { pollInterval: 60000, notifyOnNetworkStatusChange: false });
+  const { data, loading, error, refetch } = useQuery(PENDING_INWARD, {
+    pollInterval: 120000,
+    skipPollAttempt: () => typeof document !== 'undefined' && document.hidden,
+    notifyOnNetworkStatusChange: false,
+  });
   const rows = data?.pendingInwardItems || [];
   const totalQty = rows.reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
   const readyQty = rows.reduce((sum: number, row: any) => sum + Number(row.available || 0), 0);

@@ -10,12 +10,9 @@ async function bootstrap() {
   const path = require('path');
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '100mb' }));
-  const importImageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
-  const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.dirname(importImageDir);
+  const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images');
   const manualImageDir = path.join(catalogueImageRoot, 'manual');
-  fs.mkdirSync(importImageDir, { recursive: true });
   fs.mkdirSync(manualImageDir, { recursive: true });
-  app.use('/catalogue-images/imports', express.static(importImageDir));
   app.use('/catalogue-images/manual', express.static(manualImageDir));
 
   const configuredOrigins = process.env.CORS_ORIGIN?.split(',')
@@ -24,14 +21,17 @@ async function bootstrap() {
   const defaultLocalOrigins = [
     'http://localhost:3000',
     'http://localhost:3001',
+    'http://localhost:3011',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
+    'http://127.0.0.1:3011',
   ];
   const allowLocalDevOrigins = process.env.NODE_ENV !== 'production';
   const allowedOrigins = Array.from(new Set([
     ...configuredOrigins,
     ...(allowLocalDevOrigins ? defaultLocalOrigins : configuredOrigins.length ? [] : defaultLocalOrigins),
   ]));
+  const configuredForLocalhost = allowedOrigins.some((origin) => /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin));
 
   app.enableCors({
     origin(origin, callback) {
@@ -40,7 +40,7 @@ async function bootstrap() {
         return;
       }
 
-      if (allowLocalDevOrigins && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+      if ((allowLocalDevOrigins || configuredForLocalhost) && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
         callback(null, true);
         return;
       }

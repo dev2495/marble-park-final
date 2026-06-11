@@ -58,7 +58,11 @@ export default function ProcurementPage() {
   const [supplierBill, setSupplierBill] = useState('');
   const [receiveLocationId, setReceiveLocationId] = useState('');
 
-  const { data, loading, error, refetch } = useQuery(PROCUREMENT, { pollInterval: 60000, notifyOnNetworkStatusChange: false });
+  const { data, loading, error, refetch } = useQuery(PROCUREMENT, {
+    pollInterval: 120000,
+    skipPollAttempt: () => typeof document !== 'undefined' && document.hidden,
+    notifyOnNetworkStatusChange: false,
+  });
   const [createPo, { loading: creatingPo, error: createPoError }] = useMutation(CREATE_PO, { onCompleted: () => { setSelectedDemand({}); setVendorId(''); setVendorName(''); setExpectedDate(''); setPoNotes(''); refetch(); } });
   const [receivePo, { loading: receivingPo, error: receivePoError }] = useMutation(RECEIVE_PO, { onCompleted: (result) => { setReceiveMessage(`Posted ${result.receivePurchaseOrder?.grnNumber || 'GRN'} and updated inventory/backorder allocation.`); setReceiveRows({}); setSupplierChallan(''); setSupplierBill(''); refetch(); } });
 

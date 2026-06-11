@@ -184,7 +184,7 @@ export default function InventoryInwardsPage() {
           <div className="flex flex-wrap gap-2">
             <Button asChild><Link href="/dashboard/procurement"><ClipboardList className="mr-2 h-4 w-4" /> Procurement desk</Link></Button>
             <Button asChild variant="outline"><Link href="/dashboard/inventory"><Boxes className="mr-2 h-4 w-4" /> Inventory list</Link></Button>
-            <Button asChild variant="outline"><Link href="/dashboard/master-data/imports"><ClipboardList className="mr-2 h-4 w-4" /> Catalogue imports</Link></Button>
+            <Button asChild variant="outline"><Link href="/dashboard/master-data/imports"><ClipboardList className="mr-2 h-4 w-4" /> Excel SKU import</Link></Button>
           </div>
         </div>
       </section>

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { ArrowRight, Bath, Boxes, FileSpreadsheet, ShieldCheck, type LucideIcon } from 'lucide-react';
 
 const features: Array<[string, string, LucideIcon]> = [
-  ['Catalogue', 'Vendor Excel/PDF imports with product images and source trace.', Bath],
+  ['Catalogue', 'Vendor Excel imports, Product Master images and source trace.', Bath],
   ['Inventory', 'Inward, reserved, available, damaged, and dispatch-ready stock.', Boxes],
   ['Quotes', 'Beautiful product-led proposals for retail and project clients.', FileSpreadsheet],
   ['Roles', 'Owner, sales, inventory, and dispatch workspaces with auth.', ShieldCheck],

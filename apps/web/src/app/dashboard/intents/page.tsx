@@ -56,7 +56,12 @@ export default function IntentDeskPage() {
     return { pendingOnly: true };
   }, [tab]);
 
-  const { data, loading, error, refetch } = useQuery(INTENTS, { variables, pollInterval: 30000, fetchPolicy: 'cache-and-network' });
+  const { data, loading, error, refetch } = useQuery(INTENTS, {
+    variables,
+    pollInterval: 120000,
+    skipPollAttempt: () => typeof document !== 'undefined' && document.hidden,
+    fetchPolicy: 'cache-and-network',
+  });
   const [pickUp, { loading: pickingUp }] = useMutation(PICK_UP, { onCompleted: () => refetch() });
   const [release] = useMutation(RELEASE, { onCompleted: () => refetch() });
   const [generate, { loading: generating, error: generateError }] = useMutation(GENERATE, { onCompleted: () => refetch() });

@@ -330,6 +330,9 @@ export class ProcurementService {
                 updatedAt: new Date(),
               },
             });
+            if (!line.productId && accepted > 0) {
+              await this.allocateSpecialOrderReceiptTx(tx, demand, accepted, actorUserId, note.id, grnNumber);
+            }
           }
         }
 
@@ -487,7 +490,7 @@ export class ProcurementService {
       productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [],
       customerIds.length ? this.prisma.customer.findMany({ where: { id: { in: customerIds } } }) : [],
       ownerIds.length ? this.prisma.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true } }) : [],
-    ]);
+    ]) as [any[], any[], Array<{ id: string; name: string | null }>];
     const productMap = new Map(products.map((product: any) => [product.id, product] as const));
     const customerMap = new Map(customers.map((customer: any) => [customer.id, customer] as const));
     const ownerMap = new Map(owners.map((owner: any) => [owner.id, owner] as const));
@@ -589,6 +592,95 @@ export class ProcurementService {
     const lines = grnIds.length ? await (this.prisma as any).goodsReceiptLine.findMany({ where: { goodsReceiptNoteId: { in: grnIds } } }) : [];
     const byGrn = this.groupBy(lines, 'goodsReceiptNoteId');
     return notes.map((note) => ({ ...note, lines: byGrn.get(note.id) || [] }));
+  }
+
+  private async allocateSpecialOrderReceiptTx(
+    tx: any,
+    demand: any,
+    acceptedQuantity: number,
+    actorUserId: string,
+    grnId: string,
+    grnNumber: string,
+  ) {
+    if (!demand?.sourceOrderId || !demand?.sourceLineKey || acceptedQuantity <= 0) return;
+    const order = await tx.salesOrder.findUnique({ where: { id: demand.sourceOrderId } }).catch(() => null);
+    if (!order) return;
+    const line = await tx.salesOrderLine.findUnique({
+      where: { salesOrderId_lineKey: { salesOrderId: demand.sourceOrderId, lineKey: demand.sourceLineKey } },
+    }).catch(() => null);
+    if (!line) return;
+
+    const nextAllocated = Math.min(Number(line.orderedQuantity || 0), Number(line.allocatedQuantity || 0) + acceptedQuantity);
+    const dispatched = Number(line.dispatchedQuantity || 0);
+    const remainingAfterDispatch = Math.max(0, Number(line.orderedQuantity || 0) - dispatched);
+    const nextBackordered = Math.max(0, remainingAfterDispatch - nextAllocated);
+    await tx.salesOrderLine.update({
+      where: { id: line.id },
+      data: {
+        allocatedQuantity: nextAllocated,
+        backorderedQuantity: nextBackordered,
+        status: nextBackordered <= 0 ? 'ready' : 'partial_ready',
+        updatedAt: new Date(),
+      },
+    }).catch(() => null);
+
+    const quote = await tx.quote.findUnique({ where: { id: order.quoteId } }).catch(() => null);
+    if (quote?.leadId) {
+      await tx.activity.create({
+        data: {
+          id: ulid(),
+          leadId: quote.leadId,
+          quoteId: quote.id,
+          userId: quote.ownerId,
+          type: 'stock_ready',
+          message: `${line.sku || demand.sku} arrived on ${grnNumber}; special-order quantity is ready for dispatch.`,
+        },
+      }).catch(() => null);
+    }
+
+    await tx.notification.createMany({
+      data: [
+        {
+          id: ulid(),
+          title: 'Special-order item arrived',
+          message: `${line.sku || demand.sku} has been inwarded for ${order.orderNumber} and is ready for dispatch.`,
+          type: 'stock_ready',
+          entityType: 'SalesOrder',
+          entityId: order.id,
+          href: quote?.leadId ? `/dashboard/leads/${quote.leadId}` : '/dashboard/orders',
+          targetUserId: order.ownerId,
+          metadata: { salesOrderId: order.id, grnId, demandId: demand.id },
+        },
+        {
+          id: ulid(),
+          title: 'Pending inward item ready',
+          message: `${line.sku || demand.sku} is inwarded for ${order.orderNumber}. Dispatch can create the remaining challan.`,
+          type: 'stock_ready',
+          entityType: 'SalesOrder',
+          entityId: order.id,
+          href: '/dashboard/dispatch',
+          targetRole: 'dispatch_ops',
+          metadata: { salesOrderId: order.id, grnId, demandId: demand.id },
+        },
+      ],
+    }).catch(() => null);
+
+    await tx.stockLedgerEntry.create({
+      data: {
+        id: ulid(),
+        productId: null,
+        locationId: null,
+        type: 'special_order_receipt',
+        quantity: acceptedQuantity,
+        direction: 'in',
+        referenceType: 'GoodsReceiptNote',
+        referenceId: grnId,
+        sourceDocumentNo: grnNumber,
+        reason: `Special-order receipt allocated to ${order.orderNumber}`,
+        createdBy: actorUserId,
+        metadata: { salesOrderId: order.id, lineKey: demand.sourceLineKey, demandId: demand.id, sku: line.sku || demand.sku },
+      },
+    }).catch(() => null);
   }
 
   private async addAcceptedStockTx(

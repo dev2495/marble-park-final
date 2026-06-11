@@ -69,7 +69,7 @@ function fmt(value: string) {
 }
 
 export default function SystemAuditPage() {
-  const { data, loading, error, refetch } = useQuery(AUDIT_QUERY, { pollInterval: 30000 });
+  const { data, loading, error, refetch } = useQuery(AUDIT_QUERY, { fetchPolicy: 'cache-and-network' });
   const audits = data?.auditEvents?.events || [];
   const orders = data?.salesOrders || [];
   const quotes = data?.quotes || [];
@@ -156,7 +156,7 @@ export default function SystemAuditPage() {
           </div>
           <div className="mt-5 grid gap-3">
             {[
-              ['Quote approval bypass', 'New and edited quotes are auto-approved; owner approval is only for imports/images.', true],
+              ['Quote approval bypass', 'New and edited quotes are auto-approved unless pricing policy explicitly flags an exception.', true],
               ['Sales order PDF', 'Every order has /api/pdf/order/:id plus original quote PDF links.', orders.every((order: any) => order.documents?.salesOrderPdfUrl || order.id)],
               ['Reservation on order', 'In-stock quoted lines are reserved and blocked from normal availability.', reservedStockRows.length > 0 || orders.length === 0],
               ['Backorder arrival notification', 'Inward on a backordered item auto-reserves and notifies sales plus dispatch.', notifications.some((note: any) => note.type === 'stock_ready') || backorderLikelyRows.length === 0],

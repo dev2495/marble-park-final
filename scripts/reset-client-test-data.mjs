@@ -4,33 +4,22 @@ import { ulid } from 'ulid';
 
 const prisma = new PrismaClient();
 
+async function optionalDelete(modelName) {
+  if (!prisma[modelName]) return;
+  await prisma[modelName].deleteMany().catch(() => null);
+}
+
 async function clearBusinessData() {
-  await prisma.dispatchChallan.deleteMany();
-  await prisma.dispatchJob.deleteMany();
-  await prisma.reservation.deleteMany();
-  await prisma.salesOrder.deleteMany();
-  await prisma.activity.deleteMany();
-  await prisma.followUpTask.deleteMany();
-  await prisma.quote.deleteMany();
-  await prisma.leadIntent.deleteMany();
-  await prisma.lead.deleteMany();
-  await prisma.inventoryMovement.deleteMany();
-  await prisma.inventoryInwardBatch.deleteMany();
-  await prisma.inventoryBalance.deleteMany();
-  await prisma.importRow.deleteMany();
-  await prisma.importBatch.deleteMany();
-  await prisma.catalogReviewTask.deleteMany();
-  await prisma.sourceFile.deleteMany();
-  await prisma.notification.deleteMany();
-  await prisma.auditEvent.deleteMany();
-  await prisma.customer.deleteMany();
-  await prisma.vendor.deleteMany();
-  await prisma.product.deleteMany();
-  await prisma.productBrand.deleteMany();
-  await prisma.productCategory.deleteMany();
-  await prisma.productFinish.deleteMany();
-  await prisma.passwordResetToken.deleteMany();
-  await prisma.session.deleteMany();
+  const orderedModels = [
+    'returnLine', 'returnOrder', 'deliveryProof', 'shipment', 'dispatchLine', 'dispatchPackage',
+    'stockAdjustmentApproval', 'stockCountLine', 'stockCountSession', 'stockLedgerEntry', 'stockBalanceByLocation', 'stockLocation',
+    'productVendor', 'reorderPolicy', 'paymentReceipt', 'documentJob', 'salesOrderLine', 'quoteLine',
+    'goodsReceiptLine', 'goodsReceiptNote', 'purchaseOrderLine', 'purchaseOrder', 'purchaseDemand', 'sequenceCounter',
+    'dispatchChallan', 'dispatchJob', 'reservation', 'salesOrder', 'activity', 'followUpTask', 'quote', 'leadIntent', 'lead',
+    'inventoryMovement', 'inventoryInwardBatch', 'inventoryBalance', 'notification', 'auditEvent', 'customer', 'vendor',
+    'product', 'productBrand', 'productCategory', 'productFinish', 'tileSize', 'passwordResetToken', 'session',
+  ];
+  for (const modelName of orderedModels) await optionalDelete(modelName);
 }
 
 async function ensureAdmin() {
@@ -57,17 +46,24 @@ async function ensureAdmin() {
   });
 }
 
+async function countProductsWithImages() {
+  const products = await prisma.product.findMany({ select: { media: true } });
+  return products.filter((product) => {
+    const media = product.media || {};
+    return Boolean(media.primary || (Array.isArray(media.gallery) && media.gallery.length));
+  }).length;
+}
+
 async function main() {
   await clearBusinessData();
   await ensureAdmin();
   const counts = {
     users: await prisma.user.count(),
     products: await prisma.product.count(),
+    productImages: await countProductsWithImages(),
     customers: await prisma.customer.count(),
     leads: await prisma.lead.count(),
     quotes: await prisma.quote.count(),
-    imports: await prisma.importBatch.count(),
-    catalogueImagesPending: await prisma.catalogReviewTask.count(),
     inventoryBalances: await prisma.inventoryBalance.count(),
   };
   console.log(JSON.stringify({ ok: true, counts }, null, 2));

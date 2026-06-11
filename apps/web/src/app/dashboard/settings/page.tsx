@@ -141,7 +141,7 @@ export default function SettingsPage() {
 
   async function submitReset() {
     if (confirmReset !== 'RESET_CLIENT_WORKSPACE') return;
-    if (!window.confirm('This clears client test products, customers, leads, quotes, orders, imports, images and inventory. Admin user remains. Continue?')) return;
+    if (!window.confirm('This clears client test products, customers, leads, quotes, orders, product images and inventory. Admin user remains. Continue?')) return;
     setResetMessage('');
     await resetWorkspace({ variables: { confirm: confirmReset } });
     setConfirmReset('');

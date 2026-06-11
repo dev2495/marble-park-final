@@ -118,51 +118,11 @@ export class SystemResolver {
   }
 
   @Query(() => [GraphQLJSON])
-  async catalogReviewTasks(
-    @Context() ctx: GraphqlRequestContext,
-    @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
-  ) {
-    await requirePermission(this.prisma, ctx, 'catalogue.import');
-    return this.system.reviewTasks({ status, take });
-  }
-
-  @Mutation(() => SystemJsonOutput)
-  async mapCatalogReviewTask(
-    @Args('id') id: string,
-    @Args('productId') productId: string,
-    @Context() ctx: GraphqlRequestContext,
-  ) {
-    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
-    return { data: await this.system.mapReviewTask(id, productId, user.id) };
-  }
-
-  @Mutation(() => SystemJsonOutput)
-  async submitCatalogReviewTaskForApproval(
-    @Args('id') id: string,
-    @Args('productId') productId: string,
-    @Context() ctx: GraphqlRequestContext,
-  ) {
-    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
-    return { data: await this.system.submitReviewTaskForApproval(id, productId, user.id) };
-  }
-
-  @Mutation(() => SystemJsonOutput)
-  async approveCatalogReviewTask(
-    @Args('id') id: string,
-    @Context() ctx: GraphqlRequestContext,
-    @Args('note', { nullable: true }) note?: string,
-  ) {
-    const user = await requirePermission(this.prisma, ctx, 'approvals.manage');
-    return { data: await this.system.approveReviewTask(id, user.id, note) };
-  }
-
-  @Query(() => [GraphQLJSON])
   async masterProductCategories(
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales']);
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff']);
     return this.system.productCategories({ status });
   }
 
@@ -177,7 +137,7 @@ export class SystemResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales']);
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff']);
     return this.system.productBrands({ status });
   }
 
@@ -192,7 +152,7 @@ export class SystemResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales']);
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff']);
     return this.system.productFinishes({ status });
   }
 

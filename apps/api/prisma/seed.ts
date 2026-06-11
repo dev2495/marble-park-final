@@ -128,7 +128,7 @@ async function main() {
       expectedValue: 925000,
       lastContactAt: new Date(),
       nextActionAt: new Date(Date.now() + 86400000),
-      notes: 'Bulk sanitaryware and CP fitting quote awaiting PDF catalogue review.',
+      notes: 'Bulk sanitaryware and CP fitting quote awaiting office follow-up and product confirmation.',
       customerId: customer2.id,
       ownerId: sales.id,
       updatedAt: new Date(),

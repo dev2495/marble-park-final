@@ -499,6 +499,17 @@ export class LeadsService {
     if (!productRows.length) return activeRows.map((row) => this.normalizeTileRow(row));
 
     const productIds = Array.from(new Set(productRows.map((row) => row.productId)));
+    type LeadIntentProductRow = {
+      id: string;
+      sku: string;
+      name: string;
+      category: string;
+      brand: string;
+      finish: string | null;
+      unit: string;
+      sellPrice: any;
+      media: any;
+    };
     const products = await this.prisma.product.findMany({
       where: { id: { in: productIds }, status: 'active' },
       select: {
@@ -512,7 +523,7 @@ export class LeadsService {
         sellPrice: true,
         media: true,
       },
-    });
+    }) as LeadIntentProductRow[];
     const productMap = new Map(products.map((product) => [product.id, product]));
     const missingIds = productIds.filter((id) => !productMap.has(id));
     if (missingIds.length) {

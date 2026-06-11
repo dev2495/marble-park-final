@@ -537,9 +537,13 @@ export class DispatchService {
   private async consumeInventoryForChallan(tx: any, challan: any) {
     const lines = Array.isArray(challan.lines) ? challan.lines : [];
     for (const line of lines) {
-      const productId = line.productId;
+      const productId = String(line.productId || '').trim();
       const quantity = Number(line.dispatchQty || line.qty || line.quantity || 0);
-      if (!productId || quantity <= 0) continue;
+      if (quantity <= 0) continue;
+      if (!productId) {
+        await this.consumeSpecialOrderLineTx(tx, challan, line, quantity);
+        continue;
+      }
 
       const balance = await tx.inventoryBalance.findUnique({ where: { productId } });
       if (!balance) continue;
@@ -636,6 +640,55 @@ export class DispatchService {
         remainingToDispatch -= consume;
       }
     }
+  }
+
+  private async consumeSpecialOrderLineTx(tx: any, challan: any, line: any, quantity: number) {
+    const salesOrder = await tx.salesOrder.findUnique({ where: { quoteId: challan.quoteId } }).catch(() => null);
+    if (!salesOrder) return;
+    const dispatchKey = String(line.dispatchKey || line.sourceLineKey || line.tileCode || line.sku || '').trim();
+    const orderLine = await tx.salesOrderLine.findFirst({
+      where: {
+        salesOrderId: salesOrder.id,
+        OR: [
+          dispatchKey ? { lineKey: dispatchKey } : undefined,
+          line.sku || line.tileCode ? { sku: String(line.sku || line.tileCode) } : undefined,
+        ].filter(Boolean),
+      },
+      orderBy: { lineNo: 'asc' },
+    }).catch(() => null);
+    if (!orderLine) return;
+
+    const nextDispatched = Math.min(Number(orderLine.orderedQuantity || 0), Number(orderLine.dispatchedQuantity || 0) + quantity);
+    const nextAllocated = Math.max(0, Number(orderLine.allocatedQuantity || 0) - quantity);
+    await tx.salesOrderLine.update({
+      where: { id: orderLine.id },
+      data: {
+        dispatchedQuantity: nextDispatched,
+        allocatedQuantity: nextAllocated,
+        status: nextDispatched >= Number(orderLine.orderedQuantity || 0) ? 'dispatched' : 'partial_dispatched',
+        updatedAt: new Date(),
+      },
+    }).catch(() => null);
+    await tx.dispatchLine.updateMany({
+      where: { challanId: challan.id, dispatchKey: orderLine.lineKey },
+      data: { dispatchedQuantity: quantity, status: 'dispatched', updatedAt: new Date() },
+    }).catch(() => null);
+    await tx.stockLedgerEntry.create({
+      data: {
+        id: ulid(),
+        productId: null,
+        locationId: null,
+        type: 'special_order_dispatch',
+        quantity,
+        direction: 'out',
+        referenceType: 'DispatchChallan',
+        referenceId: challan.id,
+        sourceDocumentNo: challan.challanNumber,
+        reason: `Special-order dispatch on ${challan.challanNumber}`,
+        createdBy: 'dispatch',
+        metadata: { quoteId: challan.quoteId, salesOrderId: salesOrder.id, lineKey: orderLine.lineKey, sku: orderLine.sku },
+      },
+    }).catch(() => null);
   }
 
   private async markChallanDeliveredTx(tx: any, challan: any) {

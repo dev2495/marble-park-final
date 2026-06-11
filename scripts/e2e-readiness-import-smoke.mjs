@@ -5,9 +5,6 @@ import ExcelJS from 'exceljs';
 
 const API = process.env.API_URL || 'http://localhost:4011/graphql';
 const WEB = process.env.WEB_URL || 'http://localhost:3011';
-const DEFAULT_PDF_URL = 'https://site.dgtechsoln.com/wp-content/uploads/2024/01/AS-Pricing-Catalogue.pdf';
-const PDF_URL = process.env.READINESS_PDF_URL || DEFAULT_PDF_URL;
-const PDF_PATH = process.env.READINESS_PDF || path.join(os.tmpdir(), 'marble-readiness-american-standard.pdf');
 
 async function gql(query, variables = {}, token) {
   const res = await fetch(API, {
@@ -35,7 +32,7 @@ async function login(email) {
   )).login;
 }
 
-async function processUpload(filePath, kind, token) {
+async function processExcelUpload(filePath, token) {
   const filename = path.basename(filePath);
   const begin = (await gql(
     `mutation($filename: String!) { beginImportUpload(filename: $filename) { result } }`,
@@ -54,40 +51,37 @@ async function processUpload(filePath, kind, token) {
       token,
     );
   }
-  return (await gql(
-    `mutation($uploadId: String!, $filename: String!, $kind: String!) { processUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`,
-    { uploadId, filename, kind },
+  const preview = (await gql(
+    `mutation($uploadId: String!, $filename: String!, $kind: String!) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`,
+    { uploadId, filename, kind: 'excel' },
     token,
-  )).processUploadedImport.result;
+  )).previewUploadedImport.result;
+  assert(preview.status === 'ready_to_apply', `Excel preview should be ready_to_apply, got ${preview.status}`);
+  assert(preview.total === 1 && preview.failed === 0, `Excel preview should read one clean row, got ${JSON.stringify(preview)}`);
+  const applied = (await gql(
+    `mutation($uploadId: String!, $filename: String!, $kind: String!) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`,
+    { uploadId, filename, kind: 'excel' },
+    token,
+  )).applyUploadedImport.result;
+  return { preview, applied };
 }
 
 async function writeExcelSample() {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Catalogue');
-  sheet.addRow(['SKU', 'Product Name', 'Category', 'Brand', 'Finish', 'MRP', 'Dimensions', 'Description']);
-  sheet.addRow([unique('XLSX-SKU'), 'Readiness Excel Imported Basin Mixer', 'Faucets & Showers', 'Readiness Brand', 'Chrome', 4321, 'Test 160 mm', 'Excel import readiness row']);
+  sheet.addRow(['SKU', 'Product Name', 'Category', 'Brand', 'Finish', 'MRP', 'Floor Price', 'Dimensions', 'Image URL', 'Description']);
+  sheet.addRow([unique('XLSX-SKU'), 'Readiness Excel Imported Basin Mixer', 'Faucets & Showers', 'Readiness Brand', 'Chrome', 4321, 3800, 'Test 160 mm', '/catalogue-images/manual/readiness-placeholder.png', 'Excel import readiness row']);
   const filePath = path.join(os.tmpdir(), `marble-readiness-${Date.now()}.xlsx`);
   await workbook.xlsx.writeFile(filePath);
   return filePath;
 }
 
-async function ensureReadinessPdf() {
-  if (fs.existsSync(PDF_PATH)) return;
-  const response = await fetch(PDF_URL);
-  assert(response.ok, `readiness PDF download failed: ${response.status} ${PDF_URL}`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  assert(buffer.subarray(0, 4).toString() === '%PDF', `readiness PDF URL did not return a PDF: ${PDF_URL}`);
-  fs.writeFileSync(PDF_PATH, buffer);
-}
-
 async function main() {
-  const [admin, owner, inventory] = await Promise.all([
+  const [admin, inventory] = await Promise.all([
     login('admin@marblepark.com'),
-    login('owner@marblepark.com'),
     login('inventory@marblepark.com'),
   ]);
   assert(admin.user.role === 'admin', 'admin login should return admin role');
-  assert(owner.user.role === 'owner', 'owner login should return owner role');
 
   const newEmail = `readiness-${Date.now()}@example.com`;
   const createdUser = (await gql(
@@ -105,7 +99,7 @@ async function main() {
   const sku = unique('MANUAL-SKU');
   const product = (await gql(
     `mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku media category brand finish sellPrice } }`,
-    { input: { sku, name: 'Readiness Manual SKU With Image', category: 'Faucets & Showers', brand: 'Readiness Brand', finish: 'Chrome', dimensions: 'Ready Test', unit: 'PC', sellPrice: 9999, floorPrice: 8500, description: 'Manual SKU smoke with attached image', media: { primary: '/catalogue-images/new-style-products-p011-106-98195b773d7d52.png', gallery: ['/catalogue-images/new-style-products-p011-106-98195b773d7d52.png'] } } },
+    { input: { sku, name: 'Readiness Manual SKU With Image', category: 'Faucets & Showers', brand: 'Readiness Brand', finish: 'Chrome', dimensions: 'Ready Test', unit: 'PC', sellPrice: 9999, floorPrice: 8500, description: 'Manual SKU smoke with attached image', media: { primary: '/catalogue-images/manual/readiness-placeholder.png', gallery: ['/catalogue-images/manual/readiness-placeholder.png'] } } },
     admin.token,
   )).createProduct;
   assert(product.sku === sku && product.media?.primary, 'manual SKU should be created with primary image media');
@@ -115,31 +109,13 @@ async function main() {
     { input: { productId: product.id, onHand: 5 } },
     inventory.token,
   )).createInventory;
-  assert(inventoryBalance.onHand >= 5 && inventoryBalance.available >= 5, 'inventory inward/create should add available stock');
+  assert(inventoryBalance.onHand >= 5 && inventoryBalance.available >= 5, 'inventory create should add available stock');
 
   const excelPath = await writeExcelSample();
-  const excelImport = await processUpload(excelPath, 'excel', inventory.token);
-  assert(excelImport.total === 1 && excelImport.importBatchId, 'Excel import should stage one row');
-  const excelRows = (await gql(`query($id: String!) { importRows(importBatchId: $id) }`, { id: excelImport.importBatchId }, inventory.token)).importRows;
-  assert(excelRows.length === 1 && excelRows[0].status === 'pending', 'Excel row should be ready without master-data gaps');
-  await gql(`mutation($id: String!) { submitImportBatchForApproval(importBatchId: $id) { result } }`, { id: excelImport.importBatchId }, inventory.token);
-  await gql(`mutation($id: String!, $note: String) { approveImportBatch(importBatchId: $id, note: $note) { result } }`, { id: excelImport.importBatchId, note: 'Readiness Excel approval' }, owner.token);
-  const excelApply = (await gql(`mutation($id: String!) { applyImportBatch(importBatchId: $id) { result } }`, { id: excelImport.importBatchId }, inventory.token)).applyImportBatch.result;
-  assert(excelApply.applied === 1 && excelApply.failed === 0, 'approved Excel batch should apply cleanly');
-
-  await ensureReadinessPdf();
-  assert(fs.existsSync(PDF_PATH), `readiness PDF missing: ${PDF_PATH}`);
-  const pdfImport = await processUpload(PDF_PATH, 'pdf', inventory.token);
-  assert(pdfImport.importBatchId, 'PDF import should create an import batch');
-  assert(pdfImport.total >= 100, `American Standard PDF should extract at least 100 products, got ${pdfImport.total}`);
-  const pdfRows = (await gql(`query($id: String!) { importRows(importBatchId: $id) }`, { id: pdfImport.importBatchId }, inventory.token)).importRows;
-  assert(pdfRows.length > 0, 'PDF rows should be available for review');
-  const readyRows = pdfRows.filter((row) => row.status === 'pending');
-  assert(readyRows.length >= Math.min(50, pdfRows.length), `PDF rows should mostly be ready after inferred brand/category/finish, ready=${readyRows.length}, rows=${pdfRows.length}`);
-  assert(readyRows.some((row) => row.brand === 'American Standard'), 'PDF import should infer American Standard brand');
-  assert((pdfImport.rowsWithImages || 0) > 0, `PDF import should map product images, got rowsWithImages=${pdfImport.rowsWithImages || 0}`);
-  await gql(`mutation($id: String!) { submitImportBatchForApproval(importBatchId: $id) { result } }`, { id: pdfImport.importBatchId }, inventory.token);
-  await gql(`mutation($id: String!, $note: String) { approveImportBatch(importBatchId: $id, note: $note) { result } }`, { id: pdfImport.importBatchId, note: 'Readiness PDF extraction approval' }, owner.token);
+  const { preview: excelPreview, applied: excelImport } = await processExcelUpload(excelPath, inventory.token);
+  assert(excelPreview.ready === 1, `Excel preview should mark one row ready, got ${JSON.stringify(excelPreview)}`);
+  assert(excelImport.total === 1, `Excel import should read one row, got ${excelImport.total}`);
+  assert(excelImport.applied === 1 && excelImport.failed === 0, `Excel import should apply cleanly, got ${JSON.stringify(excelImport)}`);
 
   const webHealth = await fetch(WEB);
   assert(webHealth.ok, `web should respond on readiness port, got ${webHealth.status}`);
@@ -149,8 +125,7 @@ async function main() {
     createdUser: createdUser.email,
     manualSku: product.sku,
     inventoryAvailable: inventoryBalance.available,
-    excel: { batch: excelImport.importBatchId, applied: excelApply.applied },
-    pdf: { batch: pdfImport.importBatchId, extracted: pdfImport.total, rowsWithImages: pdfImport.rowsWithImages, orphansCreated: pdfImport.orphansCreated, readyRows: readyRows.length },
+    excel: { previewReady: excelPreview.ready, applied: excelImport.applied, created: excelImport.created, updated: excelImport.updated },
     ports: { api: API, web: WEB },
   }, null, 2));
 }

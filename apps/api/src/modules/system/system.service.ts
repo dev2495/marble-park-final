@@ -90,10 +90,6 @@ export class SystemService {
     await this.prisma.inventoryMovement.deleteMany();
     await this.prisma.inventoryInwardBatch.deleteMany();
     await this.prisma.inventoryBalance.deleteMany();
-    await this.prisma.importRow.deleteMany();
-    await this.prisma.importBatch.deleteMany();
-    await this.prisma.catalogReviewTask.deleteMany();
-    await this.prisma.sourceFile.deleteMany();
     await this.prisma.notification.deleteMany();
     await this.prisma.auditEvent.deleteMany();
     await this.prisma.customer.deleteMany();
@@ -122,9 +118,8 @@ export class SystemService {
       },
     });
 
-    const importImageDir = process.env.CATALOGUE_IMPORT_IMAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images/imports');
-    const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.dirname(importImageDir);
-    for (const folder of [path.join(catalogueImageRoot, 'imports'), path.join(catalogueImageRoot, 'manual')]) {
+    const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images');
+    for (const folder of [path.join(catalogueImageRoot, 'manual')]) {
       fs.rmSync(folder, { recursive: true, force: true });
       fs.mkdirSync(folder, { recursive: true });
     }
@@ -135,8 +130,7 @@ export class SystemService {
       customers: await this.prisma.customer.count(),
       leads: await this.prisma.lead.count(),
       quotes: await this.prisma.quote.count(),
-      imports: await this.prisma.importBatch.count(),
-      catalogueImagesPending: await this.prisma.catalogReviewTask.count(),
+      productImages: await this.countProductsWithImages(),
       inventoryBalances: await this.prisma.inventoryBalance.count(),
     };
     return { ok: true, counts };
@@ -153,80 +147,12 @@ export class SystemService {
     });
   }
 
-  async reviewTasks(args?: { status?: string; take?: number }) {
-    const where: any = {};
-    if (args?.status) where.status = args.status;
-    const tasks = await this.prisma.catalogReviewTask.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: args?.take || 100,
-    });
-    return tasks.map((task) => this.withCurrentCatalogueImageUrl(task));
-  }
-
-  private withCurrentCatalogueImageUrl(task: any) {
-    if (!task?.imagePath) return task;
-    const baseUrl = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || process.env.PUBLIC_APP_URL || '').replace(/\/+$/, '');
-    if (!baseUrl) return task;
-    const imageUrl = String(task.imageUrl || '');
-    if (imageUrl && !/localhost:3002|127\.0\.0\.1:3002/.test(imageUrl)) return task;
-    return {
-      ...task,
-      imageUrl: `${baseUrl}/catalogue-images/imports/${path.basename(task.imagePath)}`,
-    };
-  }
-
-  async mapReviewTask(id: string, productId: string, actorUserId: string) {
-    const task = await this.prisma.catalogReviewTask.update({
-      where: { id },
-      data: { mappedProductId: productId, status: 'mapped', updatedAt: new Date() },
-    });
-    if (task.imageUrl) {
-      const product = await this.prisma.product.findUnique({ where: { id: productId } });
-      const media: any = product?.media || {};
-      await this.prisma.product.update({
-        where: { id: productId },
-        data: {
-          media: {
-            ...media,
-            primary: task.imageUrl,
-            gallery: Array.from(new Set([task.imageUrl, ...((media.gallery || []) as string[])])),
-            exactSkuMatch: true,
-            source: 'catalogue-review',
-            reviewTaskId: id,
-          },
-          updatedAt: new Date(),
-        },
-      });
-    }
-    await this.audit(actorUserId, 'catalogue.image.map', 'CatalogReviewTask', id, 'Mapped catalogue image to product', { productId });
-    return task;
-  }
-
-  async submitReviewTaskForApproval(id: string, productId: string, actorUserId: string) {
-    const task = await this.prisma.catalogReviewTask.update({
-      where: { id },
-      data: { mappedProductId: productId, status: 'pending_approval', updatedAt: new Date() },
-    });
-    await this.audit(actorUserId, 'catalogue.image.submit_approval', 'CatalogReviewTask', id, 'Submitted catalogue image mapping for owner approval', { productId });
-    return task;
-  }
-
-  async approveReviewTask(id: string, actorUserId: string, note?: string) {
-    const task = await this.prisma.catalogReviewTask.findUnique({ where: { id } });
-    if (!task) throw new Error('Catalog review task not found');
-    if (!task.mappedProductId) throw new Error('Map the catalogue image to a product before approval');
-    await this.mapReviewTask(id, task.mappedProductId, actorUserId);
-    const approved = await this.prisma.catalogReviewTask.update({
-      where: { id },
-      data: {
-        status: 'approved',
-        raw: { ...((task.raw as any) || {}), approvedBy: actorUserId, approvedAt: new Date().toISOString(), note: note || '' },
-        updatedAt: new Date(),
-      },
-    });
-    await this.audit(actorUserId, 'catalogue.image.approve', 'CatalogReviewTask', id, 'Approved catalogue image mapping', { productId: task.mappedProductId, note });
-    return approved;
+  private async countProductsWithImages() {
+    const products = await this.prisma.product.findMany({ select: { media: true } });
+    return products.filter((product) => {
+      const media: any = product.media || {};
+      return Boolean(media.primary || (Array.isArray(media.gallery) && media.gallery.length));
+    }).length;
   }
 
   async productCategories(args?: { status?: string }) {

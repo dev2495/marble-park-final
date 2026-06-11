@@ -523,9 +523,11 @@
 }
 
 .mp-sidebar {
+  background-color: rgba(255,255,255,0.96);
   background:
     radial-gradient(420px 280px at 0% 0%, rgba(124,58,237,0.10), transparent 62%),
-    linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,251,255,0.96));
+    linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,251,255,0.96)),
+    #ffffff;
   border-color: var(--line);
 }
 
@@ -556,9 +558,11 @@
 }
 
 :root.dark .mp-sidebar {
+  background-color: rgba(31,33,41,0.98);
   background:
     radial-gradient(480px 320px at 0% 0%, rgba(99,102,241,0.14), transparent 62%),
-    linear-gradient(180deg, rgba(31,33,41,0.96), rgba(24,26,34,0.98));
+    linear-gradient(180deg, rgba(31,33,41,0.96), rgba(24,26,34,0.98)),
+    #1f2129;
   border-color: var(--line);
 }
 

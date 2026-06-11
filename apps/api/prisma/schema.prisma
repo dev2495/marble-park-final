@@ -53,23 +53,6 @@ model AuditEvent {
   @@index([entityType, entityId], map: "AuditEvent_entity_idx")
 }
 
-model CatalogReviewTask {
-  id              String   @id
-  sourceFileId    String
-  pageNumber      Int?
-  detectedSku     String?
-  detectedName    String?
-  extractedText   String?
-  imagePath       String?
-  imageUrl        String?
-  mappedProductId String?
-  confidence      Float?
-  raw             Json?
-  status          String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime
-}
-
 model Customer {
   id               String            @id
   name             String
@@ -164,35 +147,6 @@ model FollowUpTask {
   @@index([ownerId])
   @@index([status])
   @@index([dueAt])
-}
-
-model ImportBatch {
-  id           String   @id
-  sourceFileId String
-  brand        String
-  rowCount     Int
-  status       String
-  summary      Json?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime
-}
-
-model ImportRow {
-  id              String   @id
-  sourceFileId    String
-  importBatchId   String
-  brand           String
-  range           String?
-  categoryCode    String?
-  sku             String?
-  description     String
-  newMrp          Float
-  raw             Json
-  normalized      Json?
-  mappedProductId String?
-  status          String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime
 }
 
 model InventoryBalance {
@@ -1045,18 +999,6 @@ model ReturnLine {
   @@index([returnOrderId])
   @@index([productId])
   @@index([status])
-}
-
-model SourceFile {
-  id         String   @id
-  kind       String
-  name       String
-  path       String   @unique
-  uploadedBy String
-  status     String
-  metadata   Json?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime
 }
 
 model User {

@@ -76,11 +76,11 @@ const permissionGroups = [
   },
   {
     title: 'Master data',
-    description: 'SKU, catalogue imports, brands, finishes, vendors and product masters.',
+    description: 'SKU, Excel imports, brands, finishes, vendors and product masters.',
     items: [
       ['products.manage', 'Create/edit SKUs'],
       ['master_data.manage', 'Masters: category, brand, finish, vendor'],
-      ['catalogue.import', 'Catalogue import/review'],
+      ['catalogue.import', 'Excel Product Master import'],
     ],
   },
   {
