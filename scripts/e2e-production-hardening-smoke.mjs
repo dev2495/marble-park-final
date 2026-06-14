@@ -206,6 +206,7 @@ async function main() {
       returnOrders(take: 20)
       stockLedgerEntries(productId: $productId, take: 80)
       stockLocationBalances(locationId: $locationId, productId: $productId)
+      stockReconciliation(productId: $productId, take: 10)
       productionReadinessSummary
     }`,
     { productId: product.id, locationId: plant.id },
@@ -222,6 +223,8 @@ async function main() {
   assert(finalData.stockLedgerEntries.some((row) => row.referenceType === 'ReturnOrder' && row.referenceId === returnOrder.id), 'return should post stock ledger entry');
   assert(finalData.stockLedgerEntries.some((row) => row.type === 'dispatch' && row.direction === 'out' && row.locationId === plant.id), 'dispatch should consume from the default plant stock scope');
   assert(finalData.stockLocationBalances.some((row) => row.locationId === plant.id && row.onHand >= 5), 'final plant stock should reflect GRN, count, dispatch and return');
+  const reconciliationRow = finalData.stockReconciliation.rows.find((row) => row.productId === product.id);
+  assert(reconciliationRow?.status === 'ok', `stock reconciliation should be clean for smoke SKU, got ${JSON.stringify(reconciliationRow?.issues || [])}`);
   assert(finalData.productionReadinessSummary.score >= 95, 'production readiness score should stay above 95');
   assert(finalData.productionReadinessSummary.dispatch.shipments >= 1, 'dispatch shipment records should be counted');
   assert(finalData.productionReadinessSummary.returns.returns >= 1, 'return records should be counted');

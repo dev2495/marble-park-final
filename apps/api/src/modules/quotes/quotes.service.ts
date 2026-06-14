@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
+import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { ulid } from 'ulid';
 
 export interface CreateQuoteInput {
@@ -596,74 +597,7 @@ export class QuotesService {
   }
 
   private async syncSalesOrderLinesTx(tx: any, args: { quote: any; salesOrder: any; lines: any[] }) {
-    const lines = this.normalizeLines(args.salesOrder.lines || args.lines);
-    const reservations = await tx.reservation.findMany({ where: { quoteId: args.quote.id } });
-    const reservedByProduct = new Map<string, number>();
-    const backorderedByProduct = new Map<string, number>();
-    for (const reservation of reservations) {
-      const target = reservation.status === 'reserved' ? reservedByProduct : reservation.status === 'backordered' ? backorderedByProduct : null;
-      if (!target) continue;
-      target.set(reservation.productId, (target.get(reservation.productId) || 0) + Number(reservation.quantity || 0));
-    }
-    const quoteLines = await tx.quoteLine.findMany({ where: { quoteId: args.quote.id } }).catch(() => []);
-    const quoteLineMap = new Map((quoteLines as any[]).map((row) => [row.lineKey, row]));
-
-    for (const [index, line] of lines.entries()) {
-      const productId = String(line.productId || '').trim();
-      const quoteLineKey = this.quoteLineKey(line, index);
-      const key = productId ? quoteLineKey : this.tileDemandKey(args.salesOrder.id, line, index);
-      const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
-      const unitPrice = Number(line.price || line.sellPrice || 0);
-      const reservedQuantity = productId ? Number(reservedByProduct.get(productId) || 0) : 0;
-      const backorderedQuantity = productId ? Number(backorderedByProduct.get(productId) || 0) : quantity;
-      const existing = await tx.salesOrderLine.findUnique({
-        where: { salesOrderId_lineKey: { salesOrderId: args.salesOrder.id, lineKey: key } },
-      }).catch(() => null);
-      const deliveredQuantity = Number(existing?.deliveredQuantity || 0);
-      const dispatchedQuantity = Number(existing?.dispatchedQuantity || 0);
-      const status = deliveredQuantity >= quantity
-        ? 'delivered'
-        : dispatchedQuantity > 0
-          ? 'partial_dispatched'
-          : reservedQuantity > 0 && backorderedQuantity > 0
-            ? 'partial_ready'
-            : backorderedQuantity > 0
-              ? 'pending_inward'
-              : 'ready';
-      const payload = {
-        quoteLineId: (quoteLineMap.get(quoteLineKey) as any)?.id || null,
-        lineNo: index + 1,
-        productId: productId || null,
-        sku: String(line.sku || line.tileCode || productId || `LINE-${index + 1}`),
-        name: String(line.name || line.description || line.sku || `Line ${index + 1}`),
-        category: String(line.category || (this.isTileLine(line) ? 'Tiles' : 'Product')),
-        brand: String(line.brand || ''),
-        finish: line.finish || line.tileSize || line.dimensions || null,
-        area: line.area || line.room || line.section || null,
-        unit: String(line.unit || line.uom || 'PC').toUpperCase(),
-        orderedQuantity: quantity,
-        reservedQuantity,
-        backorderedQuantity,
-        unitPrice,
-        lineTotal: quantity * unitPrice,
-        status,
-        isTileSpecial: this.isTileLine(line) && !productId,
-        metadata: { snapshot: line },
-        updatedAt: new Date(),
-      };
-      await tx.salesOrderLine.upsert({
-        where: { salesOrderId_lineKey: { salesOrderId: args.salesOrder.id, lineKey: key } },
-        update: payload,
-        create: {
-          id: ulid(),
-          salesOrderId: args.salesOrder.id,
-          quoteId: args.quote.id,
-          lineKey: key,
-          createdAt: new Date(),
-          ...payload,
-        },
-      });
-    }
+    await syncSalesOrderLinesForQuoteTx(tx, args.quote.id);
   }
 
   private async ensureSalesOrderDocumentsTx(tx: any, quote: any, salesOrder: any, actorUserId: string) {
@@ -995,7 +929,7 @@ export class QuotesService {
       const backorderQty = Math.max(0, quantity - reserveQty);
 
       if (reserveQty > 0) {
-        await tx.reservation.create({
+        const reservation = await tx.reservation.create({
           data: {
             id: ulid(),
             quoteId: quote.id,
@@ -1005,24 +939,22 @@ export class QuotesService {
             updatedAt: new Date(),
           },
         });
-        await tx.inventoryBalance.update({
-          where: { productId },
-          data: {
-            reserved: Number(balance.reserved || 0) + reserveQty,
-            available: Math.max(0, available - reserveQty),
-            updatedAt: new Date(),
-          },
-        });
-        await tx.inventoryMovement.create({
-          data: {
-            id: ulid(),
-            productId,
-            type: 'reserve',
-            quantity: reserveQty,
-            reason: `Reserved for ${quote.quoteNumber}`,
-            relatedQuoteId: quote.id,
-            createdBy: quote.ownerId,
-          },
+        await applyStockPostingTx(tx, {
+          productId,
+          type: 'reserve',
+          movementType: 'reserve',
+          ledgerType: 'reserve',
+          quantity: reserveQty,
+          reservedDelta: reserveQty,
+          locationReservedDelta: reserveQty,
+          requireAvailable: true,
+          reason: `Reserved for ${quote.quoteNumber}`,
+          relatedQuoteId: quote.id,
+          referenceType: 'Reservation',
+          referenceId: reservation.id,
+          sourceDocumentNo: quote.quoteNumber,
+          createdBy: quote.ownerId,
+          metadata: { source: 'quote_confirm' },
         });
       }
 
@@ -1132,31 +1064,29 @@ export class QuotesService {
     for (const reservation of reservations) {
       const balance = await tx.inventoryBalance.findUnique({ where: { productId: reservation.productId } });
       if (balance) {
-        await tx.inventoryBalance.update({
-          where: { productId: reservation.productId },
-          data: {
-            reserved: Math.max(0, Number(balance.reserved || 0) - reservation.quantity),
-            available: Number(balance.available || 0) + reservation.quantity,
-            updatedAt: new Date(),
-          },
+        await applyStockPostingTx(tx, {
+          productId: reservation.productId,
+          type: 'release',
+          movementType: 'release',
+          ledgerType: 'release',
+          quantity: Number(reservation.quantity || 0),
+          reservedDelta: -Number(reservation.quantity || 0),
+          locationReservedDelta: -Number(reservation.quantity || 0),
+          requireReserved: true,
+          reason,
+          relatedQuoteId: quoteId,
+          referenceType: 'Reservation',
+          referenceId: reservation.id,
+          createdBy: 'system',
+          metadata: { source: 'quote_release' },
         });
       }
       await tx.reservation.update({
         where: { id: reservation.id },
         data: { status: 'released', updatedAt: new Date() },
       });
-      await tx.inventoryMovement.create({
-        data: {
-          id: ulid(),
-          productId: reservation.productId,
-          type: 'release',
-          quantity: reservation.quantity,
-          reason,
-          relatedQuoteId: quoteId,
-          createdBy: 'system',
-        },
-      });
     }
+    await syncSalesOrderLinesForQuoteTx(tx, quoteId);
   }
 
   private async getAvailabilityIssues(lines: any[]) {

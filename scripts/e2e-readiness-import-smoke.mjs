@@ -110,6 +110,13 @@ async function main() {
     inventory.token,
   )).createInventory;
   assert(inventoryBalance.onHand >= 5 && inventoryBalance.available >= 5, 'inventory create should add available stock');
+  const reconciliation = (await gql(
+    `query($productId: String) { stockReconciliation(productId: $productId, take: 10) }`,
+    { productId: product.id },
+    inventory.token,
+  )).stockReconciliation;
+  const reconciliationRow = reconciliation.rows.find((row) => row.productId === product.id);
+  assert(reconciliationRow?.status === 'ok', `inventory create should produce a reconciled stock row, got ${JSON.stringify(reconciliationRow?.issues || [])}`);
 
   const excelPath = await writeExcelSample();
   const { preview: excelPreview, applied: excelImport } = await processExcelUpload(excelPath, inventory.token);

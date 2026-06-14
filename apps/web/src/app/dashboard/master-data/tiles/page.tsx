@@ -19,7 +19,7 @@ const SAVE_TILE_SIZE = gql`
   }
 `;
 
-const empty = { id: '', name: '', code: '', uom: 'BOX', pcsPerBox: 0, description: '', status: 'active', sortOrder: 0 };
+const empty = { id: '', name: '', code: '', uom: 'BOX', pcsPerBox: 0 };
 
 export default function TileMasterPage() {
   const { data, loading, error, refetch } = useQuery(TILE_SIZES);
@@ -42,9 +42,9 @@ export default function TileMasterPage() {
         code: form.code || undefined,
         uom: form.uom || 'BOX',
         pcsPerBox: Number(form.pcsPerBox || 0),
-        description: form.description || '',
-        status: form.status || 'active',
-        sortOrder: Number(form.sortOrder || 0),
+        description: '',
+        status: 'active',
+        sortOrder: 0,
       },
     },
   });
@@ -109,26 +109,9 @@ export default function TileMasterPage() {
                 </select>
               </label>
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Pcs / box</span>
-                <Input type="number" min={0} value={form.pcsPerBox || 0} onChange={(event) => update('pcsPerBox', Number(event.target.value))} />
-              </label>
-              <label className="space-y-2">
-                <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Sort order</span>
-                <Input type="number" value={form.sortOrder || 0} onChange={(event) => update('sortOrder', Number(event.target.value))} />
-              </label>
-            </div>
             <label className="space-y-2">
-              <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Description</span>
-              <Input value={form.description || ''} onChange={(event) => update('description', event.target.value)} placeholder="Optional internal note" />
-            </label>
-            <label className="space-y-2">
-              <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Status</span>
-              <select value={form.status || 'active'} onChange={(event) => update('status', event.target.value)} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink-1)]">
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
+              <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Pcs / box</span>
+              <Input type="number" min={0} value={form.pcsPerBox || 0} onChange={(event) => update('pcsPerBox', Number(event.target.value))} />
             </label>
           </div>
 
@@ -157,12 +140,11 @@ export default function TileMasterPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-black text-[var(--ink-1)]">{row.name}</p>
-                    <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{row.code || 'No code'} · {row.status}</p>
+                    <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{row.code || 'No code'}</p>
                   </div>
                   <span className="rounded-full bg-[#eff6ff] px-3 py-1 text-xs font-black text-[#1d4ed8]">{row.uom || 'BOX'}</span>
                 </div>
                 <p className="mt-3 text-sm font-bold text-[var(--ink-3)]">{Number(row.pcsPerBox || 0)} pcs / box</p>
-                {row.description ? <p className="mt-2 line-clamp-2 text-xs font-semibold text-[var(--ink-4)]">{row.description}</p> : null}
               </button>
             ))}
           </div>

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
+import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreatePurchaseOrderInput {
@@ -687,84 +688,22 @@ export class ProcurementService {
     tx: any,
     args: { productId: string; quantity: number; reason: string; actorUserId: string; locationId?: string; referenceId?: string; sourceDocumentNo?: string },
   ) {
-    const location = args.locationId
-      ? await this.resolveStockLocationTx(tx, args.locationId)
-      : await this.ensureDefaultLocationTx(tx);
-    const current = await tx.inventoryBalance.findUnique({ where: { productId: args.productId } });
-    if (current) {
-      await tx.inventoryBalance.update({
-        where: { productId: args.productId },
-        data: {
-          onHand: Number(current.onHand || 0) + args.quantity,
-          available: Number(current.available || 0) + args.quantity,
-          updatedAt: new Date(),
-        },
-      });
-    } else {
-      await tx.inventoryBalance.create({
-        data: {
-          id: ulid(),
-          productId: args.productId,
-          onHand: args.quantity,
-          available: args.quantity,
-          reserved: 0,
-          damaged: 0,
-          hold: 0,
-          updatedAt: new Date(),
-        },
-      });
-    }
-    await tx.inventoryMovement.create({
-      data: {
-        id: ulid(),
-        productId: args.productId,
-        type: 'inward',
-        quantity: args.quantity,
-        reason: args.reason,
-        createdBy: args.actorUserId,
-      },
+    await applyStockPostingTx(tx, {
+      productId: args.productId,
+      type: 'grn_receipt',
+      movementType: 'inward',
+      ledgerType: 'grn_receipt',
+      quantity: args.quantity,
+      onHandDelta: args.quantity,
+      locationOnHandDelta: args.quantity,
+      locationId: args.locationId || null,
+      reason: args.reason,
+      referenceType: 'GoodsReceiptNote',
+      referenceId: args.referenceId || null,
+      sourceDocumentNo: args.sourceDocumentNo || null,
+      createdBy: args.actorUserId,
+      metadata: { source: 'procurement_service' },
     });
-    const byLocation = await tx.stockBalanceByLocation.findUnique({
-      where: { productId_locationId: { productId: args.productId, locationId: location.id } },
-    }).catch(() => null);
-    if (byLocation) {
-      await tx.stockBalanceByLocation.update({
-        where: { productId_locationId: { productId: args.productId, locationId: location.id } },
-        data: {
-          onHand: Number(byLocation.onHand || 0) + args.quantity,
-          updatedAt: new Date(),
-        },
-      });
-    } else {
-      await tx.stockBalanceByLocation.create({
-        data: {
-          id: ulid(),
-          productId: args.productId,
-          locationId: location.id,
-          onHand: args.quantity,
-          reserved: 0,
-          damaged: 0,
-          hold: 0,
-          updatedAt: new Date(),
-        },
-      });
-    }
-    await tx.stockLedgerEntry.create({
-      data: {
-        id: ulid(),
-        productId: args.productId,
-        locationId: location.id,
-        type: 'grn_receipt',
-        quantity: args.quantity,
-        direction: 'in',
-        referenceType: 'GoodsReceiptNote',
-        referenceId: args.referenceId || null,
-        sourceDocumentNo: args.sourceDocumentNo || null,
-        reason: args.reason,
-        createdBy: args.actorUserId,
-        metadata: { source: 'procurement_service' },
-      },
-    }).catch(() => null);
     await this.autoReserveBackordersTx(tx, args.productId, args.actorUserId);
   }
 
@@ -777,33 +716,33 @@ export class ProcurementService {
       const balance = await tx.inventoryBalance.findUnique({ where: { productId }, include: { product: true } });
       if (!balance || Number(balance.available || 0) < Number(reservation.quantity || 0)) return;
       const quote = await tx.quote.findUnique({ where: { id: reservation.quoteId } });
-      await tx.inventoryBalance.update({
-        where: { productId },
-        data: {
-          available: Number(balance.available || 0) - Number(reservation.quantity || 0),
-          reserved: Number(balance.reserved || 0) + Number(reservation.quantity || 0),
-          updatedAt: new Date(),
-        },
+      const quantity = Number(reservation.quantity || 0);
+      await applyStockPostingTx(tx, {
+        productId,
+        type: 'auto_reserve_backorder',
+        movementType: 'reserve',
+        ledgerType: 'reserve',
+        quantity,
+        reservedDelta: quantity,
+        locationReservedDelta: quantity,
+        requireAvailable: true,
+        reason: `Auto-reserved arrived backorder for ${quote?.quoteNumber || reservation.quoteId}`,
+        relatedQuoteId: reservation.quoteId,
+        referenceType: 'Reservation',
+        referenceId: reservation.id,
+        sourceDocumentNo: quote?.quoteNumber || null,
+        createdBy: actorUserId || 'system',
+        metadata: { source: 'procurement_auto_reserve' },
       });
       await tx.reservation.update({
         where: { id: reservation.id },
         data: { status: 'reserved', updatedAt: new Date() },
       });
-      await tx.inventoryMovement.create({
-        data: {
-          id: ulid(),
-          productId,
-          type: 'reserve',
-          quantity: Number(reservation.quantity || 0),
-          reason: `Auto-reserved arrived backorder for ${quote?.quoteNumber || reservation.quoteId}`,
-          relatedQuoteId: reservation.quoteId,
-          createdBy: actorUserId || 'system',
-        },
-      });
       await tx.purchaseDemand.updateMany({
         where: { sourceReservationId: reservation.id },
         data: { status: 'allocated', updatedAt: new Date() },
       }).catch(() => null);
+      await syncSalesOrderLinesForQuoteTx(tx, reservation.quoteId);
       if (quote?.leadId) {
         await tx.activity.create({
           data: {

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
+import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { ulid } from 'ulid';
 
 export interface CreateDispatchJobInput {
@@ -341,6 +342,11 @@ export class DispatchService {
     const challan = await this.prisma.dispatchChallan.findUnique({ where: { id } });
     if (!challan) throw new NotFoundException('Challan not found');
     if (challan.status === status) return challan as any;
+
+    if (status === 'dispatched' && challan.status === 'pending') {
+      const job = await this.prisma.dispatchJob.findUnique({ where: { id: challan.dispatchJobId } }).catch(() => null);
+      if (job) await this.assertDispatchableLines(this.normalizeLines((challan as any).lines) || [], job, { excludeChallanId: challan.id });
+    }
     
     const data: any = { status };
     if (status === 'dispatched') {
@@ -350,57 +356,63 @@ export class DispatchService {
     }
     
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.dispatchChallan.update({
-        where: { id },
-        data,
-      });
+      const current = await tx.dispatchChallan.findUnique({ where: { id } });
+      if (!current) throw new NotFoundException('Challan not found');
+      if (current.status === status) return current;
 
-      if (status === 'dispatched' && challan.status === 'pending') {
-        await this.consumeInventoryForChallan(tx, challan as any);
+      let updated: any = current;
+      if (status === 'dispatched') {
+        const claimed = await tx.dispatchChallan.updateMany({ where: { id, status: 'pending' }, data });
+        updated = await tx.dispatchChallan.findUnique({ where: { id } });
+        if (claimed.count !== 1) return updated;
+        await this.consumeInventoryForChallan(tx, updated as any);
         await tx.shipment.updateMany({
-          where: { challanId: challan.id },
+          where: { challanId: updated.id },
           data: { status: 'dispatched', dispatchedAt: new Date(), updatedAt: new Date() },
         }).catch(() => null);
         await tx.dispatchLine.updateMany({
-          where: { challanId: challan.id, status: 'packed' },
+          where: { challanId: updated.id, status: 'packed' },
           data: { status: 'dispatched', updatedAt: new Date() },
         }).catch(() => null);
-        await this.refreshJobStatusTx(tx, challan.dispatchJobId);
-        const job = await tx.dispatchJob.findUnique({ where: { id: challan.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
+        await this.refreshJobStatusTx(tx, updated.dispatchJobId);
+        const job = await tx.dispatchJob.findUnique({ where: { id: updated.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
         if (job?.quote?.ownerId) {
           await tx.notification.create({
             data: {
               id: ulid(),
               title: 'Items dispatched',
-              message: `${challan.challanNumber} has been dispatched for ${job.customer?.name || 'customer'}.`,
+              message: `${updated.challanNumber} has been dispatched for ${job.customer?.name || 'customer'}.`,
               type: 'dispatch_dispatched',
               entityType: 'DispatchChallan',
-              entityId: challan.id,
+              entityId: updated.id,
               href: `/dashboard/leads/${job.quote.leadId}`,
               targetUserId: job.quote.ownerId,
-              metadata: { quoteId: challan.quoteId },
+              metadata: { quoteId: updated.quoteId },
             },
           }).catch(() => null);
         }
       } else if (status === 'delivered') {
-        await this.markChallanDeliveredTx(tx, challan as any);
-        await this.refreshJobStatusTx(tx, challan.dispatchJobId);
-        const job = await tx.dispatchJob.findUnique({ where: { id: challan.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
+        updated = await tx.dispatchChallan.update({ where: { id }, data });
+        await this.markChallanDeliveredTx(tx, updated as any);
+        await this.refreshJobStatusTx(tx, updated.dispatchJobId);
+        const job = await tx.dispatchJob.findUnique({ where: { id: updated.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
         if (job?.quote?.ownerId) {
           await tx.notification.create({
             data: {
               id: ulid(),
               title: 'Delivery completed',
-              message: `${challan.challanNumber} has been marked delivered for ${job.customer?.name || 'customer'}.`,
+              message: `${updated.challanNumber} has been marked delivered for ${job.customer?.name || 'customer'}.`,
               type: 'dispatch_delivered',
               entityType: 'DispatchChallan',
-              entityId: challan.id,
+              entityId: updated.id,
               href: `/dashboard/leads/${job.quote.leadId}`,
               targetUserId: job.quote.ownerId,
-              metadata: { quoteId: challan.quoteId },
+              metadata: { quoteId: updated.quoteId },
             },
           }).catch(() => null);
         }
+      } else {
+        updated = await tx.dispatchChallan.update({ where: { id }, data });
       }
 
       return updated;
@@ -545,57 +557,27 @@ export class DispatchService {
         continue;
       }
 
-      const balance = await tx.inventoryBalance.findUnique({ where: { productId } });
-      if (!balance) continue;
-
-      const onHand = Math.max(0, Number(balance.onHand || 0) - quantity);
-      const reserved = Math.max(0, Number(balance.reserved || 0) - quantity);
-      const damaged = Number(balance.damaged || 0);
-      const hold = Number(balance.hold || 0);
-      await tx.inventoryBalance.update({
-        where: { productId },
-        data: {
-          onHand,
-          reserved,
-          available: Math.max(0, onHand - reserved - damaged - hold),
-          updatedAt: new Date(),
-        },
-      });
-      await this.applyDefaultLocationDispatchTx(tx, {
+      await applyStockPostingTx(tx, {
         productId,
+        type: 'dispatch',
+        movementType: 'dispatch',
+        ledgerType: 'dispatch',
         quantity,
-        previousOnHand: Number(balance.onHand || 0),
-        previousReserved: Number(balance.reserved || 0),
+        onHandDelta: -quantity,
+        reservedDelta: -quantity,
+        locationOnHandDelta: -quantity,
+        locationReservedDelta: -quantity,
+        requireReserved: true,
+        requireOnHand: true,
+        reason: `Dispatched on ${challan.challanNumber}`,
+        relatedQuoteId: challan.quoteId,
+        relatedChallanId: challan.id,
+        referenceType: 'DispatchChallan',
+        referenceId: challan.id,
+        sourceDocumentNo: challan.challanNumber,
+        createdBy: 'dispatch',
+        metadata: { quoteId: challan.quoteId },
       });
-
-      await tx.inventoryMovement.create({
-        data: {
-          id: ulid(),
-          productId,
-          type: 'dispatch',
-          quantity,
-          reason: `Dispatched on ${challan.challanNumber}`,
-          relatedQuoteId: challan.quoteId,
-          relatedChallanId: challan.id,
-          createdBy: 'dispatch',
-        },
-      });
-      await tx.stockLedgerEntry.create({
-        data: {
-          id: ulid(),
-          productId,
-          locationId: await this.defaultLocationIdTx(tx),
-          type: 'dispatch',
-          quantity,
-          direction: 'out',
-          referenceType: 'DispatchChallan',
-          referenceId: challan.id,
-          sourceDocumentNo: challan.challanNumber,
-          reason: `Dispatched on ${challan.challanNumber}`,
-          createdBy: 'dispatch',
-          metadata: { quoteId: challan.quoteId },
-        },
-      }).catch(() => null);
       const salesOrder = await tx.salesOrder.findUnique({ where: { quoteId: challan.quoteId } }).catch(() => null);
       if (salesOrder) {
         const orderLine = await tx.salesOrderLine.findFirst({
@@ -640,6 +622,7 @@ export class DispatchService {
         remainingToDispatch -= consume;
       }
     }
+    await syncSalesOrderLinesForQuoteTx(tx, challan.quoteId);
   }
 
   private async consumeSpecialOrderLineTx(tx: any, challan: any, line: any, quantity: number) {
@@ -737,7 +720,7 @@ export class DispatchService {
     }
   }
 
-  private async assertDispatchableLines(lines: any[], job: any) {
+  private async assertDispatchableLines(lines: any[], job: any, options?: { excludeChallanId?: string }) {
     const quoteId = job.quoteId;
     const quote = await this.prisma.quote.findUnique({ where: { id: quoteId } });
     if (!quote) throw new BadRequestException('Dispatch quote not found');
@@ -780,7 +763,11 @@ export class DispatchService {
 
     const [challans, reservations] = await Promise.all([
       this.prisma.dispatchChallan.findMany({
-        where: { quoteId, status: { in: ['pending', 'dispatched', 'delivered'] } },
+        where: {
+          quoteId,
+          status: { in: ['pending', 'dispatched', 'delivered'] },
+          ...(options?.excludeChallanId ? { id: { not: options.excludeChallanId } } : {}),
+        },
       } as any),
       this.prisma.reservation.findMany({ where: { quoteId, status: 'reserved' } }),
     ]);

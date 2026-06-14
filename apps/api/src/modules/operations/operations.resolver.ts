@@ -150,6 +150,16 @@ export class OperationsResolver {
   }
 
   @Query(() => GraphQLJSON)
+  async stockReconciliation(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('productId', { nullable: true }) productId?: string,
+    @Args('take', { nullable: true }) take?: number,
+  ) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.operations.stockReconciliation({ productId, take });
+  }
+
+  @Query(() => GraphQLJSON)
   async productionReadinessSummary(@Context() ctx: GraphqlRequestContext) {
     await requirePermission(this.prisma, ctx, 'reports.view');
     return this.operations.productionReadinessSummary();

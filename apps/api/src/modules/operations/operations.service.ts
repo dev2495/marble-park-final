@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
+import { applyStockPostingTx } from '../common/stock-posting';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -228,48 +229,28 @@ export class OperationsService {
 
     return this.prisma.$transaction(async (tx: any) => {
       for (const line of lines) {
-        if (!Number(line.variance || 0)) continue;
-        const balance = await tx.inventoryBalance.findUnique({ where: { productId: line.productId } });
-        if (!balance) continue;
-        const onHand = Math.max(0, Number(balance.onHand || 0) + Number(line.variance || 0));
-        const reserved = Number(balance.reserved || 0);
-        const damaged = Number(balance.damaged || 0);
-        const hold = Number(balance.hold || 0);
-        await tx.inventoryBalance.update({
-          where: { productId: line.productId },
-          data: { onHand, available: Math.max(0, onHand - reserved - damaged - hold), updatedAt: new Date() },
-        });
-        if (session.locationId) {
-          await this.applyLocationDeltaTx(tx, {
-            productId: line.productId,
-            locationId: session.locationId,
-            onHandDelta: Number(line.variance || 0),
-          });
-        }
-        await tx.inventoryMovement.create({
-          data: {
-            id: ulid(),
-            productId: line.productId,
-            type: 'stock_count',
-            quantity: Number(line.variance || 0),
-            reason: `Approved variance from ${session.countNumber}: ${line.reason || 'physical count'}`,
-            createdBy: actorUserId,
-          },
-        });
-        await tx.stockLedgerEntry.create({
-          data: {
-            id: ulid(),
-            productId: line.productId,
-            locationId: session.locationId || null,
-            type: 'stock_count',
-            quantity: Math.abs(Number(line.variance || 0)),
-            direction: Number(line.variance || 0) >= 0 ? 'in' : 'out',
-            referenceType: 'StockCountSession',
-            referenceId: session.id,
-            sourceDocumentNo: session.countNumber,
-            reason: line.reason || 'Approved count variance',
-            createdBy: actorUserId,
-            metadata: { expected: line.expectedQuantity, counted: line.countedQuantity, variance: line.variance },
+        const variance = Number(line.variance || 0);
+        if (!variance) continue;
+        await applyStockPostingTx(tx, {
+          productId: line.productId,
+          type: 'stock_count',
+          movementType: 'stock_count',
+          movementQuantity: variance,
+          ledgerType: 'stock_count',
+          direction: variance >= 0 ? 'in' : 'out',
+          quantity: Math.abs(variance),
+          onHandDelta: variance,
+          locationId: session.locationId || null,
+          locationOnHandDelta: variance,
+          reason: `Approved variance from ${session.countNumber}: ${line.reason || 'physical count'}`,
+          createdBy: actorUserId,
+          referenceType: 'StockCountSession',
+          referenceId: session.id,
+          sourceDocumentNo: session.countNumber,
+          metadata: {
+            expected: line.expectedQuantity,
+            counted: line.countedQuantity,
+            variance: line.variance,
           },
         });
       }
@@ -353,56 +334,27 @@ export class OperationsService {
           },
         });
         if (input.receive && row.productId) {
-          const current = await tx.inventoryBalance.findUnique({ where: { productId: row.productId } });
-          if (current) {
-            const toAvailable = row.disposition === 'resell';
-            const onHand = Number(current.onHand || 0) + quantity;
-            const damaged = Number(current.damaged || 0) + (toAvailable ? 0 : quantity);
-            const reserved = Number(current.reserved || 0);
-            const hold = Number(current.hold || 0);
-            await tx.inventoryBalance.update({
-              where: { productId: row.productId },
-              data: {
-                onHand,
-                damaged,
-                available: toAvailable ? Number(current.available || 0) + quantity : Math.max(0, onHand - reserved - damaged - hold),
-                updatedAt: new Date(),
-              },
-            });
-          }
-          await this.applyLocationDeltaTx(tx, {
+          const toAvailable = row.disposition === 'resell';
+          await applyStockPostingTx(tx, {
             productId: row.productId,
-            locationId: returnLocation.id,
+            type: toAvailable ? 'return_available' : 'return_damaged',
+            movementType: toAvailable ? 'return_available' : 'return_damaged',
+            ledgerType: toAvailable ? 'return_available' : 'return_damaged',
+            quantity,
             onHandDelta: quantity,
-            damagedDelta: row.disposition === 'resell' ? 0 : quantity,
+            damagedDelta: toAvailable ? 0 : quantity,
+            locationId: returnLocation.id,
+            locationOnHandDelta: quantity,
+            locationDamagedDelta: toAvailable ? 0 : quantity,
+            direction: 'in',
+            reason: `${returnNumber}: ${input.reason || 'Customer return'}`,
+            relatedChallanId: input.challanId || null,
+            createdBy: actorUserId,
+            referenceType: 'ReturnOrder',
+            referenceId: order.id,
+            sourceDocumentNo: returnNumber,
+            metadata: { disposition: row.disposition || 'inspect' },
           });
-          await tx.inventoryMovement.create({
-            data: {
-              id: ulid(),
-              productId: row.productId,
-              type: row.disposition === 'resell' ? 'return_available' : 'return_damaged',
-              quantity,
-              reason: `${returnNumber}: ${input.reason || 'Customer return'}`,
-              relatedChallanId: input.challanId || null,
-              createdBy: actorUserId,
-            },
-          });
-          await tx.stockLedgerEntry.create({
-            data: {
-              id: ulid(),
-              productId: row.productId,
-              locationId: returnLocation.id,
-              type: row.disposition === 'resell' ? 'return_available' : 'return_damaged',
-              quantity,
-              direction: 'in',
-              referenceType: 'ReturnOrder',
-              referenceId: order.id,
-              sourceDocumentNo: returnNumber,
-              reason: `${returnNumber}: ${input.reason || 'Customer return'}`,
-              createdBy: actorUserId,
-              metadata: { disposition: row.disposition || 'inspect' },
-            },
-          }).catch(() => null);
         }
       }
       await tx.auditEvent.create({
@@ -419,6 +371,114 @@ export class OperationsService {
       const [decorated] = await this.returnOrders({ take: 1 });
       return decorated?.id === order.id ? decorated : order;
     }, { timeout: 20000 });
+  }
+
+  async stockReconciliation(args?: { productId?: string; take?: number }) {
+    const where: any = {};
+    if (args?.productId) where.productId = args.productId;
+    const balances = await this.prisma.inventoryBalance.findMany({
+      where,
+      include: { product: true } as any,
+      orderBy: { updatedAt: 'desc' },
+      take: this.limit(args?.take, 300),
+    } as any) as any[];
+    const productIds = balances.map((balance) => balance.productId).filter(Boolean);
+
+    const [locationRows, reservations, orderLines, ledgerRows] = await Promise.all([
+      productIds.length ? (this.prisma as any).stockBalanceByLocation.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
+      productIds.length ? this.prisma.reservation.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
+      productIds.length ? (this.prisma as any).salesOrderLine.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
+      productIds.length ? (this.prisma as any).stockLedgerEntry.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
+    ]);
+
+    const locationByProduct = this.sumLocationBuckets(locationRows as any[]);
+    const reservedByProduct = this.sumReservationBuckets(reservations as any[], 'reserved');
+    const backorderedByProduct = this.sumReservationBuckets(reservations as any[], 'backordered');
+    const orderReservedByProduct = this.sumOrderLineBucket(orderLines as any[], 'reservedQuantity');
+    const orderBackorderedByProduct = this.sumOrderLineBucket(orderLines as any[], 'backorderedQuantity');
+    const ledgerCountByProduct = new Map<string, number>();
+    for (const entry of ledgerRows as any[]) {
+      if (!entry.productId) continue;
+      ledgerCountByProduct.set(entry.productId, (ledgerCountByProduct.get(entry.productId) || 0) + 1);
+    }
+
+    const rows = balances.map((balance) => {
+      const aggregate = {
+        onHand: Number(balance.onHand || 0),
+        available: Number(balance.available || 0),
+        reserved: Number(balance.reserved || 0),
+        damaged: Number(balance.damaged || 0),
+        hold: Number(balance.hold || 0),
+      };
+      const location = locationByProduct.get(balance.productId) || { onHand: 0, reserved: 0, damaged: 0, hold: 0, rowCount: 0 };
+      const expectedAvailable = Math.max(0, aggregate.onHand - aggregate.reserved - aggregate.damaged - aggregate.hold);
+      const reservationReserved = Number(reservedByProduct.get(balance.productId) || 0);
+      const reservationBackordered = Number(backorderedByProduct.get(balance.productId) || 0);
+      const salesOrderReserved = Number(orderReservedByProduct.get(balance.productId) || 0);
+      const salesOrderBackordered = Number(orderBackorderedByProduct.get(balance.productId) || 0);
+      const ledgerEntries = Number(ledgerCountByProduct.get(balance.productId) || 0);
+      const issues: any[] = [];
+
+      const addIssue = (code: string, severity: 'critical' | 'warning', message: string) => issues.push({ code, severity, message });
+      if ([aggregate.onHand, aggregate.available, aggregate.reserved, aggregate.damaged, aggregate.hold].some((value) => value < 0)) {
+        addIssue('negative_aggregate_bucket', 'critical', 'Aggregate inventory bucket cannot be negative.');
+      }
+      if (aggregate.available !== expectedAvailable) {
+        addIssue('available_mismatch', 'critical', `Available should be ${expectedAvailable}, found ${aggregate.available}.`);
+      }
+      if (location.rowCount === 0 && (aggregate.onHand || aggregate.reserved || aggregate.damaged || aggregate.hold)) {
+        addIssue('missing_location_balance', 'critical', 'Aggregate stock exists without a plant/location balance.');
+      }
+      if (location.rowCount > 0 && Number(location.onHand || 0) !== aggregate.onHand) {
+        addIssue('location_on_hand_mismatch', 'critical', `Location on-hand ${location.onHand} does not match aggregate ${aggregate.onHand}.`);
+      }
+      if (location.rowCount > 0 && Number(location.reserved || 0) !== aggregate.reserved) {
+        addIssue('location_reserved_mismatch', 'critical', `Location reserved ${location.reserved} does not match aggregate ${aggregate.reserved}.`);
+      }
+      if (location.rowCount > 0 && Number(location.damaged || 0) !== aggregate.damaged) {
+        addIssue('location_damaged_mismatch', 'critical', `Location damaged ${location.damaged} does not match aggregate ${aggregate.damaged}.`);
+      }
+      if (reservationReserved !== aggregate.reserved) {
+        addIssue('reservation_reserved_mismatch', 'critical', `Active reservations total ${reservationReserved}, aggregate reserved is ${aggregate.reserved}.`);
+      }
+      if (aggregate.reserved > aggregate.onHand) {
+        addIssue('over_reserved', 'critical', 'Reserved quantity is higher than on-hand stock.');
+      }
+      if (salesOrderReserved > aggregate.reserved) {
+        addIssue('sales_order_reserved_ahead_of_stock', 'warning', `Sales-order rows show ${salesOrderReserved} reserved against ${aggregate.reserved} stock reserved.`);
+      }
+      if (reservationBackordered !== salesOrderBackordered) {
+        addIssue('backorder_tracking_mismatch', 'warning', `Backorder reservations ${reservationBackordered}, sales-order backorders ${salesOrderBackordered}.`);
+      }
+      if (!ledgerEntries && (aggregate.onHand || aggregate.reserved || aggregate.damaged || aggregate.hold)) {
+        addIssue('missing_ledger', 'warning', 'Stock exists without ledger entries; check legacy imports or manual migration.');
+      }
+
+      const critical = issues.some((issue) => issue.severity === 'critical');
+      return {
+        productId: balance.productId,
+        sku: balance.product?.sku || '',
+        name: balance.product?.name || '',
+        category: balance.product?.category || '',
+        brand: balance.product?.brand || '',
+        aggregate,
+        location,
+        reservations: { reserved: reservationReserved, backordered: reservationBackordered },
+        salesOrderLines: { reserved: salesOrderReserved, backordered: salesOrderBackordered },
+        ledgerEntries,
+        status: critical ? 'critical' : issues.length ? 'warning' : 'ok',
+        issues,
+      };
+    });
+
+    const summary = {
+      productsChecked: rows.length,
+      ok: rows.filter((row) => row.status === 'ok').length,
+      warnings: rows.filter((row) => row.status === 'warning').length,
+      critical: rows.filter((row) => row.status === 'critical').length,
+      mismatched: rows.filter((row) => row.status !== 'ok').length,
+    };
+    return { generatedAt: new Date().toISOString(), summary, rows };
   }
 
   async productionReadinessSummary() {
@@ -606,6 +666,39 @@ export class OperationsService {
     for (const row of rows || []) {
       const groupKey = String(row[key] || '');
       grouped.set(groupKey, [...(grouped.get(groupKey) || []), row]);
+    }
+    return grouped;
+  }
+
+  private sumLocationBuckets(rows: any[]) {
+    const grouped = new Map<string, any>();
+    for (const row of rows || []) {
+      const current = grouped.get(row.productId) || { onHand: 0, reserved: 0, damaged: 0, hold: 0, rowCount: 0 };
+      grouped.set(row.productId, {
+        onHand: current.onHand + Number(row.onHand || 0),
+        reserved: current.reserved + Number(row.reserved || 0),
+        damaged: current.damaged + Number(row.damaged || 0),
+        hold: current.hold + Number(row.hold || 0),
+        rowCount: current.rowCount + 1,
+      });
+    }
+    return grouped;
+  }
+
+  private sumReservationBuckets(rows: any[], status: string) {
+    const grouped = new Map<string, number>();
+    for (const row of rows || []) {
+      if (row.status !== status || !row.productId) continue;
+      grouped.set(row.productId, (grouped.get(row.productId) || 0) + Number(row.quantity || 0));
+    }
+    return grouped;
+  }
+
+  private sumOrderLineBucket(rows: any[], field: string) {
+    const grouped = new Map<string, number>();
+    for (const row of rows || []) {
+      if (!row.productId) continue;
+      grouped.set(row.productId, (grouped.get(row.productId) || 0) + Number(row[field] || 0));
     }
     return grouped;
   }

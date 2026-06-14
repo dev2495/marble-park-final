@@ -213,12 +213,18 @@ async function main() {
   );
 
   const finalState = await gql(
-    `query($leadId: ID!, $inventoryId: ID!) { lead(id: $leadId) { id stage activities intents quotes } inventoryBalance(id: $inventoryId) { id onHand available reserved } }`,
-    { leadId: lead.id, inventoryId: inventoryData.createInventory.id },
-    sales.token,
+    `query($leadId: ID!, $inventoryId: ID!, $productId: String) {
+      lead(id: $leadId) { id stage activities intents quotes }
+      inventoryBalance(id: $inventoryId) { id onHand available reserved }
+      stockReconciliation(productId: $productId, take: 10)
+    }`,
+    { leadId: lead.id, inventoryId: inventoryData.createInventory.id, productId: product.id },
+    admin.token,
   );
   assert(finalState.lead.stage === 'won', 'sales order conversion should mark lead won');
   assert(finalState.inventoryBalance.onHand === 1, `partial dispatch should consume stock to 1, got ${finalState.inventoryBalance.onHand}`);
+  const reconciliationRow = finalState.stockReconciliation.rows.find((row) => row.productId === product.id);
+  assert(reconciliationRow?.status === 'ok', `stock reconciliation should stay clean after partial dispatch, got ${JSON.stringify(reconciliationRow?.issues || [])}`);
 
   if (WEB) {
     const pdf = await fetch(`${WEB}/api/pdf/quote/${quote.id}`);

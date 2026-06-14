@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
+import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 
 export interface CreateInventoryInput {
   productId: string;
@@ -80,71 +81,96 @@ export class InventoryService {
   }
 
   async create(data: CreateInventoryInput): Promise<any> {
-    const available = data.onHand || 0;
-    const existing = await this.prisma.inventoryBalance.findUnique({
+    const quantity = Math.max(0, Math.trunc(Number(data.onHand || 0)));
+    if (quantity > 0) {
+      await this.prisma.$transaction(async (tx) => {
+        await applyStockPostingTx(tx, {
+          productId: data.productId,
+          type: 'manual_inward',
+          movementType: 'inward',
+          ledgerType: 'manual_inward',
+          quantity,
+          onHandDelta: quantity,
+          locationOnHandDelta: quantity,
+          reason: 'Initial/top-up inventory entry',
+          createdBy: 'system',
+          referenceType: 'InventoryBalance',
+          metadata: { source: 'createInventory' },
+        });
+      }, { timeout: 10000 });
+      await this.notifyBackorderReady(data.productId, 'system');
+    } else {
+      await this.prisma.inventoryBalance.upsert({
+        where: { productId: data.productId },
+        update: { updatedAt: new Date() },
+        create: {
+          id: ulid(),
+          productId: data.productId,
+          onHand: 0,
+          available: 0,
+          reserved: 0,
+          damaged: 0,
+          hold: 0,
+          updatedAt: new Date(),
+        },
+      } as any);
+    }
+    return this.prisma.inventoryBalance.findUnique({
       where: { productId: data.productId },
       include: { product: true },
     } as any) as any;
-    if (existing) {
-      const updated = await this.prisma.inventoryBalance.update({
-        where: { productId: data.productId },
-        data: {
-          onHand: Number(existing.onHand || 0) + available,
-          available: Number(existing.available || 0) + available,
-          updatedAt: new Date(),
-        },
-        include: { product: true },
-      } as any) as any;
-      if (available > 0) {
-        await this.prisma.inventoryMovement.create({
-          data: {
-            id: ulid(),
-            productId: data.productId,
-            type: 'inward',
-            quantity: available,
-            reason: 'Initial/top-up inventory entry',
-            createdBy: 'system',
-          },
-        }).catch(() => null);
-        await this.notifyBackorderReady(data.productId, 'system');
-      }
-      return updated;
-    }
-    const created = await this.prisma.inventoryBalance.create({
-      data: {
-        id: ulid(),
-        ...data,
-        available,
-        reserved: 0,
-        damaged: 0,
-        hold: 0,
-        updatedAt: new Date(),
-      },
-      include: { product: true },
-    } as any) as any;
-    if (Number(data.onHand || 0) > 0) await this.notifyBackorderReady(data.productId, 'system');
-    return created;
   }
 
   async update(id: string, data: UpdateInventoryInput): Promise<any> {
-    await this.findById(id);
-    const normalized: any = { ...data };
-    if (data.onHand !== undefined || data.reserved !== undefined || data.damaged !== undefined) {
-      const current = await this.findById(id);
-      const onHand = data.onHand ?? current.onHand;
-      const reserved = data.reserved ?? current.reserved;
-      const damaged = data.damaged ?? current.damaged;
-      const hold = current.hold || 0;
-      normalized.available = Math.max(0, onHand - reserved - damaged - hold);
-      normalized.updatedAt = new Date();
+    const current = await this.findById(id);
+    const stockFieldTouched = data.onHand !== undefined || data.reserved !== undefined || data.damaged !== undefined;
+    const policyData: any = {};
+    if (data.lowStockThreshold !== undefined) policyData.lowStockThreshold = Math.max(0, Math.trunc(Number(data.lowStockThreshold || 0)));
+    if (data.reorderPoint !== undefined) policyData.reorderPoint = data.reorderPoint === null ? null : Math.max(0, Math.trunc(Number(data.reorderPoint || 0)));
+
+    if (!stockFieldTouched) {
+      return this.prisma.inventoryBalance.update({
+        where: { id },
+        data: { ...policyData, updatedAt: new Date() },
+        include: { product: true },
+      } as any) as any;
     }
-    const updated = await this.prisma.inventoryBalance.update({
-      where: { id },
-      data: normalized,
-      include: { product: true },
-    } as any) as any;
-    if ((data.onHand ?? 0) > 0) await this.notifyBackorderReady(updated.productId, 'system');
-    return updated;
+
+    const targetOnHand = data.onHand ?? current.onHand;
+    const targetReserved = data.reserved ?? current.reserved;
+    const targetDamaged = data.damaged ?? current.damaged;
+    const onHandDelta = Math.trunc(Number(targetOnHand || 0)) - Number(current.onHand || 0);
+    const reservedDelta = Math.trunc(Number(targetReserved || 0)) - Number(current.reserved || 0);
+    const damagedDelta = Math.trunc(Number(targetDamaged || 0)) - Number(current.damaged || 0);
+    const quantity = Math.max(1, Math.abs(onHandDelta) + Math.abs(reservedDelta) + Math.abs(damagedDelta));
+
+    await this.prisma.$transaction(async (tx) => {
+      if (Object.keys(policyData).length) {
+        await tx.inventoryBalance.update({ where: { id }, data: { ...policyData, updatedAt: new Date() } });
+      }
+      await applyStockPostingTx(tx, {
+        productId: current.productId,
+        type: 'physical_adjustment',
+        movementType: 'adjustment',
+        ledgerType: 'physical_adjustment',
+        quantity,
+        movementQuantity: onHandDelta || reservedDelta || damagedDelta || quantity,
+        onHandDelta,
+        reservedDelta,
+        damagedDelta,
+        locationOnHandDelta: onHandDelta,
+        locationReservedDelta: reservedDelta,
+        locationDamagedDelta: damagedDelta,
+        reason: 'Manual inventory balance correction',
+        createdBy: 'system',
+        referenceType: 'InventoryBalance',
+        referenceId: id,
+        metadata: { source: 'updateInventory', target: { onHand: targetOnHand, reserved: targetReserved, damaged: targetDamaged } },
+      });
+    }, { timeout: 10000 });
+
+    if (onHandDelta > 0) await this.notifyBackorderReady(current.productId, 'system');
+    return this.findById(id);
   }
 
   async adjustQuantity(
@@ -159,65 +185,60 @@ export class InventoryService {
     if (!Number.isFinite(quantity) || quantity === 0) throw new BadRequestException('Quantity must be a non-zero whole number');
     if (type !== 'adjustment' && quantity < 0) throw new BadRequestException('Quantity must be positive for this movement');
     
-    let newOnHand = balance.onHand;
-    let newAvailable = balance.available;
-    let newReserved = balance.reserved;
-    let newDamaged = balance.damaged;
-    const hold = Number(balance.hold || 0);
-    
+    const posting: any = {
+      productId: balance.productId,
+      type,
+      movementType: type,
+      ledgerType: type,
+      quantity: Math.abs(quantity),
+      movementQuantity: quantity,
+      reason: notes || 'Manual inventory adjustment',
+      createdBy,
+      referenceType: 'InventoryBalance',
+      referenceId: id,
+      metadata: { source: 'adjustInventory' },
+    };
+
     switch (type) {
       case 'inward':
-        newOnHand += quantity;
-        newAvailable += quantity;
+        posting.onHandDelta = quantity;
+        posting.locationOnHandDelta = quantity;
         break;
       case 'outward':
-        if (quantity > newAvailable) throw new BadRequestException('Cannot consume more than available stock');
-        newOnHand -= quantity;
-        newAvailable -= quantity;
+        posting.onHandDelta = -quantity;
+        posting.locationOnHandDelta = -quantity;
+        posting.requireAvailable = true;
+        posting.requireOnHand = true;
         break;
       case 'damage':
-        if (quantity > newAvailable) throw new BadRequestException('Cannot mark more than available stock as damaged');
-        newAvailable -= quantity;
-        newDamaged += quantity;
+        posting.damagedDelta = quantity;
+        posting.locationDamagedDelta = quantity;
+        posting.requireAvailable = true;
         break;
       case 'reserve':
-        if (quantity > newAvailable) throw new BadRequestException('Cannot reserve more than available stock');
-        newAvailable -= quantity;
-        newReserved += quantity;
+        posting.reservedDelta = quantity;
+        posting.locationReservedDelta = quantity;
+        posting.requireAvailable = true;
         break;
       case 'release':
-        if (quantity > newReserved) throw new BadRequestException('Cannot release more than reserved stock');
-        newReserved -= quantity;
-        newAvailable += quantity;
+        posting.reservedDelta = -quantity;
+        posting.locationReservedDelta = -quantity;
+        posting.requireReserved = true;
         break;
       case 'adjustment':
-        newOnHand = Math.max(0, newOnHand + quantity);
-        newAvailable = Math.max(0, newOnHand - newReserved - newDamaged - hold);
+        posting.onHandDelta = quantity;
+        posting.locationOnHandDelta = quantity;
         break;
       default:
         throw new BadRequestException('Unsupported inventory movement type');
     }
-    
-    const [updated]: any = await this.prisma.$transaction([
-      this.prisma.inventoryBalance.update({
-        where: { id },
-        data: { onHand: newOnHand, available: newAvailable, reserved: newReserved, damaged: newDamaged, updatedAt: new Date() },
-        include: { product: true },
-      } as any),
-      this.prisma.inventoryMovement.create({
-        data: {
-          id: ulid(),
-          productId: balance.productId,
-          type,
-          quantity,
-          reason: notes || 'Manual inventory adjustment',
-          createdBy,
-        },
-      } as any),
-    ]);
+
+    await this.prisma.$transaction(async (tx) => {
+      await applyStockPostingTx(tx, posting);
+    }, { timeout: 10000 });
     if (type === 'inward' && quantity > 0) await this.notifyBackorderReady(balance.productId, createdBy);
-    
-    return updated;
+
+    return this.findById(id);
   }
 
   async getStockSummary() {
@@ -421,29 +442,28 @@ export class InventoryService {
       const reservedNow = await this.prisma.$transaction(async (tx) => {
         const fresh = await tx.inventoryBalance.findUnique({ where: { productId } });
         if (!fresh || Number(fresh.available || 0) < Number(reservation.quantity || 0)) return false;
-        await tx.inventoryBalance.update({
-          where: { productId },
-          data: {
-            available: Number(fresh.available || 0) - Number(reservation.quantity || 0),
-            reserved: Number(fresh.reserved || 0) + Number(reservation.quantity || 0),
-            updatedAt: new Date(),
-          },
+        await applyStockPostingTx(tx, {
+          productId,
+          type: 'auto_reserve_backorder',
+          movementType: 'reserve',
+          ledgerType: 'reserve',
+          quantity: Number(reservation.quantity || 0),
+          reservedDelta: Number(reservation.quantity || 0),
+          locationReservedDelta: Number(reservation.quantity || 0),
+          requireAvailable: true,
+          reason: `Auto-reserved arrived backorder for ${quote.quoteNumber}`,
+          relatedQuoteId: quote.id,
+          referenceType: 'Reservation',
+          referenceId: reservation.id,
+          sourceDocumentNo: quote.quoteNumber,
+          createdBy: actorUserId || 'system',
+          metadata: { source: 'notifyBackorderReady' },
         });
         await tx.reservation.update({
           where: { id: reservation.id },
           data: { status: 'reserved', updatedAt: new Date() },
         });
-        await tx.inventoryMovement.create({
-          data: {
-            id: ulid(),
-            productId,
-            type: 'reserve',
-            quantity: Number(reservation.quantity || 0),
-            reason: `Auto-reserved arrived backorder for ${quote.quoteNumber}`,
-            relatedQuoteId: quote.id,
-            createdBy: actorUserId || 'system',
-          },
-        });
+        await syncSalesOrderLinesForQuoteTx(tx, quote.id);
         return true;
       }, { timeout: 10000 }).catch(() => false);
       if (!reservedNow) continue;
