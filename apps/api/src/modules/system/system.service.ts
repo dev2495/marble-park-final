@@ -232,11 +232,13 @@ export class SystemService {
 
   async upsertTileSize(input: any, actorUserId: string) {
     const name = String(input.name || '').trim();
+    const code = String(input.code || '').trim().toUpperCase();
     if (!name) throw new Error('Tile size name is required');
+    if (!code) throw new Error('Tile size code is required');
     const uom = String(input.uom || 'BOX').trim().toUpperCase() === 'PC' ? 'PC' : 'BOX';
     const data = {
       name,
-      code: input.code || this.slugCode(name),
+      code,
       uom,
       pcsPerBox: Math.max(0, Math.trunc(Number(input.pcsPerBox || 0))),
       description: input.description || '',

@@ -119,7 +119,7 @@ export default function ImportCenterPage() {
             <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Excel Product Master import</p>
             <h1 className="mt-3 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">Preview first. Apply only after the sheet is clean.</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
-              Upload vendor spreadsheets with SKU, name, brand, category, finish, MRP and image fields. The system previews create/update actions, failed rows and new master values before writing to Product Master. PDF catalogue extraction is intentionally removed.
+              Upload vendor spreadsheets with SKU/code, name/description and category as required fields. Brand, finish, pricing, dimensions, UOM and image fields are optional. The system previews create/update actions, failed rows and new master values before writing to Product Master. PDF catalogue extraction is intentionally removed.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -136,7 +136,7 @@ export default function ImportCenterPage() {
           </div>
           <h2 className="mt-5 text-2xl font-semibold text-[var(--ink)]">Upload Excel catalogue</h2>
           <p className="mt-2 text-sm leading-6 text-[var(--ink-4)]">
-            Supported columns include SKU/code, description/name, category, brand, finish/color, size/dimensions, UOM, MRP/price, floor/dealer price, and image/photo/media URL. Embedded worksheet images placed beside SKU rows are saved only when you apply.
+            Required columns: SKU/code, description/name and category. Optional columns include brand, finish/color, size/dimensions, UOM, MRP/price, floor/dealer price and image/photo/media URL. Embedded worksheet images placed beside SKU rows are saved only when you apply.
           </p>
           <label className="mt-6 block rounded-r5 border border-dashed border-[var(--line-strong)] bg-[var(--bg-soft)] p-6 text-center transition hover:border-[var(--brand-400)]">
             <UploadCloud className="mx-auto h-9 w-9 text-[var(--brand-700)]" />

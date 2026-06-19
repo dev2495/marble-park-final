@@ -19,7 +19,7 @@ const SAVE_TILE_SIZE = gql`
   }
 `;
 
-const empty = { id: '', name: '', code: '', uom: 'BOX', pcsPerBox: 0 };
+const empty = { id: '', name: '', code: '', uom: 'BOX', pcsPerBox: '' };
 
 export default function TileMasterPage() {
   const { data, loading, error, refetch } = useQuery(TILE_SIZES);
@@ -39,12 +39,9 @@ export default function TileMasterPage() {
       input: {
         id: form.id || undefined,
         name: form.name,
-        code: form.code || undefined,
-        uom: form.uom || 'BOX',
-        pcsPerBox: Number(form.pcsPerBox || 0),
-        description: '',
-        status: 'active',
-        sortOrder: 0,
+        code: form.code,
+        uom: form.uom || undefined,
+        pcsPerBox: form.pcsPerBox === '' ? undefined : Number(form.pcsPerBox || 0),
       },
     },
   });
@@ -60,10 +57,10 @@ export default function TileMasterPage() {
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--ink-4)]">Tile master</p>
             <h1 className="mt-3 max-w-4xl font-display text-4xl font-bold tracking-[-0.045em] text-[var(--ink-1)]">
-              Tile size, UOM and pcs-per-box control.
+              Tile size and code control.
             </h1>
             <p className="mt-3 max-w-2xl text-sm font-semibold leading-6 text-[var(--ink-3)]">
-              Tile designs stay as customer-facing codes in intents and quotes. This master controls the repeatable size and packing data used by office staff.
+              Only size name and code are mandatory. UOM and pcs-per-box are optional packing helpers; tile design codes remain customer-facing rows in intents and quotes.
             </p>
           </div>
           <div className="grid min-w-44 grid-cols-2 gap-3">
@@ -93,16 +90,16 @@ export default function TileMasterPage() {
 
           <div className="mt-5 grid gap-3">
             <label className="space-y-2">
-              <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Size name</span>
+              <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Size name required</span>
               <Input value={form.name || ''} onChange={(event) => update('name', event.target.value)} placeholder="600 x 1200 mm" />
             </label>
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-2">
-                <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Code</span>
+                <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Code required</span>
                 <Input value={form.code || ''} onChange={(event) => update('code', event.target.value)} placeholder="600X1200" />
               </label>
               <label className="space-y-2">
-                <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">UOM</span>
+                <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">UOM optional</span>
                 <select value={form.uom || 'BOX'} onChange={(event) => update('uom', event.target.value)} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink-1)]">
                   <option value="BOX">Box</option>
                   <option value="PC">Piece</option>
@@ -110,13 +107,13 @@ export default function TileMasterPage() {
               </label>
             </div>
             <label className="space-y-2">
-              <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Pcs / box</span>
-              <Input type="number" min={0} value={form.pcsPerBox || 0} onChange={(event) => update('pcsPerBox', Number(event.target.value))} />
+              <span className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Pcs / box optional</span>
+              <Input type="number" min={0} value={form.pcsPerBox ?? ''} onChange={(event) => update('pcsPerBox', event.target.value)} placeholder="Optional" />
             </label>
           </div>
 
           <div className="mt-5 flex flex-wrap gap-3">
-            <Button disabled={saving || !form.name} onClick={submit}>
+            <Button disabled={saving || !String(form.name || '').trim() || !String(form.code || '').trim()} onClick={submit}>
               <Save className="mr-2 h-4 w-4" />
               Save tile size
             </Button>

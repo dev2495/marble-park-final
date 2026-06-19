@@ -66,11 +66,16 @@ async function processExcelUpload(filePath, token) {
   return { preview, applied };
 }
 
-async function writeExcelSample() {
+async function writeExcelSample({ minimal = false } = {}) {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Catalogue');
-  sheet.addRow(['SKU', 'Product Name', 'Category', 'Brand', 'Finish', 'MRP', 'Floor Price', 'Dimensions', 'Image URL', 'Description']);
-  sheet.addRow([unique('XLSX-SKU'), 'Readiness Excel Imported Basin Mixer', 'Faucets & Showers', 'Readiness Brand', 'Chrome', 4321, 3800, 'Test 160 mm', '/catalogue-images/manual/readiness-placeholder.png', 'Excel import readiness row']);
+  if (minimal) {
+    sheet.addRow(['SKU', 'Product Name', 'Category']);
+    sheet.addRow([unique('XLSX-MIN'), 'Readiness Excel Minimal SKU', 'Faucets & Showers']);
+  } else {
+    sheet.addRow(['SKU', 'Product Name', 'Category', 'Brand', 'Finish', 'MRP', 'Floor Price', 'Dimensions', 'Image URL', 'Description']);
+    sheet.addRow([unique('XLSX-SKU'), 'Readiness Excel Imported Basin Mixer', 'Faucets & Showers', 'Readiness Brand', 'Chrome', 4321, 3800, 'Test 160 mm', '/catalogue-images/manual/readiness-placeholder.png', 'Excel import readiness row']);
+  }
   const filePath = path.join(os.tmpdir(), `marble-readiness-${Date.now()}.xlsx`);
   await workbook.xlsx.writeFile(filePath);
   return filePath;
@@ -95,6 +100,33 @@ async function main() {
     { input: { email: newEmail, password: 'password123' } },
   );
   assert(newLogin.login.user.email === newEmail, 'created office staff user should be able to log in');
+
+  const tileCode = unique('TILE').replace(/[^A-Z0-9]/g, '').slice(0, 24);
+  const tileSize = (await gql(
+    `mutation($input: TileSizeInput!) { saveTileSize(input: $input) { data } }`,
+    { input: { name: `${tileCode} 600 x 1200 mm`, code: tileCode } },
+    admin.token,
+  )).saveTileSize.data;
+  assert(tileSize.code === tileCode && tileSize.uom === 'BOX', 'tile master should require only size name and code, defaulting UOM to BOX');
+  let missingTileCodeRejected = false;
+  try {
+    await gql(
+      `mutation($input: TileSizeInput!) { saveTileSize(input: $input) { data } }`,
+      { input: { name: unique('TILE-MISSING-CODE') } },
+      admin.token,
+    );
+  } catch (error) {
+    missingTileCodeRejected = /code is required/i.test(error.message);
+  }
+  assert(missingTileCodeRejected, 'tile master should reject rows without a code');
+
+  const minimalSku = unique('MIN-SKU');
+  const minimalProduct = (await gql(
+    `mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku category brand finish sellPrice floorPrice } }`,
+    { input: { sku: minimalSku, name: 'Readiness Minimal Optional Fields SKU', category: 'Faucets & Showers' } },
+    admin.token,
+  )).createProduct;
+  assert(minimalProduct.sku === minimalSku && Number(minimalProduct.sellPrice) === 0 && Number(minimalProduct.floorPrice) === 0, 'manual product should require only SKU, name and category');
 
   const sku = unique('MANUAL-SKU');
   const product = (await gql(
@@ -123,6 +155,9 @@ async function main() {
   assert(excelPreview.ready === 1, `Excel preview should mark one row ready, got ${JSON.stringify(excelPreview)}`);
   assert(excelImport.total === 1, `Excel import should read one row, got ${excelImport.total}`);
   assert(excelImport.applied === 1 && excelImport.failed === 0, `Excel import should apply cleanly, got ${JSON.stringify(excelImport)}`);
+  const minimalExcelPath = await writeExcelSample({ minimal: true });
+  const { preview: minimalPreview, applied: minimalImport } = await processExcelUpload(minimalExcelPath, inventory.token);
+  assert(minimalPreview.ready === 1 && minimalImport.applied === 1, `Minimal Excel import should work without brand/finish/prices, got ${JSON.stringify({ minimalPreview, minimalImport })}`);
 
   const webHealth = await fetch(WEB);
   assert(webHealth.ok, `web should respond on readiness port, got ${webHealth.status}`);
@@ -130,9 +165,11 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     createdUser: createdUser.email,
+    tileSize: tileSize.code,
+    minimalSku: minimalProduct.sku,
     manualSku: product.sku,
     inventoryAvailable: inventoryBalance.available,
-    excel: { previewReady: excelPreview.ready, applied: excelImport.applied, created: excelImport.created, updated: excelImport.updated },
+    excel: { previewReady: excelPreview.ready, applied: excelImport.applied, minimalApplied: minimalImport.applied, created: excelImport.created, updated: excelImport.updated },
     ports: { api: API, web: WEB },
   }, null, 2));
 }

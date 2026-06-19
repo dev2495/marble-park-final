@@ -6,11 +6,11 @@ export interface CreateProductInput {
   sku: string;
   name: string;
   category: string;
-  brand: string;
+  brand?: string;
   finish?: string;
   dimensions?: string;
   unit?: string;
-  sellPrice: number;
+  sellPrice?: number;
   floorPrice?: number;
   taxClass?: string;
   description?: string;
@@ -69,13 +69,14 @@ export class ProductsService {
     const name = String(data.name || '').trim();
     const category = String(data.category || '').trim();
     const brand = String(data.brand || '').trim();
-    const finish = String(data.finish || 'Standard').trim() || 'Standard';
+    const finish = String(data.finish || '').trim();
     const sellPrice = Number(data.sellPrice || 0);
+    const floorPrice = Number(data.floorPrice || 0);
     if (!sku) throw new BadRequestException('SKU is required');
     if (!name) throw new BadRequestException('Product name is required');
     if (!category) throw new BadRequestException('Category is required');
-    if (!brand) throw new BadRequestException('Brand is required');
-    if (!Number.isFinite(sellPrice) || sellPrice <= 0) throw new BadRequestException('Sell price must be greater than zero');
+    if (!Number.isFinite(sellPrice) || sellPrice < 0) throw new BadRequestException('Sell price must be zero or greater');
+    if (!Number.isFinite(floorPrice) || floorPrice < 0) throw new BadRequestException('Floor price must be zero or greater');
 
     const existing = await this.findBySku(sku);
     if (existing) {
@@ -97,7 +98,7 @@ export class ProductsService {
           unit: String(data.unit || 'PC').trim().toUpperCase() || 'PC',
           tags: [],
           sellPrice,
-          floorPrice: data.floorPrice ?? sellPrice * 0.88,
+          floorPrice,
           taxClass: data.taxClass || 'GST_18',
           status: 'active',
           media: data.media || {},

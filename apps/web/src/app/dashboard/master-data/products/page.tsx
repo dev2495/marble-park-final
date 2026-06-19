@@ -31,7 +31,7 @@ const emptyProduct = {
   media: null,
 };
 
-function names(rows: any[] | undefined, fallback: string[]) {
+function names(rows: any[] | undefined, fallback: string[] = []) {
   const values = (rows || []).map((row: any) => typeof row === 'string' ? row : row?.name).filter(Boolean);
   return Array.from(new Set(values.length ? values : fallback));
 }
@@ -52,16 +52,28 @@ export default function ProductMasterPage() {
     onError: (error) => setMessage(error.message),
   });
 
-  const categories = names(masterData?.masterProductCategories, ['Catalogue Products']);
-  const brands = names(masterData?.masterProductBrands, ['Marble Park Select']);
-  const finishes = names(masterData?.masterProductFinishes, ['Standard']);
+  const categories = names(masterData?.masterProductCategories);
+  const brands = names(masterData?.masterProductBrands);
+  const finishes = names(masterData?.masterProductFinishes);
   const products = data?.products || [];
-  const effectiveForm = {
-    ...form,
-    category: form.category || categories[0] || '',
-    brand: form.brand || brands[0] || '',
-    finish: form.finish || finishes[0] || '',
-  };
+  const canSave = Boolean(form.sku.trim() && form.name.trim() && form.category.trim());
+
+  function submitProduct() {
+    const input: any = {
+      sku: form.sku,
+      name: form.name,
+      category: form.category,
+      brand: form.brand || undefined,
+      finish: form.finish || undefined,
+      dimensions: form.dimensions || undefined,
+      unit: form.unit || undefined,
+      description: form.description || undefined,
+      media: form.media || undefined,
+    };
+    if (form.sellPrice !== '') input.sellPrice = Number(form.sellPrice);
+    if (form.floorPrice !== '') input.floorPrice = Number(form.floorPrice);
+    createProduct({ variables: { input } });
+  }
 
   async function uploadImage(file?: File) {
     if (!file) return;
@@ -97,12 +109,12 @@ export default function ProductMasterPage() {
   return <div className="space-y-7 pb-10">
     <section className="rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]">
       <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Product master</p>
-      <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Create SKUs with controlled brand, finish and category masters.</h1>
-      <p className="mt-3 max-w-3xl text-sm text-[#52525b]">Admin, owner and inventory users create SKUs here. Brand, finish and category are dropdown-backed master data so catalogue filters, quotes and imports stay clean.</p>
+      <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Create SKUs with required code, name and category.</h1>
+      <p className="mt-3 max-w-3xl text-sm text-[#52525b]">Brand, finish, dimensions, image, unit and pricing are optional. Add them when known; the SKU still remains quoteable and stockable from Product Master.</p>
       <div className="mt-5 flex flex-wrap gap-2">
-        <Link href="/dashboard/master-data/categories" className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wider text-[#ffffff]">Category master</Link>
-        <Link href="/dashboard/master-data/brands" className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wider text-[#ffffff]">Brand master</Link>
-        <Link href="/dashboard/master-data/finishes" className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wider text-[#ffffff]">Finish master</Link>
+        <Link href="/dashboard/master-data/categories" className="rounded-full border border-[#bfdbfe] bg-[#eff6ff] px-4 py-2 text-xs font-black uppercase tracking-wider text-[#1d4ed8]">Category master</Link>
+        <Link href="/dashboard/master-data/brands" className="rounded-full border border-[#e4e4e7] bg-white px-4 py-2 text-xs font-black uppercase tracking-wider text-[#52525b]">Brand master</Link>
+        <Link href="/dashboard/master-data/finishes" className="rounded-full border border-[#e4e4e7] bg-white px-4 py-2 text-xs font-black uppercase tracking-wider text-[#52525b]">Finish master</Link>
       </div>
     </section>
 
@@ -110,15 +122,15 @@ export default function ProductMasterPage() {
       <div className="mp-card rounded-r5 p-5">
         <div className="flex items-center gap-3"><PackagePlus className="h-6 w-6 text-[#2563eb]" /><h2 className="text-xl font-semibold text-[#18181b]">Add SKU</h2></div>
         <div className="mt-5 grid gap-3 md:grid-cols-2">
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">SKU</span><Input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Name</span><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Brand</span><select value={effectiveForm.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{brands.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Finish</span><select value={effectiveForm.finish} onChange={(e) => setForm({ ...form, finish: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{finishes.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Category</span><select value={effectiveForm.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-bold">{categories.map((item: string) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Unit</span><Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Dimensions</span><Input value={form.dimensions} onChange={(e) => setForm({ ...form, dimensions: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Sell price</span><Input type="number" value={form.sellPrice} onChange={(e) => setForm({ ...form, sellPrice: e.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Floor price</span><Input type="number" value={form.floorPrice} onChange={(e) => setForm({ ...form, floorPrice: e.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">SKU / code required</span><Input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} placeholder="Example: GRO-12345" /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Name required</span><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Product display name" /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Category required</span><Input list="product-category-options" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="Select or type category" /><datalist id="product-category-options">{categories.map((item: string) => <option key={item} value={item} />)}</datalist></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Brand optional</span><Input list="product-brand-options" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} placeholder="Select or type brand" /><datalist id="product-brand-options">{brands.map((item: string) => <option key={item} value={item} />)}</datalist></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Finish optional</span><Input list="product-finish-options" value={form.finish} onChange={(e) => setForm({ ...form, finish: e.target.value })} placeholder="Select or type finish" /><datalist id="product-finish-options">{finishes.map((item: string) => <option key={item} value={item} />)}</datalist></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Unit optional</span><Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Dimensions optional</span><Input value={form.dimensions} onChange={(e) => setForm({ ...form, dimensions: e.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Sell price optional</span><Input type="number" min={0} value={form.sellPrice} onChange={(e) => setForm({ ...form, sellPrice: e.target.value })} placeholder="Leave blank if not known" /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Floor price optional</span><Input type="number" min={0} value={form.floorPrice} onChange={(e) => setForm({ ...form, floorPrice: e.target.value })} placeholder="Leave blank if not known" /></label>
           <label className="space-y-2 md:col-span-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Description</span><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
           <label className="md:col-span-2 rounded-[1.4rem] border border-dashed border-[#2563eb]/40 bg-white/65 p-4">
             <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-[#52525b]"><ImagePlus className="h-4 w-4" /> SKU image</span>
@@ -127,14 +139,14 @@ export default function ProductMasterPage() {
           </label>
         </div>
         {message && <p className="mt-4 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]">{message}</p>}
-        <Button className="mt-5" disabled={loading || uploading || !form.sku || !form.name || !form.sellPrice} onClick={() => createProduct({ variables: { input: { ...effectiveForm, sellPrice: Number(form.sellPrice), floorPrice: form.floorPrice ? Number(form.floorPrice) : undefined } } })}><Save className="mr-2 h-4 w-4" /> Save SKU</Button>
+        <Button className="mt-5" disabled={loading || uploading || !canSave} onClick={submitProduct}><Save className="mr-2 h-4 w-4" /> Save SKU</Button>
       </div>
 
       <div className="mp-card rounded-r5 p-5">
         <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-semibold text-[#18181b]">SKU register</h2><Input placeholder="Search SKU/name" value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" /></div>
         <div className="mt-5 max-h-[42rem] space-y-2 overflow-y-auto custom-scrollbar">{products.map((p: any) => <Link href={`/dashboard/products?sku=${p.sku}`} key={p.id} className="flex gap-4 rounded-2xl bg-white/75 p-4 transition hover:bg-white">
           {p.media?.primary && <img src={p.media.primary} alt="" className="h-16 w-16 shrink-0 rounded-xl object-contain bg-[#f7faff]" />}
-          <div><p className="font-semibold text-[#18181b]">{p.sku} · {p.name}</p><p className="text-xs font-bold text-[#52525b]">{p.category} · {p.brand} · {p.finish || 'Standard'} · ₹{Number(p.sellPrice || 0).toLocaleString('en-IN')}</p></div>
+          <div><p className="font-semibold text-[#18181b]">{p.sku} · {p.name}</p><p className="text-xs font-bold text-[#52525b]">{[p.category, p.brand, p.finish].filter(Boolean).join(' · ') || 'Unclassified'} · ₹{Number(p.sellPrice || 0).toLocaleString('en-IN')}</p></div>
         </Link>)}</div>
       </div>
     </section>

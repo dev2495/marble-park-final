@@ -16,6 +16,13 @@ type NormalizedProductRow = {
   unit: string;
   sellPrice: number;
   floorPrice: number;
+  hasBrand: boolean;
+  hasFinish: boolean;
+  hasDimensions: boolean;
+  hasUnit: boolean;
+  hasSellPrice: boolean;
+  hasFloorPrice: boolean;
+  hasDescription: boolean;
   description: string;
   range: string;
   imageUrl: string;
@@ -229,10 +236,9 @@ export class ImportsService {
     const errors: string[] = [];
     if (!row.sku) errors.push('SKU/code is required');
     if (!row.name) errors.push('Product name/description is required');
-    if (!Number.isFinite(row.sellPrice) || row.sellPrice <= 0) errors.push('MRP/sell price must be greater than zero');
     if (!row.category) errors.push('Category is required');
-    if (!row.brand) errors.push('Brand is required');
-    if (!row.finish) errors.push('Finish is required');
+    if (row.hasSellPrice && (!Number.isFinite(row.sellPrice) || row.sellPrice < 0)) errors.push('MRP/sell price must be zero or greater');
+    if (row.hasFloorPrice && (!Number.isFinite(row.floorPrice) || row.floorPrice < 0)) errors.push('Floor/dealer price must be zero or greater');
     return errors;
   }
 
@@ -283,17 +289,29 @@ export class ImportsService {
     };
     const price = pick('MRP', 'Price', 'SELL PRICE', 'Sell Price', 'Selling Price', 'MRP INR', 'MRP(INR)', 'List Price', 'Amount', 'Rate');
     const floorPrice = pick('Floor Price', 'FLOOR PRICE', 'Dealer Price', 'Net Price', 'Special Rate');
+    const brand = this.cleanText(pick('Brand', 'BRAND', 'Make', 'Company'));
+    const finish = this.cleanText(pick('Finish', 'FINISH', 'Color', 'Colour', 'Surface', 'Shade'));
+    const dimensions = this.cleanText(pick('Dimensions', 'DIMENSIONS', 'Size', 'SIZE', 'Tile Size'));
+    const unit = pick('Unit', 'UOM', 'uom');
+    const description = this.cleanText(pick('Long Description', 'Description', 'PRODUCT DESCRIPTION'));
     return {
       sku: this.normalizeSku(pick('SKU', 'sku', 'Code', 'PRODUCT CODE', 'Product Code', 'Item Code', 'Article No', 'Article Number', 'Model No', 'Material Code')),
       name: this.cleanText(pick('PRODUCT DESCRIPTION', 'Description', 'Product', 'Product Name', 'Item Name', 'Name', 'Item Description')),
-      category: this.cleanText(pick('Category', 'CATEGORY', 'Product Category', 'Group', 'Type')) || 'Uncategorized',
-      brand: this.cleanText(pick('Brand', 'BRAND', 'Make', 'Company')) || 'Unknown',
-      finish: this.cleanText(pick('Finish', 'FINISH', 'Color', 'Colour', 'Surface', 'Shade')) || 'Standard',
-      dimensions: this.cleanText(pick('Dimensions', 'DIMENSIONS', 'Size', 'SIZE', 'Tile Size')) || '',
-      unit: String(pick('Unit', 'UOM', 'uom') || 'PC').trim().toUpperCase() || 'PC',
+      category: this.cleanText(pick('Category', 'CATEGORY', 'Product Category', 'Group', 'Type')),
+      brand,
+      finish,
+      dimensions,
+      unit: String(unit || 'PC').trim().toUpperCase() || 'PC',
       sellPrice: this.money(price),
       floorPrice: this.money(floorPrice),
-      description: this.cleanText(pick('Long Description', 'Description', 'PRODUCT DESCRIPTION')) || '',
+      hasBrand: Boolean(brand),
+      hasFinish: Boolean(finish),
+      hasDimensions: Boolean(dimensions),
+      hasUnit: unit !== undefined,
+      hasSellPrice: price !== undefined,
+      hasFloorPrice: floorPrice !== undefined,
+      hasDescription: Boolean(description),
+      description,
       range: this.cleanText(pick('Range', 'RANGE', 'Series', 'Collection')) || '',
       imageUrl: this.cleanText(pick('__embeddedImageUrl', 'Image', 'Image URL', 'Photo', 'Photo URL', 'Media', 'Picture URL')) || '',
     };
@@ -311,24 +329,22 @@ export class ImportsService {
       const mergedMedia = media
         ? { ...existingMedia, ...media, gallery: Array.from(new Set([...(existingMedia.gallery || []), ...(media.gallery || [])])) }
         : existingMedia;
-      const product = await tx.product.update({
-        where: { sku },
-        data: {
+      const updateData: any = {
           name,
           category,
-          brand,
-          finish,
-          dimensions,
-          unit,
-          sellPrice,
-          floorPrice: normalized.floorPrice || Number(existing.floorPrice || sellPrice * 0.88),
-          description: normalized.description || existing.description || '',
           media: mergedMedia,
           sourceRefs: { ...((existing.sourceRefs as any) || {}), lastExcelImportBy: uploadedBy, lastExcelImportAt: new Date().toISOString(), range: normalized.range },
           status: 'active',
           updatedAt: new Date(),
-        } as any,
-      });
+      };
+      if (normalized.hasBrand) updateData.brand = brand;
+      if (normalized.hasFinish) updateData.finish = finish;
+      if (normalized.hasDimensions) updateData.dimensions = dimensions;
+      if (normalized.hasUnit) updateData.unit = unit;
+      if (normalized.hasSellPrice) updateData.sellPrice = sellPrice;
+      if (normalized.hasFloorPrice) updateData.floorPrice = normalized.floorPrice;
+      if (normalized.hasDescription) updateData.description = normalized.description;
+      const product = await tx.product.update({ where: { sku }, data: updateData });
       await this.ensureInventoryBalanceTx(tx, product.id);
       return product;
     }
@@ -345,7 +361,7 @@ export class ImportsService {
         unit,
         tags: [],
         sellPrice,
-        floorPrice: normalized.floorPrice || sellPrice * 0.88,
+        floorPrice: normalized.floorPrice,
         taxClass: 'GST_18',
         status: 'active',
         media: media || {},
@@ -417,7 +433,7 @@ export class ImportsService {
     if (value === undefined || value === null || value === '') return 0;
     const cleaned = String(value).replace(/[^0-9.-]+/g, '');
     const parsed = Number.parseFloat(cleaned);
-    return Number.isFinite(parsed) ? parsed : 0;
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
   }
 
   private key(value: string) {
