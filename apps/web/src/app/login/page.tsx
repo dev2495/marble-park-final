@@ -42,13 +42,13 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      const { data } = await login({ variables: { input: { email, password } } });
+      const { data, errors } = await login({ variables: { input: { email, password } } });
       if (data?.login?.token) {
         localStorage.setItem('auth_token', data.login.token);
         localStorage.setItem('user', JSON.stringify(data.login.user));
         router.push('/dashboard');
       } else {
-        setError('Login did not return a session token.');
+        setError(errors?.[0]?.message || 'Login completed but the server did not return a session token.');
       }
     } catch (err: any) {
       setError(err.message || 'Invalid credentials');
