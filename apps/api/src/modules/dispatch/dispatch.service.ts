@@ -7,6 +7,7 @@ import { ulid } from 'ulid';
 
 export interface CreateDispatchJobInput {
   quoteId?: string;
+  salesOrderId?: string;
   customerId: string;
   scheduledAt?: Date;
   notes?: string;
@@ -21,6 +22,7 @@ export interface CreateChallanInput {
   jobId?: string;
   dispatchJobId?: string;
   quoteId?: string;
+  salesOrderId?: string;
   customerId?: string;
   vehicleNumber?: string;
   vehicleNo?: string;
@@ -47,7 +49,7 @@ export class DispatchService {
     
     return this.prisma.dispatchJob.findMany({
       where,
-      include: { customer: true, quote: true },
+      include: { customer: true, quote: true, salesOrder: true },
       orderBy: { createdAt: 'desc' },
     } as any) as any;
   }
@@ -60,7 +62,7 @@ export class DispatchService {
 
     const jobs = await this.prisma.dispatchJob.findMany({
       where,
-      include: { customer: true, quote: true },
+      include: { customer: true, quote: true, salesOrder: true },
       orderBy: { updatedAt: 'desc' },
       take: 80,
     } as any) as any[];
@@ -68,6 +70,7 @@ export class DispatchService {
 
     const jobIds = jobs.map((job: any) => job.id);
     const quoteIds = Array.from(new Set(jobs.map((job: any) => job.quoteId).filter(Boolean)));
+    const directOrderIds = Array.from(new Set(jobs.map((job: any) => job.salesOrderId).filter(Boolean)));
     const quoteLines = jobs.flatMap((job: any) => this.normalizeLines(job.quote?.lines) || []);
     const productIds = Array.from(new Set(quoteLines.map((line: any) => String(line.productId || '').trim()).filter(Boolean)));
 
@@ -75,20 +78,26 @@ export class DispatchService {
       this.prisma.dispatchChallan.findMany({
         where: { dispatchJobId: { in: jobIds }, status: { in: ['pending', 'dispatched', 'delivered'] } },
       } as any),
-      this.prisma.reservation.findMany({ where: { quoteId: { in: quoteIds } } }),
+      this.prisma.reservation.findMany({ where: { OR: [{ salesOrderId: { in: directOrderIds } }, { salesOrderId: null, quoteId: { in: quoteIds } }] } } as any),
       this.prisma.inventoryBalance.findMany({ where: { productId: { in: productIds } }, include: { product: true } as any } as any),
-      this.prisma.salesOrder.findMany({ where: { quoteId: { in: quoteIds } } }),
+      this.prisma.salesOrder.findMany({ where: { OR: [{ id: { in: directOrderIds } }, { quoteId: { in: quoteIds } }] } }),
     ]);
 
     const balanceMap = new Map((balances as any[]).map((balance) => [balance.productId, balance]));
-    const orderMap = new Map((orders as any[]).map((order) => [order.quoteId, order]));
+    const orderById = new Map((orders as any[]).map((order) => [order.id, order]));
+    const ordersByQuote = new Map<string, any[]>();
+    for (const order of orders as any[]) {
+      const matching = ordersByQuote.get(order.quoteId) || [];
+      matching.push(order);
+      ordersByQuote.set(order.quoteId, matching);
+    }
     const orderIds = (orders as any[]).map((order) => order.id);
     const purchaseDemands = orderIds.length
       ? await (this.prisma as any).purchaseDemand.findMany({ where: { sourceOrderId: { in: orderIds } } }).catch(() => [])
       : [];
     const demandByOrderKey = new Map((purchaseDemands as any[]).map((demand) => [`${demand.sourceOrderId}:${demand.sourceLineKey}`, demand]));
     const demandByOrderSku = new Map((purchaseDemands as any[]).map((demand) => [`${demand.sourceOrderId}:${demand.sku}`, demand]));
-    const reservationsByQuoteProduct = this.groupByQuoteProduct(reservations as any[]);
+    const reservationsByOrderProduct = this.groupByOrderProduct(reservations as any[]);
     const challanQtyByJobProduct = this.groupChallanQty(challans as any[]);
     const challansByJob = new Map<string, any[]>();
     for (const challan of challans as any[]) {
@@ -96,8 +105,11 @@ export class DispatchService {
     }
 
     return jobs.map((job: any) => {
-      const lines = this.normalizeLines(job.quote?.lines) || [];
-      const salesOrder = orderMap.get(job.quoteId) as any;
+      const legacyOrders = ordersByQuote.get(job.quoteId) || [];
+      const salesOrder = (job.salesOrderId
+        ? orderById.get(job.salesOrderId)
+        : legacyOrders.length === 1 ? legacyOrders[0] : null) as any;
+      const lines = this.normalizeLines(salesOrder?.lines || job.quote?.lines) || [];
       const lineStatus = lines.map((line: any, index: number) => {
         const productId = String(line.productId || '').trim();
         const orderedQty = Number(line.qty || line.quantity || 0);
@@ -137,7 +149,8 @@ export class DispatchService {
         }
         const committedQty = Number(challanQtyByJobProduct.get(`${job.id}:${productId}`) || 0);
         const remainingQty = Math.max(0, orderedQty - committedQty);
-        const reservationRows = reservationsByQuoteProduct.get(`${job.quoteId}:${productId}`) || [];
+        const reservationScope = salesOrder?.id || `legacy:${job.quoteId}`;
+        const reservationRows = reservationsByOrderProduct.get(`${reservationScope}:${productId}`) || [];
         const reservedQty = reservationRows
           .filter((reservation: any) => reservation.status === 'reserved')
           .reduce((sum: number, reservation: any) => sum + Number(reservation.quantity || 0), 0);
@@ -173,6 +186,7 @@ export class DispatchService {
       return {
         id: job.id,
         quoteId: job.quoteId,
+        salesOrderId: salesOrder?.id || job.salesOrderId || null,
         customerId: job.customerId,
         siteAddress: job.siteAddress,
         status: job.status,
@@ -231,12 +245,16 @@ export class DispatchService {
   }
 
   async createJob(data: CreateDispatchJobInput): Promise<any> {
-    if (!data.quoteId) {
-      throw new BadRequestException('A quote is required to create a dispatch job');
+    let salesOrder: any = null;
+    if (data.salesOrderId) salesOrder = await this.prisma.salesOrder.findUnique({ where: { id: data.salesOrderId } }).catch(() => null);
+    if (!salesOrder && data.quoteId) {
+      const orders = await this.prisma.salesOrder.findMany({ where: { quoteId: data.quoteId, status: { in: ['open', 'partial'] } }, orderBy: { createdAt: 'desc' } });
+      if (orders.length === 1) salesOrder = orders[0];
+      if (orders.length > 1) throw new BadRequestException('Choose the sales order to create a dispatch job. This quote has multiple partial orders.');
     }
-
+    if (!salesOrder) throw new BadRequestException('A sales order is required to create a dispatch job');
     const quote = await this.prisma.quote.findUnique({
-      where: { id: data.quoteId },
+      where: { id: salesOrder.quoteId },
       include: { customer: true },
     } as any) as any;
     if (!quote) throw new NotFoundException('Quote not found');
@@ -247,6 +265,7 @@ export class DispatchService {
       data: {
         id: ulid(),
         quoteId: quote.id,
+        salesOrderId: salesOrder.id,
         customerId: data.customerId || quote.customerId,
         siteAddress: quote.customer?.siteAddress || '',
         status: 'pending',
@@ -285,7 +304,9 @@ export class DispatchService {
       include: { quote: true, customer: true },
     } as any) as any;
     if (!job) throw new NotFoundException('Dispatch job not found');
-    const salesOrder = await (this.prisma as any).salesOrder.findUnique({ where: { quoteId: job.quoteId } }).catch(() => null);
+    const salesOrder = job.salesOrderId
+      ? await this.prisma.salesOrder.findUnique({ where: { id: job.salesOrderId } }).catch(() => null)
+      : await this.prisma.salesOrder.findFirst({ where: { quoteId: job.quoteId } }).catch(() => null);
     if (!salesOrder) throw new BadRequestException('Dispatch requires a linked Sales Order. Convert the quote to a sales order first.');
 
     const contactPhone = data.contactPhone || data.driverPhone || job.customer?.mobile || '';
@@ -306,6 +327,7 @@ export class DispatchService {
         id: ulid(),
         challanNumber: await this.generateChallanNumber(),
         quoteId: data.quoteId || job.quoteId,
+        salesOrderId: data.salesOrderId || salesOrder.id,
         dispatchJobId,
         customerId: data.customerId || job.customerId,
         status: 'pending',
@@ -499,12 +521,14 @@ export class DispatchService {
         const productId = String(line.productId || '').trim();
         const dispatchKey = productId || String(line.dispatchKey || line.sourceLineKey || line.tileCode || line.sku || index);
         const quantity = Math.trunc(Number(line.dispatchQty || line.qty || line.quantity || 0));
+        const lineKey = String(line.lineKey || line.quoteLineId || dispatchKey).trim();
         const orderLine = await tx.salesOrderLine.findFirst({
           where: {
             salesOrderId: salesOrder.id,
             OR: [
-              { productId: productId || undefined },
-              { lineKey: dispatchKey },
+              line.quoteLineId ? { quoteLineId: String(line.quoteLineId) } : undefined,
+              lineKey ? { lineKey } : undefined,
+              productId ? { productId } : undefined,
             ].filter((item: any) => Object.values(item)[0]),
           },
         }).catch(() => null);
@@ -578,10 +602,20 @@ export class DispatchService {
         createdBy: 'dispatch',
         metadata: { quoteId: challan.quoteId },
       });
-      const salesOrder = await tx.salesOrder.findUnique({ where: { quoteId: challan.quoteId } }).catch(() => null);
+      const salesOrder = challan.salesOrderId
+        ? await tx.salesOrder.findUnique({ where: { id: challan.salesOrderId } }).catch(() => null)
+        : await tx.salesOrder.findFirst({ where: { quoteId: challan.quoteId } }).catch(() => null);
       if (salesOrder) {
+        const lineKey = String(line.lineKey || line.quoteLineId || line.dispatchKey || '').trim();
         const orderLine = await tx.salesOrderLine.findFirst({
-          where: { salesOrderId: salesOrder.id, productId },
+          where: {
+            salesOrderId: salesOrder.id,
+            OR: [
+              line.quoteLineId ? { quoteLineId: String(line.quoteLineId) } : undefined,
+              lineKey ? { lineKey } : undefined,
+              { productId },
+            ].filter(Boolean),
+          },
           orderBy: { lineNo: 'asc' },
         }).catch(() => null);
         if (orderLine) {
@@ -595,7 +629,7 @@ export class DispatchService {
           }).catch(() => null);
         }
         await tx.dispatchLine.updateMany({
-          where: { challanId: challan.id, productId },
+          where: orderLine ? { challanId: challan.id, salesOrderLineId: orderLine.id } : { challanId: challan.id, productId },
           data: { dispatchedQuantity: quantity, status: 'dispatched', updatedAt: new Date() },
         }).catch(() => null);
       }
@@ -603,7 +637,7 @@ export class DispatchService {
       let remainingToDispatch = quantity;
       while (remainingToDispatch > 0) {
         const reservation = await tx.reservation.findFirst({
-          where: { quoteId: challan.quoteId, productId, status: 'reserved' },
+          where: { ...(salesOrder ? { salesOrderId: salesOrder.id } : { quoteId: challan.quoteId, salesOrderId: null }), productId, status: 'reserved' },
           orderBy: { createdAt: 'asc' },
         });
         if (!reservation) break;
@@ -626,7 +660,9 @@ export class DispatchService {
   }
 
   private async consumeSpecialOrderLineTx(tx: any, challan: any, line: any, quantity: number) {
-    const salesOrder = await tx.salesOrder.findUnique({ where: { quoteId: challan.quoteId } }).catch(() => null);
+    const salesOrder = challan.salesOrderId
+      ? await tx.salesOrder.findUnique({ where: { id: challan.salesOrderId } }).catch(() => null)
+      : await tx.salesOrder.findFirst({ where: { quoteId: challan.quoteId } }).catch(() => null);
     if (!salesOrder) return;
     const dispatchKey = String(line.dispatchKey || line.sourceLineKey || line.tileCode || line.sku || '').trim();
     const orderLine = await tx.salesOrderLine.findFirst({
@@ -724,9 +760,11 @@ export class DispatchService {
     const quoteId = job.quoteId;
     const quote = await this.prisma.quote.findUnique({ where: { id: quoteId } });
     if (!quote) throw new BadRequestException('Dispatch quote not found');
-    const salesOrder = await (this.prisma as any).salesOrder.findUnique({ where: { quoteId } }).catch(() => null);
+    const salesOrder = job.salesOrderId
+      ? await this.prisma.salesOrder.findUnique({ where: { id: job.salesOrderId } }).catch(() => null)
+      : await this.prisma.salesOrder.findFirst({ where: { quoteId } }).catch(() => null);
     if (!salesOrder) throw new BadRequestException('Dispatch requires a linked Sales Order. Convert the quote first.');
-    const quoteLines = this.normalizeLines((quote as any).lines) || [];
+    const quoteLines = this.normalizeLines(salesOrder.lines) || [];
     const quoteQtyByProduct = new Map<string, number>();
     const tileQtyByKey = new Map<string, number>();
     for (const line of quoteLines) {
@@ -764,12 +802,12 @@ export class DispatchService {
     const [challans, reservations] = await Promise.all([
       this.prisma.dispatchChallan.findMany({
         where: {
-          quoteId,
+          ...(salesOrder ? { salesOrderId: salesOrder.id } : { quoteId }),
           status: { in: ['pending', 'dispatched', 'delivered'] },
           ...(options?.excludeChallanId ? { id: { not: options.excludeChallanId } } : {}),
         },
       } as any),
-      this.prisma.reservation.findMany({ where: { quoteId, status: 'reserved' } }),
+      this.prisma.reservation.findMany({ where: salesOrder ? { salesOrderId: salesOrder.id, status: 'reserved' } : { quoteId, salesOrderId: null, status: 'reserved' } }),
     ]);
     const committedByProduct = this.groupChallanQty(challans as any[], 'quote');
     const reservedByProduct = new Map<string, number>();
@@ -805,10 +843,10 @@ export class DispatchService {
     }
   }
 
-  private groupByQuoteProduct(reservations: any[]) {
+  private groupByOrderProduct(reservations: any[]) {
     const grouped = new Map<string, any[]>();
     for (const reservation of reservations) {
-      const key = `${reservation.quoteId}:${reservation.productId}`;
+      const key = `${reservation.salesOrderId || `legacy:${reservation.quoteId}`}:${reservation.productId}`;
       grouped.set(key, [...(grouped.get(key) || []), reservation]);
     }
     return grouped;
@@ -838,9 +876,11 @@ export class DispatchService {
       await tx.dispatchJob.update({ where: { id: dispatchJobId }, data: { status: 'pending', updatedAt: new Date() } }).catch(() => null);
       return;
     }
-    const order = await tx.salesOrder.findUnique({ where: { quoteId: job.quoteId } }).catch(() => null);
+    const order = job.salesOrderId
+      ? await tx.salesOrder.findUnique({ where: { id: job.salesOrderId } }).catch(() => null)
+      : await tx.salesOrder.findFirst({ where: { quoteId: job.quoteId } }).catch(() => null);
     const orderedKeys = new Map<string, number>();
-    (this.normalizeLines(job.quote.lines) || []).forEach((line: any, index: number) => {
+    (this.normalizeLines(order?.lines || job.quote.lines) || []).forEach((line: any, index: number) => {
       const productId = String(line.productId || '').trim();
       const key = productId || (order ? this.tileDemandKey(order.id, line, index) : this.lineDispatchKey(line, index));
       const qty = Number(line.qty || line.quantity || 0);

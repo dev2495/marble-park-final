@@ -82,7 +82,8 @@ function getLook(category?: string) {
 
 function galleryFor(product: any) {
   const media = product?.media || {};
-  return Array.from(new Set([media.primary, ...((media.gallery || []) as string[])].filter(Boolean)));
+  const gallery = Array.isArray(media.gallery) ? media.gallery.map((entry: any) => typeof entry === 'string' ? entry : entry?.url) : [];
+  return Array.from(new Set([media.primaryUrl, media.primaryImage, media.primary, ...gallery].filter(Boolean)));
 }
 
 export default function ProductsPage() {
@@ -115,7 +116,7 @@ export default function ProductsPage() {
               <button onClick={() => setGalleryProduct(null)} className="absolute right-5 top-5 z-10 grid h-11 w-11 place-items-center rounded-full bg-[var(--ink)] text-[var(--surface)] shadow-xl"><X className="h-5 w-5" /></button>
               <div className="grid gap-4 lg:grid-cols-[1fr_13rem]">
                 <div className="overflow-hidden rounded-r4 bg-[var(--surface-2)]">
-                  <ProductImageFrame src={galleryFor(galleryProduct)[galleryIndex] || galleryProduct.media?.primary || '/catalogue-art/faucet.svg'} alt={galleryProduct.name} className="h-[74vh] rounded-r4" imageClassName="p-4" />
+                  <ProductImageFrame src={galleryFor(galleryProduct)[galleryIndex] || '/catalogue-art/faucet.svg'} alt={galleryProduct.name} className="h-[74vh] rounded-r4" imageClassName="p-4" />
                 </div>
                 <div className="space-y-3">
                   <div className="rounded-r4 bg-[var(--ink)] p-4 text-[var(--surface)]">
@@ -178,14 +179,14 @@ export default function ProductsPage() {
               transition={{ duration: 0.32 }}
               className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-5 text-[var(--ink)] shadow-2xl"
             >
-              {selected?.media?.primary ? (
+              {galleryFor(selected).length ? (
                 <button
                   type="button"
                   className="mb-5 block w-full cursor-zoom-in text-left"
                   onClick={() => { setGalleryProduct(selected); setGalleryIndex(0); }}
                 >
                   <ProductImageFrame
-                    src={selected.media.primary}
+                    src={galleryFor(selected)[0]}
                     alt={selected.name}
                     label={selected.category}
                     className="aspect-[4/3] rounded-r4"
@@ -288,9 +289,9 @@ export default function ProductsPage() {
                 onClick={() => { setSelectedId(product.id); if (galleryFor(product).length > 0) { setGalleryProduct(product); setGalleryIndex(0); } }}
                 className="mp-card group overflow-hidden rounded-r5 text-left transition-all hover:-translate-y-1 hover:shadow-2xl"
               >
-                {product.media?.primary ? (
+                {galleryFor(product).length ? (
                   <ProductImageFrame
-                    src={product.media.primary}
+                    src={galleryFor(product)[0]}
                     alt={product.name}
                     label={product.category}
                     className="h-60 rounded-none cursor-zoom-in"

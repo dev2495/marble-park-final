@@ -302,7 +302,13 @@ export class InventoryService {
     const quoteMap = new Map(quotes.map((quote) => [quote.id, quote] as const));
     const productMap = new Map(products.map((product) => [product.id, product] as const));
     const balanceMap = new Map(balances.map((balance) => [balance.productId, balance] as const));
-    const orderMap = new Map(salesOrders.map((order) => [order.quoteId, order] as const));
+    const orderById = new Map(salesOrders.map((order) => [order.id, order] as const));
+    const ordersByQuote = new Map<string, any[]>();
+    for (const order of salesOrders as any[]) {
+      const matching = ordersByQuote.get(order.quoteId) || [];
+      matching.push(order);
+      ordersByQuote.set(order.quoteId, matching);
+    }
     const customerIds = Array.from(new Set([
       ...quotes.map((quote) => quote.customerId),
       ...salesOrders.map((order) => order.customerId),
@@ -332,7 +338,10 @@ export class InventoryService {
       const product = productMap.get(reservation.productId) as any;
       const balance = balanceMap.get(reservation.productId) as any;
       const quote = quoteMap.get(reservation.quoteId) as any;
-      const order = quote ? (orderMap.get(quote.id) as any) : null;
+      const legacyOrders = ordersByQuote.get(reservation.quoteId) || [];
+      const order = (reservation.salesOrderId
+        ? orderById.get(reservation.salesOrderId)
+        : legacyOrders.length === 1 ? legacyOrders[0] : null) as any;
       const demand = demandByReservation.get(reservation.id) as any;
       const quantity = Number(reservation.quantity || 0);
       const available = Number(balance?.available || 0);
@@ -341,12 +350,12 @@ export class InventoryService {
         status: 'pending_inward',
         productId: reservation.productId,
         quoteId: reservation.quoteId,
-        leadId: quote?.leadId || null,
+        leadId: order?.leadId || quote?.leadId || null,
         orderId: order?.id || null,
         orderNumber: order?.orderNumber || '',
         quoteNumber: quote?.quoteNumber || '',
-        customer: quote?.customerId ? customerMap.get(quote.customerId) || null : null,
-        owner: quote?.ownerId ? ownerMap.get(quote.ownerId) || null : null,
+        customer: (order?.customerId || quote?.customerId) ? customerMap.get(order?.customerId || quote?.customerId) || null : null,
+        owner: (order?.ownerId || quote?.ownerId) ? ownerMap.get(order?.ownerId || quote?.ownerId) || null : null,
         sku: product?.sku || reservation.productId,
         name: product?.name || 'Pending product',
         category: product?.category || '',

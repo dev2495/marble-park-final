@@ -35,7 +35,8 @@ function productImage(media: any) {
       return media || '/catalogue-art/faucet.svg';
     }
   }
-  return media.primary || media.gallery?.[0] || '/catalogue-art/faucet.svg';
+  const gallery = Array.isArray(media.gallery) ? media.gallery : [];
+  return media.primaryUrl || media.primary || media.primaryImage || (typeof gallery[0] === 'string' ? gallery[0] : gallery[0]?.url) || '/catalogue-art/faucet.svg';
 }
 
 // Common bathroom / kitchen / living areas — used as quick-pick chips and
@@ -73,14 +74,24 @@ export default function QuoteBuilderPage() {
   const [validationError, setValidationError] = useState<string>('');
 
   const addProduct = (product: any) => {
-    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, qty: 1, price: product.sellPrice || 0, unit: product.unit || 'PC', category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
+    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, qty: 1, price: product.sellPrice || 0, listPrice: product.sellPrice || 0, specialRate: '', discountPercent: 0, taxRate: 18, unit: product.unit || 'PC', category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
     setSearchQuery('');
   };
   const updateQty = (id: string, qty: number) => setLines((current) => current.map((line) => line.id === id ? { ...line, qty } : line));
   const updateLine = (id: string, patch: any) => setLines((current) => current.map((line) => line.id === id ? { ...line, ...patch } : line));
   const removeLine = (id: string) => setLines((current) => current.filter((line) => line.id !== id));
-  const subtotal = lines.reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.price || 0), 0);
-  const tax = subtotal * 0.18;
+  const lineCommercial = (line: any) => {
+    const quantity = Number(line.qty || 0);
+    const listPrice = Number(line.listPrice ?? line.price ?? 0);
+    const discountPercent = Number(line.discountPercent || 0);
+    const specialRate = line.specialRate === '' || line.specialRate === null || line.specialRate === undefined ? null : Number(line.specialRate);
+    const unitRate = specialRate !== null && Number.isFinite(specialRate) ? specialRate : listPrice * (1 - discountPercent / 100);
+    const taxableValue = quantity * Math.max(0, unitRate);
+    const taxAmount = taxableValue * Math.max(0, Number(line.taxRate ?? 18)) / 100;
+    return { unitRate, taxableValue, taxAmount, total: taxableValue + taxAmount };
+  };
+  const subtotal = lines.reduce((sum, line) => sum + lineCommercial(line).taxableValue, 0);
+  const tax = lines.reduce((sum, line) => sum + lineCommercial(line).taxAmount, 0);
   const total = subtotal + tax;
   const selectedCustomer = customerData?.customers?.find((customer: any) => customer.id === selectedCustomerId);
 
@@ -115,7 +126,10 @@ export default function QuoteBuilderPage() {
             title: projectTitle || 'Retail product quotation',
             displayMode,
             quoteMeta: JSON.stringify({ remarks: 'Prepared from quote studio.', showBrandLogos: true }),
-            lines: JSON.stringify(lines.map(({ id, ...line }) => ({ ...line, total: Number(line.qty || 0) * Number(line.price || 0) }))),
+            lines: JSON.stringify(lines.map(({ id, ...line }) => {
+              const commercial = lineCommercial(line);
+              return { ...line, listPrice: Number(line.listPrice ?? line.price ?? 0), price: Number(line.listPrice ?? line.price ?? 0), unitRate: commercial.unitRate, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, total: commercial.total };
+            })),
           },
         },
       });
@@ -230,17 +244,19 @@ export default function QuoteBuilderPage() {
           </div>
 
           <div className="mt-6 overflow-hidden rounded-r4 border border-[#e4e4e7]/12 bg-white/70">
-            <table className="w-full min-w-[760px] text-left">
-              <thead className="bg-[#eff6ff]/70 text-xs font-medium uppercase tracking-widest text-[#cbd5e1]"><tr><th className="px-4 py-4">Product</th><th className="px-4 py-4 text-center">Qty</th><th className="px-4 py-4 text-right">Rate</th><th className="px-4 py-4 text-right">Amount</th><th className="px-4 py-4" /></tr></thead>
+            <table className="w-full min-w-[960px] text-left">
+              <thead className="bg-[#eff6ff]/70 text-xs font-medium uppercase tracking-widest text-[#cbd5e1]"><tr><th className="px-4 py-4">Product</th><th className="px-4 py-4 text-center">Qty</th><th className="px-4 py-4 text-right">List rate</th><th className="px-4 py-4 text-right">Negotiated</th><th className="px-4 py-4 text-right">GST</th><th className="px-4 py-4 text-right">Total</th><th className="px-4 py-4" /></tr></thead>
               <tbody className="divide-y divide-[#cbd5e1]/10">
                 {lines.map((line) => (
-                  <tr key={line.id}>
+                  <tr key={line.id}>{(() => { const commercial = lineCommercial(line); return <>
                     <td className="px-4 py-4"><div className="flex items-center gap-4"><ProductImageFrame src={line.quoteImage || productImage(line.media)} alt={line.name} className="h-24 w-28 shrink-0 rounded-[1.35rem]" imageClassName="p-1.5" /><div className="min-w-0 space-y-2"><input list="mp-area-list" value={line.area || ''} onChange={(event)=>updateLine(line.id,{area:event.target.value})} placeholder="Area / room" className="h-8 w-full rounded-xl border border-[#e4e4e7]/15 bg-white px-3 text-xs font-medium uppercase tracking-wider text-[#2563eb]" /><p className="font-black">{line.name}</p><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{line.sku} · {line.unit}</p><input value={line.quoteImage || ''} onChange={(event)=>updateLine(line.id,{quoteImage:event.target.value})} placeholder="Optional quote photo URL" className="h-8 w-full rounded-xl border border-[#e4e4e7]/15 bg-white px-3 text-[10px] font-bold" /></div></div></td>
                     <td className="px-4 py-4 text-center"><input type="number" value={line.qty} min={0} onChange={(event) => updateQty(line.id, Number(event.target.value) || 0)} className="h-10 w-20 rounded-xl border border-[#e4e4e7]/18 bg-white text-center text-sm font-black outline-none focus:ring-4 focus:ring-[#2563eb]/10" /></td>
-                    <td className="px-4 py-4 text-right font-black">{money(line.price)}</td>
-                    <td className="px-4 py-4 text-right font-black text-[#059669]">{money(line.qty * line.price)}</td>
+                    <td className="px-4 py-4 text-right"><input aria-label={`List rate for ${line.name}`} type="number" min={0} value={line.listPrice ?? line.price ?? 0} onChange={(event) => updateLine(line.id, { listPrice: event.target.value, price: event.target.value })} className="h-10 w-28 rounded-xl border border-[#e4e4e7]/18 bg-white px-2 text-right text-sm font-black" /></td>
+                    <td className="px-4 py-4 text-right"><input aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate} placeholder={money(commercial.unitRate)} onChange={(event) => updateLine(line.id, { specialRate: event.target.value })} className="h-10 w-28 rounded-xl border border-[#2563eb]/30 bg-[#eff6ff]/50 px-2 text-right text-sm font-black" /><input aria-label={`Discount percent for ${line.name}`} type="number" min={0} max={100} value={line.discountPercent || 0} onChange={(event) => updateLine(line.id, { discountPercent: event.target.value })} className="mt-1 h-7 w-28 rounded-lg border border-[#e4e4e7]/18 bg-white px-2 text-right text-[11px] font-bold" /></td>
+                    <td className="px-4 py-4 text-right"><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate ?? 18} onChange={(event) => updateLine(line.id, { taxRate: event.target.value })} className="h-10 w-20 rounded-xl border border-[#e4e4e7]/18 bg-white px-2 text-right text-sm font-black" /><p className="mt-1 text-xs font-semibold text-[#52525b]">{money(commercial.taxAmount)}</p></td>
+                    <td className="px-4 py-4 text-right font-black text-[#059669]">{money(commercial.total)}</td>
                     <td className="px-4 py-4"><button onClick={() => removeLine(line.id)} className="rounded-xl p-2 text-[#52525b] hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4" /></button></td>
-                  </tr>
+                  </>; })()}</tr>
                 ))}
               </tbody>
             </table>
@@ -256,7 +272,7 @@ export default function QuoteBuilderPage() {
           <p className="mt-2 text-sm font-bold text-[#52525b]">{selectedCustomer?.name || 'Select a customer'}</p>
         </div>
         <div className="mt-5 flex-1 overflow-y-auto rounded-r4 border border-white/10 bg-white/[0.08] p-4 custom-scrollbar">
-          {lines.slice(0, 8).map((line) => <div key={line.id} className="mb-4 rounded-r4 bg-white/10 p-3"><ProductImageFrame src={productImage(line.media)} alt={line.name} className="mb-3 h-36 w-full rounded-[1.25rem]" imageClassName="p-2" /><div className="min-w-0"><p className="line-clamp-2 text-sm font-black">{line.name}</p><p className="mt-1 text-xs font-medium uppercase text-[#71717a]">{line.sku} · {line.qty} x {money(line.price)}</p></div></div>)}
+          {lines.slice(0, 8).map((line) => <div key={line.id} className="mb-4 rounded-r4 bg-white/10 p-3"><ProductImageFrame src={productImage(line.media)} alt={line.name} className="mb-3 h-36 w-full rounded-[1.25rem]" imageClassName="p-2" /><div className="min-w-0"><p className="line-clamp-2 text-sm font-black">{line.name}</p><p className="mt-1 text-xs font-medium uppercase text-[#71717a]">{line.sku} · {line.qty} x {money(lineCommercial(line).unitRate)}</p></div></div>)}
           {lines.length === 0 && <div className="grid h-full place-items-center text-center text-[#52525b]"><div><ImageIcon className="mx-auto mb-3 h-10 w-10" /><p className="text-sm font-bold">Product image preview appears after adding items.</p></div></div>}
         </div>
         <div className="mt-5 rounded-r4 bg-white p-5 text-[#18181b]">

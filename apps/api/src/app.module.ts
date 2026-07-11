@@ -35,12 +35,12 @@ import { SearchModule } from './modules/search/search.module';
       inject: [PrismaService],
       useFactory: (prisma: PrismaService) => ({
         autoSchemaFile: true,
-        playground: true,
+        playground: process.env.NODE_ENV !== 'production' || process.env.GRAPHQL_PLAYGROUND === 'true',
         // Per-request DataLoaders prevent N+1 hits on hot relations
         // (Quote.customer, Quote.owner, Quote.lead, Lead.customer, Lead.owner).
         // Loaders are constructed fresh for each request so cached rows never
         // leak between users/sessions.
-        context: ({ req }: any) => ({ req, loaders: buildLoaders(prisma) }),
+        context: ({ req, res }: any) => ({ req, res, loaders: buildLoaders(prisma) }),
       }),
     }),
     PrismaModule,

@@ -1,0 +1,27 @@
+Marble Park Client Workflow Completion Review
+Generated July 11, 2026
+
+Local release decision: approve for controlled deployment after environment setup.
+Railway deployment was intentionally deferred.
+
+Completed:
+- Editable Product Master with immutable SKU, audit events, optimistic concurrency, structured gallery, and archive.
+- Direct customer quote creation with automatic internal lead creation.
+- Canonical negotiated pricing with list price, special rate, discount, GST, and frozen order snapshots.
+- Multiple partial sales orders from one quote with selected quantities, idempotency, order-scoped reservation, dispatch, payment, documents, and procurement.
+- Close-remainder workflow with an audit reason.
+- Cookie-backed browser sessions, login throttle, upload validation, bounded request body, production playground disablement, Docker health checks, and lockfile-clean Docker installation.
+
+Verification passed:
+- Fresh database migration rehearsal.
+- API and web production builds.
+- Isolated end-to-end client workflow release gate.
+- Authenticated browser smoke for login, Product Master edit mode, and multi-order quote detail.
+
+Deployment requirements:
+- Backup and migrate a staging copy first.
+- Configure CORS, image storage/base URL, health checks, and persistent image storage.
+- Run post-deploy smoke before client acceptance.
+
+Residual risk:
+- npm audit still reports legacy Nest GraphQL/WebSocket, Next bundled PostCSS, ExcelJS/UUID, and dev Esbuild advisories with no safe non-major npm fix. Nodemailer was upgraded to 9.0.3. Plan a framework dependency upgrade before claiming a clean audit.

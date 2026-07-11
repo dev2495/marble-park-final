@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
+import { commercialTotalsFromLines, priceQuoteLines } from '../common/pricing';
 import { ulid } from 'ulid';
 
 export interface CreateQuoteInput {
@@ -38,9 +39,13 @@ export interface CreateSalesOrderInput {
   paymentMode: string;
   advanceAmount?: number;
   notes?: string;
+  lines?: any[] | string;
+  idempotencyKey?: string;
+  promisedDate?: Date;
+  paymentTerms?: string;
 }
 
-const QUOTE_STATUSES = ['draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'confirmed', 'won', 'lost', 'expired', 'superseded'];
+const QUOTE_STATUSES = ['draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'partially_ordered', 'confirmed', 'won', 'closed', 'lost', 'expired', 'superseded'];
 
 // Eager-include retained ONLY for endpoints that legitimately need the embedded
 // objects in a single round-trip (e.g. internal services that don't go through
@@ -108,7 +113,9 @@ export class QuotesService {
     const customerId = data.customerId;
     if (!customerId) throw new BadRequestException('A customer is required');
 
-    const normalizedLines = await this.assertQuoteLines(data.lines, 'creating a quote');
+    const assertedLines = await this.assertQuoteLines(data.lines, 'creating a quote');
+    const pricing = priceQuoteLines(assertedLines, data.discountPercent || 0);
+    const normalizedLines = pricing.lines;
     const displayMode = this.normalizeDisplayMode(data.displayMode);
     const quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, normalizedLines);
     const availabilityIssues = await this.getAvailabilityIssues(normalizedLines);
@@ -133,7 +140,7 @@ export class QuotesService {
                 title: data.projectName || data.title || 'Retail quote opportunity',
                 source: 'Quote desk',
                 stage: 'quoted',
-                expectedValue: this.getLinesTotal(normalizedLines),
+                expectedValue: pricing.totals.grandTotal,
                 lastContactAt: new Date(),
                 nextActionAt: new Date(Date.now() + 86400000 * 2),
                 notes: 'Auto-created from quote builder.',
@@ -166,9 +173,9 @@ export class QuotesService {
               leadId,
               lines: normalizedLines,
               quoteNumber,
-              status: 'draft',
-              approvalStatus: 'approved',
-              discountPercent: data.discountPercent || 0,
+              status: pricing.requiresApproval ? 'pending_approval' : 'draft',
+              approvalStatus: pricing.requiresApproval ? 'pending' : 'approved',
+              discountPercent: pricing.quoteDiscountPercent,
               displayMode,
               projectName: data.projectName || '',
               title: data.title || 'Retail quotation',
@@ -182,12 +189,14 @@ export class QuotesService {
               versionNumber,
               approval: {
                 requestedAt: new Date().toISOString(),
-                reason: 'quote_ready_no_owner_approval_required',
+                reason: pricing.requiresApproval ? 'below_floor_rate_requires_owner_approval' : 'quote_ready_no_owner_approval_required',
                 availabilityIssues,
-                discountPercent: data.discountPercent || 0,
-                total: this.getLinesTotal(normalizedLines),
+                pricing: pricing.totals,
+                discountPercent: pricing.quoteDiscountPercent,
+                total: pricing.totals.grandTotal,
+                requiresPriceApproval: pricing.requiresApproval,
                 displayMode,
-                autoApprovedAt: new Date().toISOString(),
+                ...(pricing.requiresApproval ? {} : { autoApprovedAt: new Date().toISOString() }),
               },
               updatedAt: new Date(),
             },
@@ -245,23 +254,33 @@ export class QuotesService {
   }
 
   async update(id: string, data: UpdateQuoteInput): Promise<any> {
-    await this.findById(id);
-    
+    const current = await this.findById(id);
+    if (data.discountPercent !== undefined || data.lines !== undefined) {
+      const existingOrders = await this.prisma.salesOrder.count({ where: { quoteId: id } });
+      if (existingOrders > 0) {
+        throw new BadRequestException('Commercial lines are frozen once an order exists. Create a quote revision for a new commercial agreement.');
+      }
+    }
     const updateData: any = { ...data };
     if (data.discountPercent !== undefined || data.lines !== undefined) {
-      const current = await this.findById(id);
-      const lines = data.lines !== undefined ? await this.assertQuoteLines(data.lines, 'updating a quote') : await this.assertQuoteLines(current.lines, 'updating a quote');
-      updateData.lines = data.lines !== undefined ? lines : undefined;
-      updateData.quoteMeta = data.quoteMeta !== undefined ? this.normalizeQuoteMeta(data.quoteMeta, lines) : undefined;
-      updateData.approvalStatus = 'approved';
-      updateData.status = 'draft';
+      const assertedLines = data.lines !== undefined
+        ? await this.assertQuoteLines(data.lines, 'updating a quote')
+        : await this.assertQuoteLines(current.lines, 'updating a quote');
+      const pricing = priceQuoteLines(assertedLines, data.discountPercent ?? current.discountPercent ?? 0);
+      updateData.lines = pricing.lines;
+      updateData.discountPercent = pricing.quoteDiscountPercent;
+      updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta ?? current.quoteMeta, pricing.lines);
+      updateData.approvalStatus = pricing.requiresApproval ? 'pending' : 'approved';
+      updateData.status = pricing.requiresApproval ? 'pending_approval' : 'draft';
       updateData.approval = {
         requestedAt: new Date().toISOString(),
-        reason: 'quote_changed_no_owner_reapproval_required',
-        availabilityIssues: await this.getAvailabilityIssues(lines),
-        discountPercent: data.discountPercent,
-        total: this.getLinesTotal(lines),
-        autoApprovedAt: new Date().toISOString(),
+        reason: pricing.requiresApproval ? 'below_floor_rate_requires_owner_approval' : 'quote_changed_no_owner_reapproval_required',
+        availabilityIssues: await this.getAvailabilityIssues(pricing.lines),
+        pricing: pricing.totals,
+        discountPercent: pricing.quoteDiscountPercent,
+        total: pricing.totals.grandTotal,
+        requiresPriceApproval: pricing.requiresApproval,
+        ...(pricing.requiresApproval ? {} : { autoApprovedAt: new Date().toISOString() }),
       };
     }
     if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
@@ -368,7 +387,7 @@ export class QuotesService {
 
   async confirmQuote(id: string) {
     const quote = await this.findByIdWithRelations(id);
-    const existingOrder = await (this.prisma as any).salesOrder.findUnique({ where: { quoteId: id } }).catch(() => null);
+    const existingOrder = await this.prisma.salesOrder.findFirst({ where: { quoteId: id } }).catch(() => null);
     if (!existingOrder) {
       throw new BadRequestException('Final confirmation must create a Sales Order with payment details. Use createSalesOrderFromQuote instead.');
     }
@@ -385,172 +404,191 @@ export class QuotesService {
   }
 
   async createSalesOrderFromQuote(input: CreateSalesOrderInput, actorUserId: string) {
-    // Same as confirmQuote: needs `customer.siteAddress`.
     const quote = await this.findByIdWithRelations(input.quoteId);
+    if (quote.approvalStatus === 'pending') {
+      throw new BadRequestException('Owner approval is required because this quote contains a below-floor rate.');
+    }
+    if (['closed', 'lost', 'expired', 'superseded'].includes(quote.status)) {
+      throw new BadRequestException(`This quote is ${quote.status} and cannot create another sales order.`);
+    }
+
     const paymentMode = String(input.paymentMode || '').toLowerCase() === 'credit' ? 'credit' : 'cash';
-    const lines = await this.assertQuoteLines(quote.lines, 'creating a sales order');
-    const totalAmount = this.getLinesTotal(lines);
-    const advanceAmount = paymentMode === 'cash' ? Number(input.advanceAmount || 0) : 0;
-    const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= totalAmount ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
+    const idempotencyKey = String(input.idempotencyKey || ulid()).trim();
+    const requestedSelections = this.normalizeOrderSelections(input.lines);
 
-    return this.prisma.$transaction(async (tx) => {
-      const existingOrder = await tx.salesOrder.findUnique({ where: { quoteId: quote.id } }).catch(() => null);
-      if (existingOrder) {
-        await this.syncSalesOrderLinesTx(tx, { quote, salesOrder: existingOrder, lines });
-        await this.ensureSalesOrderDocumentsTx(tx, quote, existingOrder, actorUserId);
-        await this.createPurchaseDemandForSalesOrderTx(tx, { quote, salesOrder: existingOrder, lines });
-        return existingOrder;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const existing = await tx.salesOrder.findUnique({ where: { idempotencyKey } }).catch(() => null);
+          if (existing) return existing;
+
+          const latestQuote = await tx.quote.findUnique({ where: { id: quote.id }, include: quoteInclude } as any) as any;
+          if (!latestQuote) throw new NotFoundException('Quote not found');
+          if (latestQuote.approvalStatus === 'pending') throw new BadRequestException('Owner approval is required before creating an order.');
+
+          let quoteLines = await tx.quoteLine.findMany({ where: { quoteId: quote.id }, orderBy: { lineNo: 'asc' } });
+          if (!quoteLines.length) {
+            const historicalLines = await this.assertQuoteLines(latestQuote.lines, 'creating a sales order');
+            const priced = priceQuoteLines(historicalLines, latestQuote.discountPercent || 0);
+            await this.syncQuoteLinesTx(tx, latestQuote, priced.lines);
+            quoteLines = await tx.quoteLine.findMany({ where: { quoteId: quote.id }, orderBy: { lineNo: 'asc' } });
+          }
+
+          const selected = this.selectOrderLines(latestQuote, quoteLines as any[], requestedSelections);
+          const commercial = priceQuoteLines(selected.lines, latestQuote.discountPercent || 0);
+          const totalAmount = commercial.totals.grandTotal;
+          const advanceAmount = paymentMode === 'cash' ? Number(input.advanceAmount || 0) : 0;
+          if (!Number.isFinite(advanceAmount) || advanceAmount < 0 || advanceAmount > totalAmount) {
+            throw new BadRequestException('Advance amount must be between zero and the selected order total.');
+          }
+          const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= totalAmount ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
+          const salesOrderId = ulid();
+          const orderNumber = await nextDocumentNumber(tx as any, 'sales_order', 'SO', new Date(), {
+            existingNumbers: async (prefixForYear) => (await tx.salesOrder.findMany({
+              where: { orderNumber: { startsWith: prefixForYear } },
+              select: { orderNumber: true },
+            })).map((row: any) => row.orderNumber),
+          });
+
+          for (const item of selected.items) {
+            const updated = await tx.quoteLine.updateMany({
+              where: { id: item.quoteLine.id, orderedQuantity: Number(item.quoteLine.orderedQuantity || 0) },
+              data: {
+                orderedQuantity: { increment: item.quantity },
+                status: Number(item.quoteLine.orderedQuantity || 0) + item.quantity >= Number(item.quoteLine.quantity || 0)
+                  ? 'fully_ordered'
+                  : 'partially_ordered',
+                updatedAt: new Date(),
+              },
+            });
+            if (updated.count !== 1) throw new BadRequestException('Quote quantities changed while this order was being created. Review the remaining balance and try again.');
+          }
+
+          const salesOrder = await tx.salesOrder.create({
+            data: {
+              id: salesOrderId,
+              orderNumber,
+              quoteId: latestQuote.id,
+              idempotencyKey,
+              leadId: latestQuote.leadId,
+              customerId: latestQuote.customerId,
+              ownerId: latestQuote.ownerId,
+              status: 'open',
+              paymentMode,
+              paymentStatus,
+              paymentTerms: String(input.paymentTerms || (paymentMode === 'credit' ? 'Net 30' : 'Cash on order')).trim(),
+              promisedDate: input.promisedDate ? new Date(input.promisedDate) : new Date(Date.now() + 86400000),
+              advanceAmount,
+              totalAmount,
+              lines: commercial.lines,
+              notes: input.notes || '',
+              documents: {
+                quotePdfUrl: `/api/pdf/quote/${latestQuote.id}`,
+                salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`,
+                quotePdf: { url: `/api/pdf/quote/${latestQuote.id}`, status: 'generated_on_request', checkedAt: new Date().toISOString() },
+                salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request', checkedAt: new Date().toISOString() },
+                pricing: commercial.totals,
+                generatedAt: new Date().toISOString(),
+              },
+              updatedAt: new Date(),
+            },
+          });
+
+          await this.syncSalesOrderLinesTx(tx, { quote: latestQuote, salesOrder, lines: commercial.lines });
+          const salesOrderLines = await tx.salesOrderLine.findMany({ where: { salesOrderId } });
+          await this.createReservationsForSalesOrder(tx, { quote: latestQuote, salesOrder, lines: commercial.lines, salesOrderLines });
+          await this.syncSalesOrderLinesTx(tx, { quote: latestQuote, salesOrder, lines: commercial.lines });
+          await tx.dispatchJob.create({
+            data: {
+              id: ulid(),
+              quoteId: latestQuote.id,
+              salesOrderId: salesOrder.id,
+              customerId: latestQuote.customerId,
+              siteAddress: latestQuote.customer?.siteAddress || '',
+              status: 'pending',
+              dueDate: salesOrder.promisedDate || new Date(Date.now() + 86400000),
+              ownerId: latestQuote.ownerId,
+              updatedAt: new Date(),
+            },
+          });
+          await this.ensureSalesOrderDocumentsTx(tx, latestQuote, salesOrder, actorUserId);
+
+          if (advanceAmount > 0 || paymentMode === 'credit') {
+            await tx.paymentReceipt.create({
+              data: {
+                id: ulid(),
+                receiptNumber: await nextDocumentNumber(tx as any, 'payment_receipt', 'RCPT', new Date(), {
+                  existingNumbers: async (prefixForYear) => (await tx.paymentReceipt.findMany({
+                    where: { receiptNumber: { startsWith: prefixForYear } },
+                    select: { receiptNumber: true },
+                  })).map((row: any) => row.receiptNumber),
+                }),
+                salesOrderId: salesOrder.id,
+                customerId: salesOrder.customerId,
+                paymentMode,
+                amount: paymentMode === 'credit' ? 0 : advanceAmount,
+                status: paymentMode === 'credit' ? 'credit_due' : 'posted',
+                receivedAt: new Date(),
+                dueDate: paymentMode === 'credit' ? new Date(Date.now() + 86400000 * 30) : null,
+                reference: '',
+                notes: paymentMode === 'credit' ? 'Credit order opened; collection due date tracked here.' : 'Advance received during sales order conversion.',
+                createdBy: actorUserId,
+                updatedAt: new Date(),
+                metadata: { orderNumber, paymentStatus, pricing: commercial.totals },
+              },
+            });
+          }
+
+          const refreshedLines = await tx.quoteLine.findMany({ where: { quoteId: latestQuote.id } });
+          const isFullyOrdered = refreshedLines.every((line: any) => Number(line.orderedQuantity || 0) + Number(line.closedQuantity || 0) >= Number(line.quantity || 0));
+          await tx.quote.update({
+            where: { id: latestQuote.id },
+            data: {
+              status: isFullyOrdered ? 'confirmed' : 'partially_ordered',
+              confirmedAt: latestQuote.confirmedAt || new Date(),
+              updatedAt: new Date(),
+            },
+          });
+          await tx.lead.update({ where: { id: latestQuote.leadId }, data: { stage: 'won', updatedAt: new Date(), lastContactAt: new Date() } }).catch(() => null);
+          await tx.leadIntent.updateMany({
+            where: { quoteId: latestQuote.id, salesOrderId: null },
+            data: { status: 'converted', salesOrderId: salesOrder.id, updatedAt: new Date() },
+          }).catch(() => null);
+          await this.createPurchaseDemandForSalesOrderTx(tx, { quote: latestQuote, salesOrder, lines: commercial.lines });
+          await tx.activity.create({
+            data: {
+              id: ulid(), leadId: latestQuote.leadId, quoteId: latestQuote.id, userId: actorUserId,
+              type: 'sales_order_created', message: `${salesOrder.orderNumber} created for selected quote quantities as ${paymentMode.toUpperCase()} (${paymentStatus}).`,
+            },
+          }).catch(() => null);
+          await tx.notification.createMany({
+            data: [
+              { id: ulid(), title: 'Sales order created', message: `${salesOrder.orderNumber} created from ${latestQuote.quoteNumber}.`, type: 'sales_order_created', entityType: 'SalesOrder', entityId: salesOrder.id, href: '/dashboard/orders', targetRole: 'owner', metadata: { quoteId: latestQuote.id, salesOrderId: salesOrder.id, paymentMode, paymentStatus, totalAmount, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` } },
+              { id: ulid(), title: 'Sales order ready for dispatch', message: `${salesOrder.orderNumber} has its own dispatch job and reservations.`, type: 'dispatch_ready', entityType: 'SalesOrder', entityId: salesOrder.id, href: '/dashboard/dispatch', targetRole: 'dispatch_ops', metadata: { quoteId: latestQuote.id, salesOrderId: salesOrder.id, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` } },
+            ],
+          }).catch(() => null);
+          return salesOrder;
+        }, { timeout: 20000, isolationLevel: 'Serializable' as any });
+      } catch (error: any) {
+        if ((error?.code === 'P2034' || error?.code === 'P2002') && attempt < 2) continue;
+        throw error;
       }
-
-      const existingReservations = await tx.reservation.count({ where: { quoteId: quote.id } });
-      if (!existingReservations) await this.createReservationsForQuote(tx, { ...quote, lines });
-
-      const existingJob = await tx.dispatchJob.findUnique({ where: { quoteId: quote.id } });
-      if (!existingJob) {
-        await tx.dispatchJob.create({
-          data: {
-            id: ulid(),
-            quoteId: quote.id,
-            customerId: quote.customerId,
-            siteAddress: quote.customer?.siteAddress || '',
-            status: 'pending',
-            dueDate: new Date(Date.now() + 86400000),
-            ownerId: quote.ownerId,
-            updatedAt: new Date(),
-          },
-        });
-      }
-
-      const salesOrderId = ulid();
-      const orderNumber = await nextDocumentNumber(tx as any, 'sales_order', 'SO', new Date(), {
-        existingNumbers: async (prefixForYear) => (await tx.salesOrder.findMany({
-          where: { orderNumber: { startsWith: prefixForYear } },
-          select: { orderNumber: true },
-        })).map((row: any) => row.orderNumber),
-      });
-      const salesOrder = await tx.salesOrder.create({
-        data: {
-          id: salesOrderId,
-          orderNumber,
-          quoteId: quote.id,
-          leadId: quote.leadId,
-          customerId: quote.customerId,
-          ownerId: quote.ownerId,
-          status: 'open',
-          paymentMode,
-          paymentStatus,
-          advanceAmount,
-          totalAmount,
-          lines,
-          notes: input.notes || '',
-          documents: {
-            quotePdfUrl: `/api/pdf/quote/${quote.id}`,
-            salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`,
-            quotePdf: { url: `/api/pdf/quote/${quote.id}`, status: 'generated_on_request', checkedAt: new Date().toISOString() },
-            salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request', checkedAt: new Date().toISOString() },
-            generatedAt: new Date().toISOString(),
-            forwardingUse: 'Send sales-order PDF to customer and use it for dispatch marking.',
-          },
-          updatedAt: new Date(),
-        },
-      });
-      await this.syncSalesOrderLinesTx(tx, { quote, salesOrder, lines });
-      await this.ensureSalesOrderDocumentsTx(tx, quote, salesOrder, actorUserId);
-      if (advanceAmount > 0 || paymentMode === 'credit') {
-        await tx.paymentReceipt.create({
-          data: {
-            id: ulid(),
-            receiptNumber: await nextDocumentNumber(tx as any, 'payment_receipt', 'RCPT', new Date(), {
-              existingNumbers: async (prefixForYear) => (await tx.paymentReceipt.findMany({
-                where: { receiptNumber: { startsWith: prefixForYear } },
-                select: { receiptNumber: true },
-              })).map((row: any) => row.receiptNumber),
-            }),
-            salesOrderId: salesOrder.id,
-            customerId: salesOrder.customerId,
-            paymentMode,
-            amount: paymentMode === 'credit' ? 0 : advanceAmount,
-            status: paymentMode === 'credit' ? 'credit_due' : 'posted',
-            receivedAt: new Date(),
-            dueDate: paymentMode === 'credit' ? new Date(Date.now() + 86400000 * 30) : null,
-            reference: '',
-            notes: paymentMode === 'credit' ? 'Credit order opened; collection due date tracked here.' : 'Advance received during sales order conversion.',
-            createdBy: actorUserId,
-            updatedAt: new Date(),
-            metadata: { orderNumber, paymentStatus },
-          },
-        });
-      }
-
-      await tx.quote.update({
-        where: { id: quote.id },
-        data: { status: 'confirmed', confirmedAt: quote.confirmedAt || new Date(), updatedAt: new Date() },
-      });
-      await tx.lead.update({
-        where: { id: quote.leadId },
-        data: { stage: 'won', updatedAt: new Date(), lastContactAt: new Date() },
-      }).catch(() => null);
-      await tx.leadIntent.updateMany({
-        where: { quoteId: quote.id },
-        data: { status: 'converted', salesOrderId: salesOrder.id, updatedAt: new Date() },
-      }).catch(() => null);
-      await this.createPurchaseDemandForSalesOrderTx(tx, { quote, salesOrder, lines });
-      await tx.activity.create({
-        data: {
-          id: ulid(),
-          leadId: quote.leadId,
-          quoteId: quote.id,
-          userId: actorUserId,
-          type: 'sales_order_created',
-          message: `${salesOrder.orderNumber} created as ${paymentMode.toUpperCase()} order (${paymentStatus}).`,
-        },
-      }).catch(() => null);
-      await tx.notification.createMany({
-        data: [
-          {
-            id: ulid(),
-            title: 'Sales order created',
-            message: `${salesOrder.orderNumber} created from ${quote.quoteNumber}. Payment: ${paymentMode.toUpperCase()} ${paymentStatus}.`,
-            type: 'sales_order_created',
-            entityType: 'SalesOrder',
-            entityId: salesOrder.id,
-            href: '/dashboard/orders',
-            targetRole: 'owner',
-            metadata: { quoteId: quote.id, paymentMode, paymentStatus, totalAmount, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
-          },
-          {
-            id: ulid(),
-            title: 'Sales order ready for dispatch',
-            message: `${salesOrder.orderNumber} is ready. Dispatch only in-stock rows; backorders remain blocked until inward.`,
-            type: 'dispatch_ready',
-            entityType: 'SalesOrder',
-            entityId: salesOrder.id,
-            href: '/dashboard/dispatch',
-            targetRole: 'dispatch_ops',
-            metadata: { quoteId: quote.id, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
-          },
-          {
-            id: ulid(),
-            title: 'Customer order confirmed',
-            message: `${salesOrder.orderNumber} is live. Track stocked and pending inward items from this lead.`,
-            type: 'sales_order_created',
-            entityType: 'SalesOrder',
-            entityId: salesOrder.id,
-            href: `/dashboard/leads/${quote.leadId}`,
-            targetUserId: quote.ownerId,
-            metadata: { quoteId: quote.id, salesOrderPdfUrl: `/api/pdf/order/${salesOrder.id}` },
-          },
-        ],
-      }).catch(() => null);
-      return salesOrder;
-    });
+    }
+    throw new BadRequestException('Could not safely create this sales order. Review remaining quote quantities and try again.');
   }
 
   private async syncQuoteLinesTx(tx: any, quote: any, lines: any[]) {
     for (const [index, line] of this.normalizeLines(lines).entries()) {
       const key = this.quoteLineKey(line, index);
       const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
-      const unitPrice = Number(line.price || line.sellPrice || 0);
+      const listPrice = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
+      const unitPrice = Number(line.unitRate ?? line.specialRate ?? listPrice);
+      const discountPercent = Number(line.discountPercent ?? line.discount ?? 0);
+      const taxRate = Number(line.taxRate ?? 18);
+      const taxableValue = Number(line.taxableValue ?? quantity * unitPrice);
+      const taxAmount = Number(line.taxAmount ?? 0);
+      const grossLineTotal = Number(line.grossLineTotal ?? line.total ?? taxableValue + taxAmount);
+      const pricing = { listPrice, unitPrice, discountPercent, taxRate, taxableValue, taxAmount, grossLineTotal };
       await tx.quoteLine.upsert({
         where: { quoteId_lineKey: { quoteId: quote.id, lineKey: key } },
         update: {
@@ -564,11 +602,17 @@ export class QuotesService {
           area: line.area || line.room || line.section || null,
           unit: String(line.unit || line.uom || 'PC').toUpperCase(),
           quantity,
+          listPrice,
           unitPrice,
-          lineTotal: quantity * unitPrice,
+          discountPercent,
+          taxRate,
+          taxableValue,
+          taxAmount,
+          grossLineTotal,
+          lineTotal: grossLineTotal,
           status: 'quoted',
           isTileSpecial: this.isTileLine(line) && !String(line.productId || '').trim(),
-          metadata: { snapshot: line },
+          metadata: { snapshot: line, pricing },
           updatedAt: new Date(),
         },
         create: {
@@ -585,8 +629,14 @@ export class QuotesService {
           area: line.area || line.room || line.section || null,
           unit: String(line.unit || line.uom || 'PC').toUpperCase(),
           quantity,
+          listPrice,
           unitPrice,
-          lineTotal: quantity * unitPrice,
+          discountPercent,
+          taxRate,
+          taxableValue,
+          taxAmount,
+          grossLineTotal,
+          lineTotal: grossLineTotal,
           status: 'quoted',
           isTileSpecial: this.isTileLine(line) && !String(line.productId || '').trim(),
           metadata: { snapshot: line },
@@ -653,6 +703,72 @@ export class QuotesService {
     return productId ? `product:${productId}:${area || index}` : `tile:${tileCode || index}:${area || index}`;
   }
 
+  private normalizeOrderSelections(value: any) {
+    const parsed = typeof value === 'string'
+      ? (() => { try { return JSON.parse(value); } catch { throw new BadRequestException('Selected order lines must be valid JSON'); } })()
+      : value;
+    if (parsed === undefined || parsed === null || parsed === '') return new Map<string, number>();
+    if (!Array.isArray(parsed)) throw new BadRequestException('Selected order lines must be an array');
+    const selections = new Map<string, number>();
+    for (const item of parsed) {
+      const key = String(item?.quoteLineId || item?.lineKey || '').trim();
+      const quantity = Math.trunc(Number(item?.quantity ?? item?.qty ?? 0));
+      if (!key) throw new BadRequestException('Every selected order line needs a quote line reference');
+      if (!Number.isFinite(quantity) || quantity <= 0) throw new BadRequestException('Selected order quantities must be positive whole numbers');
+      selections.set(key, (selections.get(key) || 0) + quantity);
+    }
+    return selections;
+  }
+
+  private selectOrderLines(quote: any, quoteLines: any[], selections: Map<string, number>) {
+    const quoteLinesById = new Map(quoteLines.map((line: any) => [line.id, line]));
+    const quoteLinesByKey = new Map(quoteLines.map((line: any) => [line.lineKey, line]));
+    const rawByKey = new Map(this.normalizeLines(quote.lines).map((line: any, index: number) => [this.quoteLineKey(line, index), line]));
+    const selectedRows: Array<{ quoteLine: any; quantity: number }> = [];
+    const requested = selections.size
+      ? Array.from(selections.entries()).map(([key, quantity]) => ({ key, quantity }))
+      : quoteLines.map((line: any) => ({ key: line.id, quantity: Math.max(0, Number(line.quantity || 0) - Number(line.orderedQuantity || 0) - Number(line.cancelledQuantity || 0) - Number(line.closedQuantity || 0)) })).filter((item) => item.quantity > 0);
+
+    for (const request of requested) {
+      const quoteLine = quoteLinesById.get(request.key) || quoteLinesByKey.get(request.key);
+      if (!quoteLine) throw new BadRequestException('A selected line no longer belongs to this quote. Refresh the quote and try again.');
+      const remaining = Math.max(0, Number(quoteLine.quantity || 0) - Number(quoteLine.orderedQuantity || 0) - Number(quoteLine.cancelledQuantity || 0) - Number(quoteLine.closedQuantity || 0));
+      if (request.quantity > remaining) {
+        throw new BadRequestException(`${quoteLine.sku} has only ${remaining} remaining on this quote.`);
+      }
+      selectedRows.push({ quoteLine, quantity: request.quantity });
+    }
+    if (!selectedRows.length) throw new BadRequestException('This quote has no remaining quantity to order.');
+
+    const lines = selectedRows.map(({ quoteLine, quantity }) => {
+      const snapshot = (quoteLine.metadata as any)?.snapshot || rawByKey.get(quoteLine.lineKey) || {};
+      return {
+        ...snapshot,
+        quoteLineId: quoteLine.id,
+        lineKey: quoteLine.lineKey,
+        productId: quoteLine.productId || undefined,
+        sku: quoteLine.sku,
+        name: quoteLine.name,
+        category: quoteLine.category,
+        brand: quoteLine.brand,
+        finish: quoteLine.finish || undefined,
+        area: quoteLine.area || 'General Selection',
+        unit: quoteLine.unit,
+        qty: quantity,
+        quantity,
+        price: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
+        sellPrice: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
+        listPrice: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
+        specialRate: Number(quoteLine.unitPrice ?? 0),
+        discountPercent: Number(quoteLine.discountPercent || 0),
+        taxRate: Number(quoteLine.taxRate ?? 18),
+        floorPrice: Number((quoteLine.metadata as any)?.snapshot?.floorPrice || 0),
+        isTileSpecial: Boolean(quoteLine.isTileSpecial),
+      };
+    });
+    return { items: selectedRows, lines };
+  }
+
   async salesOrders(args?: { paymentMode?: string; range?: string; ownerId?: string }) {
     const where: any = {};
     if (args?.paymentMode) where.paymentMode = args.paymentMode.toLowerCase();
@@ -686,6 +802,77 @@ export class QuotesService {
       creditOrders: creditOrders.length,
       creditValue: creditOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0),
     };
+  }
+
+  async quoteFulfillment(quoteId: string) {
+    const [quote, lines, orders] = await Promise.all([
+      this.findByIdWithRelations(quoteId),
+      this.prisma.quoteLine.findMany({ where: { quoteId }, orderBy: { lineNo: 'asc' } }),
+      this.prisma.salesOrder.findMany({ where: { quoteId }, orderBy: { createdAt: 'asc' } }),
+    ]);
+    return {
+      quoteId: quote.id,
+      quoteNumber: quote.quoteNumber,
+      status: quote.status,
+      lines: lines.map((line: any) => {
+        const quantity = Number(line.quantity || 0);
+        const ordered = Number(line.orderedQuantity || 0);
+        const cancelled = Number(line.cancelledQuantity || 0);
+        const closed = Number(line.closedQuantity || 0);
+        return {
+          id: line.id,
+          lineKey: line.lineKey,
+          sku: line.sku,
+          name: line.name,
+          area: line.area,
+          quantity,
+          ordered,
+          cancelled,
+          closed,
+          remaining: Math.max(0, quantity - ordered - cancelled - closed),
+          status: line.status,
+          unitRate: Number(line.unitPrice || 0),
+          grossLineTotal: Number(line.grossLineTotal || line.lineTotal || 0),
+        };
+      }),
+      orders: orders.map((order: any) => ({
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        paymentMode: order.paymentMode,
+        paymentStatus: order.paymentStatus,
+        promisedDate: order.promisedDate,
+        totalAmount: Number(order.totalAmount || 0),
+        lines: order.lines,
+      })),
+    };
+  }
+
+  async closeQuoteRemainder(quoteId: string, actorUserId: string, reason: string) {
+    const note = String(reason || '').trim();
+    if (!note) throw new BadRequestException('A reason is required when closing remaining quote quantity.');
+    return this.prisma.$transaction(async (tx) => {
+      const quote = await tx.quote.findUnique({ where: { id: quoteId } });
+      if (!quote) throw new NotFoundException('Quote not found');
+      const lines = await tx.quoteLine.findMany({ where: { quoteId } });
+      for (const line of lines as any[]) {
+        const remaining = Math.max(0, Number(line.quantity || 0) - Number(line.orderedQuantity || 0) - Number(line.cancelledQuantity || 0) - Number(line.closedQuantity || 0));
+        if (!remaining) continue;
+        await tx.quoteLine.update({
+          where: { id: line.id },
+          data: { closedQuantity: { increment: remaining }, status: 'closed', updatedAt: new Date() },
+        });
+      }
+      const updated = await tx.quote.update({
+        where: { id: quoteId },
+        data: { status: 'closed', updatedAt: new Date(), approval: { ...(quote.approval as any || {}), remainderClosedAt: new Date().toISOString(), remainderClosedBy: actorUserId, remainderCloseReason: note } },
+        include: quoteInclude,
+      } as any) as any;
+      await tx.auditEvent.create({
+        data: { id: ulid(), actorUserId, action: 'quote.remainder.close', entityType: 'Quote', entityId: quoteId, summary: `Closed remaining quantity on ${quote.quoteNumber}`, metadata: { reason: note } },
+      }).catch(() => null);
+      return updated;
+    });
   }
 
   async approveQuote(id: string, approvedByUserId: string, note?: string) {
@@ -742,11 +929,13 @@ export class QuotesService {
 
   async delete(id: string) {
     await this.findById(id);
+    const orders = await this.prisma.salesOrder.count({ where: { quoteId: id } });
+    if (orders > 0) throw new BadRequestException('A quote with sales orders is an audit record and cannot be deleted. Close any remaining quantity instead.');
     // Release reservations and remove dependent rows in one tx so we never
     // leave orphan reservations / activities pointing at a deleted quote.
     return this.prisma.$transaction(async (tx) => {
       await this.releaseReservationsTx(tx, id, 'Quote deleted');
-      await tx.reservation.deleteMany({ where: { quoteId: id } });
+      await tx.reservation.deleteMany({ where: { quoteId: id, salesOrderId: null } });
       await tx.activity.deleteMany({ where: { quoteId: id } });
       await tx.leadIntent.updateMany({ where: { quoteId: id }, data: { quoteId: null, status: 'pending_quote', updatedAt: new Date() } }).catch(() => null);
       return tx.quote.delete({ where: { id } });
@@ -796,8 +985,12 @@ export class QuotesService {
     if (!tileCode) throw new BadRequestException(`Tile row ${index + 1} needs a tile code`);
     if (!tileSize) throw new BadRequestException(`Tile ${tileCode} needs a tile size`);
     if (!Number.isFinite(qty) || qty <= 0) throw new BadRequestException(`Tile ${tileCode} needs a positive whole-number quantity`);
-    const price = Number(line.price || line.sellPrice || 0);
-    if (!Number.isFinite(price) || price < 0) throw new BadRequestException(`Tile ${tileCode} has an invalid price`);
+    const listPrice = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
+    if (!Number.isFinite(listPrice) || listPrice < 0) throw new BadRequestException(`Tile ${tileCode} has an invalid price`);
+    const specialRate = line.specialRate ?? line.specialPrice;
+    if (specialRate !== undefined && specialRate !== null && specialRate !== '' && (!Number.isFinite(Number(specialRate)) || Number(specialRate) < 0)) {
+      throw new BadRequestException(`Tile ${tileCode} has an invalid negotiated rate`);
+    }
     return {
       ...line,
       type: 'tile',
@@ -813,8 +1006,12 @@ export class QuotesService {
       pcsPerBox: Number(line.pcsPerBox || 0),
       qty,
       quantity: qty,
-      price,
-      sellPrice: price,
+      price: listPrice,
+      sellPrice: listPrice,
+      listPrice,
+      specialRate: specialRate === undefined || specialRate === null || specialRate === '' ? null : Number(specialRate),
+      discountPercent: Number(line.discountPercent ?? line.discount ?? 0),
+      taxRate: Number(line.taxRate ?? 18),
       area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
       quoteImage: line.quoteImage || line.customImageUrl || '',
       source: 'tile-intent',
@@ -852,8 +1049,13 @@ export class QuotesService {
       if (!Number.isFinite(qty) || qty <= 0) {
         throw new BadRequestException(`${product.sku} needs a positive whole-number quantity`);
       }
-      const price = Number(line.price || line.sellPrice || product.sellPrice || 0);
-      if (!Number.isFinite(price) || price < 0) {
+      const listPrice = Number(product.sellPrice || 0);
+      const suppliedSpecial = line.specialRate ?? line.specialPrice;
+      const legacyRate = Number(line.price ?? line.sellPrice);
+      const specialRate = suppliedSpecial !== undefined && suppliedSpecial !== null && suppliedSpecial !== ''
+        ? Number(suppliedSpecial)
+        : Number.isFinite(legacyRate) && legacyRate !== listPrice ? legacyRate : null;
+      if (!Number.isFinite(listPrice) || listPrice < 0 || (specialRate !== null && (!Number.isFinite(specialRate) || specialRate < 0))) {
         throw new BadRequestException(`${product.sku} has an invalid price`);
       }
       const media = line.media || product.media || {};
@@ -869,8 +1071,12 @@ export class QuotesService {
         unit: product.unit,
         qty,
         quantity: qty,
-        price,
-        sellPrice: price,
+        price: listPrice,
+        sellPrice: listPrice,
+        listPrice,
+        specialRate,
+        discountPercent: Number(line.discountPercent ?? line.discount ?? 0),
+        taxRate: Number(line.taxRate ?? 18),
         floorPrice: Number(product.floorPrice || 0),
         media,
         area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
@@ -902,26 +1108,20 @@ export class QuotesService {
     };
   }
 
-  private getLinesTotal(lines: any) {
-    return this.normalizeLines(lines).reduce((sum: number, line: any) => {
-      const qty = Number(line.qty || line.quantity || 0);
-      const price = Number(line.price || line.sellPrice || 0);
-      return sum + qty * price;
-    }, 0);
+  private getLinesTotal(lines: any, quoteDiscountPercent = 0) {
+    return priceQuoteLines(this.normalizeLines(lines), quoteDiscountPercent).totals.grandTotal;
   }
 
-  private async createReservationsForQuote(tx: any, quote: any) {
-    const lines = this.normalizeLines(quote.lines);
-
-    // Idempotency guard: if reservations for this quote already exist (e.g. a
-    // concurrent confirm just wrote them) bail out instead of double-deducting.
-    const existing = await tx.reservation.count({ where: { quoteId: quote.id } });
+  private async createReservationsForSalesOrder(tx: any, args: { quote: any; salesOrder: any; lines: any[]; salesOrderLines: any[] }) {
+    const { quote, salesOrder, lines, salesOrderLines } = args;
+    const existing = await tx.reservation.count({ where: { salesOrderId: salesOrder.id } });
     if (existing > 0) return;
 
-    for (const line of lines) {
+    for (const line of this.normalizeLines(lines)) {
       const productId = line.productId;
       const quantity = Number(line.qty || line.quantity || 0);
       if (!productId || quantity <= 0) continue;
+      const salesOrderLine = salesOrderLines.find((row: any) => row.quoteLineId === line.quoteLineId || row.lineKey === line.lineKey);
 
       const balance = await tx.inventoryBalance.findUnique({ where: { productId } });
       const available = Math.max(0, Number(balance?.available || 0));
@@ -933,6 +1133,8 @@ export class QuotesService {
           data: {
             id: ulid(),
             quoteId: quote.id,
+            salesOrderId: salesOrder.id,
+            salesOrderLineId: salesOrderLine?.id || null,
             productId,
             quantity: reserveQty,
             status: 'reserved',
@@ -948,13 +1150,13 @@ export class QuotesService {
           reservedDelta: reserveQty,
           locationReservedDelta: reserveQty,
           requireAvailable: true,
-          reason: `Reserved for ${quote.quoteNumber}`,
+          reason: `Reserved for ${salesOrder.orderNumber}`,
           relatedQuoteId: quote.id,
           referenceType: 'Reservation',
           referenceId: reservation.id,
-          sourceDocumentNo: quote.quoteNumber,
+          sourceDocumentNo: salesOrder.orderNumber,
           createdBy: quote.ownerId,
-          metadata: { source: 'quote_confirm' },
+          metadata: { source: 'sales_order_conversion', salesOrderId: salesOrder.id, salesOrderLineId: salesOrderLine?.id || null },
         });
       }
 
@@ -963,6 +1165,8 @@ export class QuotesService {
           data: {
             id: ulid(),
             quoteId: quote.id,
+            salesOrderId: salesOrder.id,
+            salesOrderLineId: salesOrderLine?.id || null,
             productId,
             quantity: backorderQty,
             status: 'backordered',
@@ -976,7 +1180,7 @@ export class QuotesService {
   private async createPurchaseDemandForSalesOrderTx(tx: any, args: { quote: any; salesOrder: any; lines: any[] }) {
     const { quote, salesOrder } = args;
     const backorders = await tx.reservation.findMany({
-      where: { quoteId: quote.id, status: 'backordered' },
+      where: { salesOrderId: salesOrder.id, status: 'backordered' },
       orderBy: { createdAt: 'asc' },
     });
     const productIds = Array.from(new Set(backorders.map((reservation: any) => reservation.productId).filter(Boolean)));
@@ -1060,7 +1264,7 @@ export class QuotesService {
   }
 
   private async releaseReservationsTx(tx: any, quoteId: string, reason: string) {
-    const reservations = await tx.reservation.findMany({ where: { quoteId, status: 'reserved' } });
+    const reservations = await tx.reservation.findMany({ where: { quoteId, salesOrderId: null, status: 'reserved' } });
     for (const reservation of reservations) {
       const balance = await tx.inventoryBalance.findUnique({ where: { productId: reservation.productId } });
       if (balance) {

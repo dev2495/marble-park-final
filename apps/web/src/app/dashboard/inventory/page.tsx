@@ -164,7 +164,7 @@ export default function InventoryPage() {
                   <tr key={item.id} className="transition hover:bg-white">
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
-                        <img src={item.product?.media?.primary || '/catalogue-art/faucet.svg'} alt="" className="h-12 w-12 rounded-2xl bg-[#eff6ff] object-contain p-1" />
+                        <img src={item.product?.media?.primaryUrl || item.product?.media?.primaryImage || item.product?.media?.primary || (Array.isArray(item.product?.media?.gallery) ? (typeof item.product.media.gallery[0] === 'string' ? item.product.media.gallery[0] : item.product.media.gallery[0]?.url) : '') || '/catalogue-art/faucet.svg'} alt="" className="h-12 w-12 rounded-2xl bg-[#eff6ff] object-contain p-1" />
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold text-[#18181b]">{item.product?.name}</div>
                           <div className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{item.product?.sku} · {item.product?.brand}</div>

@@ -1,4 +1,4 @@
-import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int, Context } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int, Context, GraphQLISODateTime } from '@nestjs/graphql';
 import { ProductsService } from './products.service';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
@@ -47,6 +47,9 @@ export class ProductOutput {
 
   @Field(() => GraphQLJSON, { nullable: true })
   media?: any;
+
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  updatedAt?: Date;
 }
 
 @InputType()
@@ -86,6 +89,7 @@ export class CreateProductInput {
 
   @Field(() => GraphQLJSON, { nullable: true })
   media?: any;
+
 }
 
 @InputType()
@@ -125,6 +129,9 @@ export class UpdateProductInput {
 
   @Field(() => GraphQLJSON, { nullable: true })
   media?: any;
+
+  @Field(() => String, { nullable: true })
+  expectedUpdatedAt?: string;
 }
 
 @Resolver()
@@ -140,9 +147,10 @@ export class ProductsResolver {
     @Args('search', { nullable: true }) search?: string,
     @Args('category', { nullable: true }) category?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
+    @Args('includeInactive', { nullable: true }) includeInactive?: boolean,
   ) {
     await requireSession(this.prisma, ctx);
-    return this.products.findAll({ search, category, take });
+    return this.products.findAll({ search, category, take, includeInactive });
   }
 
   @Query(() => ProductOutput)
@@ -177,8 +185,8 @@ export class ProductsResolver {
 
   @Mutation(() => ProductOutput)
   async createProduct(@Args('input') input: CreateProductInput, @Context() ctx: GraphqlRequestContext) {
-    await requirePermission(this.prisma, ctx, 'products.manage');
-    return this.products.create(input as any);
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.create(input as any, user.id);
   }
 
   @Mutation(() => ProductOutput)
@@ -187,13 +195,13 @@ export class ProductsResolver {
     @Args('input') input: UpdateProductInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requirePermission(this.prisma, ctx, 'products.manage');
-    return this.products.update(id, input as any);
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.update(id, input as any, user.id);
   }
 
   @Mutation(() => ProductOutput)
   async deleteProduct(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    await requirePermission(this.prisma, ctx, 'products.manage');
-    return this.products.delete(id);
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.delete(id, user.id);
   }
 }

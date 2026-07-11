@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230169cc'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='Arial' font-size='12' font-weight='700' fill='white'%3EMP%3C/text%3E%3C/svg%3E">
+  <title>Marble Park Client Workflow Readiness</title>
+  <style>
+    :root {
+      --surface: #fff;
+      --bg: #f7f7f7;
+      --surface-tertiary: #f3f3f3;
+      --text: #0d0d0d;
+      --secondary: #5d5d5d;
+      --muted: #8f8f8f;
+      --border: rgba(13, 13, 13, 0.08);
+      --border-strong: rgba(13, 13, 13, 0.14);
+      --grid: #e9e9e9;
+      --blue: #0169cc;
+      --blue-dark: #003f7a;
+      --green: #00692a;
+      --purple: #8046d9;
+      --warning: #e25507;
+      --warning-bg: #fff5f0;
+      --positive: #00692a;
+      --positive-bg: #edfaf2;
+      --ds-bg: var(--bg);
+      --ds-surface: var(--surface);
+      --ds-surface-secondary: var(--bg);
+      --ds-surface-tertiary: var(--surface-tertiary);
+      --ds-border-subtle: var(--border);
+      --ds-border: var(--border-strong);
+      --ds-border-strong: var(--border-strong);
+      --ds-text-primary: var(--text);
+      --ds-text: var(--text);
+      --ds-text-secondary: var(--secondary);
+      --ds-text-muted: var(--secondary);
+      --ds-text-tertiary: var(--muted);
+      --ds-blue: var(--blue-dark);
+      --ds-blue-500: var(--blue);
+      --ds-purple: var(--purple);
+      --ds-green: var(--green);
+      --ds-orange: var(--warning);
+      --ds-neutral: var(--muted);
+      --ds-font: "System Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --ds-radius-sm: 8px;
+      --ds-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+      --ds-chart-body-height: 320px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { max-width: 100%; overflow-x: clip; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.55 var(--ds-font); }
+    .shell { width: min(1140px, calc(100% - 32px)); margin: 18px auto 56px; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05); }
+    .topbar { display: flex; min-height: 48px; align-items: center; justify-content: space-between; padding: 8px 16px; border-bottom: 1px solid var(--border); font-weight: 500; }
+    .brand { display: flex; align-items: center; gap: 9px; }
+    .mark { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 6px; background: var(--blue); color: #fff; font-size: 9px; font-weight: 700; }
+    .meta { overflow: hidden; max-width: 45%; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    main { padding: 48px; }
+    .reading { width: min(800px, 100%); margin: 0 auto; }
+    .wide { width: 100%; margin: 28px auto 46px; }
+    .kicker { margin-bottom: 12px; color: var(--blue); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+    h1 { max-width: 760px; margin: 0; font-size: 36px; font-weight: 500; letter-spacing: 0; line-height: 42px; }
+    h2 { margin: 0 0 10px; font-size: 24px; font-weight: 500; letter-spacing: 0; line-height: 31px; }
+    h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 22px; }
+    p, li { line-height: 22px; }
+    .deck { max-width: 750px; margin: 16px 0 30px; color: var(--secondary); font-size: 16px; line-height: 25px; }
+    .summary { display: grid; grid-template-columns: 145px 1fr; gap: 24px; margin-bottom: 26px; padding: 24px 0; border-top: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong); }
+    .summary-label { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+    .summary-body { display: grid; gap: 12px; }
+    .summary-body p { margin: 0; color: var(--secondary); }
+    .summary-body strong { color: var(--text); }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 12px; margin-bottom: 46px; }
+    .metric { min-height: 118px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 8px; }
+    .metric-label { color: var(--secondary); font-size: 12px; }
+    .metric-value { margin: 8px 0 5px; font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; line-height: 34px; }
+    .metric-note { margin-top: 7px; color: var(--muted); font-size: 11px; }
+    .pill { display: inline-flex; padding: 2px 7px; border-radius: 999px; background: var(--positive-bg); color: var(--positive); font-size: 12px; font-weight: 600; }
+    .pill.warn { background: var(--warning-bg); color: var(--warning); }
+    .narrative { margin: 44px 0 20px; }
+    .narrative p { max-width: 730px; margin: 0; color: var(--secondary); }
+    .card { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    figure.card { margin: 0; }
+    .card-head { padding: 16px 20px 14px; border-bottom: 1px solid var(--border); }
+    .card-head p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    .chart-wrap { padding: 16px 24px 16px 210px; }
+    [data-recharts-chart] { min-height: 320px; }
+    [data-recharts-live] { display: none; width: 100%; min-height: 320px; }
+    [data-recharts-ready="true"] [data-recharts-fallback] { display: none; }
+    [data-recharts-ready="true"] [data-recharts-live] { display: block; }
+    .chart-fallback { width: 100%; min-height: 320px; }
+    .chart-fallback svg { display: block; width: 100%; height: auto; min-height: 320px; overflow: visible; }
+    .chart-note { padding: 12px 20px 15px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; line-height: 17px; }
+    .table-card { margin: 12px 0 46px; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; text-align: right; white-space: nowrap; }
+    td { padding: 13px 14px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td.positive { color: var(--positive); }
+    td.negative { color: var(--warning); font-weight: 600; }
+    .caveat { margin: 46px 0 0; padding: 16px 18px; border-radius: 14px; background: var(--surface-tertiary); color: var(--secondary); font-size: 12px; line-height: 19px; }
+    .caveat strong { color: var(--text); }
+    .source-tooltip { position: relative; display: inline-block; padding: 0; border: 0; appearance: none; background: none; color: inherit; font: inherit; line-height: inherit; cursor: help; text-decoration: underline dotted; text-underline-offset: 0.18em; }
+    .source-tooltip:focus-visible { outline: 2px solid var(--purple); outline-offset: 3px; border-radius: 3px; }
+    .source-tooltip-content { position: fixed; z-index: 1000; top: var(--source-tooltip-top, 8px); left: var(--source-tooltip-left, 8px); display: none; width: max-content; max-width: min(360px, calc(100vw - 16px)); padding: 8px 10px; border-radius: 8px; background: #171411; color: #fff; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; line-height: 1.4; overflow-wrap: anywhere; white-space: normal; text-align: left; text-decoration: none; box-shadow: 0 8px 24px rgba(23, 20, 17, 0.2); opacity: 0; visibility: hidden; pointer-events: none; }
+    .source-tooltip-content, .source-tooltip-content * { color: #fff !important; font-style: normal !important; text-decoration: none !important; }
+    .source-tooltip-heading { display: none; }
+    html:not([data-source-tooltips-ready]) .source-tooltip-content { position: absolute; top: auto; bottom: calc(100% + 8px); left: 50%; max-width: min(360px, 80vw); transform: translateX(-50%); }
+    html:not([data-source-tooltips-ready]) .source-figure > .source-tooltip .source-tooltip-content { top: calc(100% + 8px); bottom: auto; }
+    .source-tooltip:hover .source-tooltip-content, .source-tooltip:focus .source-tooltip-content, .source-tooltip:focus-within .source-tooltip-content { display: block; opacity: 1; visibility: visible; }
+    .source-figure { position: relative; }
+    .source-figure > .source-tooltip { position: absolute; top: 10px; right: 10px; z-index: 2; padding: 4px 7px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--secondary); font-size: 11px; font-weight: 600; line-height: 1; letter-spacing: 0.01em; text-decoration: none; touch-action: manipulation; }
+    .status-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 0 0 44px; }
+    .status-item { min-height: 94px; padding: 14px; border: 1px solid var(--border); border-top: 3px solid var(--muted); border-radius: 8px; }
+    .status-item.ok { border-top-color: var(--positive); }
+    .status-item.partial { border-top-color: var(--blue); }
+    .status-item.warn { border-top-color: var(--warning); }
+    .status-item strong { display: block; margin-bottom: 6px; font-size: 15px; }
+    .status-item span { color: var(--secondary); font-size: 12px; line-height: 18px; }
+    .section { margin: 42px 0 0; }
+    .section > p { margin: 0 0 14px; color: var(--secondary); }
+    .section ul, .section ol { margin: 12px 0 0; padding-left: 20px; }
+    .section li { margin: 7px 0; color: var(--secondary); }
+    .section li strong { color: var(--text); }
+    .callout { margin: 20px 0; padding: 16px 18px; border-left: 4px solid var(--blue); border-radius: 0 8px 8px 0; background: var(--surface-tertiary); color: var(--secondary); }
+    .callout strong { color: var(--text); }
+    .callout.critical { border-left-color: var(--warning); }
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 22px 0 10px; }
+    .flow-step { position: relative; min-height: 108px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .flow-step:not(:last-child)::after { position: absolute; top: 42px; right: -9px; z-index: 2; content: '\2192'; color: var(--blue); font-weight: 700; }
+    .flow-step small { display: block; margin-bottom: 7px; color: var(--blue); font-weight: 700; text-transform: uppercase; }
+    .flow-step strong { display: block; margin-bottom: 5px; }
+    .flow-step span { color: var(--secondary); font-size: 12px; line-height: 18px; }
+    .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
+    .review-item { padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
+    .review-item h3 { margin-bottom: 7px; }
+    .review-item p { margin: 0; color: var(--secondary); font-size: 12px; line-height: 19px; }
+    .priority { display: inline-flex; margin-right: 7px; padding: 2px 6px; border-radius: 4px; background: var(--warning-bg); color: var(--warning); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+    .priority.medium { background: var(--surface-tertiary); color: var(--blue); }
+    .evidence-note { color: var(--muted); font-size: 11px; line-height: 17px; }
+    td.status { font-weight: 700; text-align: left; }
+    td.status.ready { color: var(--positive); }
+    td.status.partial { color: var(--blue); }
+    td.status.missing { color: var(--warning); }
+
+    @page { size: A4; margin: 13mm 12mm 15mm; }
+    @media print {
+      :root { color-scheme: light; --surface: #fff; --bg: #fff; --surface-tertiary: #f3f3f3; --text: #0d0d0d; --secondary: #4f4f4f; --muted: #707070; --border: rgba(13,13,13,.12); --border-strong: rgba(13,13,13,.2); --grid: #e5e5e5; --blue: #0169cc; --blue-dark: #003f7a; --green: #00692a; --purple: #8046d9; --warning: #c94700; --warning-bg: #fff5f0; --positive: #00692a; --positive-bg: #edfaf2; }
+      body { background: #fff; font-size: 11px; }
+      .shell { width: 100%; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+      .topbar { min-height: 34px; padding: 4px 0 8px; }
+      main { padding: 22px 0 0; }
+      .reading { width: 100%; }
+      h1 { font-size: 29px; line-height: 34px; }
+      h2 { font-size: 20px; line-height: 26px; }
+      p, li { line-height: 18px; }
+      .summary { gap: 18px; margin-bottom: 18px; padding: 16px 0; }
+      .status-strip { margin-bottom: 24px; }
+      .status-item { min-height: 76px; padding: 10px; }
+      .wide { margin: 20px 0 28px; }
+      .chart-wrap { padding: 8px 18px 8px 155px; }
+      [data-recharts-chart], [data-recharts-live], .chart-fallback { min-height: 280px; }
+      .chart-fallback svg { min-height: 280px; }
+      .section, .narrative { margin-top: 28px; }
+      .card, .review-item, .flow-step, .status-item { break-inside: avoid; }
+      figure.card { break-inside: avoid; }
+      .table-card { break-inside: auto; }
+      .table-card .card-head { break-after: avoid; }
+      .table-scroll { overflow: visible; }
+      table { table-layout: fixed; font-size: 9.5px; }
+      thead { display: table-header-group; }
+      tr { break-inside: avoid; }
+      th, td { padding: 8px 9px; vertical-align: top; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+      .mapping-table th:nth-child(1), .mapping-table td:nth-child(1) { width: 20%; }
+      .mapping-table th:nth-child(2), .mapping-table td:nth-child(2) { width: 9%; }
+      .mapping-table th:nth-child(3), .mapping-table td:nth-child(3) { width: 34%; }
+      .mapping-table th:nth-child(4), .mapping-table td:nth-child(4) { width: 37%; }
+      .acceptance-table th:nth-child(1), .acceptance-table td:nth-child(1) { width: 17%; }
+      .acceptance-table th:nth-child(2), .acceptance-table td:nth-child(2) { width: 40%; }
+      .acceptance-table th:nth-child(3), .acceptance-table td:nth-child(3) { width: 43%; }
+      .adjacent-features { break-before: page; }
+      .caveat { margin-top: 16px; padding: 10px 12px; border-radius: 8px; font-size: 10px; line-height: 14px; break-inside: avoid; }
+      .source-tooltip-content { display: none !important; }
+      .source-figure > .source-tooltip { display: none; }
+      .evidence-note { display: block; }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface: #212121;
+        --bg: #171717;
+        --surface-tertiary: #303030;
+        --text: #fff;
+        --secondary: #cdcdcd;
+        --muted: #afafaf;
+        --border: rgba(255, 255, 255, 0.07);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --grid: #3a3a3a;
+        --blue: #48aaff;
+        --blue-dark: #48aaff;
+        --green: #62c887;
+        --purple: #b58cff;
+        --warning: #ff9e6c;
+        --warning-bg: #4a2206;
+        --positive: #7bd99b;
+        --positive-bg: #143b22;
+      }
+    }
+
+    @media (max-width: 800px) {
+      .shell { width: 100%; margin: 0; border: 0; border-radius: 0; }
+      main { padding: 32px 18px; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+      .summary { grid-template-columns: 1fr; gap: 10px; }
+      .chart-fallback svg { min-width: 720px; }
+      .chart-wrap { overflow-x: auto; padding: 16px 18px 16px 160px; }
+      .status-strip, .flow, .review-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 600px) {
+      .source-tooltip:hover .source-tooltip-content, .source-tooltip:focus .source-tooltip-content, .source-tooltip:focus-within .source-tooltip-content { display: none; opacity: 0; visibility: hidden; }
+      .source-tooltip[data-source-tooltip-open] .source-tooltip-content, html:not([data-source-tooltips-ready]) .source-tooltip:focus .source-tooltip-content { position: fixed; top: auto; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 16px; display: block; width: auto; max-width: none; max-height: min(40vh, 280px); padding: 14px 16px; overflow-y: auto; border-radius: 14px; font-size: 14px; line-height: 1.45; transform: none; opacity: 1; visibility: visible; pointer-events: auto; }
+      .source-tooltip-heading { display: block; margin-bottom: 6px; font-weight: 600; }
+    }
+
+    @media (max-width: 520px) {
+      h1 { font-size: 32px; line-height: 38px; }
+      .metrics { grid-template-columns: 1fr; }
+      .status-strip, .flow, .review-grid { grid-template-columns: 1fr; }
+      .flow-step::after { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Static report source; the embedded runtime upgrades the same-data chart fallback. -->
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="mark" aria-hidden="true">MP</span>Marble Park Review</div>
+      <div class="meta">Repository and Railway audit | July 10, 2026</div>
+    </header>
+    <main data-report-audience="product stakeholders">
+      <article class="reading">
+        <div class="kicker">Client workflow and full-stack review</div>
+        <header data-contract-section="title"><h1>Marble Park Client Workflow Readiness</h1></header>
+        <section class="summary" data-contract-section="executive-summary">
+          <div class="summary-label">Executive Summary</div>
+          <div class="summary-body">
+            <p><strong>The client requests are valid and should be handled as one commercial workflow.</strong> Product editing, quote pricing, and partial order conversion share the same product and line snapshots; implementing them independently would create data drift.</p>
+            <p><strong>Direct quote creation already works.</strong> Quote Studio accepts a customer and product lines without a lead or intent, while the API creates the internal CRM opportunity automatically.</p>
+            <p><strong>Product editing, editable quote rate, and partial sales orders are not end-to-end complete.</strong> Product updates exist only in the API, quote-rate totals disagree between surfaces, and the database enforces one sales order and one dispatch job per quote.</p>
+            <p><strong>Production is currently offline.</strong> Railway reports both application services stopped with no running replicas, so restoring a controlled deployment is the first operational action before client validation.</p>
+          </div>
+        </section>
+
+        <section class="status-strip" aria-label="Current workflow status">
+          <div class="status-item ok"><strong>Direct quote</strong><span>Existing behavior; needs a dedicated regression test.</span></div>
+          <div class="status-item partial"><strong>Product edit</strong><span>API capable; no usable Product Master edit screen.</span></div>
+          <div class="status-item warn"><strong>Quote rate</strong><span>Visible calculation and stored order value can disagree.</span></div>
+          <div class="status-item warn"><strong>Partial order</strong><span>Blocked by one-order-per-quote data constraints.</span></div>
+          <div class="status-item warn"><strong>Production</strong><span>Web and API services are stopped.</span></div>
+        </section>
+
+        <section class="narrative" data-contract-section="key-findings">
+          <h2>Only direct quote creation is functionally ready</h2>
+          <p>The chart grades each request across UI, API, data model, downstream integrity, and automated test coverage. It is a coverage count, not a subjective percentage. Product editing has backend foundations, pricing has partial UI and schema support but unsafe downstream totals, and partial ordering needs coordinated changes across the full chain.</p>
+        </section>
+
+        <section class="caveat" data-contract-section="caveats-and-assumptions">
+          <strong>Caveats and Assumptions.</strong> This is a no-change audit of the current main branch and read-only Railway state on July 10, 2026. Local production builds and Prisma validation passed. Mutating smoke scripts were not run, and production was offline, so authenticated live workflows could not be executed. No application code, migration, database record, or hosting configuration was changed.
+        </section>
+      </article>
+
+      <div class="wide">
+        <figure class="card source-figure">
+          <div class="card-head"><h3>Requirement coverage by delivery layer</h3><p>Five audited layers per request: UI, API, data model, downstream integrity, and automated test.</p></div>
+          <div class="chart-wrap">
+            <div data-recharts-chart="requirement-coverage">
+              <div class="chart-fallback" data-recharts-fallback>
+                <svg viewBox="0 0 960 420" role="img" aria-label="Stacked horizontal bars showing implemented, partial, and missing delivery layers for each client request">
+                  <style>
+                    .fb-label{font:600 15px system-ui,sans-serif;fill:#4f4f4f}.fb-value{font:700 13px system-ui,sans-serif;fill:#fff}.fb-axis{font:12px system-ui,sans-serif;fill:#707070}.fb-grid{stroke:#e5e5e5;stroke-width:1}.fb-ready{fill:#00692a}.fb-partial{fill:#0169cc}.fb-missing{fill:#e25507}
+                  </style>
+                  <line x1="260" y1="55" x2="260" y2="355" class="fb-grid"/><line x1="386" y1="55" x2="386" y2="355" class="fb-grid"/><line x1="512" y1="55" x2="512" y2="355" class="fb-grid"/><line x1="638" y1="55" x2="638" y2="355" class="fb-grid"/><line x1="764" y1="55" x2="764" y2="355" class="fb-grid"/><line x1="890" y1="55" x2="890" y2="355" class="fb-grid"/>
+                  <text x="252" y="380" text-anchor="middle" class="fb-axis">0</text><text x="386" y="380" text-anchor="middle" class="fb-axis">1</text><text x="512" y="380" text-anchor="middle" class="fb-axis">2</text><text x="638" y="380" text-anchor="middle" class="fb-axis">3</text><text x="764" y="380" text-anchor="middle" class="fb-axis">4</text><text x="890" y="380" text-anchor="middle" class="fb-axis">5 layers</text>
+                  <text x="240" y="102" text-anchor="end" class="fb-label">Product master edit</text><rect x="260" y="78" width="252" height="34" rx="3" class="fb-ready"/><rect x="512" y="78" width="126" height="34" class="fb-partial"/><rect x="638" y="78" width="252" height="34" rx="3" class="fb-missing"/><text x="386" y="100" text-anchor="middle" class="fb-value">2 ready</text><text x="575" y="100" text-anchor="middle" class="fb-value">1 partial</text><text x="764" y="100" text-anchor="middle" class="fb-value">2 missing</text>
+                  <text x="240" y="172" text-anchor="end" class="fb-label">Direct quote creation</text><rect x="260" y="148" width="504" height="34" rx="3" class="fb-ready"/><rect x="764" y="148" width="126" height="34" rx="3" class="fb-missing"/><text x="512" y="170" text-anchor="middle" class="fb-value">4 ready</text><text x="827" y="170" text-anchor="middle" class="fb-value">1 missing</text>
+                  <text x="240" y="242" text-anchor="end" class="fb-label">Editable quote rate</text><rect x="260" y="218" width="126" height="34" rx="3" class="fb-ready"/><rect x="386" y="218" width="252" height="34" class="fb-partial"/><rect x="638" y="218" width="252" height="34" rx="3" class="fb-missing"/><text x="323" y="240" text-anchor="middle" class="fb-value">1</text><text x="512" y="240" text-anchor="middle" class="fb-value">2 partial</text><text x="764" y="240" text-anchor="middle" class="fb-value">2 missing</text>
+                  <text x="240" y="312" text-anchor="end" class="fb-label">Partial sales order</text><rect x="260" y="288" width="126" height="34" rx="3" class="fb-partial"/><rect x="386" y="288" width="504" height="34" rx="3" class="fb-missing"/><text x="323" y="310" text-anchor="middle" class="fb-value">1 partial</text><text x="638" y="310" text-anchor="middle" class="fb-value">4 missing</text>
+                  <rect x="260" y="18" width="14" height="14" rx="2" class="fb-ready"/><text x="282" y="30" class="fb-axis">Implemented</text><rect x="385" y="18" width="14" height="14" rx="2" class="fb-partial"/><text x="407" y="30" class="fb-axis">Partial</text><rect x="473" y="18" width="14" height="14" rx="2" class="fb-missing"/><text x="495" y="30" class="fb-axis">Missing</text>
+                </svg>
+              </div>
+              <div data-recharts-live aria-hidden="true"></div>
+            </div>
+          </div>
+          <figcaption class="chart-note">Coverage is based on traced repository behavior, current schema constraints, available smoke scripts, and read-only Railway status. <span class="evidence-note">Evidence: client message; Product Master, quote, order, stock, and dispatch source; Prisma schema; smoke scripts.</span></figcaption>
+          <button type="button" class="source-tooltip" aria-describedby="chart-source-tooltip-1">Source<span class="source-tooltip-content" id="chart-source-tooltip-1" role="tooltip">Source: Marble Park repository audit and client WhatsApp requirement<br>Files: schema.prisma, products service/resolver and page, quote service/resolver and pages, stock-posting.ts, dispatch service, E2E smoke scripts</span></button>
+        </figure>
+      </div>
+
+      <article class="reading">
+        <section class="card table-card">
+          <div class="card-head"><h3>Client request to current-system mapping</h3><p>Current behavior and the minimum complete outcome for client acceptance.</p></div>
+          <div class="table-scroll">
+            <table class="mapping-table">
+              <thead><tr><th>Client request</th><th>Status</th><th>Current system</th><th>Complete acceptance outcome</th></tr></thead>
+              <tbody>
+                <tr><td>Product master editable; SKU fixed</td><td class="status partial">Partial</td><td>API update excludes SKU, but Product Master has create-only UI; archive can still rewrite SKU.</td><td>Edit all commercial fields and image gallery; SKU read-only; diff audit; archive without changing code.</td></tr>
+                <tr><td>Quote without lead or intent</td><td class="status ready">Ready</td><td>Quote Studio creates from customer and lines; API auto-creates the internal opportunity.</td><td>Keep this path, label it clearly, and add a regression test for no-lead creation.</td></tr>
+                <tr><td>Rate available while quoting</td><td class="status missing">Unsafe</td><td>Creation shows catalogue rate read-only; detail edits MRP and discount; order totals ignore special-rate semantics.</td><td>Editable line rate at creation and detail, one canonical pricing function, floor-price policy, identical UI/PDF/order totals.</td></tr>
+                <tr><td>Multiple partial orders from one quote</td><td class="status missing">Missing</td><td>Partial challans exist, but quote-to-order conversion always uses all lines and quote ID is unique on sales order and dispatch job.</td><td>Select line quantities, create repeated orders against remaining quantity, and isolate stock, payment, procurement, documents, and dispatch per order.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>The correct design keeps one quote and allows many controlled orders</h2>
+          <p>The quote remains the negotiated customer record. Each confirmed subset becomes its own sales order, with independent payment, reservation, procurement, document, and dispatch state. Remaining quote quantities stay available for the next order instead of forcing a duplicate quote.</p>
+          <div class="flow" aria-label="Recommended quote to partial order flow">
+            <div class="flow-step"><small>Quote</small><strong>Frozen commercial snapshot</strong><span>Customer, area, SKU, list price, negotiated rate, tax, and accepted quantities.</span></div>
+            <div class="flow-step"><small>Selection</small><strong>Choose this order</strong><span>Staff selects line quantities up to the remaining balance and confirms payment terms.</span></div>
+            <div class="flow-step"><small>Sales order</small><strong>Independent execution</strong><span>Each order gets its own number, lines, payment, reservation, demand, PDF, and dispatch job.</span></div>
+            <div class="flow-step"><small>Quote progress</small><strong>Remaining quantity stays open</strong><span>Show ordered, remaining, cancelled, and closed quantities with full order history.</span></div>
+          </div>
+          <div class="callout"><strong>Concurrency rule:</strong> sales-order creation must be transactional and idempotent. Two staff members cannot order the same remaining quantity, and retrying a request cannot create a duplicate order.</div>
+        </section>
+
+        <section class="section">
+          <h2>Pricing must become one business rule, not three calculations</h2>
+          <p>The current quote UI and PDFs understand special rate and line discount, while sales-order totals and normalized line prices use catalogue price. The fix should introduce one shared pricing contract used by the browser, API, quote PDF, sales-order PDF, payments, and reports.</p>
+          <ul>
+            <li><strong>Line snapshot:</strong> list price, discount percentage, final unit rate, tax rate, taxable value, tax amount, and gross line total.</li>
+            <li><strong>Commercial guardrail:</strong> below-floor rate requires an explicit permission or owner approval, with the requested and approved rate recorded.</li>
+            <li><strong>Version safety:</strong> editing Product Master changes future quotes only; existing quote versions and sales orders keep their historical rate and image snapshot.</li>
+            <li><strong>Single calculator:</strong> persist server-calculated totals and make both PDFs read those values instead of recalculating independently.</li>
+          </ul>
+        </section>
+
+        <section class="section">
+          <h2>Product Master needs a real edit lifecycle</h2>
+          <p>The backend already has the right first boundary because the update input does not accept SKU. The complete workflow should add an edit action from the SKU register and product detail, expose the existing commercial fields, and close audit and image-management gaps.</p>
+          <ul>
+            <li><strong>Immutable identity:</strong> SKU is read-only in UI and rejected if supplied to update APIs; archive keeps the original SKU.</li>
+            <li><strong>Editable content:</strong> name, category, brand, finish, dimensions, unit, sell price, floor price, tax class, description, status, primary image, and gallery.</li>
+            <li><strong>Image controls:</strong> upload, replace, remove, set primary, reorder gallery, file validation, size limits, and durable storage.</li>
+            <li><strong>Audit and conflict control:</strong> record field-level before/after values and reject stale edits using a version or updated timestamp.</li>
+          </ul>
+        </section>
+
+        <section class="section">
+          <h2>Full-stack review found four release blockers beyond the UI</h2>
+          <div class="review-grid">
+            <div class="review-item"><h3><span class="priority">Critical</span>Production hosting</h3><p>Railway shows both application services failed/stopped, zero running replicas, and no connected source repository. Public web and API domains return Application not found.</p></div>
+            <div class="review-item"><h3><span class="priority">Critical</span>Pricing integrity</h3><p>Special rate and discounts are calculated in quote UI/PDF, but order totals, normalized unit price, and payment status use catalogue price. This can create customer-document and accounting disagreement.</p></div>
+            <div class="review-item"><h3><span class="priority">Critical</span>Order data model</h3><p>Sales order and dispatch job both enforce quote ID uniqueness. Reservations and several downstream lookups are quote-scoped, so partial ordering cannot be made safe with a frontend-only change.</p></div>
+            <div class="review-item"><h3><span class="priority">Critical</span>Security and uploads</h3><p>Production GraphQL playground is enabled, sessions live in browser storage, login has no throttling, broad roles can upload arbitrary public files, and request bodies permit very large payloads.</p></div>
+            <div class="review-item"><h3><span class="priority medium">High</span>Dependency risk</h3><p>The current production dependency audit reports <span class="source-tooltip" tabindex="0" aria-describedby="dep-audit-tip">six high and four moderate advisories<span class="source-tooltip-content" id="dep-audit-tip" role="tooltip">Source: npm audit --omit=dev, July 10, 2026<br>Dataset: root package-lock dependency graph</span></span>, including websocket, upload, mail, and CSS processing paths.</p></div>
+            <div class="review-item"><h3><span class="priority medium">High</span>Automated verification</h3><p>Production builds and schema validation pass, but there are no unit or integration test files. Existing smoke scripts mutate business data and do not cover product edit, direct quote without lead, canonical rate parity, or multiple orders per quote.</p></div>
+            <div class="review-item"><h3><span class="priority medium">High</span>Database integrity</h3><p>Several normalized operational tables have IDs and indexes but no foreign keys in migrations. Partial-order work should add explicit relations and deletion rules instead of increasing soft references.</p></div>
+            <div class="review-item"><h3><span class="priority medium">High</span>Delivery discipline</h3><p>Service source is disconnected, health checks are absent, Docker builds use install rather than lockfile-clean install, and documentation describes older framework and authentication choices.</p></div>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>User database review: 37 of 98 accounts are active in the local snapshot</h2>
+          <p>A read-only aggregate query was run against the configured local <code>marble_park</code> database. No names, email addresses, phone numbers, password hashes, tokens, or permission details were extracted.</p>
+          <div class="review-grid">
+            <div class="review-item"><h3>Account status</h3><p><strong>98 total users:</strong> 37 active and 61 inactive. The recorded account creation range is April 29 to June 19, 2026.</p></div>
+            <div class="review-item"><h3>Active role mix</h3><p>27 office staff, 4 sales, 2 owners, and one each for admin, dispatch operations, inventory manager, and sales manager.</p></div>
+            <div class="review-item"><h3>Inactive concentration</h3><p>All 61 inactive accounts are concentrated in three roles: 31 sales, 15 owners, and 15 dispatch operations. These should be reconciled against current staff before production restore.</p></div>
+            <div class="review-item"><h3>Authentication hygiene</h3><p>All 751 stored sessions are expired and none are active. Password-change timestamps exist for 82 users, while 16 are missing; three users have permission overrides.</p></div>
+          </div>
+          <div class="callout critical"><strong>Production user counts remain unverified.</strong> Railway variables show a TCP proxy correctly targeting PostgreSQL port 5432, but the Postgres service has no active deployment and both public-proxy and SSH-tunnel connections closed before authentication. Restarting or redeploying production would be a state change, so it was not performed in this audit.</div>
+        </section>
+
+        <section class="section">
+          <h2>End-to-end acceptance must prove business truth across every surface</h2>
+          <p>A release is complete only when UI, API, database state, documents, stock, payments, procurement, dispatch, and audit agree. The acceptance suite should use an isolated test database and disposable uploaded assets, never the client dataset.</p>
+          <section class="card table-card">
+            <div class="card-head"><h3>Required acceptance scenarios</h3><p>Minimum automated coverage before client handoff.</p></div>
+            <div class="table-scroll">
+              <table class="acceptance-table">
+                <thead><tr><th>Workflow</th><th>Cases that must pass</th><th>Pass condition</th></tr></thead>
+                <tbody>
+                  <tr><td>Product edit</td><td>Edit every commercial field, replace and reorder images, attempt SKU change, stale-edit conflict, permission denial, archive.</td><td>SKU never changes; catalogue and future quote search refresh; audit contains exact diff.</td></tr>
+                  <tr><td>Direct quote</td><td>Create from customer with no lead or intent; assign owner; reopen and revise.</td><td>Quote saves, internal CRM link exists, PDF renders, and no user-facing lead step is required.</td></tr>
+                  <tr><td>Rate parity</td><td>Catalogue rate, negotiated rate, line discount, quote discount, tax, floor-price breach, revision.</td><td>UI, API, quote PDF, order PDF, payment balance, and reports return the same totals.</td></tr>
+                  <tr><td>Partial orders</td><td>Order a subset, order remaining lines later, partial quantity, concurrent over-order attempt, retry, close remainder.</td><td>Ordered plus remaining plus cancelled equals quoted; no duplicate or over-order is possible.</td></tr>
+                  <tr><td>Downstream isolation</td><td>Separate cash/credit payments, reservation, backorder demand, GRN allocation, dispatch, delivery, return, and cancellation for each order.</td><td>Every operational record points to the correct sales-order line and stock reconciliation stays clean.</td></tr>
+                  <tr><td>Deployment</td><td>Migration rehearsal, rollback rehearsal, dependency gate, health checks, authenticated browser journey, document downloads.</td><td>Connected deployment becomes healthy, source revision is traceable, and smoke evidence is saved without touching client data.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="section adjacent-features">
+          <h2>Adjacent features the client is likely to expect</h2>
+          <ul>
+            <li><strong>Quote fulfillment view:</strong> ordered, remaining, cancelled, reserved, pending inward, dispatched, and delivered by line and area.</li>
+            <li><strong>Price and product history:</strong> effective date, prior value, changed by, reason, and future-price scheduling.</li>
+            <li><strong>Duplicate active-quote warning:</strong> alert staff when the same customer and project already has an open quote; open the current quote instead of creating another.</li>
+            <li><strong>Close or cancel remainder:</strong> release stock and purchase demand with a reason, preserving the accepted order history.</li>
+            <li><strong>Per-order promise and payment:</strong> delivery date, payment terms, advance allocation, outstanding amount, and credit approval on each partial order.</li>
+            <li><strong>Inline customer creation and quote draft recovery:</strong> create the customer from Quote Studio, autosave drafts, and recover interrupted work.</li>
+          </ul>
+        </section>
+
+        <section class="narrative" data-contract-section="recommended-next-steps">
+          <h2>Recommended Next Steps</h2>
+          <ol>
+            <li><strong>Restore a controlled production deployment first.</strong> Reconnect Railway services to source, configure health checks, deploy the current main revision, and verify login plus read-only core queries before client testing.</li>
+            <li><strong>Fix canonical pricing before exposing editable rate.</strong> Introduce the server pricing contract and parity tests, then make Rate editable in both Quote Studio and quote detail.</li>
+            <li><strong>Complete Product Master editing.</strong> Add immutable-SKU edit UI, audit history, archive behavior, safe image management, and focused tests.</li>
+            <li><strong>Migrate to one quote with many sales orders.</strong> Change order, reservation, dispatch, payment, procurement, and document ownership together, with backfill and rollback scripts.</li>
+            <li><strong>Run the isolated end-to-end release gate.</strong> Only after that gate passes should the client dataset be migrated and the client acceptance session begin.</li>
+          </ol>
+        </section>
+
+        <section class="narrative" data-contract-section="further-questions">
+          <h2>Decisions to confirm with the client</h2>
+          <ul>
+            <li>Recommended default: only admin, owner, and inventory manager can edit Product Master; sales can view and quote.</li>
+            <li>Recommended default: a rate below floor price requires owner approval before PDF send or order creation.</li>
+            <li>Recommended default: each partial order has its own payment terms, delivery promise, PDF, and dispatch job.</li>
+            <li>Recommended default: remaining quote quantity stays open until fully ordered or explicitly closed with a reason.</li>
+          </ul>
+        </section>
+
+      </article>
+    </main>
+  </div>
+  <!-- DATA_ANALYTICS_HTML_REPORT_RUNTIME -->
+</body>
+</html>

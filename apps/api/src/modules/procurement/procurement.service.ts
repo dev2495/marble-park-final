@@ -478,10 +478,23 @@ export class ProcurementService {
     });
     if (!orders.length) return;
 
+    const orderIds = orders.map((order: any) => order.id);
     const quoteIds = Array.from(new Set(orders.map((order: any) => order.quoteId).filter(Boolean))) as string[];
-    const orderByQuote = new Map(orders.map((order: any) => [order.quoteId, order] as const));
+    const orderById = new Map(orders.map((order: any) => [order.id, order] as const));
+    const ordersByQuote = new Map<string, any[]>();
+    for (const order of orders as any[]) {
+      const matching = ordersByQuote.get(order.quoteId) || [];
+      matching.push(order);
+      ordersByQuote.set(order.quoteId, matching);
+    }
     const reservations = await this.prisma.reservation.findMany({
-      where: { quoteId: { in: quoteIds }, status: 'backordered' },
+      where: {
+        status: 'backordered',
+        OR: [
+          { salesOrderId: { in: orderIds } },
+          { salesOrderId: null, quoteId: { in: quoteIds } },
+        ],
+      } as any,
       orderBy: { createdAt: 'asc' },
     });
     const productIds = Array.from(new Set(reservations.map((reservation: any) => reservation.productId).filter(Boolean))) as string[];
@@ -498,7 +511,10 @@ export class ProcurementService {
     const rows: any[] = [];
 
     for (const reservation of reservations as any[]) {
-      const order = orderByQuote.get(reservation.quoteId) as any;
+      const legacyOrders = ordersByQuote.get(reservation.quoteId) || [];
+      const order = (reservation.salesOrderId
+        ? orderById.get(reservation.salesOrderId)
+        : legacyOrders.length === 1 ? legacyOrders[0] : null) as any;
       const product = productMap.get(reservation.productId) as any;
       if (!order || !product) continue;
       rows.push({

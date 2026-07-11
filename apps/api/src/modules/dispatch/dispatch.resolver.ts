@@ -13,6 +13,9 @@ export class DispatchOutput {
   quoteId?: string;
 
   @Field({ nullable: true })
+  salesOrderId?: string;
+
+  @Field({ nullable: true })
   customerId?: string;
 
   @Field({ nullable: true })
@@ -46,6 +49,9 @@ export class CreateDispatchJobInput {
   quoteId?: string;
 
   @Field(() => String, { nullable: true })
+  salesOrderId?: string;
+
+  @Field(() => String, { nullable: true })
   customerId?: string;
 
   @Field(() => Date, { nullable: true })
@@ -59,6 +65,9 @@ export class CreateDispatchJobInput {
 export class CreateChallanInput {
   @Field(() => String, { nullable: true })
   jobId?: string;
+
+  @Field(() => String, { nullable: true })
+  salesOrderId?: string;
 
   @Field(() => String, { nullable: true })
   transporter?: string;

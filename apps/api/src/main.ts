@@ -8,8 +8,10 @@ async function bootstrap() {
   const express = require('express');
   const fs = require('fs');
   const path = require('path');
-  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '100mb' }));
-  app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '100mb' }));
+  // A 5 MB image is base64-expanded to about 6.7 MB in the GraphQL payload.
+  // Keep the global cap bounded while allowing the explicitly validated image path.
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '8mb' }));
+  app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '8mb' }));
   const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images');
   const manualImageDir = path.join(catalogueImageRoot, 'manual');
   fs.mkdirSync(manualImageDir, { recursive: true });

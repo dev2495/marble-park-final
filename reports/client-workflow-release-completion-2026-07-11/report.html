@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marble Park Client Workflow Completion Review</title>
+  <style>
+    :root { --ink:#14213d; --muted:#56637a; --line:#dbe3ee; --blue:#1769e0; --navy:#102040; --green:#08764a; --green-bg:#eaf8f0; --amber:#aa5600; --amber-bg:#fff6e9; --surface:#fff; --soft:#f5f8fc; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#edf2f8; color:var(--ink); font:14px/1.55 Arial, Helvetica, sans-serif; }
+    .page { width:min(1040px,calc(100% - 36px)); margin:22px auto 48px; background:var(--surface); border:1px solid var(--line); box-shadow:0 12px 35px rgba(20,33,61,.09); }
+    header { display:flex; justify-content:space-between; gap:20px; padding:18px 34px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); }
+    .brand { color:var(--ink); font-weight:700; } .mark { display:inline-grid; place-items:center; width:22px; height:22px; margin-right:7px; border-radius:5px; background:var(--blue); color:#fff; font-size:10px; }
+    main { padding:42px 52px 52px; } .kicker { color:var(--blue); font-weight:700; font-size:11px; letter-spacing:.11em; text-transform:uppercase; }
+    h1 { max-width:760px; margin:11px 0 13px; font-size:37px; line-height:1.1; letter-spacing:0; } h2 { margin:37px 0 10px; font-size:23px; line-height:1.25; } h3 { margin:0 0 6px; font-size:14px; } p { margin:8px 0; } .lead { max-width:810px; color:var(--muted); font-size:16px; line-height:1.62; }
+    .decision { display:grid; grid-template-columns:170px 1fr; gap:22px; margin:30px 0 26px; padding:20px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); } .label { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; } .decision p { margin:0; font-size:15px; }
+    .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:11px; margin:25px 0 34px; } .metric { min-height:103px; padding:15px; border:1px solid var(--line); border-radius:8px; } .metric strong { display:block; margin:7px 0 4px; font-size:25px; } .metric span { color:var(--muted); font-size:12px; }
+    .status-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:11px; margin:18px 0 30px; } .status { min-height:128px; padding:15px; border:1px solid var(--line); border-top:4px solid var(--blue); border-radius:8px; } .status.ok { border-top-color:var(--green); } .status.warn { border-top-color:#e38a19; } .status span { color:var(--muted); font-size:12px; line-height:1.45; }
+    .pill { display:inline-block; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; } .pill.ok { background:var(--green-bg); color:var(--green); } .pill.warn { background:var(--amber-bg); color:var(--amber); }
+    .flow { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:18px 0; } .step { position:relative; min-height:130px; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--soft); } .step:not(:last-child)::after { content:'→'; position:absolute; right:-9px; top:48px; z-index:2; color:var(--blue); font-size:18px; font-weight:700; } .step small { display:block; color:var(--blue); font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; } .step strong { display:block; margin:7px 0; } .step span { color:var(--muted); font-size:12px; line-height:1.45; }
+    table { width:100%; border-collapse:collapse; margin:14px 0 8px; font-size:12px; } th,td { padding:11px 10px; border-bottom:1px solid var(--line); vertical-align:top; text-align:left; } th { color:var(--muted); font-size:10px; letter-spacing:.08em; text-transform:uppercase; } td:first-child { font-weight:700; } .ok-text { color:var(--green); font-weight:700; } .warn-text { color:var(--amber); font-weight:700; }
+    .callout { margin:20px 0; padding:15px 17px; border-left:4px solid var(--blue); border-radius:0 8px 8px 0; background:var(--soft); } .callout.warn { border-left-color:#e38a19; background:var(--amber-bg); }
+    ul,ol { padding-left:20px; } li { margin:6px 0; color:#31415d; } .sources { margin-top:30px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; } .sources p { margin:4px 0; }
+    @page { size:A4; margin:12mm; } @media print { body{background:#fff;font-size:10.5px;} .page{width:100%;margin:0;border:0;box-shadow:none;} header{padding:4px 0 8px;} main{padding:24px 0 0;} h1{font-size:29px;} h2{font-size:19px;margin-top:27px;} .flow-heading{break-before:page;} .metrics,.status-grid{gap:8px;} .metric,.status{min-height:84px;padding:10px;} .metric strong{font-size:21px;} .flow{gap:8px;} .step{min-height:108px;padding:10px;} .card, .status, .metric, .step, .callout, tr { break-inside:avoid; } table{font-size:9px;} th,td{padding:7px;} .sources{font-size:9px;} }
+    @media(max-width:720px){ main{padding:28px 22px;} .metrics,.status-grid,.flow{grid-template-columns:1fr 1fr;} .step:nth-child(2)::after{display:none;} .decision{grid-template-columns:1fr;gap:8px;} }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header><div class="brand"><span class="mark">MP</span>Marble Park Retail OS</div><div>Implementation completion review | July 11, 2026</div></header>
+    <main>
+      <div class="kicker">Client workflow completion and release review</div>
+      <h1>Commercial workflow is locally release-gated.</h1>
+      <p class="lead">The requested Product Master editing, editable quote rates, direct quotes, and repeated partial sales orders now operate as one controlled system. The release gate ran against a clean migrated PostgreSQL database and the compiled API and web application. Railway deployment is deliberately not part of this run.</p>
+
+      <section class="decision"><div class="label">Release decision</div><div><p><strong>Approve for controlled deployment after environment setup.</strong> Local migration rehearsal, production builds, API-level workflow gate, and browser verification passed. Do not describe the system as live until Railway services, database backup, environment variables, health checks, and the post-deploy smoke are complete.</p></div></section>
+
+      <section class="metrics">
+        <div class="metric"><span>Client requests</span><strong>4 / 4</strong><span>implemented end to end</span></div>
+        <div class="metric"><span>Partial orders</span><strong>2</strong><span>created from one quote in the release gate</span></div>
+        <div class="metric"><span>Build gates</span><strong>2</strong><span>API and web production builds passed</span></div>
+        <div class="metric"><span>Cookie auth</span><strong>Pass</strong><span>HTTP-only browser session issued</span></div>
+      </section>
+
+      <h2>What was completed</h2>
+      <div class="status-grid">
+        <div class="status ok"><h3>Product Master</h3><span>Existing SKUs are selectable and editable. SKU is read-only, changes are audited, stale saves are rejected, image galleries are validated and reorderable, and archive preserves history.</span></div>
+        <div class="status ok"><h3>Quote pricing</h3><span>Quote Studio and quote detail expose list rate, negotiated rate, discount, and GST. The server persists the same commercial snapshot for quote, order, payment, PDF, and downstream records.</span></div>
+        <div class="status ok"><h3>Partial orders</h3><span>Staff selects only remaining quantity. Each order has a retry key, payment terms, delivery promise, order lines, reservations, procurement demand, documents, and dispatch job.</span></div>
+        <div class="status ok"><h3>Session and upload safety</h3><span>Browser sessions use an HTTP-only cookie. Login throttling, disabled production playground, bounded request sizes, validated image uploads, and least-privilege upload scopes are in place.</span></div>
+      </div>
+
+      <h2 class="flow-heading">Client workflow now delivered</h2>
+      <div class="flow">
+        <div class="step"><small>1. Product Master</small><strong>Maintain the master SKU</strong><span>Change images, name, price, floor, tax, status and description. The SKU identifier remains immutable.</span></div>
+        <div class="step"><small>2. Quote Studio</small><strong>Quote direct to a customer</strong><span>No lead or intent is required at the screen. The API creates the internal opportunity automatically.</span></div>
+        <div class="step"><small>3. Commercial control</small><strong>Set a negotiated line rate</strong><span>List price, discount, negotiated rate, GST and total are retained as a server-calculated commercial snapshot.</span></div>
+        <div class="step"><small>4. Fulfilment</small><strong>Convert selected quantities</strong><span>Order part now, order the balance later, or close a remainder with a recorded reason. Do not create a duplicate quote.</span></div>
+      </div>
+
+      <h2>Release gate evidence</h2>
+      <table>
+        <thead><tr><th>Gate</th><th>Result</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Migration rehearsal</td><td class="ok-text">Passed</td><td>All 12 Prisma migrations, including the new client workflow migration, applied to an empty local PostgreSQL database.</td></tr>
+          <tr><td>API production build</td><td class="ok-text">Passed</td><td>Nest production compile passed after Prisma client generation.</td></tr>
+          <tr><td>Web production build</td><td class="ok-text">Passed</td><td>Next.js 15.5.19 generated all 42 application routes, including Product Master and quote detail.</td></tr>
+          <tr><td>Client workflow E2E</td><td class="ok-text">Passed</td><td>Created and edited a product; created a direct quote; checked negotiated GST pricing; created two partial orders; retried one idempotently; rejected over-order; verified order-scoped reservation, dispatch, payment and procurement records; closed a remainder.</td></tr>
+          <tr><td>Browser workflow</td><td class="ok-text">Passed</td><td>Cookie-backed login reached the dashboard. Product Master showed locked SKU edit mode. A completed quote showed rate controls, GST totals, two sales orders, and no remaining quantity available to order.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Data and migration design</h2>
+      <p>The old one-order-per-quote constraints were removed only after new order ownership fields were added and legacy records were backfilled. New orders use a serializable transaction and optimistic remaining-quantity update. This prevents two staff members from allocating the same quote balance and prevents a client retry from creating a duplicate order.</p>
+      <table>
+        <thead><tr><th>Business record</th><th>New ownership rule</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr><td>Sales order and dispatch job</td><td>Many sales orders may reference one quote; one dispatch job belongs to one sales order.</td><td>Partial orders cannot overwrite each other’s operational state.</td></tr>
+          <tr><td>Reservations and sales-order lines</td><td>Reservations retain sales order and sales-order-line ownership.</td><td>Stock consumption, backorders, and dispatch consume the correct selected quantity.</td></tr>
+          <tr><td>Payments, documents and demand</td><td>Each partial order gets independent payment, PDF, and procurement records.</td><td>Commercial, warehouse, and accounts evidence stays traceable.</td></tr>
+          <tr><td>Quote remainder</td><td>Each line reports quoted, ordered, cancelled, closed, and remaining quantity.</td><td>The original negotiated quote remains the customer record without forcing duplicate quotes.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Deployment prerequisites</h2>
+      <div class="callout warn"><strong>Not deployed in this implementation run.</strong> Railway deployment was explicitly deferred. Before touching the client environment, take a database backup, apply the migration to a staging copy, validate the legacy foreign-key backfill, set the listed environment variables, and run the same release gate against the deployed API.</div>
+      <ol>
+        <li>Set <strong>CORS_ORIGIN</strong> to the published web URL, <strong>PUBLIC_CATALOGUE_IMAGE_BASE_URL</strong> to the public API origin, and a persistent <strong>CATALOGUE_IMAGE_STORAGE_DIR</strong> or object-storage implementation.</li>
+        <li>Deploy API and web from the committed revision. The Docker images now use lockfile-clean installation and provide <strong>/readyz</strong> and <strong>/api/health</strong> checks.</li>
+        <li>Run database backup, migration deploy, and post-migration orphan/backfill validation before allowing traffic.</li>
+        <li>Execute the client workflow smoke with a disposable account and test customer. Confirm login, quote, two partial orders, and a read-only order/dispatch check.</li>
+        <li>Only then invite the client to acceptance testing. Do not run the destructive reset scripts against the client database.</li>
+      </ol>
+
+      <h2>Residual release risk</h2>
+      <p><span class="pill warn">Dependency follow-up</span> The targeted Nodemailer upgrade to 9.0.3 is included. The latest npm production audit still reports three high and several moderate advisories in legacy Nest GraphQL/WebSocket and Next bundled dependency paths. npm’s automated remedy recommends invalid major downgrades, so it was not applied. The production API exposes only POST GraphQL, disables Playground in production, restricts origins, and does not enable subscriptions; however, a planned framework dependency upgrade remains required for a clean audit.</p>
+      <p><span class="pill warn">Asset durability</span> The code validates images and supports a configured persistent directory. Railway ephemeral storage is not suitable for durable product images unless the image directory is mounted persistently or replaced with object storage before the production rollout.</p>
+
+      <h2>Earlier local user snapshot</h2>
+      <p>The prior read-only audit of the configured local Marble Park database found 98 users: 37 active and 61 inactive. All 751 stored sessions were expired at that audit time. This is a local snapshot, not a current production count; production data remains unverified until Railway is restored and accessed under the deployment runbook.</p>
+
+      <div class="sources"><strong>Evidence sources</strong><p>Repository source and Prisma schema; migration <code>20260711090000_client_workflow_completion</code>; compiled API and web; isolated local PostgreSQL release-gate database; browser verification on local web/API services; prior July 10 read-only database and Railway audit.</p><p>Generated July 11, 2026. This document intentionally does not claim Railway deployment or a live production recovery.</p></div>
+    </main>
+  </div>
+</body>
+</html>

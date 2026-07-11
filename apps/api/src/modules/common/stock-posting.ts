@@ -285,80 +285,74 @@ export function tileDemandKey(orderId: string, line: any, index: number) {
 }
 
 export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
-  const [quote, salesOrder, reservations, quoteLines] = await Promise.all([
+  const [quote, salesOrders, reservations, quoteLines] = await Promise.all([
     tx.quote.findUnique({ where: { id: quoteId } }).catch(() => null),
-    tx.salesOrder.findUnique({ where: { quoteId } }).catch(() => null),
+    tx.salesOrder.findMany({ where: { quoteId } }).catch(() => []),
     tx.reservation.findMany({ where: { quoteId } }).catch(() => []),
     tx.quoteLine.findMany({ where: { quoteId } }).catch(() => []),
   ]);
-  if (!quote || !salesOrder) return;
+  if (!quote || !salesOrders.length) return;
 
-  const reservedByProduct = bucketReservationQty(reservations, 'reserved');
-  const backorderedByProduct = bucketReservationQty(reservations, 'backordered');
   const quoteLineMap = new Map((quoteLines as any[]).map((row) => [row.lineKey, row]));
-  const lines = normalizeJsonLines(salesOrder.lines || quote.lines);
+  const quoteLineById = new Map((quoteLines as any[]).map((row) => [row.id, row]));
+  for (const salesOrder of salesOrders as any[]) {
+    const linkedReservations = (reservations as any[]).filter((reservation) => reservation.salesOrderId === salesOrder.id);
+    const legacyReservations = linkedReservations.length || salesOrders.length !== 1
+      ? linkedReservations
+      : (reservations as any[]).filter((reservation) => !reservation.salesOrderId);
+    const reservedByProduct = bucketReservationQty(legacyReservations, 'reserved');
+    const backorderedByProduct = bucketReservationQty(legacyReservations, 'backordered');
+    const lines = normalizeJsonLines(salesOrder.lines || quote.lines);
 
-  for (const [index, line] of lines.entries()) {
-    const productId = String(line.productId || '').trim();
-    const qKey = quoteLineKey(line, index);
-    const key = productId ? qKey : tileDemandKey(salesOrder.id, line, index);
-    const orderedQuantity = Math.trunc(Number(line.qty || line.quantity || 0));
-    const unitPrice = Number(line.price || line.sellPrice || 0);
-    const existing = await tx.salesOrderLine.findUnique({
-      where: { salesOrderId_lineKey: { salesOrderId: salesOrder.id, lineKey: key } },
-    }).catch(() => null);
+    for (const [index, line] of lines.entries()) {
+      const productId = String(line.productId || '').trim();
+      const qKey = String(line.lineKey || quoteLineKey(line, index));
+      const quoteLine = quoteLineById.get(String(line.quoteLineId || '')) || quoteLineMap.get(qKey);
+      const key = qKey || (productId ? quoteLineKey(line, index) : tileDemandKey(salesOrder.id, line, index));
+      const orderedQuantity = Math.trunc(Number(line.qty || line.quantity || 0));
+      const listPrice = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
+      const unitPrice = Number(line.unitRate ?? line.specialRate ?? line.specialPrice ?? listPrice);
+      const discountPercent = Number(line.discountPercent ?? line.discount ?? 0);
+      const taxRate = Number(line.taxRate ?? 18);
+      const taxableValue = Number(line.taxableValue ?? orderedQuantity * unitPrice);
+      const taxAmount = Number(line.taxAmount ?? 0);
+      const grossLineTotal = Number(line.grossLineTotal ?? line.total ?? taxableValue + taxAmount);
+      const existing = await tx.salesOrderLine.findUnique({
+        where: { salesOrderId_lineKey: { salesOrderId: salesOrder.id, lineKey: key } },
+      }).catch(() => null);
 
-    const reservedQuantity = productId ? takeFromBucket(reservedByProduct, productId, orderedQuantity) : Number(existing?.reservedQuantity || 0);
-    const backorderedQuantity = productId ? takeFromBucket(backorderedByProduct, productId, Math.max(0, orderedQuantity - reservedQuantity)) : Number(existing?.backorderedQuantity ?? orderedQuantity);
-    const allocatedQuantity = Number(existing?.allocatedQuantity || 0);
-    const dispatchedQuantity = Number(existing?.dispatchedQuantity || 0);
-    const deliveredQuantity = Number(existing?.deliveredQuantity || 0);
-    const returnedQuantity = Number(existing?.returnedQuantity || 0);
-    const status = deriveSalesOrderLineStatus({
-      orderedQuantity,
-      reservedQuantity,
-      backorderedQuantity,
-      allocatedQuantity,
-      dispatchedQuantity,
-      deliveredQuantity,
-    });
-    const payload = {
-      quoteLineId: (quoteLineMap.get(qKey) as any)?.id || null,
-      lineNo: index + 1,
-      productId: productId || null,
-      sku: String(line.sku || line.tileCode || productId || `LINE-${index + 1}`),
-      name: String(line.name || line.description || line.sku || `Line ${index + 1}`),
-      category: String(line.category || (isTileSelectionLine(line) ? 'Tiles' : 'Product')),
-      brand: String(line.brand || ''),
-      finish: line.finish || line.tileSize || line.dimensions || null,
-      area: line.area || line.room || line.section || null,
-      unit: String(line.unit || line.uom || 'PC').toUpperCase(),
-      orderedQuantity,
-      reservedQuantity,
-      backorderedQuantity,
-      allocatedQuantity,
-      dispatchedQuantity,
-      deliveredQuantity,
-      returnedQuantity,
-      unitPrice,
-      lineTotal: orderedQuantity * unitPrice,
-      status,
-      isTileSpecial: isTileSelectionLine(line) && !productId,
-      metadata: { ...(existing?.metadata || {}), snapshot: line },
-      updatedAt: new Date(),
-    };
-    await tx.salesOrderLine.upsert({
-      where: { salesOrderId_lineKey: { salesOrderId: salesOrder.id, lineKey: key } },
-      update: payload,
-      create: {
-        id: ulid(),
-        salesOrderId: salesOrder.id,
-        quoteId,
-        lineKey: key,
-        createdAt: new Date(),
-        ...payload,
-      },
-    });
+      const reservedQuantity = productId ? takeFromBucket(reservedByProduct, productId, orderedQuantity) : Number(existing?.reservedQuantity || 0);
+      const backorderedQuantity = productId ? takeFromBucket(backorderedByProduct, productId, Math.max(0, orderedQuantity - reservedQuantity)) : Number(existing?.backorderedQuantity ?? orderedQuantity);
+      const allocatedQuantity = Number(existing?.allocatedQuantity || 0);
+      const dispatchedQuantity = Number(existing?.dispatchedQuantity || 0);
+      const deliveredQuantity = Number(existing?.deliveredQuantity || 0);
+      const returnedQuantity = Number(existing?.returnedQuantity || 0);
+      const status = deriveSalesOrderLineStatus({ orderedQuantity, reservedQuantity, backorderedQuantity, allocatedQuantity, dispatchedQuantity, deliveredQuantity });
+      const payload = {
+        quoteLineId: quoteLine?.id || line.quoteLineId || null,
+        lineNo: index + 1,
+        productId: productId || null,
+        sku: String(line.sku || line.tileCode || productId || `LINE-${index + 1}`),
+        name: String(line.name || line.description || line.sku || `Line ${index + 1}`),
+        category: String(line.category || (isTileSelectionLine(line) ? 'Tiles' : 'Product')),
+        brand: String(line.brand || ''),
+        finish: line.finish || line.tileSize || line.dimensions || null,
+        area: line.area || line.room || line.section || null,
+        unit: String(line.unit || line.uom || 'PC').toUpperCase(),
+        orderedQuantity, reservedQuantity, backorderedQuantity, allocatedQuantity, dispatchedQuantity, deliveredQuantity, returnedQuantity,
+        listPrice, unitPrice, discountPercent, taxRate, taxableValue, taxAmount, grossLineTotal,
+        lineTotal: grossLineTotal,
+        status,
+        isTileSpecial: isTileSelectionLine(line) && !productId,
+        metadata: { ...(existing?.metadata || {}), snapshot: line },
+        updatedAt: new Date(),
+      };
+      await tx.salesOrderLine.upsert({
+        where: { salesOrderId_lineKey: { salesOrderId: salesOrder.id, lineKey: key } },
+        update: payload,
+        create: { id: ulid(), salesOrderId: salesOrder.id, quoteId, lineKey: key, createdAt: new Date(), ...payload },
+      });
+    }
   }
 }
 

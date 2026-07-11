@@ -173,6 +173,18 @@ export class CreateSalesOrderInput {
 
   @Field(() => String, { nullable: true })
   notes?: string;
+
+  @Field(() => String, { nullable: true, description: 'JSON array of selected quoteLineId/lineKey and quantity rows' })
+  lines?: string;
+
+  @Field(() => String, { nullable: true, description: 'Client retry key. Repeating it returns the original order.' })
+  idempotencyKey?: string;
+
+  @Field(() => Date, { nullable: true })
+  promisedDate?: Date;
+
+  @Field(() => String, { nullable: true })
+  paymentTerms?: string;
 }
 
 @Resolver(() => QuoteOutput)
@@ -297,6 +309,26 @@ export class QuotesResolver {
   async createSalesOrderFromQuote(@Args('input') input: CreateSalesOrderInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
     return this.quotes.createSalesOrderFromQuote(input as any, user.id);
+  }
+
+  @Query(() => GraphQLJSON)
+  async quoteFulfillment(@Args('quoteId', { type: () => ID }) quoteId: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
+    const quote = await this.quotes.findById(quoteId);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && user.role !== 'dispatch_ops' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    return this.quotes.quoteFulfillment(quoteId);
+  }
+
+  @Mutation(() => QuoteOutput)
+  async closeQuoteRemainder(
+    @Args('quoteId', { type: () => ID }) quoteId: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
+    const quote = await this.quotes.findById(quoteId);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    return this.quotes.closeQuoteRemainder(quoteId, user.id, reason);
   }
 
   @Query(() => [GraphQLJSON])

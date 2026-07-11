@@ -7,6 +7,10 @@ export type GraphqlRequestContext = {
   req?: {
     headers?: Record<string, string | string[] | undefined>;
   };
+  res?: {
+    cookie?: (name: string, value: string, options?: Record<string, unknown>) => void;
+    clearCookie?: (name: string, options?: Record<string, unknown>) => void;
+  };
   loaders?: AppDataLoaders;
 };
 
@@ -26,8 +30,25 @@ function bearerToken(ctx: GraphqlRequestContext): string {
   return header.replace(/^Bearer\s+/i, '').trim();
 }
 
+function cookieToken(ctx: GraphqlRequestContext): string {
+  const raw = ctx.req?.headers?.cookie;
+  const header = Array.isArray(raw) ? raw[0] : raw;
+  if (!header) return '';
+  const match = header.split(';').map((entry) => entry.trim()).find((entry) => entry.startsWith('mp_session='));
+  if (!match) return '';
+  try {
+    return decodeURIComponent(match.slice('mp_session='.length)).trim();
+  } catch {
+    return '';
+  }
+}
+
+export function sessionToken(ctx: GraphqlRequestContext): string {
+  return cookieToken(ctx) || bearerToken(ctx);
+}
+
 export async function getSessionUser(prisma: PrismaService, ctx: GraphqlRequestContext): Promise<SessionUser | null> {
-  const token = bearerToken(ctx);
+  const token = sessionToken(ctx);
   if (!token) return null;
 
   const session = await prisma.session.findUnique({ where: { token } });

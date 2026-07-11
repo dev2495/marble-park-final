@@ -48,6 +48,8 @@ const MARK_NOTIFICATION_READ = gql`
   }
 `;
 
+const LOGOUT_MUTATION = gql`mutation Logout { logout }`;
+
 const navSections: Array<{ title: string; items: Array<{ name: string; href: string; icon: any; roles: string[]; permission?: string }> }> = [
   {
     title: 'Operate',
@@ -171,19 +173,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [showResults, setShowResults] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const deferredSearchQuery = useDeferredValue(searchQuery.trim());
+  const { data: meData, loading: meLoading, error: meError } = useQuery(ME_QUERY, { fetchPolicy: 'network-only', errorPolicy: 'all' });
+  const [logout] = useMutation(LOGOUT_MUTATION);
 
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    if (!token) {
-      router.push('/login');
-      return;
-    }
     const stored = localStorage.getItem('user');
     if (stored) setUser(JSON.parse(stored));
     setRoleOverride(localStorage.getItem('role_override') || '');
-  }, [router]);
+  }, []);
 
-  const { data: meData } = useQuery(ME_QUERY, { skip: !user, fetchPolicy: 'cache-and-network' });
+  useEffect(() => {
+    if (meData?.me) {
+      setUser(meData.me);
+      localStorage.setItem('user', JSON.stringify(meData.me));
+      return;
+    }
+    if (!meLoading && meError && !user) router.replace('/login');
+  }, [meData, meLoading, meError, router, user]);
+
   const me = meData?.me || user;
   const previewingRole = user?.role === 'admin' && roleOverride;
   const effectiveRole = previewingRole ? roleOverride : me?.role || user?.role || 'owner';
@@ -208,8 +215,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   });
   const [markNotificationRead] = useMutation(MARK_NOTIFICATION_READ, { onCompleted: () => refetchNotifications() });
 
-  const handleLogout = () => {
-    localStorage.removeItem('auth_token');
+  const handleLogout = async () => {
+    await logout().catch(() => null);
     localStorage.removeItem('user');
     localStorage.removeItem('role_override');
     window.location.href = '/login';

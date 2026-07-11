@@ -22,6 +22,16 @@ const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput
 const SEND_QUOTE = gql`mutation SendQuote($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
 const CREATE_SALES_ORDER = gql`mutation CreateSalesOrderFromQuote($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`;
 const START_REVISION_FROM_QUOTE = gql`mutation StartRevisionFromQuote($quoteId: String!) { startQuoteRevision(quoteId: $quoteId) }`;
+const QUOTE_FULFILLMENT = gql`query QuoteFulfillment($quoteId: ID!) { quoteFulfillment(quoteId: $quoteId) }`;
+const CLOSE_QUOTE_REMAINDER = gql`mutation CloseQuoteRemainder($quoteId: ID!, $reason: String!) { closeQuoteRemainder(quoteId: $quoteId, reason: $reason) { id status } }`;
+const UPLOAD_QUOTE_COVER = gql`mutation UploadQuoteCover($filename: String!, $contentBase64: String!, $scope: String) { uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result } }`;
+
+async function fileBase64(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
 
 function money(value: number) { return `₹${Math.round(Number(value || 0)).toLocaleString('en-IN')}`; }
 function productImage(line: any) {
@@ -31,7 +41,8 @@ function productImage(line: any) {
   if (typeof media === 'string') {
     try { return JSON.parse(media)?.primary || '/catalogue-art/faucet.svg'; } catch { return media || '/catalogue-art/faucet.svg'; }
   }
-  return media.primary || media.gallery?.[0] || '/catalogue-art/faucet.svg';
+  const gallery = Array.isArray(media.gallery) ? media.gallery : [];
+  return media.primaryUrl || media.primary || media.primaryImage || (typeof gallery[0] === 'string' ? gallery[0] : gallery[0]?.url) || '/catalogue-art/faucet.svg';
 }
 function lineRate(line: any) {
   const qty = Number(line.qty || line.quantity || 0);
@@ -58,6 +69,11 @@ export default function QuoteDetailPage() {
   const [advanceAmount, setAdvanceAmount] = useState('0');
   const [orderMessage, setOrderMessage] = useState('');
   const [orderPdfUrl, setOrderPdfUrl] = useState('');
+  const [orderQuantities, setOrderQuantities] = useState<Record<string, string>>({});
+  const [orderKey, setOrderKey] = useState('');
+  const [paymentTerms, setPaymentTerms] = useState('');
+  const [promisedDate, setPromisedDate] = useState('');
+  const [closeReason, setCloseReason] = useState('');
   const [editLines, setEditLines] = useState<any[]>([]);
   const [displayMode, setDisplayMode] = useState('priced');
   const [remarks, setRemarks] = useState('');
@@ -69,6 +85,7 @@ export default function QuoteDetailPage() {
   const [uploadingCover, setUploadingCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
   const { data, loading, error, refetch } = useQuery(QUOTE_DETAIL, { variables: { id } });
+  const { data: fulfillmentData, refetch: refetchFulfillment } = useQuery(QUOTE_FULFILLMENT, { variables: { quoteId: id }, skip: !id });
   const [updateQuote, { loading: savingQuote, error: updateError }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
   const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
   const [createSalesOrder, { loading: creatingOrder, error: createOrderError }] = useMutation(CREATE_SALES_ORDER, {
@@ -76,21 +93,28 @@ export default function QuoteDetailPage() {
       const order = result.createSalesOrderFromQuote;
       setOrderMessage(`Sales order ${order.orderNumber} created. Inventory has been reserved where available and dispatch can work split rows.`);
       setOrderPdfUrl(order.documents?.salesOrderPdfUrl || `/api/pdf/order/${order.id}`);
+      setOrderKey('');
       refetch();
+      refetchFulfillment();
     },
     onError: (error) => {
       setOrderPdfUrl('');
       setOrderMessage(error.message);
     },
   });
+  const [closeRemainder, { loading: closingRemainder, error: closeRemainderError }] = useMutation(CLOSE_QUOTE_REMAINDER, {
+    onCompleted: () => { setCloseReason(''); setOrderMessage('Remaining quote quantities were closed. The existing sales order history is preserved.'); refetch(); refetchFulfillment(); },
+  });
+  const [uploadCover] = useMutation(UPLOAD_QUOTE_COVER);
   const [startRevision, { loading: revising, error: reviseError }] = useMutation(START_REVISION_FROM_QUOTE, {
     onCompleted: (data) => {
       const intent = data?.startQuoteRevision;
       if (intent?.id) router.push(`/dashboard/intents/${intent.id}`);
     },
   });
-  const mutationError = updateError || sendError || createOrderError || reviseError;
+  const mutationError = updateError || sendError || createOrderError || reviseError || closeRemainderError;
   const quote = data?.quote;
+  const fulfillment = fulfillmentData?.quoteFulfillment;
 
   useEffect(() => {
     if (!quote) return;
@@ -105,22 +129,28 @@ export default function QuoteDetailPage() {
     setTagline(meta.tagline || '');
   }, [quote]);
 
+  useEffect(() => {
+    const lines = fulfillment?.lines;
+    if (!Array.isArray(lines)) return;
+    setOrderQuantities((current) => {
+      const next = { ...current };
+      for (const line of lines) if (next[line.id] === undefined) next[line.id] = String(line.remaining || 0);
+      return next;
+    });
+  }, [fulfillment]);
+
   async function handleCoverUpload(file: File | null) {
     if (!file) return;
     setCoverError(null);
     setUploadingCover(true);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('scope', 'product-image');
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { authorization: `Bearer ${localStorage.getItem('auth_token') || ''}` },
-        body: fd,
-      });
-      const json = await res.json();
-      if (!res.ok || !json.publicUrl) throw new Error(json.error || 'Upload failed');
-      setCoverImage(json.publicUrl);
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size <= 0 || file.size > 5 * 1024 * 1024) {
+        throw new Error('Use a JPG, PNG, or WebP image smaller than 5 MB.');
+      }
+      const result = await uploadCover({ variables: { filename: file.name, contentBase64: await fileBase64(file), scope: 'product-image' } });
+      const publicUrl = result.data?.uploadStoredAsset?.result?.publicUrl;
+      if (!publicUrl) throw new Error('Upload failed');
+      setCoverImage(publicUrl);
     } catch (err) {
       setCoverError((err as any)?.message || 'Upload failed');
     } finally {
@@ -268,9 +298,9 @@ export default function QuoteDetailPage() {
                   <div className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-[#2563eb]"/><input value={line.quoteImage || ''} onChange={(event)=>updateLine(index,{quoteImage:event.target.value})} placeholder="Optional quote image URL" className="h-9 flex-1 rounded-xl border border-[#e4e4e7]/15 bg-white px-3 text-xs font-bold" /></div>
                 </div>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Qty</span><input type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[#e4e4e7]/15 bg-white px-3 text-sm font-black" /></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">MRP</span><input type="number" value={line.price || line.sellPrice || 0} onChange={(event)=>updateLine(index,{price:Number(event.target.value),sellPrice:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[#e4e4e7]/15 bg-white px-3 text-sm font-black" /></label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">List rate</span><input type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} onChange={(event)=>updateLine(index,{listPrice:Number(event.target.value),price:Number(event.target.value),sellPrice:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[#e4e4e7]/15 bg-white px-3 text-sm font-black" /></label>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Disc %</span><input type="number" value={line.discountPercent || line.discount || 0} onChange={(event)=>updateLine(index,{discountPercent:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[#e4e4e7]/15 bg-white px-3 text-sm font-black" /></label>
-                <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Special / total</p><p className="mt-1 font-semibold text-[#18181b]">{money(rate.specialRate)}</p>{showPrices && <p className="text-xl font-black text-[#059669]">{money(rate.amount)}</p>}</div>
+                <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Negotiated / total</p><input aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate ?? line.specialPrice ?? ''} placeholder={String(rate.specialRate)} onChange={(event)=>updateLine(index,{specialRate:event.target.value})} className="mt-1 h-10 w-full rounded-xl border border-[#2563eb]/30 bg-[#eff6ff]/50 px-2 text-right text-sm font-black" />{showPrices && <p className="mt-1 text-xl font-black text-[#059669]">{money(rate.amount)}</p>}</div>
               </article>;
             })}
           </div>
@@ -281,7 +311,7 @@ export default function QuoteDetailPage() {
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Customer</h2><p className="mt-4 text-lg font-semibold text-[#18181b]">{quote.customer?.name || 'Customer'}</p><p className="mt-2 text-sm font-bold text-[#52525b]">{quote.customer?.mobile || quote.customer?.phone}</p><p className="mt-2 text-sm font-bold text-[#52525b]">{quote.customer?.siteAddress || quote.customer?.city}</p></div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Totals</h2>{showPrices ? <div className="mt-5 space-y-3 text-sm font-bold text-[#27272a]"><div className="flex justify-between"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between"><span>Discount</span><span>{money(quoteDiscount)}</span></div><div className="flex justify-between"><span>GST 18%</span><span>{money(tax)}</span></div><div className="flex justify-between border-t border-[#e4e4e7]/10 pt-4 text-2xl font-semibold text-[#18181b]"><span>Total</span><span>{money(total)}</span></div></div> : <p className="mt-4 rounded-2xl bg-[#eff6ff]/70 p-4 text-sm font-black text-[#1d4ed8]">Selection summary mode hides all prices in the PDF.</p>}</div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">PDF terms</h2><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Terms</span><textarea value={terms} onChange={(event)=>setTerms(event.target.value)} className="min-h-28 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 py-3 text-xs font-bold" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Bank details</span><textarea value={bankDetails} onChange={(event)=>setBankDetails(event.target.value)} className="min-h-24 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 py-3 text-xs font-bold" /></label></div>
-        <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert to sales order</h2><p className="mt-2 text-sm font-bold text-[#52525b]">Use after final customer confirmation. Cash orders capture advance/full payment; credit orders are tagged for owner reports. No owner approval is required at this step.</p><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Advance / full paid</span><input type="number" value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label>}{orderMessage && <div className="mt-3 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[#2563eb] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder || quote.status === 'superseded'} onClick={()=>createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),notes:'Created from quote detail'}}})}>Create sales order</Button></div>
+        <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert selected quantity</h2><p className="mt-2 text-sm font-bold text-[#52525b]">Choose only the quantities being confirmed now. The remaining balance stays on this quote for the next order or an explicit close-out.</p><div className="mt-4 space-y-2">{(fulfillment?.lines || []).map((line: any) => <label key={line.id} className="grid grid-cols-[1fr_5.5rem] items-center gap-3 rounded-lg border border-[#e4e4e7] p-3"><span className="min-w-0"><span className="block truncate text-sm font-bold text-[#18181b]">{line.sku} · {line.name}</span><span className="text-xs font-semibold text-[#52525b]">Ordered {line.ordered} of {line.quantity} · remaining {line.remaining}</span></span><input aria-label={`Order quantity for ${line.sku}`} type="number" min={0} max={line.remaining} value={orderQuantities[line.id] ?? ''} onChange={(event) => setOrderQuantities((current) => ({ ...current, [line.id]: event.target.value }))} disabled={!line.remaining} className="h-10 rounded-lg border border-[#2563eb]/30 bg-[#eff6ff]/50 px-2 text-right text-sm font-black" /></label>)}{fulfillment && !fulfillment.lines?.length ? <p className="text-sm font-semibold text-[#52525b]">No remaining quote lines.</p> : null}</div><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Advance / full paid</span><input type="number" min={0} value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label>}<label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Payment terms</span><input value={paymentTerms} onChange={(e)=>setPaymentTerms(e.target.value)} placeholder={paymentMode === 'credit' ? 'Net 30' : 'Cash on order'} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Promised dispatch date</span><input type="date" value={promisedDate} onChange={(e)=>setPromisedDate(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label>{orderMessage && <div className="mt-3 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[#2563eb] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder || quote.status === 'superseded' || !(fulfillment?.lines || []).some((line: any) => Number(orderQuantities[line.id] || 0) > 0)} onClick={()=>{ const key = orderKey || (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`); setOrderKey(key); createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),paymentTerms:paymentTerms || undefined,promisedDate:promisedDate || undefined,idempotencyKey:key,lines:JSON.stringify((fulfillment?.lines || []).map((line: any) => ({ quoteLineId: line.id, quantity: Number(orderQuantities[line.id] || 0) })).filter((line: any) => line.quantity > 0)),notes:'Created from quote detail'}}}); }}>{creatingOrder ? 'Creating...' : 'Create selected sales order'}</Button>{(fulfillment?.orders || []).length ? <div className="mt-5 border-t border-[#e4e4e7] pt-4"><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Orders from this quote</p>{fulfillment.orders.map((order: any) => <div key={order.id} className="mt-2 flex justify-between gap-3 text-sm font-bold"><span>{order.orderNumber} · {order.status}</span><span>{money(order.totalAmount)}</span></div>)}</div> : null}<div className="mt-5 border-t border-[#e4e4e7] pt-4"><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Close unused remainder</p><input value={closeReason} onChange={(event) => setCloseReason(event.target.value)} placeholder="Reason required to close remaining quantity" className="mt-2 h-10 w-full rounded-lg border border-[#e4e4e7] px-3 text-sm font-semibold" /><Button variant="outline" className="mt-2 w-full" disabled={closingRemainder || !closeReason.trim() || !(fulfillment?.lines || []).some((line: any) => Number(line.remaining || 0) > 0)} onClick={() => closeRemainder({ variables: { quoteId: quote.id, reason: closeReason } })}>{closingRemainder ? 'Closing...' : 'Close remaining quantity'}</Button></div></div>
       </aside>
     </section>
   </div>;

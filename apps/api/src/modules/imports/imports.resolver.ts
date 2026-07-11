@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ImportsService } from './imports.service';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireRoles } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 
@@ -22,7 +22,7 @@ function writeUploadToTemp(filename: string, contentBase64: string) {
   assertExcelFile(filename);
   const safeName = path.basename(filename || `catalogue-${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '-');
   const filePath = path.join(os.tmpdir(), `marble-excel-import-${Date.now()}-${safeName}`);
-  fs.writeFileSync(filePath, Buffer.from(contentBase64, 'base64'));
+  fs.writeFileSync(filePath, decodeBase64Upload(contentBase64, MAX_EXCEL_UPLOAD_BYTES, 'Excel upload'));
   return filePath;
 }
 
@@ -39,13 +39,48 @@ function assertExcelFile(filename: string) {
   }
 }
 
-function persistentManualAssetPath(filename: string) {
+const MAX_MANUAL_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_EXCEL_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+function decodeBase64Upload(contentBase64: string, maxBytes: number, label: string) {
+  const encoded = String(contentBase64 || '').trim();
+  if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length > Math.ceil(maxBytes * 4 / 3) + 4) {
+    throw new BadRequestException(`${label} is invalid or exceeds the allowed size`);
+  }
+  const content = Buffer.from(encoded, 'base64');
+  if (!content.length || content.length > maxBytes) throw new BadRequestException(`${label} is invalid or exceeds the allowed size`);
+  return content;
+}
+
+function persistentManualAssetPath(extension: string) {
   const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images');
-  const ext = path.extname(filename || '').replace(/[^a-zA-Z0-9.]/g, '').slice(0, 12) || '.bin';
-  const safeName = `${ulid()}${ext}`;
+  const safeName = `${ulid()}${extension}`;
   const directory = path.join(catalogueImageRoot, 'manual');
   fs.mkdirSync(directory, { recursive: true });
   return { filePath: path.join(directory, safeName), safeName };
+}
+
+function decodeManualImage(filename: string, contentBase64: string) {
+  const extension = path.extname(filename || '').toLowerCase();
+  if (!['.jpg', '.jpeg', '.png', '.webp'].includes(extension)) {
+    throw new BadRequestException('Only JPG, PNG, and WebP images can be uploaded');
+  }
+  const content = decodeBase64Upload(contentBase64, MAX_MANUAL_IMAGE_BYTES, 'Image upload');
+  const isPng = content.length >= 8 && content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isJpeg = content.length >= 3 && content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff;
+  const isWebp = content.length >= 12 && content.subarray(0, 4).toString('ascii') === 'RIFF' && content.subarray(8, 12).toString('ascii') === 'WEBP';
+  const detectedExtension = isPng ? '.png' : isJpeg ? '.jpg' : isWebp ? '.webp' : '';
+  if (!detectedExtension) throw new BadRequestException('The upload contents are not a valid JPG, PNG, or WebP image');
+  return { content, extension: detectedExtension };
+}
+
+function assertManagedImportPath(filePath: string) {
+  const resolved = path.resolve(filePath || '');
+  const temporaryRoot = path.resolve(os.tmpdir());
+  if (!resolved.startsWith(`${temporaryRoot}${path.sep}`) || !path.basename(resolved).startsWith('marble-excel-import-')) {
+    throw new BadRequestException('Direct server file paths are not accepted. Start an Excel upload session instead.');
+  }
+  return resolved;
 }
 
 function cataloguePublicUrl(fileName: string) {
@@ -64,7 +99,7 @@ export class ImportsResolver {
   async processExcelImport(@Args('filePath') filePath: string, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     assertExcelFile(filePath);
-    const result = await this.imports.processExcelImport(filePath, user.id);
+    const result = await this.imports.processExcelImport(assertManagedImportPath(filePath), user.id);
     return { id: `excel-${Date.now()}`, result };
   }
 
@@ -100,8 +135,11 @@ export class ImportsResolver {
   ) {
     await requirePermission(this.prisma, ctx, 'catalogue.import');
     const filePath = uploadTempPath(uploadId, filename);
-    fs.appendFileSync(filePath, Buffer.from(contentBase64, 'base64'));
-    return { id: uploadId, result: { uploadedBytes: fs.statSync(filePath).size } };
+    const chunk = decodeBase64Upload(contentBase64, MAX_EXCEL_UPLOAD_BYTES, 'Excel upload chunk');
+    const currentSize = fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
+    if (currentSize + chunk.length > MAX_EXCEL_UPLOAD_BYTES) throw new BadRequestException('Excel uploads are limited to 25 MB');
+    fs.appendFileSync(filePath, chunk);
+    return { id: uploadId, result: { uploadedBytes: currentSize + chunk.length } };
   }
 
   @Mutation(() => ImportOutput)
@@ -168,14 +206,21 @@ export class ImportsResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('scope', { nullable: true }) scope?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
-    const { filePath, safeName } = persistentManualAssetPath(filename);
-    fs.writeFileSync(filePath, Buffer.from(contentBase64, 'base64'));
+    const effectiveScope = scope || 'product-image';
+    if (effectiveScope === 'profile-avatar') {
+      await requireSession(this.prisma, ctx);
+    } else if (effectiveScope === 'product-image') {
+      await requirePermission(this.prisma, ctx, 'products.manage');
+    } else {
+      throw new BadRequestException('Unsupported asset upload scope');
+    }
+    const image = decodeManualImage(filename, contentBase64);
+    const { filePath, safeName } = persistentManualAssetPath(image.extension);
+    fs.writeFileSync(filePath, image.content, { mode: 0o640 });
     return {
       id: safeName,
       result: {
-        scope: scope || 'asset',
-        filePath,
+        scope: effectiveScope,
         publicUrl: cataloguePublicUrl(safeName),
       },
     };

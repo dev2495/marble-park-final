@@ -1,0 +1,52 @@
+{
+  "charts": [
+    {
+      "id": "requirement-coverage",
+      "height": 360,
+      "type": "bar",
+      "dataset": {
+        "id": "requirement-coverage",
+        "title": "Requirement coverage by delivery layer",
+        "data": [
+          { "request": "Product master edit", "state": "Implemented", "layers": 2, "layer_definition": "API and data model" },
+          { "request": "Product master edit", "state": "Partial", "layers": 1, "layer_definition": "Downstream rules" },
+          { "request": "Product master edit", "state": "Missing", "layers": 2, "layer_definition": "UI and automated test" },
+          { "request": "Direct quote creation", "state": "Implemented", "layers": 4, "layer_definition": "UI, API, data model, downstream behavior" },
+          { "request": "Direct quote creation", "state": "Partial", "layers": 0, "layer_definition": "None" },
+          { "request": "Direct quote creation", "state": "Missing", "layers": 1, "layer_definition": "Automated test" },
+          { "request": "Editable quote rate", "state": "Implemented", "layers": 1, "layer_definition": "Data model" },
+          { "request": "Editable quote rate", "state": "Partial", "layers": 2, "layer_definition": "UI and API semantics" },
+          { "request": "Editable quote rate", "state": "Missing", "layers": 2, "layer_definition": "Downstream integrity and automated test" },
+          { "request": "Partial sales order", "state": "Implemented", "layers": 0, "layer_definition": "None" },
+          { "request": "Partial sales order", "state": "Partial", "layers": 1, "layer_definition": "Adjacent partial dispatch capability" },
+          { "request": "Partial sales order", "state": "Missing", "layers": 4, "layer_definition": "UI, API, data model, automated test" }
+        ],
+        "chart_spec": {
+          "id": "requirement-coverage",
+          "dataset": "requirement-coverage",
+          "title": "Requirement coverage by delivery layer",
+          "type": "bar",
+          "encodings": {
+            "x": { "field": "request", "type": "nominal" },
+            "y": { "field": "layers", "label": "Delivery layers", "type": "quantitative" },
+            "color": { "field": "state", "type": "nominal" },
+            "tooltip": [
+              { "field": "request", "type": "nominal" },
+              { "field": "state", "type": "nominal" },
+              { "field": "layers", "type": "quantitative" },
+              { "field": "layer_definition", "type": "nominal" }
+            ]
+          },
+          "settings": { "orientation": "horizontal", "groupMode": "stacked" },
+          "palette": {
+            "kind": "semantic",
+            "colors": { "Implemented": "#00692a", "Partial": "#0169cc", "Missing": "#e25507" }
+          },
+          "xAxisTitle": "",
+          "yAxisTitle": "Delivery layers",
+          "valueFormat": "number"
+        }
+      }
+    }
+  ]
+}

@@ -33,6 +33,19 @@ const CHANGE_PASSWORD = gql`
   }
 `;
 
+const UPLOAD_PROFILE_AVATAR = gql`
+  mutation UploadProfileAvatar($filename: String!, $contentBase64: String!, $scope: String) {
+    uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result }
+  }
+`;
+
+async function fileBase64(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
 function daysAgo(d?: string | null): string {
   if (!d) return 'never';
   const t = new Date(d).getTime();
@@ -59,6 +72,7 @@ export default function ProfilePage() {
     },
   });
   const [changePassword, { loading: changing, error: passwordError }] = useMutation(CHANGE_PASSWORD);
+  const [uploadAvatar] = useMutation(UPLOAD_PROFILE_AVATAR);
 
   const me = data?.me;
 
@@ -86,17 +100,13 @@ export default function ProfilePage() {
     setUploadError(null);
     setUploadingAvatar(true);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('scope', 'product-image'); // reuse the image upload path
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}` },
-        body: fd,
-      });
-      const json = await res.json();
-      if (!res.ok || !json.publicUrl) throw new Error(json.error || 'Upload failed');
-      setProfile((cur) => ({ ...cur, avatarUrl: json.publicUrl }));
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size <= 0 || file.size > 5 * 1024 * 1024) {
+        throw new Error('Use a JPG, PNG, or WebP image smaller than 5 MB.');
+      }
+      const result = await uploadAvatar({ variables: { filename: file.name, contentBase64: await fileBase64(file), scope: 'profile-avatar' } });
+      const publicUrl = result.data?.uploadStoredAsset?.result?.publicUrl;
+      if (!publicUrl) throw new Error('Upload failed');
+      setProfile((cur) => ({ ...cur, avatarUrl: publicUrl }));
     } catch (err) {
       setUploadError((err as any)?.message || 'Upload failed');
     } finally {

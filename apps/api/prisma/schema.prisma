@@ -51,6 +51,7 @@ model AuditEvent {
   @@index([actorUserId])
   @@index([createdAt(sort: Desc)])
   @@index([entityType, entityId], map: "AuditEvent_entity_idx")
+  @@index([action, createdAt(sort: Desc)], map: "AuditEvent_action_created_idx")
 }
 
 model Customer {
@@ -84,6 +85,8 @@ model DispatchChallan {
   challanNumber   String      @unique
   quote           Quote       @relation(fields: [quoteId], references: [id])
   quoteId         String
+  salesOrder      SalesOrder? @relation("SalesOrderChallans", fields: [salesOrderId], references: [id])
+  salesOrderId    String?
   dispatchJob     DispatchJob @relation(fields: [dispatchJobId], references: [id])
   dispatchJobId   String
   customer        Customer    @relation(fields: [customerId], references: [id])
@@ -104,6 +107,7 @@ model DispatchChallan {
   updatedAt       DateTime
 
   @@index([quoteId])
+  @@index([salesOrderId])
   @@index([dispatchJobId])
   @@index([customerId])
   @@index([status])
@@ -113,7 +117,9 @@ model DispatchChallan {
 model DispatchJob {
   id               String            @id
   quote            Quote             @relation(fields: [quoteId], references: [id])
-  quoteId          String            @unique
+  quoteId          String
+  salesOrder       SalesOrder?       @relation("SalesOrderDispatchJob", fields: [salesOrderId], references: [id])
+  salesOrderId     String?           @unique
   customer         Customer          @relation(fields: [customerId], references: [id])
   customerId       String
   siteAddress      String
@@ -125,6 +131,7 @@ model DispatchJob {
   updatedAt        DateTime
   dispatchChallans DispatchChallan[]
 
+  @@index([quoteId])
   @@index([customerId])
   @@index([ownerId])
   @@index([status])
@@ -526,7 +533,7 @@ model Quote {
   updatedAt           DateTime
   activities          Activity[]
   reservations        Reservation[]
-  dispatchJobs        DispatchJob?
+  dispatchJobs        DispatchJob[]
   dispatchChallan     DispatchChallan[]
 
   @@index([leadId])
@@ -545,6 +552,8 @@ model Reservation {
   id        String   @id
   quote     Quote    @relation(fields: [quoteId], references: [id])
   quoteId   String
+  salesOrderId String?
+  salesOrderLineId String?
   product   Product  @relation(fields: [productId], references: [id])
   productId String
   quantity  Int
@@ -553,6 +562,8 @@ model Reservation {
   updatedAt DateTime
 
   @@index([quoteId, status])
+  @@index([salesOrderId, status])
+  @@index([salesOrderLineId])
   @@index([productId, status])
   @@index([status])
   @@index([createdAt(sort: Desc)])
@@ -572,13 +583,16 @@ model Session {
 model SalesOrder {
   id            String   @id
   orderNumber   String   @unique
-  quoteId       String   @unique
+  quoteId       String
+  idempotencyKey String? @unique
   leadId        String
   customerId    String
   ownerId       String
   status        String
   paymentMode   String
   paymentStatus String
+  paymentTerms  String   @default("")
+  promisedDate  DateTime?
   advanceAmount Float
   totalAmount   Float
   lines         Json
@@ -587,6 +601,10 @@ model SalesOrder {
   createdAt     DateTime @default(now())
   updatedAt     DateTime
 
+  dispatchJob   DispatchJob? @relation("SalesOrderDispatchJob")
+  dispatchChallans DispatchChallan[] @relation("SalesOrderChallans")
+
+  @@index([quoteId])
   @@index([leadId])
   @@index([customerId])
   @@index([ownerId])
@@ -608,7 +626,16 @@ model QuoteLine {
   area          String?
   unit          String   @default("PC")
   quantity      Int
+  orderedQuantity Int      @default(0)
+  cancelledQuantity Int    @default(0)
+  closedQuantity Int       @default(0)
+  listPrice     Float      @default(0)
   unitPrice     Float    @default(0)
+  discountPercent Float   @default(0)
+  taxRate       Float      @default(18)
+  taxableValue  Float      @default(0)
+  taxAmount     Float      @default(0)
+  grossLineTotal Float     @default(0)
   lineTotal     Float    @default(0)
   status        String   @default("quoted")
   isTileSpecial Boolean  @default(false)
@@ -645,7 +672,13 @@ model SalesOrderLine {
   dispatchedQuantity  Int      @default(0)
   deliveredQuantity   Int      @default(0)
   returnedQuantity    Int      @default(0)
+  listPrice           Float    @default(0)
   unitPrice           Float    @default(0)
+  discountPercent     Float    @default(0)
+  taxRate             Float    @default(18)
+  taxableValue        Float    @default(0)
+  taxAmount           Float    @default(0)
+  grossLineTotal      Float    @default(0)
   lineTotal           Float    @default(0)
   status              String   @default("open")
   isTileSpecial       Boolean  @default(false)

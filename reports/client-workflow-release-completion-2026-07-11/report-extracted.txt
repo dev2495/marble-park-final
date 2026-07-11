@@ -1,0 +1,165 @@
+MP Marble Park Retail OS Implementation completion review | July 11, 2026
+CLIENT WORKFLOW COMPLETION AND RELEASE REVIEW
+Commercial workflow is locally release-gated.
+The requested Product Master editing, editable quote rates, direct quotes, and repeated partial
+sales orders now operate as one controlled system. The release gate ran against a clean migrated
+PostgreSQL database and the compiled API and web application. Railway deployment is
+deliberately not part of this run.
+RELEASE DECISION Approve for controlled deployment after environment setup. Local
+migration rehearsal, production builds, API-level workflow gate, and browser
+verification passed. Do not describe the system as live until Railway
+services, database backup, environment variables, health checks, and the
+post-deploy smoke are complete.
+Client requests
+4 / 4
+implemented end to end
+Partial orders
+2
+created from one quote in
+the release gate
+Build gates
+2
+API and web production
+builds passed
+Cookie auth
+Pass
+HTTP-only browser session
+issued
+What was completed
+Product Master
+Existing SKUs are
+selectable and editable.
+SKU is read-only, changes
+are audited, stale saves are
+rejected, image galleries
+are validated and
+reorderable, and archive
+preserves history.
+Quote pricing
+Quote Studio and quote
+detail expose list rate,
+negotiated rate, discount,
+and GST. The server
+persists the same
+commercial snapshot for
+quote, order, payment,
+PDF, and downstream
+records.
+Partial orders
+Staff selects only remaining
+quantity. Each order has a
+retry key, payment terms,
+delivery promise, order
+lines, reservations,
+procurement demand,
+documents, and dispatch
+job.
+Session and upload
+safety
+Browser sessions use an
+HTTP-only cookie. Login
+throttling, disabled
+production playground,
+bounded request sizes,
+validated image uploads,
+and least-privilege upload
+scopes are in place.
+Client workflow now delivered
+Release gate evidence
+GATE RESULT EVIDENCE
+Migration
+rehearsal
+Passed All 12 Prisma migrations, including the new client workflow migration, applied to an empty local PostgreSQL database.
+API production
+build
+Passed Nest production compile passed after Prisma client generation.
+Web production
+build
+Passed Next.js 15.5.19 generated all 42 application routes, including Product Master and quote detail.
+Client workflow
+E2E
+Passed Created and edited a product; created a direct quote; checked negotiated GST pricing; created two partial orders; retried one
+idempotently; rejected over-order; verified order-scoped reservation, dispatch, payment and procurement records; closed a remainder.
+Browser
+workflow
+Passed Cookie-backed login reached the dashboard. Product Master showed locked SKU edit mode. A completed quote showed rate controls,
+GST totals, two sales orders, and no remaining quantity available to order.
+Data and migration design
+The old one-order-per-quote constraints were removed only after new order ownership fields were added and legacy records were backfilled. New
+orders use a serializable transaction and optimistic remaining-quantity update. This prevents two staff members from allocating the same quote balance
+and prevents a client retry from creating a duplicate order.
+BUSINESS RECORD NEW OWNERSHIP RULE WHY IT MATTERS
+Sales order and dispatch
+job
+Many sales orders may reference one quote; one dispatch job
+belongs to one sales order.
+Partial orders cannot overwrite each other’s operational state.
+Reservations and sales-
+order lines
+Reservations retain sales order and sales-order-line ownership.Stock consumption, backorders, and dispatch consume the correct
+selected quantity.
+Payments, documents and
+demand
+Each partial order gets independent payment, PDF, and
+procurement records.
+Commercial, warehouse, and accounts evidence stays traceable.
+Quote remainder Each line reports quoted, ordered, cancelled, closed, and
+remaining quantity.
+The original negotiated quote remains the customer record without
+forcing duplicate quotes.
+Deployment prerequisites
+Not deployed in this implementation run. Railway deployment was explicitly deferred. Before touching the client environment, take a
+database backup, apply the migration to a staging copy, validate the legacy foreign-key backfill, set the listed environment variables, and run
+the same release gate against the deployed API.
+1. PRODUCT MASTER
+Maintain the master SKU
+Change images, name,
+price, floor, tax, status and
+description. The SKU
+identifier remains
+immutable.
+2. QUOTE STUDIO
+Quote direct to a customer
+No lead or intent is required
+at the screen. The API
+creates the internal
+opportunity automatically.
+3. COMMERCIAL
+CONTROL
+Set a negotiated line rate
+List price, discount,
+negotiated rate, GST and
+total are retained as a
+server-calculated
+commercial snapshot.
+4. FULFILMENT
+Convert selected quantities
+Order part now, order the
+balance later, or close a
+remainder with a recorded
+reason. Do not create a
+duplicate quote.
+→ → →
+1. Set CORS_ORIGIN to the published web URL, PUBLIC_CATALOGUE_IMAGE_BASE_URL to the public API origin, and a persistent
+CATALOGUE_IMAGE_STORAGE_DIR or object-storage implementation.
+2. Deploy API and web from the committed revision. The Docker images now use lockfile-clean installation and provide /readyz and /api/health
+checks.
+3. Run database backup, migration deploy, and post-migration orphan/backfill validation before allowing traffic.
+4. Execute the client workflow smoke with a disposable account and test customer. Confirm login, quote, two partial orders, and a read-only
+order/dispatch check.
+5. Only then invite the client to acceptance testing. Do not run the destructive reset scripts against the client database.
+Residual release risk
+Dependency follow-up The targeted Nodemailer upgrade to 9.0.3 is included. The latest npm production audit still reports three high and several
+moderate advisories in legacy Nest GraphQL/WebSocket and Next bundled dependency paths. npm’s automated remedy recommends invalid major
+downgrades, so it was not applied. The production API exposes only POST GraphQL, disables Playground in production, restricts origins, and does not
+enable subscriptions; however, a planned framework dependency upgrade remains required for a clean audit.
+Asset durability The code validates images and supports a configured persistent directory. Railway ephemeral storage is not suitable for durable
+product images unless the image directory is mounted persistently or replaced with object storage before the production rollout.
+Earlier local user snapshot
+The prior read-only audit of the configured local Marble Park database found 98 users: 37 active and 61 inactive. All 751 stored sessions were expired
+at that audit time. This is a local snapshot, not a current production count; production data remains unverified until Railway is restored and accessed
+under the deployment runbook.
+Evidence sources
+Repository source and Prisma schema; migration 20260711090000_client_workflow_completion; compiled API and web; isolated local PostgreSQL release-gate
+database; browser verification on local web/API services; prior July 10 read-only database and Railway audit.
+Generated July 11, 2026. This document intentionally does not claim Railway deployment or a live production recovery.

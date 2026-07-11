@@ -27,7 +27,9 @@ export class AuthService {
   ) {}
 
   async login(input: LoginInput, ipAddress?: string, userAgent?: string) {
-    const user = await this.users.findByEmail(input.email);
+    const email = String(input.email || '').trim().toLowerCase();
+    await this.assertLoginAllowed(email, ipAddress, userAgent);
+    const user = await this.users.findByEmail(email);
     if (!user) {
       // Record a failed-login attempt against an anonymous actor so admins
       // can spot brute-force or typo storms in the audit log.
@@ -35,9 +37,9 @@ export class AuthService {
         actorUserId: 'anonymous',
         action: 'auth.login.failed',
         entityType: 'User',
-        entityId: input.email || 'unknown',
-        summary: `Failed login attempt for ${input.email || 'unknown email'}`,
-        metadata: { email: input.email, ipAddress, userAgent, reason: 'user-not-found' },
+        entityId: email || 'unknown',
+        summary: `Failed login attempt for ${email || 'unknown email'}`,
+        metadata: { email, ipAddress, userAgent, reason: 'user-not-found' },
       });
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -48,9 +50,9 @@ export class AuthService {
         actorUserId: user.id,
         action: 'auth.login.failed',
         entityType: 'User',
-        entityId: user.id,
+          entityId: email,
         summary: `Failed login attempt for ${user.email}`,
-        metadata: { email: user.email, ipAddress, userAgent, reason: 'invalid-password' },
+        metadata: { email, userId: user.id, ipAddress, userAgent, reason: 'invalid-password' },
       });
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -101,6 +103,12 @@ export class AuthService {
       });
     }
     return { success: true };
+  }
+
+  async logoutByToken(token: string) {
+    const session = await this.prisma.session.findUnique({ where: { token } }).catch(() => null);
+    if (!session) return { success: true };
+    return this.logout(session.id);
   }
 
   async validateSession(token: string): Promise<SessionPayload | null> {
@@ -166,7 +174,10 @@ export class AuthService {
       } as any,
     });
 
-    return { success: true, token };
+    // The caller always receives the same result whether an account exists or not.
+    // Delivery is intentionally delegated to a configured mail provider; never return
+    // a password-reset secret in a GraphQL response.
+    return { success: true };
   }
 
   async resetPassword(token: string, newPassword: string) {
@@ -178,6 +189,9 @@ export class AuthService {
       throw new BadRequestException('Invalid or expired token');
     }
 
+    if (String(newPassword || '').length < 12) {
+      throw new BadRequestException('Password must contain at least 12 characters');
+    }
     const passwordHash = await bcrypt.hash(newPassword, 12);
     
     await this.prisma.user.update({
@@ -189,5 +203,25 @@ export class AuthService {
     await this.prisma.session.deleteMany({ where: { userId: resetToken.userId } });
 
     return { success: true };
+  }
+
+  private async assertLoginAllowed(email: string, ipAddress?: string, userAgent?: string) {
+    const attempts = await this.prisma.auditEvent.count({
+      where: {
+        action: 'auth.login.failed',
+        entityId: email || 'unknown',
+        createdAt: { gte: new Date(Date.now() - 15 * 60 * 1000) },
+      },
+    }).catch(() => 0);
+    if (attempts < 10) return;
+    await this.audit.record({
+      actorUserId: 'anonymous',
+      action: 'auth.login.throttled',
+      entityType: 'User',
+      entityId: email || 'unknown',
+      summary: `Login throttled for ${email || 'unknown email'}`,
+      metadata: { email, ipAddress, userAgent, attempts },
+    });
+    throw new UnauthorizedException('Too many sign-in attempts. Try again in 15 minutes.');
   }
 }

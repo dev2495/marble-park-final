@@ -1,5 +1,6 @@
 import { Resolver, Mutation, Args, Context, InputType, Field, ObjectType } from '@nestjs/graphql';
 import { AuthService } from './auth.service';
+import { GraphqlRequestContext, sessionToken } from './session-context';
 
 import { IsEmail, IsString, IsNotEmpty } from 'class-validator';
 
@@ -47,20 +48,30 @@ export class AuthResolver {
   constructor(private auth: AuthService) {}
 
   @Mutation(() => AuthResult)
-  login(
+  async login(
     @Args('input') input: LoginInput,
-    @Context() ctx: { req?: { ip?: string; headers?: { 'user-agent'?: string } } },
+    @Context() ctx: GraphqlRequestContext & { req?: { ip?: string; headers?: Record<string, string | string[] | undefined> } },
   ) {
-    return this.auth.login(
+    const result = await this.auth.login(
       input,
       ctx.req?.ip,
-      ctx.req?.headers?.['user-agent'],
+      Array.isArray(ctx.req?.headers?.['user-agent']) ? ctx.req?.headers?.['user-agent'][0] : ctx.req?.headers?.['user-agent'],
     );
+    ctx.res?.cookie?.('mp_session', result.token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+    return result;
   }
 
   @Mutation(() => Boolean)
-  async logout(@Args('sessionId') sessionId: string) {
-    await this.auth.logout(sessionId);
+  async logout(@Context() ctx: GraphqlRequestContext) {
+    const token = sessionToken(ctx);
+    if (token) await this.auth.logoutByToken(token);
+    ctx.res?.clearCookie?.('mp_session', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' });
     return true;
   }
 

@@ -1,0 +1,220 @@
+MP   Marble Park Review                                                                  Repository and Railway audit | July 10, 2026
+
+ CLIENT WORKFLOW AND FULL-STACK REVIEW
+ Marble Park Client Workflow Readiness
+ EXECUTIVE SUMMARY
+ The client requests are valid and should be handled as one commercial workflow. Product editing, quote pricing, and
+ partial order conversion share the same product and line snapshots; implementing them independently would create data drift.
+ Direct quote creation already works. Quote Studio accepts a customer and product lines without a lead or intent, while the
+ API creates the internal CRM opportunity automatically.
+ Product editing, editable quote rate, and partial sales orders are not end-to-end complete. Product updates exist only in
+ the API, quote-rate totals disagree between surfaces, and the database enforces one sales order and one dispatch job per
+ quote.
+ Production is currently offline. Railway reports both application services stopped with no running replicas, so restoring a
+ controlled deployment is the first operational action before client validation.
+
+
+     Direct quote                                                       Product edit
+     Existing behavior; needs a dedicated regression test.              API capable; no usable Product Master edit screen.
+
+     Quote rate                                                         Partial order
+     Visible calculation and stored order value can                     Blocked by one-order-per-quote data constraints.
+     disagree.
+
+     Production
+     Web and API services are stopped.
+
+ Only direct quote creation is functionally ready
+ The chart grades each request across UI, API, data model, downstream integrity, and automated test coverage. It is a coverage
+ count, not a subjective percentage. Product editing has backend foundations, pricing has partial UI and schema support but
+ unsafe downstream totals, and partial ordering needs coordinated changes across the full chain.
+
+     Caveats and Assumptions. This is a no-change audit of the current main branch and read-only Railway state on July 10, 2026. Local
+     production builds and Prisma validation passed. Mutating smoke scripts were not run, and production was offline, so authenticated
+     live workflows could not be executed. No application code, migration, database record, or hosting configuration was changed.
+   Requirement coverage by delivery layer
+   Five audited layers per request: UI, API, data model, downstream integrity, and automated test.
+
+
+
+            Product master edit
+
+
+          Direct quote creation
+
+
+             Editable quote rate
+
+
+              Partial sales order
+
+                                    0                     2                            4                         6                           8
+
+                                                               Implemented             Partial      Missing
+   Coverage is based on traced repository behavior, current schema constraints, available smoke scripts, and read-only
+   Railway status.
+   Evidence: client message; Product Master, quote, order, stock, and dispatch source; Prisma schema; smoke scripts.
+
+
+   Client request to current-system mapping
+   Current behavior and the minimum complete outcome for client acceptance.
+ Client request              Status     Current system                                     Complete acceptance outcome
+ Product master editable;    Partial    API update excludes SKU, but Product               Edit all commercial fields and image gallery; SKU
+ SKU fixed                              Master has create-only UI; archive can still       read-only; diff audit; archive without changing
+                                        rewrite SKU.                                       code.
+ Quote without lead or       Ready      Quote Studio creates from customer and             Keep this path, label it clearly, and add a
+ intent                                 lines; API auto-creates the internal               regression test for no-lead creation.
+                                        opportunity.
+ Rate available while        Unsafe     Creation shows catalogue rate read-only;           Editable line rate at creation and detail, one
+ quoting                                detail edits MRP and discount; order totals        canonical pricing function, floor-price policy,
+                                        ignore special-rate semantics.                     identical UI/PDF/order totals.
+ Multiple partial orders     Missing    Partial challans exist, but quote-to-order         Select line quantities, create repeated orders
+ from one quote                         conversion always uses all lines and quote ID      against remaining quantity, and isolate stock,
+                                        is unique on sales order and dispatch job.         payment, procurement, documents, and dispatch
+                                                                                           per order.
+
+
+
+The correct design keeps one quote and allows many controlled orders
+The quote remains the negotiated customer record. Each confirmed subset becomes its own sales order, with independent
+payment, reservation, procurement, document, and dispatch state. Remaining quote quantities stay available for the next order
+instead of forcing a duplicate quote.
+
+  QUOTE                                                             SELECTION
+  Frozen commercial snapshot                                   → Choose this order                                               →
+  Customer, area, SKU, list price, negotiated rate, tax,            Staff selects line quantities up to the remaining
+  and accepted quantities.                                          balance and confirms payment terms.
+
+  SALES ORDER                                                       QUOTE PROGRESS
+  Independent execution                                        → Remaining quantity stays open
+  Each order gets its own number, lines, payment,                   Show ordered, remaining, cancelled, and closed
+  reservation, demand, PDF, and dispatch job.                       quantities with full order history.
+
+    Concurrency rule: sales-order creation must be transactional and idempotent. Two staff members cannot order the
+    same remaining quantity, and retrying a request cannot create a duplicate order.
+
+
+Pricing must become one business rule, not three calculations
+The current quote UI and PDFs understand special rate and line discount, while sales-order totals and normalized line prices
+use catalogue price. The fix should introduce one shared pricing contract used by the browser, API, quote PDF, sales-order
+PDF, payments, and reports.
+   Line snapshot: list price, discount percentage, final unit rate, tax rate, taxable value, tax amount, and gross line total.
+   Commercial guardrail: below-floor rate requires an explicit permission or owner approval, with the requested and
+   approved rate recorded.
+   Version safety: editing Product Master changes future quotes only; existing quote versions and sales orders keep their
+   historical rate and image snapshot.
+   Single calculator: persist server-calculated totals and make both PDFs read those values instead of recalculating
+   independently.
+
+Product Master needs a real edit lifecycle
+The backend already has the right first boundary because the update input does not accept SKU. The complete workflow
+should add an edit action from the SKU register and product detail, expose the existing commercial fields, and close audit and
+image-management gaps.
+   Immutable identity: SKU is read-only in UI and rejected if supplied to update APIs; archive keeps the original SKU.
+   Editable content: name, category, brand, finish, dimensions, unit, sell price, floor price, tax class, description, status,
+   primary image, and gallery.
+   Image controls: upload, replace, remove, set primary, reorder gallery, file validation, size limits, and durable storage.
+   Audit and conflict control: record field-level before/after values and reject stale edits using a version or updated
+   timestamp.
+
+Full-stack review found four release blockers beyond the UI
+    CRITICAL Production hosting                                  CRITICAL Pricing integrity
+   Railway shows both application services                      Special rate and discounts are calculated in quote
+   failed/stopped, zero running replicas, and no                UI/PDF, but order totals, normalized unit price, and
+   connected source repository. Public web and API              payment status use catalogue price. This can
+   domains return Application not found.                        create customer-document and accounting
+                                                                disagreement.
+
+    CRITICAL Order data model                                    CRITICAL Security and uploads
+   Sales order and dispatch job both enforce quote ID           Production GraphQL playground is enabled,
+   uniqueness. Reservations and several downstream              sessions live in browser storage, login has no
+   lookups are quote-scoped, so partial ordering                throttling, broad roles can upload arbitrary public
+   cannot be made safe with a frontend-only change.             files, and request bodies permit very large
+                                                                payloads.
+
+    HIGH Dependency risk                                         HIGH Automated verification
+   The current production dependency audit reports              Production builds and schema validation pass, but
+   six high and four moderate advisories, including             there are no unit or integration test files. Existing
+   websocket, upload, mail, and CSS processing                  smoke scripts mutate business data and do not
+   paths.                                                       cover product edit, direct quote without lead,
+                                                                canonical rate parity, or multiple orders per quote.
+
+    HIGH Database integrity                                      HIGH Delivery discipline
+   Several normalized operational tables have IDs and           Service source is disconnected, health checks are
+   indexes but no foreign keys in migrations. Partial-          absent, Docker builds use install rather than
+   order work should add explicit relations and                 lockfile-clean install, and documentation describes
+   deletion rules instead of increasing soft references.        older framework and authentication choices.
+
+User database review: 37 of 98 accounts are active in the local snapshot
+A read-only aggregate query was run against the configured local marble_park database. No names, email addresses, phone
+numbers, password hashes, tokens, or permission details were extracted.
+
+   Account status                                               Active role mix
+   98 total users: 37 active and 61 inactive. The               27 office staff, 4 sales, 2 owners, and one each for
+   recorded account creation range is April 29 to June          admin, dispatch operations, inventory manager, and
+   19, 2026.                                                    sales manager.
+   Inactive concentration                                                   Authentication hygiene
+   All 61 inactive accounts are concentrated in three                       All 751 stored sessions are expired and none are
+   roles: 31 sales, 15 owners, and 15 dispatch                              active. Password-change timestamps exist for 82
+   operations. These should be reconciled against                           users, while 16 are missing; three users have
+   current staff before production restore.                                 permission overrides.
+
+    Production user counts remain unverified. Railway variables show a TCP proxy correctly targeting PostgreSQL port
+    5432, but the Postgres service has no active deployment and both public-proxy and SSH-tunnel connections closed
+    before authentication. Restarting or redeploying production would be a state change, so it was not performed in this
+    audit.
+
+
+End-to-end acceptance must prove business truth across every surface
+A release is complete only when UI, API, database state, documents, stock, payments, procurement, dispatch, and audit agree.
+The acceptance suite should use an isolated test database and disposable uploaded assets, never the client dataset.
+
+   Required acceptance scenarios
+   Minimum automated coverage before client handoff.
+ Workflow              Cases that must pass                                      Pass condition
+ Product edit          Edit every commercial field, replace and reorder          SKU never changes; catalogue and future quote search
+                       images, attempt SKU change, stale-edit conflict,          refresh; audit contains exact diff.
+                       permission denial, archive.
+ Direct quote          Create from customer with no lead or intent; assign       Quote saves, internal CRM link exists, PDF renders, and
+                       owner; reopen and revise.                                 no user-facing lead step is required.
+ Rate parity           Catalogue rate, negotiated rate, line discount, quote     UI, API, quote PDF, order PDF, payment balance, and
+                       discount, tax, floor-price breach, revision.              reports return the same totals.
+ Partial orders        Order a subset, order remaining lines later, partial      Ordered plus remaining plus cancelled equals quoted; no
+                       quantity, concurrent over-order attempt, retry, close     duplicate or over-order is possible.
+                       remainder.
+ Downstream            Separate cash/credit payments, reservation,               Every operational record points to the correct sales-order
+ isolation             backorder demand, GRN allocation, dispatch,               line and stock reconciliation stays clean.
+                       delivery, return, and cancellation for each order.
+ Deployment            Migration rehearsal, rollback rehearsal, dependency       Connected deployment becomes healthy, source revision
+                       gate, health checks, authenticated browser journey,       is traceable, and smoke evidence is saved without
+                       document downloads.                                       touching client data.
+Adjacent features the client is likely to expect
+  Quote fulfillment view: ordered, remaining, cancelled, reserved, pending inward, dispatched, and delivered by line and
+  area.
+  Price and product history: effective date, prior value, changed by, reason, and future-price scheduling.
+  Duplicate active-quote warning: alert staff when the same customer and project already has an open quote; open the
+  current quote instead of creating another.
+  Close or cancel remainder: release stock and purchase demand with a reason, preserving the accepted order history.
+  Per-order promise and payment: delivery date, payment terms, advance allocation, outstanding amount, and credit
+  approval on each partial order.
+  Inline customer creation and quote draft recovery: create the customer from Quote Studio, autosave drafts, and recover
+  interrupted work.
+
+Recommended Next Steps
+   1. Restore a controlled production deployment first. Reconnect Railway services to source, configure health checks,
+      deploy the current main revision, and verify login plus read-only core queries before client testing.
+   2. Fix canonical pricing before exposing editable rate. Introduce the server pricing contract and parity tests, then make
+      Rate editable in both Quote Studio and quote detail.
+   3. Complete Product Master editing. Add immutable-SKU edit UI, audit history, archive behavior, safe image
+      management, and focused tests.
+   4. Migrate to one quote with many sales orders. Change order, reservation, dispatch, payment, procurement, and
+      document ownership together, with backfill and rollback scripts.
+   5. Run the isolated end-to-end release gate. Only after that gate passes should the client dataset be migrated and the
+      client acceptance session begin.
+
+Decisions to confirm with the client
+     Recommended default: only admin, owner, and inventory manager can edit Product Master; sales can view and quote.
+     Recommended default: a rate below floor price requires owner approval before PDF send or order creation.
+     Recommended default: each partial order has its own payment terms, delivery promise, PDF, and dispatch job.
+     Recommended default: remaining quote quantity stays open until fully ordered or explicitly closed with a reason.
+

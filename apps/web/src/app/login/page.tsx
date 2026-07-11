@@ -43,12 +43,11 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const { data, errors } = await login({ variables: { input: { email, password } } });
-      if (data?.login?.token) {
-        localStorage.setItem('auth_token', data.login.token);
+      if (data?.login?.authenticated && data?.login?.user) {
         localStorage.setItem('user', JSON.stringify(data.login.user));
         router.push('/dashboard');
       } else {
-        setError(errors?.[0]?.message || 'Login completed but the server did not return a session token.');
+        setError(errors?.[0]?.message || 'Login did not establish a session.');
       }
     } catch (err: any) {
       setError(err.message || 'Invalid credentials');

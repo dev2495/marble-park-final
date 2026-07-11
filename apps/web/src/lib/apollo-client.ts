@@ -1,23 +1,10 @@
 import { ApolloClient, InMemoryCache, createHttpLink, from } from '@apollo/client';
-import { setContext } from '@apollo/client/link/context';
 import { onError } from '@apollo/client/link/error';
 import { RetryLink } from '@apollo/client/link/retry';
 
 const httpLink = createHttpLink({
   uri: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql',
-});
-
-const authLink = setContext((_, { headers }) => {
-  let token = null;
-  if (typeof window !== 'undefined') {
-    token = localStorage.getItem('auth_token');
-  }
-  return {
-    headers: {
-      ...headers,
-      authorization: token ? `Bearer ${token}` : '',
-    },
-  };
+  credentials: 'include',
 });
 
 // Surface GraphQL/network errors centrally and bounce the user to /login on 401-style
@@ -36,7 +23,6 @@ const errorLink = onError(({ graphQLErrors, networkError, operation }) => {
         /unauthori[sz]ed|session expired|invalid session/i.test(message);
       if (isAuthError && typeof window !== 'undefined') {
         try {
-          localStorage.removeItem('auth_token');
         } catch {}
         if (!window.location.pathname.startsWith('/login')) {
           window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
@@ -68,7 +54,7 @@ const retryLink = new RetryLink({
 });
 
 export const apolloClient = new ApolloClient({
-  link: from([errorLink, retryLink, authLink, httpLink]),
+  link: from([errorLink, retryLink, httpLink]),
   cache: new InMemoryCache(),
   defaultOptions: {
     watchQuery: {
