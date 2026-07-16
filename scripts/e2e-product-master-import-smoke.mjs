@@ -2,6 +2,8 @@ import ExcelJS from 'exceljs';
 import { PrismaClient } from '@prisma/client';
 
 const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
@@ -20,7 +22,7 @@ async function uploadWorkbook(buffer, filename, token) {
 }
 
 async function main() {
-  const token = (await gql(`mutation($input: LoginInput!) { login(input: $input) { token } }`, { input: { email: 'admin@marblepark.com', password: 'password123' } })).login.token;
+  const token = (await gql(`mutation($input: LoginInput!) { login(input: $input) { token } }`, { input: { email: TEST_EMAIL, password: TEST_PASSWORD } })).login.token;
   const template = (await gql(`query { productImportTemplate }`, {}, token)).productImportTemplate;
   assert(template.contentBase64 && template.headers.includes('Internal Code') && template.headers.includes('Coverage Per Pack'), 'Downloadable template must expose governed tile fields');
   const workbook = new ExcelJS.Workbook();

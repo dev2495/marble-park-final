@@ -1,4 +1,9 @@
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
+const ROLE_PASSWORD = process.env.ROLE_PASSWORD || 'password123';
+const OFFICE_EMAIL = process.env.OFFICE_EMAIL || 'office@marblepark.com';
+const SALES_EMAIL = process.env.SALES_EMAIL || 'sales@marblepark.com';
 
 async function gql(query, variables = {}, token) {
   const res = await fetch(API, {
@@ -19,18 +24,18 @@ function unique(prefix) {
   return `${prefix}-${Date.now().toString(36).toUpperCase()}`;
 }
 
-async function login(email) {
+async function login(email, password = ROLE_PASSWORD) {
   return (await gql(
     `mutation($input: LoginInput!) { login(input: $input) { token user { id email role } } }`,
-    { input: { email, password: 'password123' } },
+    { input: { email, password } },
   )).login;
 }
 
 async function main() {
   const [admin, sales, office] = await Promise.all([
-    login('admin@marblepark.com'),
-    login('sales@marblepark.com'),
-    login('office@marblepark.com'),
+    login(TEST_EMAIL, TEST_PASSWORD),
+    login(SALES_EMAIL),
+    login(OFFICE_EMAIL),
   ]);
   assert(sales.user.role === 'sales', 'sales login should use the sales role');
   assert(office.user.role === 'office_staff', 'office login should use the office_staff role');

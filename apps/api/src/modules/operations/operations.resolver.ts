@@ -1,4 +1,4 @@
-import { Args, Context, Field, ID, InputType, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Context, Field, ID, InputType, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
@@ -127,7 +127,7 @@ export class OperationsResolver {
     @Args('entityType', { nullable: true }) entityType?: string,
     @Args('entityId', { nullable: true }) entityId?: string,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
     return this.operations.documentJobs({ entityType, entityId, status, take });
@@ -139,7 +139,7 @@ export class OperationsResolver {
     @Args('salesOrderId', { nullable: true }) salesOrderId?: string,
     @Args('customerId', { nullable: true }) customerId?: string,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
     return this.operations.paymentReceipts({ salesOrderId, customerId, status, take });
@@ -150,7 +150,7 @@ export class OperationsResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('salesOrderId', { nullable: true }) salesOrderId?: string,
     @Args('customerId', { nullable: true }) customerId?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'reports.view');
     return this.operations.creditNotes({ salesOrderId, customerId, take });
@@ -177,7 +177,7 @@ export class OperationsResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('locationId', { nullable: true }) locationId?: string,
     @Args('productId', { nullable: true }) productId?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
     return this.operations.stockLocationBalances({ locationId, productId, take });
@@ -204,7 +204,7 @@ export class OperationsResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('productId', { nullable: true }) productId?: string,
     @Args('referenceId', { nullable: true }) referenceId?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
     return this.operations.stockLedgerEntries({ productId, referenceId, take });
@@ -214,7 +214,7 @@ export class OperationsResolver {
   async stockCountSessions(
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
     return this.operations.stockCountSessions({ status, take });
@@ -227,7 +227,7 @@ export class OperationsResolver {
     @Args('locationId', { nullable: true }) locationId?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('search', { nullable: true }) search?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.operations.inventoryLots({ productId, locationId, status, search, take });
@@ -237,7 +237,7 @@ export class OperationsResolver {
   async openingStockSessions(
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.operations.openingStockSessions({ status, take });
@@ -259,7 +259,7 @@ export class OperationsResolver {
   async stockTransfers(
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.operations.stockTransfers({ status, take });
@@ -286,7 +286,7 @@ export class OperationsResolver {
   async inventoryPeriodCloses(
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'stock_counts.manage');
     return this.operations.inventoryPeriodCloses({ status, take });
@@ -314,7 +314,7 @@ export class OperationsResolver {
   async returnOrders(
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
     return this.operations.returnOrders({ status, take });
@@ -324,7 +324,7 @@ export class OperationsResolver {
   async returnableDispatchLines(
     @Context() ctx: GraphqlRequestContext,
     @Args('search', { nullable: true }) search?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'returns.manage');
     return this.operations.returnableDispatchLines({ search, take });
@@ -340,7 +340,7 @@ export class OperationsResolver {
   async stockReconciliation(
     @Context() ctx: GraphqlRequestContext,
     @Args('productId', { nullable: true }) productId?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.operations.stockReconciliation({ productId, take });
@@ -352,7 +352,7 @@ export class OperationsResolver {
     @Args('sourceType', { nullable: true }) sourceType?: string,
     @Args('sourceId', { nullable: true }) sourceId?: string,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.operations.internalLabelJobs({ sourceType, sourceId, status, take });
@@ -403,7 +403,7 @@ export class OperationsResolver {
   async stockAdjustmentRequests(
     @Context() ctx: GraphqlRequestContext,
     @Args('status', { nullable: true }) status?: string,
-    @Args('take', { nullable: true }) take?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.operations.stockAdjustmentRequests({ status, take });

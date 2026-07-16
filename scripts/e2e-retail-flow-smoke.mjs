@@ -1,4 +1,6 @@
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 
 async function gql(query, variables = {}, token) {
   const res = await fetch(API, {
@@ -14,7 +16,7 @@ function assert(condition, message) { if (!condition) throw new Error(message); 
 function unique(prefix) { return `${prefix}-${Date.now().toString(36).toUpperCase()}`; }
 
 async function main() {
-  const login = await gql(`mutation($input: LoginInput!) { login(input: $input) { token user { id role } } }`, { input: { email: 'admin@marblepark.com', password: 'password123' } });
+  const login = await gql(`mutation($input: LoginInput!) { login(input: $input) { token user { id role } } }`, { input: { email: TEST_EMAIL, password: TEST_PASSWORD } });
   const token = login.login.token;
   const sku = unique('E2E-HR');
 

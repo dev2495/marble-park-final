@@ -1,5 +1,11 @@
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const WEB = process.env.WEB_URL || 'http://localhost:3001';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
+const ROLE_PASSWORD = process.env.ROLE_PASSWORD || 'password123';
+const OFFICE_EMAIL = process.env.OFFICE_EMAIL || 'office@marblepark.com';
+const SALES_EMAIL = process.env.SALES_EMAIL || 'sales@marblepark.com';
+const DISPATCH_EMAIL = process.env.DISPATCH_EMAIL || 'dispatch@marblepark.com';
 
 async function gql(query, variables = {}, token) {
   const res = await fetch(API, {
@@ -13,24 +19,31 @@ async function gql(query, variables = {}, token) {
 }
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function unique(prefix) { return `${prefix}-${Date.now().toString(36).toUpperCase()}`; }
-async function login(email) {
-  const data = await gql(`mutation($input: LoginInput!) { login(input: $input) { token user { id email role name } } }`, { input: { email, password: 'password123' } });
+async function login(email, password = ROLE_PASSWORD) {
+  const data = await gql(`mutation($input: LoginInput!) { login(input: $input) { token user { id email role name } } }`, { input: { email, password } });
   return data.login;
 }
 async function product(token, sku, name, price) {
   return (await gql(`mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku name sellPrice category brand finish unit media } }`, {
-    input: { sku, name, category: 'Faucets & Showers', brand: 'Marble Park Select', finish: 'Chrome', dimensions: 'Smoke', unit: 'PC', sellPrice: price, floorPrice: price * 0.8, description: 'Area notification smoke SKU', media: { primary: '/catalogue-images/new-style-products-p011-106-98195b773d7d52.png' } },
+    input: { sku, name, category: 'Faucets & Showers', brand: 'Marble Park Select', finish: 'Chrome', dimensions: 'Smoke', unit: 'PC', sellPrice: price, floorPrice: price * 0.8, description: 'Area notification smoke SKU' },
   }, token)).createProduct;
 }
 async function main() {
   const [admin, office, sales, dispatch] = await Promise.all([
-    login('admin@marblepark.com'), login('office@marblepark.com'), login('sales@marblepark.com'), login('dispatch@marblepark.com'),
+    login(TEST_EMAIL, TEST_PASSWORD), login(OFFICE_EMAIL), login(SALES_EMAIL), login(DISPATCH_EMAIL),
   ]);
   const skuA = unique('AREA-STOCK');
   const skuB = unique('AREA-BACK');
   const stocked = await product(admin.token, skuA, 'Area Smoke Stocked Diverter', 7200);
   const backorder = await product(admin.token, skuB, 'Area Smoke Backorder Shower', 11600);
-  await gql(`mutation($input: CreateInventoryInput!) { createInventory(input: $input) { id onHand available } }`, { input: { productId: stocked.id, onHand: 2 } }, admin.token);
+  const location = (await gql(`query { stockLocations(status: "active") }`, {}, admin.token)).stockLocations.find((row) => row.code !== 'IN-TRANSIT');
+  assert(location, 'an active stock location is required');
+  const receive = (productId, quantity, reason) => gql(
+    `mutation($input: ManualGoodsReceiptInput!) { createManualGoodsReceipt(input: $input) }`,
+    { input: { vendorName: 'E2E CRM Vendor', locationId: location.id, reason, lines: JSON.stringify([{ productId, receivedQuantity: quantity, damagedQuantity: 0, unitCost: 5000 }]) } },
+    admin.token,
+  );
+  await receive(stocked.id, 2, 'Initial showroom stock for CRM smoke');
 
   const customer = (await gql(`mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`, { input: { name: `Area Quote Notification Customer ${skuA}`, phone: '9777777777', email: `${skuA.toLowerCase()}@example.com`, city: 'Ahmedabad', address: 'Area smoke site', forceCreate: true } }, admin.token)).createCustomer;
   const initialRows = [{ area: 'Master Bath', type: 'product', productId: stocked.id, sku: stocked.sku, name: stocked.name, category: stocked.category, brand: stocked.brand, qty: 1, unit: 'PC', price: stocked.sellPrice }];
@@ -68,18 +81,16 @@ async function main() {
   const jobs = (await gql(`query { dispatchJobs { id quoteId status quote } }`, {}, dispatch.token)).dispatchJobs;
   const job = jobs.find((row) => row.quoteId === quote3.id);
   assert(job, 'final sales order should open dispatch job');
-  let blocked = false;
-  try {
-    await gql(`mutation($input: CreateChallanInput!) { createChallan(input: $input) { id } }`, { input: { jobId: job.id, transporter: 'Smoke', vehicleNo: 'SMOKE', driverName: 'Driver', driverPhone: '9000000000' } }, dispatch.token);
-  } catch (error) {
-    blocked = /not inwards yet/i.test(error.message);
-  }
-  assert(blocked, 'full dispatch must block the not-inwarded backorder line');
-  const stockedLine = quote3.lines.find((line) => line.productId === stocked.id);
-  const challan = (await gql(`mutation($input: CreateChallanInput!) { createChallan(input: $input) { id challanNumber status lines } }`, { input: { jobId: job.id, transporter: 'Smoke', vehicleNo: 'SMOKE-1', driverName: 'Driver', driverPhone: '9000000000', lines: JSON.stringify([stockedLine]) } }, dispatch.token)).createChallan;
+  const pick = (await gql(`mutation($input: CreatePickListInput!) { createPickList(input: $input) }`, { input: { salesOrderId: order.id, locationId: location.id, notes: 'Partial CRM stock-ready pick' } }, dispatch.token)).createPickList;
+  assert(pick.lines.length === 1 && pick.lines[0].productId === stocked.id, 'partial pick must include only the stocked order line while backorder remains pending inward');
+  await gql(`mutation($id: ID!, $action: String!) { transitionPickList(id: $id, action: $action) }`, { id: pick.id, action: 'start' }, dispatch.token);
+  await gql(`mutation($id: ID!, $action: String!, $input: PickListTransitionInput) { transitionPickList(id: $id, action: $action, input: $input) }`, { id: pick.id, action: 'pick', input: { lines: JSON.stringify(pick.lines.map((line) => ({ pickLineId: line.id, pickedQuantity: line.requestedQuantity }))) } }, dispatch.token);
+  await gql(`mutation($id: ID!, $action: String!, $input: PickListTransitionInput) { transitionPickList(id: $id, action: $action, input: $input) }`, { id: pick.id, action: 'pack', input: { lines: JSON.stringify(pick.lines.map((line) => ({ pickLineId: line.id, packedQuantity: line.requestedQuantity }))) } }, dispatch.token);
+  await gql(`mutation($id: ID!, $action: String!) { transitionPickList(id: $id, action: $action) }`, { id: pick.id, action: 'complete' }, dispatch.token);
+  const challan = (await gql(`mutation($input: CreateChallanInput!) { createChallan(input: $input) { id challanNumber status lines } }`, { input: { jobId: job.id, pickListId: pick.id, transporter: 'Smoke', vehicleNo: 'SMOKE-1', driverName: 'Driver', driverPhone: '9000000000' } }, dispatch.token)).createChallan;
   await gql(`mutation($id: ID!, $status: String!) { updateChallanStatus(id: $id, status: $status) { id status } }`, { id: challan.id, status: 'dispatched' }, dispatch.token);
 
-  await gql(`mutation($input: CreateInventoryInput!) { createInventory(input: $input) { id onHand available product { sku } } }`, { input: { productId: backorder.id, onHand: 1 } }, admin.token);
+  await receive(backorder.id, 1, 'Pending inward fulfilled for CRM smoke');
   const [salesNotices, dispatchNotices, ownerNotices, leadState] = await Promise.all([
     gql(`query { notifications(take: 40) }`, {}, sales.token),
     gql(`query { notifications(take: 40) }`, {}, dispatch.token),

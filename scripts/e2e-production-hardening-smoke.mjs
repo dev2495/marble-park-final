@@ -1,4 +1,6 @@
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 
 async function gql(query, variables = {}, token) {
   const res = await fetch(API, {
@@ -22,7 +24,7 @@ function unique(prefix) {
 async function main() {
   const login = await gql(
     `mutation($input: LoginInput!) { login(input: $input) { token user { id email role } } }`,
-    { input: { email: 'admin@marblepark.com', password: 'password123' } },
+    { input: { email: TEST_EMAIL, password: TEST_PASSWORD } },
   );
   const token = login.login.token;
   const sku = unique('PROD-HARDEN');
@@ -134,7 +136,7 @@ async function main() {
     { id: count.id },
     token,
   )).approveStockCountSession;
-  assert(approvedCount.status === 'approved', 'stock count should approve and post variance');
+  assert(approvedCount.status === 'posted', 'stock count should approve and post variance atomically');
 
   const customer = (await gql(
     `mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`,
@@ -170,13 +172,37 @@ async function main() {
 
   const job = (await gql(`query { dispatchJobs { id quoteId status } }`, {}, token)).dispatchJobs.find((row) => row.quoteId === quote.id);
   assert(job, 'sales order conversion should create dispatch job');
+  const pick = (await gql(
+    `mutation($input: CreatePickListInput!) { createPickList(input: $input) }`,
+    { input: { salesOrderId: order.id, locationId: plant.id, notes: 'Production hardening exact-lot pick' } },
+    token,
+  )).createPickList;
+  assert(pick.lines.length === 1, 'reserved order should create one exact-lot pick line');
+  await gql(`mutation($id: ID!, $action: String!) { transitionPickList(id: $id, action: $action) }`, { id: pick.id, action: 'start' }, token);
+  await gql(
+    `mutation($id: ID!, $action: String!, $input: PickListTransitionInput) { transitionPickList(id: $id, action: $action, input: $input) }`,
+    { id: pick.id, action: 'pick', input: { lines: JSON.stringify(pick.lines.map((line) => ({ pickLineId: line.id, pickedQuantity: line.requestedQuantity }))) } },
+    token,
+  );
+  await gql(
+    `mutation($id: ID!, $action: String!, $input: PickListTransitionInput) { transitionPickList(id: $id, action: $action, input: $input) }`,
+    { id: pick.id, action: 'pack', input: { lines: JSON.stringify(pick.lines.map((line) => ({ pickLineId: line.id, packedQuantity: line.requestedQuantity }))) } },
+    token,
+  );
+  await gql(`mutation($id: ID!, $action: String!) { transitionPickList(id: $id, action: $action) }`, { id: pick.id, action: 'complete' }, token);
   const challan = (await gql(
     `mutation($input: CreateChallanInput!) { createChallan(input: $input) { id challanNumber status } }`,
-    { input: { jobId: job.id, transporter: 'Production Smoke Transport', vehicleNo: 'SMOKE-95', driverName: 'Smoke Driver', driverPhone: '9000000095' } },
+    { input: { jobId: job.id, pickListId: pick.id, transporter: 'Production Smoke Transport', vehicleNo: 'SMOKE-95', driverName: 'Smoke Driver', driverPhone: '9000000095' } },
     token,
   )).createChallan;
   await gql(`mutation($id: ID!, $status: String!) { updateChallanStatus(id: $id, status: $status) { id status } }`, { id: challan.id, status: 'dispatched' }, token);
-  await gql(`mutation($id: ID!, $status: String!) { updateChallanStatus(id: $id, status: $status) { id status } }`, { id: challan.id, status: 'delivered' }, token);
+  await gql(
+    `mutation($id: ID!, $input: ConfirmDeliveryInput!) { confirmDelivery(id: $id, input: $input) }`,
+    { id: challan.id, input: { receivedByName: 'Production Smoke Customer', receivedByPhone: '9000000096', proofType: 'otp', notes: 'Production hardening delivery proof' } },
+    token,
+  );
+  const dispatchLine = (await gql(`query { returnableDispatchLines(take: 120) }`, {}, token)).returnableDispatchLines.find((line) => line.challanId === challan.id);
+  assert(dispatchLine?.returnableQuantity === 1, 'delivered pick line should be available for controlled return');
 
   const returnOrder = (await gql(
     `mutation($input: ReturnOrderInput!) { createReturnOrder(input: $input) }`,
@@ -190,7 +216,7 @@ async function main() {
         reason: 'Production hardening return smoke',
         refundMode: 'store_credit',
         refundAmount: 0,
-        lines: JSON.stringify([{ productId: product.id, sku: product.sku, name: product.name, quantity: 1, disposition: 'resell' }]),
+        lines: JSON.stringify([{ dispatchLineId: dispatchLine.id, productId: product.id, sku: product.sku, name: product.name, quantity: 1, disposition: 'resell' }]),
       },
     },
     token,
@@ -218,7 +244,7 @@ async function main() {
   assert(finalData.documentJobs.some((jobRow) => jobRow.entityId === quote.id), 'quote document job should exist');
   assert(finalData.documentJobs.some((jobRow) => jobRow.entityId === order.id), 'sales order document job should exist');
   assert(finalData.paymentReceipts.some((receipt) => receipt.salesOrderId === order.id && receipt.status === 'posted'), 'payment receipt should exist for full advance');
-  assert(finalData.stockCountSessions.some((session) => session.id === approvedCount.id && session.status === 'approved'), 'approved stock count should be queryable');
+  assert(finalData.stockCountSessions.some((session) => session.id === approvedCount.id && session.status === 'posted'), 'posted stock count should be queryable');
   assert(finalData.returnOrders.some((row) => row.id === returnOrder.id), 'return order should be queryable');
   assert(finalData.stockLedgerEntries.some((row) => row.referenceType === 'ReturnOrder' && row.referenceId === returnOrder.id), 'return should post stock ledger entry');
   assert(finalData.stockLedgerEntries.some((row) => row.type === 'dispatch' && row.direction === 'out' && row.locationId === plant.id), 'dispatch should consume from the default plant stock scope');

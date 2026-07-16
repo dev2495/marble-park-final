@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 
 const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
 
 function assert(condition, message) {
@@ -25,7 +27,7 @@ async function gql(query, variables = {}, token) {
 async function main() {
   const login = await gql(
     `mutation($input: LoginInput!) { login(input: $input) { authenticated token user { id email role } } }`,
-    { input: { email: 'admin@marblepark.com', password: 'password123' } },
+    { input: { email: TEST_EMAIL, password: TEST_PASSWORD } },
   );
   assert(login.data.login.authenticated && login.data.login.token, 'Login must retain a bearer token for automation clients');
   assert(/mp_session=/i.test(login.setCookie) && /HttpOnly/i.test(login.setCookie), 'Browser login must issue an HttpOnly mp_session cookie');

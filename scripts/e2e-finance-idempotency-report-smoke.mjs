@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 
 const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const key = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;
@@ -13,7 +15,7 @@ async function gql(query, variables = {}, token) {
 }
 
 async function main() {
-  const login = await gql(`mutation($input: LoginInput!) { login(input: $input) { token } }`, { input: { email: 'admin@marblepark.com', password: 'password123' } });
+  const login = await gql(`mutation($input: LoginInput!) { login(input: $input) { token } }`, { input: { email: TEST_EMAIL, password: TEST_PASSWORD } });
   const token = login.login.token;
   const data = await gql(`query { returnableDispatchLines(take: 20) stockLocations(status: "active") }`, {}, token);
   const line = data.returnableDispatchLines[0];

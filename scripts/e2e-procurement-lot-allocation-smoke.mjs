@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 
 const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
 
 function assert(condition, message) {
@@ -21,7 +23,7 @@ async function gql(query, variables = {}, token) {
 async function main() {
   const login = await gql(
     `mutation($input: LoginInput!) { login(input: $input) { token } }`,
-    { input: { email: 'admin@marblepark.com', password: 'password123' } },
+    { input: { email: TEST_EMAIL, password: TEST_PASSWORD } },
   );
   const token = login.login.token;
   assert(token, 'Admin login must return a token');

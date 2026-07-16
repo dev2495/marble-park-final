@@ -462,8 +462,8 @@ export class LeadsService {
       ...row,
       type: 'tile',
       category: 'Tiles',
-      productId: undefined,
-      sku: tileCode,
+      productId: String(row.productId || '').trim(),
+      sku: String(row.sku || tileCode).trim(),
       name: String(row.name || `Tile ${tileCode} ${tileSize}`).trim(),
       tileCode,
       tileSize,
@@ -476,9 +476,9 @@ export class LeadsService {
       price,
       sellPrice: price,
       area: row.area || row.room || 'General Selection',
-      source: 'tile-intent',
-      inventoryTracked: false,
-      nonStock: true,
+      source: 'product-master-tile',
+      inventoryTracked: true,
+      nonStock: false,
     };
   }
 
@@ -489,14 +489,13 @@ export class LeadsService {
 
     if (!activeRows.length) return [];
 
-    const productRows = activeRows.filter((row) => !this.isTileRow(row));
+    const productRows = activeRows;
     const missingProduct = productRows.find((row) => !row.productId);
     if (missingProduct) {
       throw new BadRequestException(
-        'Every non-tile intent row must use a Product Master SKU. Create or select the SKU in Product Master before making an intent or quote.',
+        'Every intent row, including tile designs, must use a Product Master SKU. Create or select the SKU in Product Master before making an intent or quote.',
       );
     }
-    if (!productRows.length) return activeRows.map((row) => this.normalizeTileRow(row));
 
     const productIds = Array.from(new Set(productRows.map((row) => row.productId)));
     type LeadIntentProductRow = {
@@ -531,8 +530,18 @@ export class LeadsService {
     }
 
     return activeRows.map((row) => {
-      if (this.isTileRow(row)) return this.normalizeTileRow(row);
       const product = productMap.get(row.productId)!;
+      if (this.isTileRow(row)) return this.normalizeTileRow({
+        ...row,
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        brand: product.brand,
+        finish: product.finish || row.finish || '',
+        unit: row.unit || product.unit || 'BOX',
+        price: Number(row.price || row.sellPrice || product.sellPrice || 0),
+        media: product.media || row.media || {},
+      });
       const price = Number(row.price || row.sellPrice || product.sellPrice || 0);
       if (!Number.isFinite(price) || price < 0) throw new BadRequestException(`${product.sku} has an invalid price`);
       return {
