@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up Marble Park PostgreSQL and uploaded assets
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/marble-park/deploy/aws
+ExecStart=/opt/marble-park/deploy/aws/backup.sh

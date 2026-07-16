@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Marble Park backup every night
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

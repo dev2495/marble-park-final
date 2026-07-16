@@ -1,0 +1,91 @@
+name: marble-park
+
+services:
+  postgres:
+    image: postgres:16.9-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ${DATA_ROOT}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - data
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGIN: https://${APP_HOST}
+      JSON_BODY_LIMIT: 8mb
+      CATALOGUE_IMAGE_STORAGE_DIR: /data/catalogue-images
+      PUBLIC_CATALOGUE_IMAGE_BASE_URL: https://${APP_HOST}
+      BOOTSTRAP_OWNER_EMAIL: ${BOOTSTRAP_OWNER_EMAIL}
+      BOOTSTRAP_OWNER_PASSWORD: ${BOOTSTRAP_OWNER_PASSWORD}
+      BOOTSTRAP_OWNER_NAME: ${BOOTSTRAP_OWNER_NAME}
+      BOOTSTRAP_OWNER_PHONE: ${BOOTSTRAP_OWNER_PHONE:-}
+    volumes:
+      - ${DATA_ROOT}/assets:/data/catalogue-images
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app
+      - data
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://${APP_HOST}/graphql
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: https://${APP_HOST}/graphql
+      QUOTE_PDF_API_URL: http://api:4000/graphql
+      QUOTE_PDF_EMAIL: ${BOOTSTRAP_OWNER_EMAIL}
+      QUOTE_PDF_PASSWORD: ${BOOTSTRAP_OWNER_PASSWORD}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app
+
+  caddy:
+    image: caddy:2.10.0-alpine
+    restart: unless-stopped
+    environment:
+      APP_HOST: ${APP_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${DATA_ROOT}/caddy/data:/data
+      - ${DATA_ROOT}/caddy/config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - app
+
+networks:
+  app:
+    internal: true
+  data:
+    internal: true

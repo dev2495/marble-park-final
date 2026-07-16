@@ -7,9 +7,11 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/web/package.json ./apps/web/package.json
+RUN npm ci --legacy-peer-deps --workspace=apps/api --include-workspace-root
 
-COPY . .
+COPY apps/api ./apps/api
 RUN npm run db:generate --workspace=apps/api && npm run build:api
 
 ENV NODE_ENV=production
