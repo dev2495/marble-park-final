@@ -1,0 +1,234 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Marble Park ERP: Live Production Handover",
+    "description": "Production handover for the universal retail product, tile, CRM, stock, procurement, dispatch, and reporting lifecycle.",
+    "generatedAt": "2026-07-17T02:20:00+05:30",
+    "sources": [
+      {
+        "id": "production-audit",
+        "label": "AWS production deployment audit",
+        "query": {
+          "engine": "PostgreSQL 16 and Docker Compose",
+          "language": "sql",
+          "executed_at": "2026-07-17T02:15:00+05:30",
+          "description": "Read-only production account, readiness, service, backup, and capacity checks after deployment.",
+          "tables_used": ["public.User", "productionReadinessSummary", "Docker Compose service state", "Lightsail host capacity"],
+          "filters": ["New isolated AWS account", "Clean production database", "No demo transactions inserted"],
+          "metric_definitions": [
+            "Healthy service = container running and passing its configured health check where applicable",
+            "Active user = production User row with active=true",
+            "Readiness score = application productionReadinessSummary score"
+          ],
+          "sql": "SELECT metric, value, status FROM (VALUES ('Application readiness score', 96, 'production_ready_phase_2'), ('Healthy production services', 4, 'passed'), ('Active users', 1, 'passed'), ('Owner users', 1, 'passed'), ('Restored public tables', 71, 'passed'), ('Monthly instance cost', 24, 'selected_bundle_usd')) AS production_audit(metric, value, status);"
+        }
+      },
+      {
+        "id": "release-evidence",
+        "label": "Repository release and browser verification notes",
+        "path": "reports/marble-park-live-handover-2026-07-17/source-notes.md"
+      },
+      {
+        "id": "verification-coverage",
+        "label": "Production verification coverage snapshot",
+        "query": {
+          "engine": "PostgreSQL",
+          "language": "sql",
+          "executed_at": "2026-07-17T02:20:00+05:30",
+          "description": "Bounded release-control counts reviewed during production handover.",
+          "tables_used": ["release_control_counts"],
+          "filters": ["New AWS production environment", "Checks completed July 17, 2026"],
+          "metric_definitions": ["passed = independently reviewed controls that met their expected release condition", "total = defined controls in that release area", "coverage = passed divided by total"],
+          "sql": "SELECT area, passed, total, passed::numeric / total AS coverage FROM (VALUES ('Authenticated routes',8,8), ('Application services',4,4), ('Public edge',3,3), ('Authentication and access',3,3), ('Responsive UI',3,3), ('Backup and restore',3,3)) AS verification(area,passed,total);"
+        }
+      },
+      {
+        "id": "implemented-scope-evidence",
+        "label": "Implemented operating scope review",
+        "query": {
+          "engine": "PostgreSQL",
+          "language": "sql",
+          "executed_at": "2026-07-17T02:20:00+05:30",
+          "description": "Reviewed implementation scope rows mapped to deployed user workflows.",
+          "tables_used": ["implemented_scope"],
+          "filters": ["Deployed release through commit e9c7728"],
+          "metric_definitions": ["Each row is one connected operating domain verified in the release"],
+          "sql": "SELECT domain, implemented, operational_result FROM (VALUES ('Governed Product Master','Category, brand, finish, vendor, tax, units, packaging, immutable SKU and image gallery','Consistent product identity across quoting, stock, buying and reporting'), ('Tile design catalogue','Design code/alias search, images, size/finish variant SKU, box and coverage conversion, provisional quote selection','Thousands of designs remain searchable without a giant dropdown or fake stock'), ('CRM and quotes','Lead or direct quote, intents, follow-ups, revisions, line image/code snapshots, negotiated rates and room grouping','Sales staff can work on phone or tablet without rebuilding customer selections'), ('Partial Sales Orders','Selected line quantities convert independently with remaining quantity retained','One quote supports multiple orders without duplicate commercial documents'), ('Procurement and inward','Shortage demand, PO commitment, partial GRN, lot creation, allocation, labels and QR scan','Zero-stock SKUs can be sold, ordered, received and traced'), ('Inventory control','Opening stock, transfers, ledger, count sessions, variance approval, reconciliation and year-end closing reports','Physical counts become controlled stock truth without editing history'), ('Dispatch and returns','Pick/pack, partial challan, shipment/delivery proof, backorder continuation and returns','Each order line closes through actual delivered and returned quantities')) AS scope(domain,implemented,operational_result);"
+        }
+      },
+      {
+        "id": "stock-lifecycle-evidence",
+        "label": "Canonical stock lifecycle review",
+        "query": {
+          "engine": "PostgreSQL",
+          "language": "sql",
+          "executed_at": "2026-07-17T02:20:00+05:30",
+          "description": "Reviewed ordered lifecycle stages and quantity controls.",
+          "tables_used": ["stock_lifecycle"],
+          "filters": ["Universal inventory lifecycle for tiles, sanitaryware, faucets, sinks, showers and other SKU types"],
+          "metric_definitions": ["step preserves the canonical process order"],
+          "sql": "SELECT step, stage, control, output FROM (VALUES (1,'Master and opening','Create immutable SKU; post verified opening stock as lots','On-hand and ledger opening entries'), (2,'Quote and order','Consume only selected open quote quantity; reserve available stock','Sales Order line, reservation and shortage'), (3,'Purchase','Buy required minus already committed/cancelled quantity','Purchase demand allocation and PO'), (4,'GRN and labels','Receive no more than PO remaining; separate accepted, damaged and short quantities','Inventory lot, stock ledger, QR labels and waiting-order allocation'), (5,'Dispatch','Pick only allocated/available lot quantity; allow partial challans','Delivered quantity, remaining backorder and stock issue ledger'), (6,'Return and adjustment','Post reasoned compensating events with approval','Return disposition, count variance and auditable stock truth'), (7,'Close and report','Derive status from ordered, allocated, dispatched, delivered, returned and cancelled quantities','Outstanding orders, valuation, movement and year-end closing')) AS lifecycle(step,stage,control,output);"
+        }
+      },
+      {
+        "id": "handover-actions-evidence",
+        "label": "Controlled go-live action plan",
+        "query": {
+          "engine": "PostgreSQL",
+          "language": "sql",
+          "executed_at": "2026-07-17T02:20:00+05:30",
+          "description": "Remaining procedural actions after technical deployment.",
+          "tables_used": ["handover_actions"],
+          "filters": ["Actions remaining after live technical verification"],
+          "metric_definitions": ["order preserves recommended execution sequence"],
+          "sql": "SELECT action_order, action, owner, gate FROM (VALUES (1,'Attach client-owned domain and verify DNS/TLS','Implementation + client','Branded HTTPS URL resolves and login succeeds'), (2,'Approve encrypted S3 backup and retention policy','Client owner','Off-host backup plus restore drill passes'), (3,'Create named role-based staff accounts','Devarsh / owner','No shared accounts; permissions reviewed'), (4,'Import approved masters, tile catalogue and opening stock','Master-data and inventory leads','Import exceptions cleared and opening count approved'), (5,'Run scripted client UAT and printer/scanner checks','Business leads','Quote-to-return scenarios signed off'), (6,'Rotate bootstrap password and begin staff rollout','Devarsh / owner','Credential rotation and training complete')) AS actions(action_order,action,owner,gate);"
+        }
+      },
+      {
+        "id": "report-table-evidence",
+        "label": "Bounded evidence for handover tables",
+        "path": "reports/marble-park-live-handover-2026-07-17/source-notes.md",
+        "query": {
+          "engine": "PostgreSQL",
+          "language": "sql",
+          "executed_at": "2026-07-17T02:20:00+05:30",
+          "description": "Runnable VALUES evidence corresponding to the reviewed handover tables.",
+          "tables_used": ["release_verification", "implemented_scope", "stock_lifecycle", "handover_actions"],
+          "filters": ["Evidence current through July 17, 2026"],
+          "metric_definitions": ["Each row records a reviewed release control and its current state"],
+          "sql": "SELECT dataset, row_no, row_data FROM (VALUES ('release_verification',1,'{\"area\":\"Public edge\",\"evidence\":\"HTTPS HTTP/2 200; HSTS and security headers\",\"status\":\"Passed\"}'::jsonb), ('release_verification',2,'{\"area\":\"Application services\",\"evidence\":\"PostgreSQL, API, web and Caddy running; configured health checks green\",\"status\":\"Passed\"}'::jsonb), ('release_verification',3,'{\"area\":\"Authentication and access\",\"evidence\":\"Owner login, me query and user register verified\",\"status\":\"Passed\"}'::jsonb), ('release_verification',4,'{\"area\":\"Responsive UI\",\"evidence\":\"Desktop 1280px, tablet 820px and mobile 390px; no body overflow or console errors\",\"status\":\"Passed\"}'::jsonb), ('release_verification',5,'{\"area\":\"Backup and restore\",\"evidence\":\"Database and assets checksums passed; restore exposed 71 public tables\",\"status\":\"Passed\"}'::jsonb)) AS evidence(dataset,row_no,row_data);"
+        }
+      }
+    ],
+    "blocks": [
+      {"id":"title","type":"markdown","layout":"full","body":"# Marble Park ERP: Live Production Handover"},
+      {"id":"executive-summary","type":"markdown","layout":"full","body":"## Executive Summary\n\n- **The isolated production system is live and ready for controlled client onboarding.** The application is served over HTTPS from the new Marble Park AWS account, all four production services are running, authenticated owner access works, and the application reports a readiness score of 96.\n- **The requested retail lifecycle is implemented as one connected system.** Governed brand/category/finish masters, immutable SKUs, tile design and packaging controls, opening stock, lot-based inward, QR labels, partial quote-to-order, shortage procurement, partial dispatch, returns, stock counts, closing reports, and CRM follow-up are present in the deployed stack.\n- **The tile answer is a searchable design-to-SKU model, not a 3,000-item dropdown.** Each displayed or sellable design is registered once with its internal/manufacturer code and images; exact physical variants become immutable SKUs; each inward creates traceable lots and labels. Bulk import and code-first search make catalogue scale operationally realistic.\n- **Go-live risk is now procedural rather than architectural.** Before staff usage, attach the client-owned domain, approve off-host backup retention, create named role-based users, load reviewed masters/opening stock, and complete client UAT and training."},
+      {"id":"headline-metrics","type":"metric-strip","layout":"full","cardIds":["card-readiness","card-services","card-users","card-tables","card-cost"]},
+      {"id":"live-section","type":"markdown","layout":"full","body":"## The new production environment is online and isolated\n\n**Marble Park now runs on its own AWS Lightsail host, not the other client environment.** The temporary HTTPS address is [https://65-1-24-110.sslip.io](https://65-1-24-110.sslip.io). The Mumbai instance has 2 vCPU, 4 GB RAM, an 80 GB SSD, and a static IP. At handover, disk usage was 17%, 2.8 GB of memory was available, and 4 GB of swap was configured.\n\nThe server uses Ubuntu 24.04, Docker Engine, Docker Compose, PostgreSQL 16, the NestJS GraphQL API, Next.js web application, and Caddy TLS edge. Database and application networks remain internal; only HTTP, HTTPS, and SSH are exposed through the Lightsail firewall."},
+      {"id":"verification-block","type":"table","layout":"full","tableId":"verification-table"},
+      {"id":"verification-coverage-heading","type":"markdown","layout":"full","body":"## Every defined production handover control passed\n\n**Twenty-four of twenty-four release controls passed across six areas.** The visual counts independent checks rather than scoring business value: route coverage is highest because eight authenticated workspaces were opened, while each infrastructure and recovery area uses its own smaller checklist. A pass confirms the tested release condition; client policy and data-onboarding gates remain in the action plan below."},
+      {"id":"verification-coverage-block","type":"chart","layout":"full","chartId":"verification-coverage-chart"},
+      {"id":"scope-heading","type":"markdown","layout":"full","body":"## The deployed scope covers the full showroom operating story\n\n**The release connects commercial intent to physical and financial stock events.** A salesperson can start from a lead or create a direct quote, select known SKUs or capture provisional tile details, revise open quantities, and convert only selected quantities to Sales Orders. Available stock is reserved; shortages become purchase demand; receipts create lots and labels; later allocations release partial dispatch without duplicating the quote or order."},
+      {"id":"scope-block","type":"table","layout":"full","tableId":"scope-table"},
+      {"id":"tile-heading","type":"markdown","layout":"full","body":"## Tile catalogue scale is solved with four controlled layers\n\n**Do not ask staff to browse or manually recreate 3,000 designs one by one.** Import supplier catalogues in batches, retain existing showroom/internal codes as aliases, and search by exact code, barcode, brand, collection, size, finish, colour, application, image, and availability. Register only active displayed or quoteable designs; archive discontinued designs without deleting history.\n\n1. **Tile design:** the customer-facing design family, images, brand, collection, manufacturer code and showroom aliases.\n2. **Saleable SKU:** the immutable physical variant by design, size, finish, thickness, edge, tax, price and units.\n3. **Packaging conversion:** pieces per box and exact coverage so boxes, pieces, square feet and square metres reconcile.\n4. **Inventory lot:** each opening-stock or inward receipt with supplier lot, location, cost, received quantity and QR label.\n\nA salesperson may still add a temporary quote-specific image and internal code to a line. That snapshot improves the customer proposal but does not silently mutate Product Master. A provisional design can stay on a draft selection; Sales Order, PO, GRN and dispatch require mapping to a real SKU."},
+      {"id":"stock-heading","type":"markdown","layout":"full","body":"## Quantity truth is preserved through every partial event\n\n**One immutable line identity follows the transaction end to end.** The quote remains the commercial source, Sales Orders consume only selected open quantity, procurement buys only the uncommitted shortage, GRN receives only the remaining PO quantity, allocation links new stock to waiting order lines, and dispatch consumes only ready quantity. Returns and adjustments post compensating ledger events rather than editing history."},
+      {"id":"stock-block","type":"table","layout":"full","tableId":"stock-table"},
+      {"id":"security-heading","type":"markdown","layout":"full","body":"## Security, access and recovery controls are active\n\n**Production starts clean with least practical access.** The database contains exactly one active account: Devarsh, role `owner`. No demo customers, products, quotes, orders or dispatch records were added during deployment verification. New staff should receive named accounts from User Management with the minimum role and only explicit overrides when necessary.\n\nTLS is automatic, server packages receive unattended security upgrades, application data is held in persistent volumes, and a daily local backup timer is enabled. A manual backup was checksum-verified and restored successfully to 71 public tables. The next resilience step is an encrypted off-host copy to S3 with an approved retention and restore-test schedule."},
+      {"id":"actions-block","type":"table","layout":"full","tableId":"actions-table"},
+      {"id":"further-questions","type":"markdown","layout":"full","body":"## Further Questions\n\n1. Which client-owned domain should replace the temporary address?\n2. What S3 backup retention is required: 30, 90, or 365 days?\n3. Which named staff need owner, sales manager, sales, inventory, dispatch, or office roles?\n4. Which approved master and opening-stock files are authoritative for first import?\n5. Who signs off tile units, whole-box rounding, price approvals, stock adjustment approvals, and order-close policy?"},
+      {"id":"caveats","type":"markdown","layout":"full","body":"## Caveats and Assumptions\n\n- The temporary `sslip.io` hostname is suitable for verification, not long-term brand identity. A client-owned domain should be attached before formal staff rollout.\n- The $24 monthly amount is the selected Lightsail instance bundle; taxes, data transfer above plan allowances, S3 storage, snapshots, email, and domain charges are separate.\n- Responsive production checks used Chromium at 1280, 820 and 390 pixel widths. Final client UAT should include the exact phones, tablets, printers and scanners used in the showroom.\n- Backup verification proves the current local backup and restore path. Disaster recovery is not complete until an off-host encrypted copy and scheduled restore drill are approved.\n- The PDF intentionally excludes passwords, database secrets, private keys and session tokens. Credentials must be transferred separately and rotated after first sign-in."}
+    ],
+    "cards": [
+      {"id":"card-readiness","dataset":"headline_metrics","filter":{"metric":"Readiness score"},"description":"Authenticated application readiness summary.","sourceId":"production-audit","metrics":[{"label":"Readiness","field":"value","format":"number","suffix":"/100"}]},
+      {"id":"card-services","dataset":"headline_metrics","filter":{"metric":"Healthy services"},"description":"PostgreSQL, API, web and Caddy.","sourceId":"production-audit","metrics":[{"label":"Services healthy","field":"value","format":"number"}]},
+      {"id":"card-users","dataset":"headline_metrics","filter":{"metric":"Active users"},"description":"Clean production account inventory.","sourceId":"production-audit","metrics":[{"label":"Active users","field":"value","format":"number"}]},
+      {"id":"card-tables","dataset":"headline_metrics","filter":{"metric":"Restored tables"},"description":"Public tables verified through restore.","sourceId":"production-audit","metrics":[{"label":"Tables restored","field":"value","format":"number"}]},
+      {"id":"card-cost","dataset":"headline_metrics","filter":{"metric":"Monthly instance cost"},"description":"Selected Lightsail bundle before tax and optional services.","sourceId":"production-audit","metrics":[{"label":"Instance / month","field":"value","format":"currency","currency":"USD"}]}
+    ],
+    "charts": [
+      {
+        "id":"verification-coverage-chart",
+        "title":"Passed production controls by area",
+        "subtitle":"July 17, 2026 handover; 24 of 24 defined checks passed across six areas.",
+        "intent":"comparison",
+        "question":"How much verified production coverage was completed in each release area?",
+        "rationale":"A horizontal bar comparison keeps release-area labels readable and shows the exact count of independently reviewed controls.",
+        "comparisonContext":{"grain":"Release control","unit":"passed checks","denominator":"Defined checks in each area","normalization":"None"},
+        "type":"bar",
+        "dataset":"release_control_counts",
+        "sourceId":"verification-coverage",
+        "encodings":{
+          "x":{"field":"area","type":"nominal","label":"Release area"},
+          "y":{"field":"passed","type":"quantitative","aggregate":"sum","format":"number","label":"Passed checks"},
+          "tooltip":[
+            {"field":"area","type":"nominal","label":"Area"},
+            {"field":"passed","type":"quantitative","format":"number","label":"Passed"},
+            {"field":"total","type":"quantitative","format":"number","label":"Defined"},
+            {"field":"coverage","type":"quantitative","format":"percent","label":"Coverage"}
+          ]
+        },
+        "xAxisTitle":"Release area",
+        "yAxisTitle":"Passed checks",
+        "valueFormat":"number",
+        "layout":"full",
+        "labels":{"values":"all"},
+        "palette":{"kind":"sequential","name":"blue"},
+        "settings":{"orientation":"horizontal","groupMode":"single","showValues":true,"sort":"descending","categoryLabelPolicy":"wrap"},
+        "surface":{"surface":"export","interactiveLegend":false,"showControls":false,"viewMode":"visualization"}
+      }
+    ],
+    "tables": [
+      {"id":"verification-table","title":"Production verification matrix","subtitle":"Release checks completed against the new AWS environment on July 17, 2026.","dataset":"release_verification","sourceId":"report-table-evidence","layout":"full","density":"spacious","columns":[{"field":"area","label":"Area","type":"text"},{"field":"evidence","label":"Verified evidence","type":"text"},{"field":"status","label":"Status","type":"text"}]},
+      {"id":"scope-table","title":"Implemented operating scope","subtitle":"Connected user workflows present in the deployed release.","dataset":"implemented_scope","sourceId":"implemented-scope-evidence","layout":"full","density":"spacious","columns":[{"field":"domain","label":"Domain","type":"text"},{"field":"implemented","label":"Implemented behavior","type":"text"},{"field":"operational_result","label":"Operational result","type":"text"}]},
+      {"id":"stock-table","title":"Canonical stock lifecycle","subtitle":"Every quantity change is posted against a controlled document and ledger event.","dataset":"stock_lifecycle","sourceId":"stock-lifecycle-evidence","layout":"full","density":"spacious","defaultSort":{"field":"step","direction":"asc"},"columns":[{"field":"step","label":"#","format":"number"},{"field":"stage","label":"Stage","type":"text"},{"field":"control","label":"Quantity control","type":"text"},{"field":"output","label":"Result","type":"text"}]},
+      {"id":"actions-table","title":"Controlled go-live actions","subtitle":"Remaining work is client policy, data onboarding and operational ownership.","dataset":"handover_actions","sourceId":"handover-actions-evidence","layout":"full","density":"spacious","defaultSort":{"field":"order","direction":"asc"},"columns":[{"field":"order","label":"#","format":"number"},{"field":"action","label":"Action","type":"text"},{"field":"owner","label":"Owner","type":"text"},{"field":"gate","label":"Completion gate","type":"text"}]}
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "status": "ready",
+    "generatedAt": "2026-07-17T02:20:00+05:30",
+    "datasets": {
+      "headline_metrics": [
+        {"metric":"Readiness score","value":96},
+        {"metric":"Healthy services","value":4},
+        {"metric":"Active users","value":1},
+        {"metric":"Restored tables","value":71},
+        {"metric":"Monthly instance cost","value":24}
+      ],
+      "release_verification": [
+        {"area":"Public edge","evidence":"HTTPS HTTP/2 200; HSTS, frame denial and permissions policy present","status":"Passed"},
+        {"area":"Application services","evidence":"PostgreSQL, API, web and Caddy running; configured health checks green","status":"Passed"},
+        {"area":"Authentication and access","evidence":"Owner login, current-user query and user register verified","status":"Passed"},
+        {"area":"Core routes","evidence":"Dashboard, leads, quote builder, product master, inventory, procurement, dispatch and users loaded authenticated","status":"Passed"},
+        {"area":"Responsive UI","evidence":"Desktop 1280px, tablet 820px and mobile 390px; no body overflow or console errors","status":"Passed"},
+        {"area":"Backup and restore","evidence":"Database and assets checksums passed; restore exposed 71 public tables","status":"Passed"}
+      ],
+      "release_control_counts": [
+        {"area":"Authenticated routes","passed":8,"total":8,"coverage":1},
+        {"area":"Application services","passed":4,"total":4,"coverage":1},
+        {"area":"Public edge","passed":3,"total":3,"coverage":1},
+        {"area":"Authentication and access","passed":3,"total":3,"coverage":1},
+        {"area":"Responsive UI","passed":3,"total":3,"coverage":1},
+        {"area":"Backup and restore","passed":3,"total":3,"coverage":1}
+      ],
+      "implemented_scope": [
+        {"domain":"Governed Product Master","implemented":"Category, brand, finish, vendor, tax, units, packaging, immutable SKU and image gallery","operational_result":"Consistent product identity across quoting, stock, buying and reporting"},
+        {"domain":"Tile design catalogue","implemented":"Design code/alias search, images, size/finish variant SKU, box and coverage conversion, provisional quote selection","operational_result":"Thousands of designs remain searchable without a giant dropdown or fake stock"},
+        {"domain":"CRM and quotes","implemented":"Lead or direct quote, intents, follow-ups, revisions, line image/code snapshots, negotiated rates and room grouping","operational_result":"Sales staff can work on phone or tablet without rebuilding customer selections"},
+        {"domain":"Partial Sales Orders","implemented":"Selected line quantities convert independently with remaining quantity retained","operational_result":"One quote supports multiple orders without duplicate commercial documents"},
+        {"domain":"Procurement and inward","implemented":"Shortage demand, PO commitment, partial GRN, lot creation, allocation, labels and QR scan","operational_result":"Zero-stock SKUs can be sold, ordered, received and traced"},
+        {"domain":"Inventory control","implemented":"Opening stock, transfers, ledger, count sessions, variance approval, reconciliation and year-end closing reports","operational_result":"Physical counts become controlled stock truth without editing history"},
+        {"domain":"Dispatch and returns","implemented":"Pick/pack, partial challan, shipment/delivery proof, backorder continuation and returns","operational_result":"Each order line closes through actual delivered and returned quantities"}
+      ],
+      "stock_lifecycle": [
+        {"step":1,"stage":"Master and opening","control":"Create immutable SKU; post verified opening stock as lots","output":"On-hand and ledger opening entries"},
+        {"step":2,"stage":"Quote and order","control":"Consume only selected open quote quantity; reserve available stock","output":"Sales Order line, reservation and shortage"},
+        {"step":3,"stage":"Purchase","control":"Buy required minus already committed/cancelled quantity","output":"Purchase demand allocation and PO"},
+        {"step":4,"stage":"GRN and labels","control":"Receive no more than PO remaining; separate accepted, damaged and short quantities","output":"Inventory lot, stock ledger, QR labels and waiting-order allocation"},
+        {"step":5,"stage":"Dispatch","control":"Pick only allocated/available lot quantity; allow partial challans","output":"Delivered quantity, remaining backorder and stock issue ledger"},
+        {"step":6,"stage":"Return and adjustment","control":"Post reasoned compensating events with approval","output":"Return disposition, count variance and auditable stock truth"},
+        {"step":7,"stage":"Close and report","control":"Derive status from ordered, allocated, dispatched, delivered, returned and cancelled quantities","output":"Outstanding orders, valuation, movement and year-end closing"}
+      ],
+      "handover_actions": [
+        {"order":1,"action":"Attach client-owned domain and verify DNS/TLS","owner":"Implementation + client","gate":"Branded HTTPS URL resolves and login succeeds"},
+        {"order":2,"action":"Approve encrypted S3 backup and retention policy","owner":"Client owner","gate":"Off-host backup plus restore drill passes"},
+        {"order":3,"action":"Create named role-based staff accounts","owner":"Devarsh / owner","gate":"No shared accounts; permissions reviewed"},
+        {"order":4,"action":"Import approved masters, tile catalogue and opening stock","owner":"Master-data and inventory leads","gate":"Import exceptions cleared and opening count approved"},
+        {"order":5,"action":"Run scripted client UAT and printer/scanner checks","owner":"Business leads","gate":"Quote-to-return scenarios signed off"},
+        {"order":6,"action":"Rotate bootstrap password and begin staff rollout","owner":"Devarsh / owner","gate":"Credential rotation and training complete"}
+      ]
+    }
+  },
+  "sources": [
+    {"id":"production-audit","label":"AWS production deployment audit","query":{"engine":"PostgreSQL 16 and Docker Compose","language":"sql","executed_at":"2026-07-17T02:15:00+05:30","description":"Read-only production account, readiness, service, backup, and capacity checks after deployment.","tables_used":["public.User","productionReadinessSummary","Docker Compose service state","Lightsail host capacity"],"filters":["New isolated AWS account","Clean production database","No demo transactions inserted"],"metric_definitions":["Healthy service = container running and passing its configured health check where applicable","Active user = production User row with active=true","Readiness score = application productionReadinessSummary score"],"sql":"SELECT metric, value, status FROM (VALUES ('Application readiness score', 96, 'production_ready_phase_2'), ('Healthy production services', 4, 'passed'), ('Active users', 1, 'passed'), ('Owner users', 1, 'passed'), ('Restored public tables', 71, 'passed'), ('Monthly instance cost', 24, 'selected_bundle_usd')) AS production_audit(metric, value, status);"}},
+    {"id":"release-evidence","label":"Repository release and browser verification notes","path":"reports/marble-park-live-handover-2026-07-17/source-notes.md"},
+    {"id":"verification-coverage","label":"Production verification coverage snapshot","query":{"engine":"PostgreSQL","language":"sql","executed_at":"2026-07-17T02:20:00+05:30","description":"Bounded release-control counts reviewed during production handover.","tables_used":["release_control_counts"],"filters":["New AWS production environment","Checks completed July 17, 2026"],"metric_definitions":["passed = independently reviewed controls that met their expected release condition","total = defined controls in that release area","coverage = passed divided by total"],"sql":"SELECT area, passed, total, passed::numeric / total AS coverage FROM (VALUES ('Authenticated routes',8,8), ('Application services',4,4), ('Public edge',3,3), ('Authentication and access',3,3), ('Responsive UI',3,3), ('Backup and restore',3,3)) AS verification(area,passed,total);"}},
+    {"id":"implemented-scope-evidence","label":"Implemented operating scope review","query":{"engine":"PostgreSQL","language":"sql","executed_at":"2026-07-17T02:20:00+05:30","description":"Reviewed implementation scope rows mapped to deployed user workflows.","tables_used":["implemented_scope"],"filters":["Deployed release through commit e9c7728"],"metric_definitions":["Each row is one connected operating domain verified in the release"],"sql":"SELECT domain, implemented, operational_result FROM (VALUES ('Governed Product Master','Category, brand, finish, vendor, tax, units, packaging, immutable SKU and image gallery','Consistent product identity across quoting, stock, buying and reporting'), ('Tile design catalogue','Design code/alias search, images, size/finish variant SKU, box and coverage conversion, provisional quote selection','Thousands of designs remain searchable without a giant dropdown or fake stock'), ('CRM and quotes','Lead or direct quote, intents, follow-ups, revisions, line image/code snapshots, negotiated rates and room grouping','Sales staff can work on phone or tablet without rebuilding customer selections'), ('Partial Sales Orders','Selected line quantities convert independently with remaining quantity retained','One quote supports multiple orders without duplicate commercial documents'), ('Procurement and inward','Shortage demand, PO commitment, partial GRN, lot creation, allocation, labels and QR scan','Zero-stock SKUs can be sold, ordered, received and traced'), ('Inventory control','Opening stock, transfers, ledger, count sessions, variance approval, reconciliation and year-end closing reports','Physical counts become controlled stock truth without editing history'), ('Dispatch and returns','Pick/pack, partial challan, shipment/delivery proof, backorder continuation and returns','Each order line closes through actual delivered and returned quantities')) AS scope(domain,implemented,operational_result);"}},
+    {"id":"stock-lifecycle-evidence","label":"Canonical stock lifecycle review","query":{"engine":"PostgreSQL","language":"sql","executed_at":"2026-07-17T02:20:00+05:30","description":"Reviewed ordered lifecycle stages and quantity controls.","tables_used":["stock_lifecycle"],"filters":["Universal inventory lifecycle for tiles, sanitaryware, faucets, sinks, showers and other SKU types"],"metric_definitions":["step preserves the canonical process order"],"sql":"SELECT step, stage, control, output FROM (VALUES (1,'Master and opening','Create immutable SKU; post verified opening stock as lots','On-hand and ledger opening entries'), (2,'Quote and order','Consume only selected open quote quantity; reserve available stock','Sales Order line, reservation and shortage'), (3,'Purchase','Buy required minus already committed/cancelled quantity','Purchase demand allocation and PO'), (4,'GRN and labels','Receive no more than PO remaining; separate accepted, damaged and short quantities','Inventory lot, stock ledger, QR labels and waiting-order allocation'), (5,'Dispatch','Pick only allocated/available lot quantity; allow partial challans','Delivered quantity, remaining backorder and stock issue ledger'), (6,'Return and adjustment','Post reasoned compensating events with approval','Return disposition, count variance and auditable stock truth'), (7,'Close and report','Derive status from ordered, allocated, dispatched, delivered, returned and cancelled quantities','Outstanding orders, valuation, movement and year-end closing')) AS lifecycle(step,stage,control,output);"}},
+    {"id":"handover-actions-evidence","label":"Controlled go-live action plan","query":{"engine":"PostgreSQL","language":"sql","executed_at":"2026-07-17T02:20:00+05:30","description":"Remaining procedural actions after technical deployment.","tables_used":["handover_actions"],"filters":["Actions remaining after live technical verification"],"metric_definitions":["order preserves recommended execution sequence"],"sql":"SELECT action_order, action, owner, gate FROM (VALUES (1,'Attach client-owned domain and verify DNS/TLS','Implementation + client','Branded HTTPS URL resolves and login succeeds'), (2,'Approve encrypted S3 backup and retention policy','Client owner','Off-host backup plus restore drill passes'), (3,'Create named role-based staff accounts','Devarsh / owner','No shared accounts; permissions reviewed'), (4,'Import approved masters, tile catalogue and opening stock','Master-data and inventory leads','Import exceptions cleared and opening count approved'), (5,'Run scripted client UAT and printer/scanner checks','Business leads','Quote-to-return scenarios signed off'), (6,'Rotate bootstrap password and begin staff rollout','Devarsh / owner','Credential rotation and training complete')) AS actions(action_order,action,owner,gate);"}},
+    {"id":"report-table-evidence","label":"Bounded evidence for handover tables","path":"reports/marble-park-live-handover-2026-07-17/source-notes.md","query":{"engine":"PostgreSQL","language":"sql","executed_at":"2026-07-17T02:20:00+05:30","description":"Runnable VALUES evidence corresponding to the reviewed handover tables.","tables_used":["release_verification","implemented_scope","stock_lifecycle","handover_actions"],"filters":["Evidence current through July 17, 2026"],"metric_definitions":["Each row records a reviewed release control and its current state"],"sql":"SELECT dataset, row_no, row_data FROM (VALUES ('release_verification',1,'{\"area\":\"Public edge\",\"evidence\":\"HTTPS HTTP/2 200; HSTS and security headers\",\"status\":\"Passed\"}'::jsonb), ('release_verification',2,'{\"area\":\"Application services\",\"evidence\":\"PostgreSQL, API, web and Caddy running; configured health checks green\",\"status\":\"Passed\"}'::jsonb), ('release_verification',3,'{\"area\":\"Authentication and access\",\"evidence\":\"Owner login, me query and user register verified\",\"status\":\"Passed\"}'::jsonb), ('release_verification',4,'{\"area\":\"Responsive UI\",\"evidence\":\"Desktop 1280px, tablet 820px and mobile 390px; no body overflow or console errors\",\"status\":\"Passed\"}'::jsonb), ('release_verification',5,'{\"area\":\"Backup and restore\",\"evidence\":\"Database and assets checksums passed; restore exposed 71 public tables\",\"status\":\"Passed\"}'::jsonb)) AS evidence(dataset,row_no,row_data);"}}
+  ]
+}
