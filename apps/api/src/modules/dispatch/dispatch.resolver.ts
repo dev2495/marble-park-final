@@ -86,6 +86,36 @@ export class CreateChallanInput {
 
   @Field(() => String, { nullable: true })
   lines?: string;
+
+  @Field(() => String, { nullable: true })
+  pickListId?: string;
+}
+
+@InputType()
+export class CreatePickListInput {
+  @Field() salesOrderId!: string;
+  @Field() locationId!: string;
+  @Field({ nullable: true }) assignedTo?: string;
+  @Field({ nullable: true }) notes?: string;
+  @Field(() => String, { nullable: true }) lines?: string;
+}
+
+@InputType()
+export class PickListTransitionInput {
+  @Field(() => String, { nullable: true }) lines?: string;
+  @Field({ nullable: true }) assignedTo?: string;
+  @Field({ nullable: true }) reason?: string;
+}
+
+@InputType()
+export class ConfirmDeliveryInput {
+  @Field() receivedByName!: string;
+  @Field({ nullable: true }) receivedByPhone?: string;
+  @Field({ nullable: true }) proofType?: string;
+  @Field({ nullable: true }) proofUrl?: string;
+  @Field({ nullable: true }) latitude?: number;
+  @Field({ nullable: true }) longitude?: number;
+  @Field({ nullable: true }) notes?: string;
 }
 
 @Resolver()
@@ -123,6 +153,17 @@ export class DispatchResolver {
     return this.dispatch.findAllChallans({ status, dispatchJobId });
   }
 
+  @Query(() => [GraphQLJSON])
+  async pickLists(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('salesOrderId', { nullable: true }) salesOrderId?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('take', { nullable: true }) take?: number,
+  ) {
+    await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.pickLists({ salesOrderId, status, take });
+  }
+
   @Mutation(() => DispatchOutput)
   async createDispatchJob(@Args('input') input: CreateDispatchJobInput, @Context() ctx: GraphqlRequestContext) {
     await requirePermission(this.prisma, ctx, 'dispatch.manage');
@@ -145,13 +186,40 @@ export class DispatchResolver {
     return this.dispatch.createChallan(input as any);
   }
 
+  @Mutation(() => GraphQLJSON)
+  async createPickList(@Args('input') input: CreatePickListInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.createPickList(input as any, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async transitionPickList(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('action') action: string,
+    @Args('input', { type: () => PickListTransitionInput, nullable: true }) input: PickListTransitionInput | undefined,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.transitionPickList(id, action, input as any, user.id);
+  }
+
   @Mutation(() => DispatchOutput)
   async updateChallanStatus(
     @Args('id', { type: () => ID }) id: string,
     @Args('status') status: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requirePermission(this.prisma, ctx, 'dispatch.manage');
-    return this.dispatch.updateChallanStatus(id, status);
+    const user = await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.updateChallanStatus(id, status, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async confirmDelivery(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: ConfirmDeliveryInput,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.confirmDelivery(id, input as any, user.id);
   }
 }

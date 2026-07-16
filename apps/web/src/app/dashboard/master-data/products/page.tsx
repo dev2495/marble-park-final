@@ -3,21 +3,20 @@
 import { useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import Link from 'next/link';
-import { Archive, ArrowLeft, ArrowRight, ImagePlus, PackagePlus, Plus, Save, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, ArrowRight, Boxes, ImagePlus, PackagePlus, Plus, Save, ScanLine, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 const MASTER_DATA = gql`
   query ProductMasterData {
-    masterProductCategories(status: "active")
-    masterProductBrands(status: "active")
-    masterProductFinishes(status: "active")
+    productMasters
   }
 `;
 const GET_PRODUCTS = gql`
   query ProductRegister($search: String, $take: Int, $includeInactive: Boolean) {
     products(search: $search, take: $take, includeInactive: $includeInactive) {
-      id sku name category brand finish dimensions unit sellPrice floorPrice taxClass status description media updatedAt
+      id sku internalCode name category brand finish dimensions unit sellPrice floorPrice taxClass status description media updatedAt
+      categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
     }
   }
 `;
@@ -31,7 +30,8 @@ const UPLOAD_ASSET = gql`
 `;
 
 const emptyProduct = {
-  sku: '', name: '', category: '', brand: '', finish: '', dimensions: '', unit: 'PC',
+  sku: '', internalCode: '', name: '', category: '', brand: '', finish: '', dimensions: '', unit: 'PC',
+  materialId: '', tileSizeId: '', baseUom: 'PC', purchaseUom: 'PC', salesUom: 'PC', piecesPerPack: '1', coveragePerPack: '', hsnCode: '', allowLoose: false,
   sellPrice: '', floorPrice: '', taxClass: 'GST_18', description: '', status: 'active',
   updatedAt: '', images: [] as string[],
 };
@@ -76,20 +76,29 @@ export default function ProductMasterPage() {
   const [archiveProduct, { loading: archiving }] = useMutation(ARCHIVE_PRODUCT);
   const [uploadAsset] = useMutation(UPLOAD_ASSET);
 
-  const categories = names(masterData?.masterProductCategories);
-  const brands = names(masterData?.masterProductBrands);
-  const finishes = names(masterData?.masterProductFinishes);
+  const masters = masterData?.productMasters || {};
+  const categories = masters.categories || [];
+  const brands = masters.brands || [];
+  const finishes = masters.finishes || [];
+  const materials = masters.materials || [];
+  const tileSizes = masters.tileSizes || [];
+  const uoms = masters.uoms || [];
+  const taxCodes = masters.taxCodes || [];
   const products = data?.products || [];
   const isEditing = Boolean(selectedId);
   const saving = creating || updating;
-  const canSave = Boolean(form.name.trim() && form.category.trim() && (isEditing || form.sku.trim()));
+  const areaPriced = ['SQFT', 'SQM', 'M2'].includes(String(form.salesUom || '').toUpperCase());
+  const canSave = Boolean(form.name.trim() && form.category.trim() && form.internalCode.trim() && (isEditing || form.sku.trim()) && (!areaPriced || Number(form.coveragePerPack || 0) > 0));
 
   function chooseProduct(product: any) {
     setSelectedId(product.id);
     setForm({
-      sku: product.sku || '', name: product.name || '', category: product.category || '', brand: product.brand || '', finish: product.finish || '',
+      sku: product.sku || '', internalCode: product.internalCode || product.sku || '', name: product.name || '', category: product.category || '', brand: product.brand || '', finish: product.finish || '',
       dimensions: product.dimensions || '', unit: product.unit || 'PC', sellPrice: String(product.sellPrice ?? ''), floorPrice: String(product.floorPrice ?? ''),
       taxClass: product.taxClass || 'GST_18', description: product.description || '', status: product.status || 'active', updatedAt: product.updatedAt || '',
+      materialId: product.materialId || '', tileSizeId: product.tileSizeId || '', baseUom: product.baseUom || 'PC', purchaseUom: product.purchaseUom || 'PC',
+      salesUom: product.salesUom || 'PC', piecesPerPack: String(product.piecesPerPack || 1), coveragePerPack: String(product.coveragePerPack || ''),
+      hsnCode: product.hsnCode || '', allowLoose: Boolean(product.allowLoose),
       images: mediaUrls(product.media),
     });
     setMessage(`Editing ${product.sku}. The SKU code is locked to preserve quote, order, and stock history.`);
@@ -104,9 +113,13 @@ export default function ProductMasterPage() {
   async function saveProduct() {
     setMessage('');
     const shared: any = {
-      name: form.name, category: form.category, brand: form.brand || undefined, finish: form.finish || undefined,
+      name: form.name, internalCode: form.internalCode, category: form.category, brand: form.brand || undefined, finish: form.finish || undefined,
       dimensions: form.dimensions || undefined, unit: form.unit || undefined, taxClass: form.taxClass || undefined,
       description: form.description || undefined, status: form.status, media: mediaPayload(form.images),
+      materialId: form.materialId || undefined, tileSizeId: form.tileSizeId || undefined,
+      baseUom: form.baseUom, purchaseUom: form.purchaseUom, salesUom: form.salesUom,
+      piecesPerPack: Number(form.piecesPerPack || 1), coveragePerPack: Number(form.coveragePerPack || 0),
+      hsnCode: form.hsnCode || undefined, allowLoose: Boolean(form.allowLoose),
     };
     if (form.sellPrice !== '') shared.sellPrice = Number(form.sellPrice);
     if (form.floorPrice !== '') shared.floorPrice = Number(form.floorPrice);
@@ -178,12 +191,12 @@ export default function ProductMasterPage() {
   }
 
   return <div className="space-y-6 pb-10">
-    <section className="mp-card rounded-r5 border border-[#e4e4e7] bg-white p-6 text-[#18181b]">
+    <section className="border-b border-[var(--line)] bg-[var(--surface)] px-1 py-5 text-[var(--ink-1)]">
       <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <div><p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Product master</p><h1 className="mt-2 font-display text-3xl font-bold">SKU details, prices and gallery</h1><p className="mt-2 max-w-3xl text-sm text-[#52525b]">SKU codes are permanent. All other catalogue details can be updated with a traceable audit history.</p></div>
+        <div><p className="text-xs font-semibold uppercase text-[var(--ink-4)]">Product master</p><h1 className="mt-1 font-display text-3xl font-bold">Display code to saleable SKU</h1><p className="mt-2 max-w-3xl text-sm text-[var(--ink-3)]">Register each quoteable design once. Display samples stay non-saleable; opening stock and GRNs create physical lots.</p></div>
         <Button variant="outline" onClick={startNew}><Plus className="mr-2 h-4 w-4" /> New SKU</Button>
       </div>
-      <div className="mt-5 flex flex-wrap gap-2 text-xs font-bold"><Link href="/dashboard/master-data/categories" className="rounded-lg border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-[#1d4ed8]">Category master</Link><Link href="/dashboard/master-data/brands" className="rounded-lg border border-[#e4e4e7] px-3 py-2 text-[#52525b]">Brand master</Link><Link href="/dashboard/master-data/finishes" className="rounded-lg border border-[#e4e4e7] px-3 py-2 text-[#52525b]">Finish master</Link></div>
+      <div className="mt-4 grid max-w-3xl grid-cols-3 overflow-hidden rounded-lg border border-[var(--line)] text-xs font-semibold"><span className="flex items-center gap-2 bg-[#eef5ff] px-3 py-2 text-[#174ea6]"><ScanLine className="h-4 w-4" />1. Display code</span><span className="flex items-center gap-2 border-l border-[var(--line)] px-3 py-2"><Boxes className="h-4 w-4" />2. Product SKU</span><span className="flex items-center gap-2 border-l border-[var(--line)] px-3 py-2"><PackagePlus className="h-4 w-4" />3. Opening / GRN stock</span></div>
     </section>
 
     <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
@@ -191,13 +204,21 @@ export default function ProductMasterPage() {
         <div className="flex items-center justify-between"><div className="flex items-center gap-3"><PackagePlus className="h-6 w-6 text-[#2563eb]" /><h2 className="text-xl font-semibold text-[#18181b]">{isEditing ? 'Edit SKU' : 'Add SKU'}</h2></div>{isEditing ? <span className="rounded-full bg-[#eff6ff] px-3 py-1 text-xs font-bold text-[#1d4ed8]">{form.status}</span> : null}</div>
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">SKU code</span><Input value={form.sku} disabled={isEditing} onChange={(event) => setForm({ ...form, sku: event.target.value })} placeholder="Example: GRO-12345" /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Internal / display code</span><Input value={form.internalCode} onChange={(event) => setForm({ ...form, internalCode: event.target.value })} placeholder="Existing showroom code" /></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Name</span><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Category</span><Input list="product-category-options" value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} /><datalist id="product-category-options">{categories.map((item: string) => <option key={item} value={item} />)}</datalist></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Brand</span><Input list="product-brand-options" value={form.brand} onChange={(event) => setForm({ ...form, brand: event.target.value })} /><datalist id="product-brand-options">{brands.map((item: string) => <option key={item} value={item} />)}</datalist></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Finish</span><Input list="product-finish-options" value={form.finish} onChange={(event) => setForm({ ...form, finish: event.target.value })} /><datalist id="product-finish-options">{finishes.map((item: string) => <option key={item} value={item} />)}</datalist></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Unit</span><Input value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Category</span><select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select category</option>{categories.map((item: any) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Brand</span><select value={form.brand} onChange={(event) => setForm({ ...form, brand: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select brand</option>{brands.map((item: any) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Finish</span><select value={form.finish} onChange={(event) => setForm({ ...form, finish: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select finish</option>{finishes.map((item: any) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Material</span><select value={form.materialId} onChange={(event) => setForm({ ...form, materialId: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select material</option>{materials.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Tile size</span><select value={form.tileSizeId} onChange={(event) => setForm({ ...form, tileSizeId: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Not a tile / select size</option>{tileSizes.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Stock / purchase UOM</span><select value={form.purchaseUom} onChange={(event) => setForm({ ...form, purchaseUom: event.target.value, unit: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm">{uoms.map((item: any) => <option key={item.code} value={item.code}>{item.code} · {item.name}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Sales / rate UOM</span><select value={form.salesUom} onChange={(event) => setForm({ ...form, salesUom: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm">{uoms.map((item: any) => <option key={item.code} value={item.code}>{item.code} · {item.name}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Base UOM</span><select value={form.baseUom} onChange={(event) => setForm({ ...form, baseUom: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm">{uoms.map((item: any) => <option key={item.code} value={item.code}>{item.code} · {item.name}</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Pieces / pack</span><Input type="number" min={1} value={form.piecesPerPack} onChange={(event) => setForm({ ...form, piecesPerPack: event.target.value })} /></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Coverage / {form.purchaseUom || 'pack'} {areaPriced ? `(${form.salesUom})` : ''}</span><Input type="number" min={0} step="0.01" value={form.coveragePerPack} onChange={(event) => setForm({ ...form, coveragePerPack: event.target.value })} />{areaPriced && Number(form.coveragePerPack || 0) <= 0 ? <span className="text-xs font-semibold text-red-700">Required for area pricing</span> : null}</label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Dimensions</span><Input value={form.dimensions} onChange={(event) => setForm({ ...form, dimensions: event.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Tax class</span><select value={form.taxClass} onChange={(event) => setForm({ ...form, taxClass: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="GST_18">GST 18%</option><option value="GST_12">GST 12%</option><option value="GST_5">GST 5%</option><option value="EXEMPT">Exempt</option></select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Tax class</span><select value={form.taxClass} onChange={(event) => setForm({ ...form, taxClass: event.target.value, hsnCode: taxCodes.find((item: any) => item.code === event.target.value)?.hsnCode || form.hsnCode })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm">{taxCodes.map((item: any) => <option key={item.code} value={item.code}>{item.name} · {item.rate}%</option>)}</select></label>
+          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">HSN code</span><Input value={form.hsnCode} onChange={(event) => setForm({ ...form, hsnCode: event.target.value })} /></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Sell price</span><Input type="number" min={0} value={form.sellPrice} onChange={(event) => setForm({ ...form, sellPrice: event.target.value })} /></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Floor price</span><Input type="number" min={0} value={form.floorPrice} onChange={(event) => setForm({ ...form, floorPrice: event.target.value })} /></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Status</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archived</option></select></label>

@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { Resolver, Mutation, Args, ObjectType, Field, Context } from '@nestjs/graphql';
+import { Resolver, Mutation, Args, ObjectType, Field, Context, Query } from '@nestjs/graphql';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -94,6 +94,12 @@ export class ImportsResolver {
     private imports: ImportsService,
     private prisma: PrismaService,
   ) {}
+
+  @Query(() => GraphQLJSON)
+  async productImportTemplate(@Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
+    return this.imports.productImportTemplate();
+  }
 
   @Mutation(() => ImportOutput)
   async processExcelImport(@Args('filePath') filePath: string, @Context() ctx: GraphqlRequestContext) {
@@ -211,6 +217,8 @@ export class ImportsResolver {
       await requireSession(this.prisma, ctx);
     } else if (effectiveScope === 'product-image') {
       await requirePermission(this.prisma, ctx, 'products.manage');
+    } else if (effectiveScope === 'delivery-proof') {
+      await requirePermission(this.prisma, ctx, 'dispatch.manage');
     } else {
       throw new BadRequestException('Unsupported asset upload scope');
     }

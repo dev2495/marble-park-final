@@ -7,8 +7,9 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import {
   Bath, Bell, Boxes, Briefcase, ChevronDown, ClipboardCheck, ClipboardList, FileSpreadsheet,
   KeyRound, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
-  Truck, UserCircle2, Users, UserCog, UserCheck, BadgeCheck, CreditCard, FileText, MapPinned, RotateCcw,
+  Truck, UserCircle2, Users, UserCog, UserCheck, BadgeCheck, CreditCard, FileText, MapPinned, RotateCcw, PackagePlus,
   Menu, X,
+  ArrowLeftRight, QrCode, Scale, BarChart3,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -57,6 +58,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
       { name: 'Command Center', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
       { name: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck, roles: ['admin', 'owner'], permission: 'approvals.manage' },
       { name: 'Sales Desk', href: '/dashboard/sales', icon: Briefcase, roles: ['admin', 'owner', 'sales_manager', 'sales'] },
+      { name: 'Reports', href: '/dashboard/reports', icon: BarChart3, roles: ['admin', 'owner', 'sales_manager'], permission: 'reports.view' },
     ],
   },
   {
@@ -77,6 +79,10 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
       { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes, roles: ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff'], permission: 'inventory.manage' },
       { name: 'Pending Inward', href: '/dashboard/pending-inward', icon: PackageSearch, roles: ['admin', 'owner', 'dispatch_ops', 'inventory_manager', 'sales_manager', 'sales', 'office_staff'], permission: 'goods_receipts.manage' },
       { name: 'Procurement', href: '/dashboard/procurement', icon: ClipboardList, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'procurement.manage' },
+      { name: 'Opening Stock', href: '/dashboard/inventory/opening-stock', icon: PackagePlus, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
+      { name: 'Transfers', href: '/dashboard/inventory/transfers', icon: ArrowLeftRight, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
+      { name: 'Labels & Scan', href: '/dashboard/inventory/labels', icon: QrCode, roles: ['admin', 'owner', 'inventory_manager', 'dispatch_ops'], permission: 'inventory.manage' },
+      { name: 'Inventory Control', href: '/dashboard/inventory/control', icon: Scale, roles: ['admin', 'owner', 'inventory_manager'], permission: 'stock_counts.manage' },
       { name: 'Stock Count', href: '/dashboard/inventory/stock-count', icon: ClipboardCheck, roles: ['admin', 'owner', 'inventory_manager'], permission: 'stock_counts.manage' },
       { name: 'Stock Ledger', href: '/dashboard/inventory/ledger', icon: MapPinned, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
       { name: 'Reconciliation', href: '/dashboard/inventory/reconciliation', icon: BadgeCheck, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
@@ -117,6 +123,10 @@ const pageTitles: Record<string, string> = {
   '/dashboard/products': 'Catalogue',
   '/dashboard/inventory': 'Inventory',
   '/dashboard/inventory/inwards': 'GRN Receiving',
+  '/dashboard/inventory/opening-stock': 'Opening Stock',
+  '/dashboard/inventory/transfers': 'Stock Transfers',
+  '/dashboard/inventory/labels': 'Labels & Scan',
+  '/dashboard/inventory/control': 'Inventory Control',
   '/dashboard/inventory/adjustments': 'Stock Adjustments',
   '/dashboard/inventory/reconciliation': 'Stock Reconciliation',
   '/dashboard/pending-inward': 'Pending Inward',
@@ -135,6 +145,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/customers': 'Customers',
   '/dashboard/dispatch': 'Dispatch',
   '/dashboard/returns': 'Returns',
+  '/dashboard/reports': 'Management Reports',
   '/dashboard/inventory/stock-count': 'Stock Count',
   '/dashboard/inventory/ledger': 'Stock Ledger',
   '/dashboard/users': 'User Management',

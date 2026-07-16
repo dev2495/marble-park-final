@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { motion } from 'framer-motion';
 import { CalendarClock, CheckCircle2, ClipboardList, IndianRupee, PackageCheck, PackageSearch, Send, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,6 +52,10 @@ export default function ProcurementPage() {
   const [poNotes, setPoNotes] = useState('');
   const [activePoId, setActivePoId] = useState('');
   const [receiveRows, setReceiveRows] = useState<Record<string, string>>({});
+  const [damagedRows, setDamagedRows] = useState<Record<string, string>>({});
+  const [batchRows, setBatchRows] = useState<Record<string, string>>({});
+  const [costRows, setCostRows] = useState<Record<string, string>>({});
+  const [receiptKey, setReceiptKey] = useState(() => crypto.randomUUID());
   const [receiveMessage, setReceiveMessage] = useState('');
   const [supplierChallan, setSupplierChallan] = useState('');
   const [supplierBill, setSupplierBill] = useState('');
@@ -64,7 +67,7 @@ export default function ProcurementPage() {
     notifyOnNetworkStatusChange: false,
   });
   const [createPo, { loading: creatingPo, error: createPoError }] = useMutation(CREATE_PO, { onCompleted: () => { setSelectedDemand({}); setVendorId(''); setVendorName(''); setExpectedDate(''); setPoNotes(''); refetch(); } });
-  const [receivePo, { loading: receivingPo, error: receivePoError }] = useMutation(RECEIVE_PO, { onCompleted: (result) => { setReceiveMessage(`Posted ${result.receivePurchaseOrder?.grnNumber || 'GRN'} and updated inventory/backorder allocation.`); setReceiveRows({}); setSupplierChallan(''); setSupplierBill(''); refetch(); } });
+  const [receivePo, { loading: receivingPo, error: receivePoError }] = useMutation(RECEIVE_PO, { onCompleted: (result) => { setReceiveMessage(`Posted ${result.receivePurchaseOrder?.grnNumber || 'GRN'} and updated inventory/backorder allocation.`); setReceiveRows({}); setDamagedRows({}); setBatchRows({}); setCostRows({}); setReceiptKey(crypto.randomUUID()); setSupplierChallan(''); setSupplierBill(''); refetch(); } });
 
   const summary = data?.procurementSummary || {};
   const demands = useMemo<any[]>(() => data?.purchaseDemandQueue || [], [data?.purchaseDemandQueue]);
@@ -108,7 +111,9 @@ export default function ProcurementPage() {
         return {
           purchaseOrderLineId: line.id,
           receivedQuantity,
-          damagedQuantity: 0,
+          damagedQuantity: Number(damagedRows[line.id] || 0),
+          supplierBatch: batchRows[line.id] || undefined,
+          unitCost: Number(costRows[line.id] || line.unitCost || 0),
           location: receiveLocation ? `${receiveLocation.code} · ${receiveLocation.name}` : 'Default plant',
           locationId: receiveLocation?.id,
         };
@@ -124,6 +129,7 @@ export default function ProcurementPage() {
           locationId: receiveLocation?.id || undefined,
           lines: JSON.stringify(lines),
           notes: 'Received from procurement desk.',
+          idempotencyKey: receiptKey,
         },
       },
     });
@@ -136,20 +142,16 @@ export default function ProcurementPage() {
       {receivePoError ? <QueryErrorBanner error={receivePoError} /> : null}
       {receiveMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{receiveMessage}</div> : null}
 
-      <section className="relative overflow-hidden rounded-r6 border border-[var(--line)] bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-6 text-white shadow-sm-soft">
-        <div className="absolute right-10 top-8 h-32 w-32 rounded-full bg-blue-400/25 blur-3xl" />
-        <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
+      <section className="border-b border-[var(--line)] pb-5 pt-2">
+        <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-200">Procurement control</p>
-            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.03em] text-white">Turn shortages into vendor orders, then receive against PO.</h1>
-            <p className="mt-3 max-w-3xl text-sm font-medium leading-6 text-blue-100">
-              Sales orders create purchase demand automatically. Inventory teams group those rows into a PO, record ETA, receive GRN, and the system allocates arrived stock back to waiting customers.
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ink-4)]">Procurement control</p>
+            <h1 className="mt-2 text-2xl font-black text-[var(--ink)]">Purchase demand and inward</h1>
           </div>
           <div className="grid grid-cols-3 gap-3 text-center">
-            <div className="rounded-r4 border border-white/15 bg-white/10 p-4"><p className="text-2xl font-black">{summary.openDemand || 0}</p><p className="text-[10px] font-black uppercase tracking-widest text-blue-100">Open demand</p></div>
-            <div className="rounded-r4 border border-white/15 bg-white/10 p-4"><p className="text-2xl font-black">{summary.activePurchaseOrders || 0}</p><p className="text-[10px] font-black uppercase tracking-widest text-blue-100">Active POs</p></div>
-            <div className="rounded-r4 border border-white/15 bg-white/10 p-4"><p className="text-2xl font-black">{summary.recentGrn || 0}</p><p className="text-[10px] font-black uppercase tracking-widest text-blue-100">7d GRNs</p></div>
+            <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-5 py-3"><p className="text-xl font-black text-[var(--ink)]">{summary.openDemand || 0}</p><p className="text-[10px] font-black uppercase text-[var(--ink-4)]">Open demand</p></div>
+            <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-5 py-3"><p className="text-xl font-black text-[var(--ink)]">{summary.activePurchaseOrders || 0}</p><p className="text-[10px] font-black uppercase text-[var(--ink-4)]">Active POs</p></div>
+            <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-5 py-3"><p className="text-xl font-black text-[var(--ink)]">{summary.recentGrn || 0}</p><p className="text-[10px] font-black uppercase text-[var(--ink-4)]">7d GRNs</p></div>
           </div>
         </div>
       </section>
@@ -179,12 +181,9 @@ export default function ProcurementPage() {
             ) : demands.map((row, index) => {
               const checked = !!selectedDemand[row.id];
               return (
-                <motion.button
+                <button
                   key={row.id}
                   type="button"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.02 }}
                   onClick={() => setSelectedDemand((current) => ({ ...current, [row.id]: !checked }))}
                   className={cn('mb-2 w-full rounded-r4 border p-4 text-left transition-all', checked ? 'border-[var(--brand-400)] bg-[var(--brand-50)] shadow-sm-soft' : 'border-[var(--line)] bg-[var(--surface)] hover:border-[var(--line-strong)]')}
                 >
@@ -201,7 +200,7 @@ export default function ProcurementPage() {
                     <span>Received <b className="block text-lg text-emerald-700">{row.receivedQuantity}</b></span>
                     <span>Vendor <b className="block truncate text-[var(--ink)]">{row.vendorName || row.brand || 'Assign'}</b></span>
                   </div>
-                </motion.button>
+                </button>
               );
             })}
           </div>
@@ -261,8 +260,9 @@ export default function ProcurementPage() {
                         <p className="truncate text-sm font-black text-[var(--ink)]">{line.sku} · {line.name}</p>
                         <p className="mt-1 text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Ordered {line.orderedQuantity} · Received {line.receivedQuantity} · Remaining {remaining}</p>
                       </div>
-                      <Input type="number" min={0} max={remaining} value={receiveRows[line.id] ?? String(remaining)} onChange={(event) => setReceiveRows((current) => ({ ...current, [line.id]: event.target.value }))} className="w-24 text-center font-black" />
+                      <div className="grid w-44 grid-cols-2 gap-2"><label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Received<Input type="number" min={0} max={remaining} value={receiveRows[line.id] ?? String(remaining)} onChange={(event) => setReceiveRows((current) => ({ ...current, [line.id]: event.target.value }))} className="mt-1 text-center font-black" /></label><label className="text-[10px] font-bold uppercase text-red-600">Damaged<Input type="number" min={0} max={Number(receiveRows[line.id] ?? remaining)} value={damagedRows[line.id] ?? '0'} onChange={(event) => setDamagedRows((current) => ({ ...current, [line.id]: event.target.value }))} className="mt-1 text-center font-black" /></label></div>
                     </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2"><Input value={batchRows[line.id] || ''} onChange={(event) => setBatchRows((current) => ({ ...current, [line.id]: event.target.value }))} placeholder="Supplier batch / lot"/><Input type="number" min={0} value={costRows[line.id] ?? String(line.unitCost || 0)} onChange={(event) => setCostRows((current) => ({ ...current, [line.id]: event.target.value }))} placeholder="Unit cost"/></div>
                   </div>
                 );
               })}

@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { gql, useMutation } from '@apollo/client';
-import { AlertTriangle, CheckCircle2, Database, Eye, FileSpreadsheet, Image as ImageIcon, PackagePlus, UploadCloud } from 'lucide-react';
+import { gql, useLazyQuery, useMutation } from '@apollo/client';
+import { AlertTriangle, CheckCircle2, Database, Download, Eye, FileSpreadsheet, Image as ImageIcon, PackagePlus, UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 
@@ -11,6 +11,7 @@ const BEGIN_UPLOAD = gql`mutation($filename: String!) { beginImportUpload(filena
 const APPEND_UPLOAD = gql`mutation($uploadId: String!, $filename: String!, $contentBase64: String!) { appendImportUpload(uploadId: $uploadId, filename: $filename, contentBase64: $contentBase64) { id result } }`;
 const PREVIEW_UPLOAD = gql`mutation($uploadId: String!, $filename: String!, $kind: String!) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { id result } }`;
 const APPLY_UPLOAD = gql`mutation($uploadId: String!, $filename: String!, $kind: String!) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { id result } }`;
+const TEMPLATE = gql`query ProductImportTemplate { productImportTemplate }`;
 
 async function blobToBase64(blob: Blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -69,6 +70,20 @@ export default function ImportCenterPage() {
     },
     onError: (err) => setStatus(err.message),
   });
+  const [loadTemplate, templateState] = useLazyQuery(TEMPLATE, { fetchPolicy: 'no-cache' });
+
+  async function downloadTemplate() {
+    const response = await loadTemplate();
+    const file = response.data?.productImportTemplate;
+    if (!file?.contentBase64) return;
+    const bytes = Uint8Array.from(atob(file.contentBase64), (character) => character.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: file.mimeType }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = file.filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
 
   async function uploadAndPreview(file: File) {
     if (!/\.xlsx$/i.test(file.name)) throw new Error('Only .xlsx files are supported here. PDF catalogue extraction has been removed.');
@@ -123,6 +138,7 @@ export default function ImportCenterPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={downloadTemplate} disabled={templateState.loading}><Download className="mr-2 h-4 w-4" /> Excel template</Button>
             <Button asChild><Link href="/dashboard/master-data/products"><PackagePlus className="mr-2 h-4 w-4" /> Product Master</Link></Button>
             <Button asChild variant="outline"><Link href="/dashboard/products"><ImageIcon className="mr-2 h-4 w-4" /> Catalogue</Link></Button>
           </div>

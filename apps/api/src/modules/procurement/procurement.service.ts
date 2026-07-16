@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
+import { applyLotStockPostingTx } from '../common/lot-stock-posting';
+import { reserveAvailableLotsTx } from '../common/lot-allocation';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreatePurchaseOrderInput {
@@ -20,6 +22,7 @@ export interface ReceivePurchaseOrderInput {
   notes?: string;
   locationId?: string;
   lines?: any;
+  idempotencyKey?: string;
 }
 
 export interface ManualGoodsReceiptInput {
@@ -28,6 +31,7 @@ export interface ManualGoodsReceiptInput {
   supplierChallan?: string;
   supplierBill?: string;
   receivedDate?: Date;
+  idempotencyKey?: string;
   reason?: string;
   notes?: string;
   locationId?: string;
@@ -95,6 +99,8 @@ export class ProcurementService {
       orderBy: { createdAt: 'asc' },
     });
     if (!demands.length) throw new BadRequestException('Selected demand rows are already closed or unavailable');
+    const invalidDemand = demands.find((demand: any) => !demand.productId);
+    if (invalidDemand) throw new BadRequestException(`${invalidDemand.sku} must be linked to a Product Master SKU before purchase ordering`);
 
     const vendor = input.vendorId
       ? await (this.prisma as any).vendor.findUnique({ where: { id: input.vendorId } }).catch(() => null)
@@ -171,7 +177,7 @@ export class ProcurementService {
               updatedAt: new Date(),
               metadata: { source: 'purchase_order', poNumber },
             },
-          }).catch(() => null);
+          });
           await tx.reorderPolicy.upsert({
             where: { productId: demand.productId },
             update: {
@@ -188,7 +194,7 @@ export class ProcurementService {
               reorderPoint: 0,
               updatedAt: new Date(),
             },
-          }).catch(() => null);
+          });
         }
         await tx.purchaseDemand.update({
           where: { id: demand.id },
@@ -213,7 +219,7 @@ export class ProcurementService {
           summary: `Created ${order.poNumber} for ${vendorName}`,
           metadata: { demandIds },
         },
-      }).catch(() => null);
+      });
       return order;
     }, { timeout: 15000 });
 
@@ -244,6 +250,11 @@ export class ProcurementService {
   }
 
   async receivePurchaseOrder(input: ReceivePurchaseOrderInput, actorUserId: string) {
+    const idempotencyKey = String((input as any).idempotencyKey || '').trim() || null;
+    if (idempotencyKey) {
+      const existing = await (this.prisma as any).goodsReceiptNote.findUnique({ where: { idempotencyKey } });
+      if (existing) return (await this.decorateGrns([existing]))[0];
+    }
     if (!input.purchaseOrderId) throw new BadRequestException('Purchase order is required for GRN receiving');
     const po = await (this.prisma as any).purchaseOrder.findUnique({ where: { id: input.purchaseOrderId } });
     if (!po) throw new NotFoundException('Purchase order not found');
@@ -272,6 +283,7 @@ export class ProcurementService {
         data: {
           id: ulid(),
           grnNumber,
+          idempotencyKey,
           purchaseOrderId: po.id,
           vendorId: po.vendorId || null,
           vendorName: po.vendorName,
@@ -285,7 +297,7 @@ export class ProcurementService {
         },
       });
 
-      for (const row of selected) {
+      for (const [lineIndex, row] of selected.entries()) {
         const line = lineMap.get(String(row.purchaseOrderLineId || '')) as any;
         if (!line) throw new BadRequestException('One GRN line does not belong to this purchase order');
         const received = this.whole(row.receivedQuantity, `${line.sku} received quantity`);
@@ -294,7 +306,12 @@ export class ProcurementService {
         const accepted = received - damaged;
         if (received <= 0) continue;
 
-        await tx.goodsReceiptLine.create({
+        const remaining = Math.max(0, Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0));
+        if (received > remaining) {
+          throw new BadRequestException(`${line.sku} receipt ${received} exceeds remaining PO quantity ${remaining}`);
+        }
+
+        const receiptLine = await tx.goodsReceiptLine.create({
           data: {
             id: ulid(),
             goodsReceiptNoteId: note.id,
@@ -311,6 +328,21 @@ export class ProcurementService {
             metadata: { purchaseDemandId: line.purchaseDemandId, note: row.note || '', locationId: receiptLocation.id },
           },
         });
+
+        let lot: any = null;
+        if (line.productId) {
+          lot = await tx.inventoryLot.create({
+            data: {
+              id: ulid(), lotNumber: `${grnNumber}-${String(lineIndex + 1).padStart(3, '0')}`,
+              productId: line.productId, sourceType: 'grn', sourceId: note.id, sourceLineId: receiptLine.id,
+              supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
+              receivedAt: note.receivedDate, unitCost: Number(row.unitCost || line.unitCost || 0), status: 'active',
+              attributes: row.attributes || {}, metadata: { purchaseOrderId: po.id, purchaseOrderLineId: line.id },
+              createdBy: actorUserId, updatedAt: new Date(),
+            },
+          });
+          await tx.goodsReceiptLine.update({ where: { id: receiptLine.id }, data: { lotId: lot.id } });
+        }
 
         const lineReceived = Number(line.receivedQuantity || 0) + accepted;
         const lineStatus = lineReceived >= Number(line.orderedQuantity || 0) ? 'received' : 'partial_received';
@@ -337,10 +369,13 @@ export class ProcurementService {
           }
         }
 
-        if (line.productId && accepted > 0) {
-          await this.addAcceptedStockTx(tx, {
+        if (line.productId && lot) {
+          await this.addReceivedStockTx(tx, {
             productId: line.productId,
-            quantity: accepted,
+            lotId: lot.id,
+            receivedQuantity: received,
+            damagedQuantity: damaged,
+            unitCost: Number(row.unitCost || line.unitCost || 0),
             reason: `GRN ${grnNumber} against ${po.poNumber}`,
             actorUserId,
             locationId: receiptLocation.id,
@@ -363,13 +398,18 @@ export class ProcurementService {
         },
       }).catch(() => null);
       return note;
-    }, { timeout: 20000 });
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
 
     const [decorated] = await this.decorateGrns([grn]);
     return decorated;
   }
 
   async createManualGoodsReceipt(input: ManualGoodsReceiptInput, actorUserId: string) {
+    const idempotencyKey = String(input.idempotencyKey || '').trim() || null;
+    if (idempotencyKey) {
+      const existing = await (this.prisma as any).goodsReceiptNote.findUnique({ where: { idempotencyKey } });
+      if (existing) return (await this.decorateGrns([existing]))[0];
+    }
     const vendor = input.vendorId
       ? await (this.prisma as any).vendor.findUnique({ where: { id: input.vendorId } }).catch(() => null)
       : null;
@@ -389,6 +429,7 @@ export class ProcurementService {
       const note = await tx.goodsReceiptNote.create({
         data: {
           id: ulid(),
+          idempotencyKey,
           grnNumber,
           vendorId: input.vendorId || vendor?.id || null,
           vendorName,
@@ -401,7 +442,7 @@ export class ProcurementService {
         },
       });
 
-      for (const row of lines) {
+      for (const [lineIndex, row] of lines.entries()) {
         const product = productMap.get(String(row.productId || '')) as any;
         if (!product) throw new BadRequestException('Manual GRN rows must use an existing Product Master SKU');
         const received = this.whole(row.receivedQuantity || row.quantity, `${product.sku} received quantity`);
@@ -409,7 +450,7 @@ export class ProcurementService {
         if (damaged > received) throw new BadRequestException(`${product.sku} damaged quantity cannot exceed received quantity`);
         const accepted = received - damaged;
 
-        await tx.goodsReceiptLine.create({
+        const receiptLine = await tx.goodsReceiptLine.create({
           data: {
             id: ulid(),
             goodsReceiptNoteId: note.id,
@@ -426,10 +467,25 @@ export class ProcurementService {
           },
         });
 
-        if (accepted > 0) {
-          await this.addAcceptedStockTx(tx, {
+        const lot = await tx.inventoryLot.create({
+          data: {
+            id: ulid(), lotNumber: `${grnNumber}-${String(lineIndex + 1).padStart(3, '0')}`,
+            productId: product.id, sourceType: 'manual_grn', sourceId: note.id, sourceLineId: receiptLine.id,
+            supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
+            receivedAt: note.receivedDate, unitCost: Number(row.unitCost || 0), status: 'active',
+            attributes: row.attributes || {}, metadata: { manualReason: input.reason || '' },
+            createdBy: actorUserId, updatedAt: new Date(),
+          },
+        });
+        await tx.goodsReceiptLine.update({ where: { id: receiptLine.id }, data: { lotId: lot.id } });
+
+        if (received > 0) {
+          await this.addReceivedStockTx(tx, {
             productId: product.id,
-            quantity: accepted,
+            lotId: lot.id,
+            receivedQuantity: received,
+            damagedQuantity: damaged,
+            unitCost: Number(row.unitCost || 0),
             reason: `Manual GRN ${grnNumber} from ${vendorName}`,
             actorUserId,
             locationId: receiptLocation.id,
@@ -542,39 +598,8 @@ export class ProcurementService {
       });
     }
 
-    for (const order of orders as any[]) {
-      const lines = this.normalizeLines(order.lines);
-      lines.forEach((line: any, index: number) => {
-        if (!this.isTileLine(line) || String(line.productId || '').trim()) return;
-        const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
-        if (quantity <= 0) return;
-        const sku = String(line.tileCode || line.sku || `TILE-${index + 1}`).trim();
-        rows.push({
-          id: ulid(),
-          sourceType: 'tile_special_order',
-          sourceLineKey: this.tileDemandKey(order.id, line, index),
-          sourceOrderId: order.id,
-          sourceQuoteId: order.quoteId,
-          customerId: order.customerId,
-          ownerId: order.ownerId,
-          sku,
-          name: String(line.name || `Tile ${sku}`).trim(),
-          category: 'Tiles',
-          brand: line.brand || 'Tile vendor',
-          finish: line.tileSize || line.dimensions || '',
-          unit: line.unit || line.uom || 'BOX',
-          quantity,
-          status: 'open',
-          vendorName: line.brand || 'Tile vendor',
-          notes: `${order.orderNumber || 'Sales order'} tile special order for ${customerMap.get(order.customerId)?.name || 'customer'}`,
-          metadata: { orderNumber: order.orderNumber, tileCode: sku, tileSize: line.tileSize || line.dimensions || '', lineIndex: index },
-          updatedAt: new Date(),
-        });
-      });
-    }
-
     if (!rows.length) return;
-    await (this.prisma as any).purchaseDemand.createMany({ data: rows, skipDuplicates: true }).catch(() => null);
+    await (this.prisma as any).purchaseDemand.createMany({ data: rows, skipDuplicates: true });
   }
 
   private async decorateDemands(rows: any[]) {
@@ -700,27 +725,28 @@ export class ProcurementService {
     }).catch(() => null);
   }
 
-  private async addAcceptedStockTx(
+  private async addReceivedStockTx(
     tx: any,
-    args: { productId: string; quantity: number; reason: string; actorUserId: string; locationId?: string; referenceId?: string; sourceDocumentNo?: string },
+    args: { productId: string; lotId: string; receivedQuantity: number; damagedQuantity: number; unitCost?: number; reason: string; actorUserId: string; locationId?: string; referenceId?: string; sourceDocumentNo?: string },
   ) {
-    await applyStockPostingTx(tx, {
+    await applyLotStockPostingTx(tx, {
       productId: args.productId,
+      lotId: args.lotId,
+      idempotencyKey: `grn:${args.referenceId}:${args.lotId}`,
+      locationId: String(args.locationId || ''),
       type: 'grn_receipt',
-      movementType: 'inward',
-      ledgerType: 'grn_receipt',
-      quantity: args.quantity,
-      onHandDelta: args.quantity,
-      locationOnHandDelta: args.quantity,
-      locationId: args.locationId || null,
+      direction: 'in',
+      quantity: args.receivedQuantity,
+      onHandDelta: args.receivedQuantity,
+      damagedDelta: args.damagedQuantity,
       reason: args.reason,
-      referenceType: 'GoodsReceiptNote',
-      referenceId: args.referenceId || null,
+      referenceType: 'GoodsReceiptNote', referenceId: String(args.referenceId || ''),
       sourceDocumentNo: args.sourceDocumentNo || null,
       createdBy: args.actorUserId,
-      metadata: { source: 'procurement_service' },
+      unitCost: Number(args.unitCost || 0),
+      metadata: { source: 'procurement_service', acceptedQuantity: args.receivedQuantity - args.damagedQuantity },
     });
-    await this.autoReserveBackordersTx(tx, args.productId, args.actorUserId);
+    if (args.receivedQuantity > args.damagedQuantity) await this.autoReserveBackordersTx(tx, args.productId, args.actorUserId);
   }
 
   private async autoReserveBackordersTx(tx: any, productId: string, actorUserId: string) {
@@ -730,29 +756,27 @@ export class ProcurementService {
     });
     for (const reservation of reservations) {
       const balance = await tx.inventoryBalance.findUnique({ where: { productId }, include: { product: true } });
-      if (!balance || Number(balance.available || 0) < Number(reservation.quantity || 0)) return;
+      const lotAvailability = await tx.inventoryLotBalance.aggregate({
+        where: { lot: { productId, status: 'active' } }, _sum: { available: true },
+      });
+      if (!balance || Number(lotAvailability._sum.available || 0) < Number(reservation.quantity || 0)) return;
       const quote = await tx.quote.findUnique({ where: { id: reservation.quoteId } });
+      const salesOrder = reservation.salesOrderId
+        ? await tx.salesOrder.findUnique({ where: { id: reservation.salesOrderId } })
+        : null;
       const quantity = Number(reservation.quantity || 0);
-      await applyStockPostingTx(tx, {
-        productId,
-        type: 'auto_reserve_backorder',
-        movementType: 'reserve',
-        ledgerType: 'reserve',
-        quantity,
-        reservedDelta: quantity,
-        locationReservedDelta: quantity,
-        requireAvailable: true,
-        reason: `Auto-reserved arrived backorder for ${quote?.quoteNumber || reservation.quoteId}`,
-        relatedQuoteId: reservation.quoteId,
-        referenceType: 'Reservation',
-        referenceId: reservation.id,
-        sourceDocumentNo: quote?.quoteNumber || null,
-        createdBy: actorUserId || 'system',
-        metadata: { source: 'procurement_auto_reserve' },
+      const allocations = await reserveAvailableLotsTx(tx, {
+        reservationId: reservation.id, salesOrderLineId: reservation.salesOrderLineId,
+        productId, quantity, actorUserId: actorUserId || 'system', quoteId: reservation.quoteId,
+        orderNumber: salesOrder?.orderNumber || quote?.quoteNumber || reservation.quoteId,
       });
       await tx.reservation.update({
         where: { id: reservation.id },
-        data: { status: 'reserved', updatedAt: new Date() },
+        data: {
+          status: 'reserved',
+          locationId: new Set(allocations.map((row: any) => row.locationId)).size === 1 ? allocations[0].locationId : null,
+          updatedAt: new Date(),
+        },
       });
       await tx.purchaseDemand.updateMany({
         where: { sourceReservationId: reservation.id },

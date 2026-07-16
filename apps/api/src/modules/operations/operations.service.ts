@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import * as QRCode from 'qrcode';
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx } from '../common/stock-posting';
+import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -30,6 +32,81 @@ export class OperationsService {
       orderBy: { receivedAt: 'desc' },
       take: this.limit(args?.take, 120),
     });
+  }
+
+  async creditNotes(args?: { salesOrderId?: string; customerId?: string; take?: number }) {
+    const where: any = {};
+    if (args?.salesOrderId) where.salesOrderId = args.salesOrderId;
+    if (args?.customerId) where.customerId = args.customerId;
+    return (this.prisma as any).creditNote.findMany({
+      where,
+      orderBy: { issuedAt: 'desc' },
+      take: this.limit(args?.take, 120),
+    });
+  }
+
+  async managementReport(args?: { from?: string; to?: string }) {
+    const to = args?.to ? new Date(`${args.to}T23:59:59.999Z`) : new Date();
+    const from = args?.from ? new Date(`${args.from}T00:00:00.000Z`) : new Date(to.getTime() - 29 * 86400000);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) throw new BadRequestException('Report date range is invalid');
+    const dateRange = { gte: from, lte: to };
+    const [orders, payments, creditNotes, lotBalances, demands, purchaseOrders, grnLines, challans, returns, closes] = await Promise.all([
+      this.prisma.salesOrder.findMany({ where: { createdAt: dateRange }, orderBy: { createdAt: 'asc' } }),
+      (this.prisma as any).paymentReceipt.findMany({ where: { receivedAt: dateRange, status: 'posted' }, orderBy: { receivedAt: 'asc' } }),
+      (this.prisma as any).creditNote.findMany({ where: { issuedAt: dateRange, status: 'issued' }, orderBy: { issuedAt: 'asc' } }),
+      (this.prisma as any).inventoryLotBalance.findMany({ include: { lot: { include: { product: true } } } }),
+      (this.prisma as any).purchaseDemand.findMany({ where: { status: { in: ['open', 'ordered', 'partial_received'] } } }),
+      (this.prisma as any).purchaseOrder.findMany({ where: { status: { in: ['draft', 'ordered', 'partial_received'] } }, orderBy: { createdAt: 'desc' }, take: 20 }),
+      (this.prisma as any).goodsReceiptLine.findMany({ where: { createdAt: dateRange } }),
+      this.prisma.dispatchChallan.findMany({ where: { createdAt: dateRange } }),
+      (this.prisma as any).returnOrder.findMany({ where: { createdAt: dateRange } }),
+      (this.prisma as any).inventoryPeriodClose.findMany({ where: { status: 'closed' }, orderBy: { effectiveAt: 'desc' }, take: 12 }),
+    ]);
+    const sales = orders.reduce((sum: number, row: any) => sum + Number(row.totalAmount || 0), 0);
+    const collections = payments.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+    const credits = creditNotes.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+    const inventory = lotBalances.reduce((acc: any, row: any) => {
+      const qty = Number(row.onHand || 0);
+      const value = qty * Number(row.lot?.unitCost || 0);
+      const category = row.lot?.product?.category || 'Uncategorised';
+      acc.quantity += qty;
+      acc.reserved += Number(row.reserved || 0);
+      acc.damaged += Number(row.damaged || 0);
+      acc.value += value;
+      const bucket = acc.byCategory.get(category) || { category, quantity: 0, value: 0, reserved: 0 };
+      bucket.quantity += qty; bucket.value += value; bucket.reserved += Number(row.reserved || 0);
+      acc.byCategory.set(category, bucket);
+      return acc;
+    }, { quantity: 0, reserved: 0, damaged: 0, value: 0, byCategory: new Map() });
+    const daily = new Map<string, any>();
+    const bucket = (date: Date) => {
+      const key = date.toISOString().slice(0, 10);
+      if (!daily.has(key)) daily.set(key, { date: key, sales: 0, collections: 0, credits: 0, orders: 0 });
+      return daily.get(key);
+    };
+    orders.forEach((row: any) => { const item = bucket(row.createdAt); item.sales += Number(row.totalAmount || 0); item.orders += 1; });
+    payments.forEach((row: any) => { bucket(row.receivedAt).collections += Number(row.amount || 0); });
+    creditNotes.forEach((row: any) => { bucket(row.issuedAt).credits += Number(row.amount || 0); });
+    return {
+      generatedAt: new Date().toISOString(), range: { from: from.toISOString(), to: to.toISOString() },
+      finance: { sales, collections, creditNotes: credits, netSales: sales - credits, outstanding: Math.max(0, sales - collections - credits), orderCount: orders.length },
+      inventory: { quantity: inventory.quantity, reserved: inventory.reserved, available: inventory.quantity - inventory.reserved - inventory.damaged, damaged: inventory.damaged, value: inventory.value },
+      procurement: {
+        backorderQuantity: demands.reduce((sum: number, row: any) => sum + Math.max(0, Number(row.quantity || 0) - Number(row.receivedQuantity || 0)), 0),
+        openDemandCount: demands.length, openPurchaseOrders: purchaseOrders.length,
+        receivedQuantity: grnLines.reduce((sum: number, row: any) => sum + Number(row.acceptedQuantity || 0), 0),
+        damagedReceivedQuantity: grnLines.reduce((sum: number, row: any) => sum + Number(row.damagedQuantity || 0), 0),
+      },
+      fulfilment: {
+        challans: challans.length, delivered: challans.filter((row: any) => row.status === 'delivered').length,
+        pending: challans.filter((row: any) => !['delivered', 'cancelled'].includes(row.status)).length,
+        returns: returns.length, receivedReturns: returns.filter((row: any) => row.status === 'received').length,
+      },
+      trend: Array.from(daily.values()).sort((a, b) => a.date.localeCompare(b.date)),
+      categoryStock: Array.from(inventory.byCategory.values()).sort((a: any, b: any) => b.value - a.value),
+      openPurchaseOrders: purchaseOrders,
+      periodCloses: closes,
+    };
   }
 
   async stockLocations(args?: { status?: string }) {
@@ -138,15 +215,15 @@ export class OperationsService {
   async stockCountSessions(args?: { status?: string; take?: number }) {
     const where: any = {};
     if (args?.status && args.status !== 'all') where.status = args.status;
-    const sessions = await (this.prisma as any).stockCountSession.findMany({
+    return (this.prisma as any).stockCountSession.findMany({
       where,
       orderBy: { startedAt: 'desc' },
       take: this.limit(args?.take, 80),
+      include: {
+        location: true,
+        lines: { include: { product: true, lot: true, location: true }, orderBy: { createdAt: 'asc' } },
+      },
     });
-    const ids = sessions.map((session: any) => session.id);
-    const lines = ids.length ? await (this.prisma as any).stockCountLine.findMany({ where: { stockCountId: { in: ids } } }) : [];
-    const bySession = this.groupBy(lines, 'stockCountId');
-    return sessions.map((session: any) => ({ ...session, lines: bySession.get(session.id) || [] }));
   }
 
   async createStockCountSession(input: any, actorUserId: string) {
@@ -154,16 +231,27 @@ export class OperationsService {
     if (!lines.length) throw new BadRequestException('Add at least one counted SKU');
     const productIds = Array.from(new Set(lines.map((line: any) => String(line.productId || '').trim()).filter(Boolean)));
     if (!productIds.length) throw new BadRequestException('Stock count lines require Product Master SKUs');
-    const balances = await this.prisma.inventoryBalance.findMany({ where: { productId: { in: productIds } }, include: { product: true } as any } as any);
-    const balanceMap = new Map((balances as any[]).map((balance) => [balance.productId, balance]));
-    const locationBalances = input.locationId
-      ? await (this.prisma as any).stockBalanceByLocation.findMany({ where: { locationId: input.locationId, productId: { in: productIds } } }).catch(() => [])
-      : [];
-    const locationBalanceMap = new Map((locationBalances as any[]).map((balance) => [balance.productId, balance]));
-    const missing = productIds.filter((id) => !balanceMap.has(id));
-    if (missing.length) throw new BadRequestException('Every counted SKU must have an inventory balance');
+    const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
+    const productMap = new Map((products as any[]).map((product) => [product.id, product]));
+    if (products.length !== productIds.length) throw new BadRequestException('Every count line must reference an existing Product Master SKU');
+    const countType = String(input.countType || 'cycle').trim().toLowerCase();
+    if (!['cycle', 'monthly', 'year_end'].includes(countType)) throw new BadRequestException('Count type must be cycle, monthly, or year_end');
+    const periodKey = String(input.periodKey || '').trim() || null;
+    if (countType !== 'cycle' && !periodKey) throw new BadRequestException('Monthly and year-end counts require a period key');
 
     return this.prisma.$transaction(async (tx: any) => {
+      const location = input.locationId
+        ? await this.resolveStockLocationTx(tx, input.locationId)
+        : await this.ensureDefaultLocationTx(tx);
+      const lotIds = Array.from(new Set(lines.map((line: any) => String(line.lotId || '').trim()).filter(Boolean)));
+      const lotBalances = lotIds.length
+        ? await tx.inventoryLotBalance.findMany({
+            where: { locationId: location.id, lotId: { in: lotIds } },
+            include: { lot: true },
+          })
+        : [];
+      const lotBalanceMap = new Map((lotBalances as any[]).map((balance) => [balance.lotId, balance]));
+      const seen = new Set<string>();
       const countNumber = await nextDocumentNumber(tx, 'stock_count', 'SC', new Date(), {
         existingNumbers: async (prefixForYear) => (await tx.stockCountSession.findMany({
           where: { countNumber: { startsWith: prefixForYear } },
@@ -176,32 +264,46 @@ export class OperationsService {
           countNumber,
           status: input.submit ? 'submitted' : 'draft',
           scope: input.scope || 'selected_skus',
-          locationId: input.locationId || null,
+          countType,
+          periodKey,
+          effectiveAt: input.effectiveAt ? new Date(input.effectiveAt) : new Date(),
+          locationId: location.id,
           notes: input.notes || '',
           createdBy: actorUserId,
           submittedAt: input.submit ? new Date() : null,
           updatedAt: new Date(),
-          metadata: { source: 'inventory_count_ui' },
+          metadata: { source: 'inventory_count_ui', device: input.device || null },
         },
       });
       for (const row of lines) {
-        const balance = balanceMap.get(String(row.productId)) as any;
-        const counted = this.wholeOrZero(row.countedQuantity, `${balance.product?.sku || row.productId} counted quantity`);
-        const expected = input.locationId
-          ? Number((locationBalanceMap.get(balance.productId) as any)?.onHand || 0)
-          : Number(balance.onHand || 0);
+        const product = productMap.get(String(row.productId)) as any;
+        const lotId = String(row.lotId || '').trim() || null;
+        const identity = `${product.id}:${lotId || 'new'}:${location.id}`;
+        if (seen.has(identity)) throw new BadRequestException(`${product.sku} has a duplicate count row for the same lot and location`);
+        seen.add(identity);
+        const lotBalance = lotId ? lotBalanceMap.get(lotId) as any : null;
+        if (lotId && (!lotBalance || lotBalance.lot?.productId !== product.id)) {
+          throw new BadRequestException(`${product.sku} lot was not found at ${location.code}`);
+        }
+        const counted = this.wholeOrZero(row.countedQuantity, `${product.sku} counted quantity`);
+        const expected = Number(lotBalance?.onHand || 0);
+        if (!lotId && expected === 0 && counted === 0) continue;
         await tx.stockCountLine.create({
           data: {
             id: ulid(),
             stockCountId: session.id,
-            productId: balance.productId,
+            productId: product.id,
+            lotId,
+            locationId: location.id,
             expectedQuantity: expected,
             countedQuantity: counted,
             variance: counted - expected,
+            unitCost: Number(row.unitCost ?? lotBalance?.lot?.unitCost ?? 0),
+            varianceValue: (counted - expected) * Number(row.unitCost ?? lotBalance?.lot?.unitCost ?? 0),
             reason: row.reason || '',
             status: 'counted',
             updatedAt: new Date(),
-            metadata: { sku: balance.product?.sku, name: balance.product?.name },
+            metadata: { sku: product.sku, name: product.name, lotNumber: lotBalance?.lot?.lotNumber || null },
           },
         });
       }
@@ -215,48 +317,89 @@ export class OperationsService {
           summary: `Created ${countNumber} with ${lines.length} counted SKU rows`,
           metadata: { lineCount: lines.length },
         },
-      }).catch(() => null);
+      });
       return this.decorateStockCount(session.id, tx);
-    }, { timeout: 15000 });
+    }, { isolationLevel: 'Serializable', timeout: 20000 });
   }
 
   async approveStockCountSession(id: string, actorUserId: string) {
     const session = await (this.prisma as any).stockCountSession.findUnique({ where: { id } });
     if (!session) throw new NotFoundException('Stock count session not found');
-    if (session.status === 'approved') return this.decorateStockCount(id);
-    const lines = await (this.prisma as any).stockCountLine.findMany({ where: { stockCountId: id } });
+    if (session.status === 'posted') return this.decorateStockCount(id);
+    if (!['draft', 'submitted'].includes(session.status)) throw new BadRequestException(`Count ${session.countNumber} cannot be posted from ${session.status}`);
+    const lines = await (this.prisma as any).stockCountLine.findMany({ where: { stockCountId: id }, include: { product: true, lot: true } });
     if (!lines.length) throw new BadRequestException('Stock count has no lines to approve');
 
     return this.prisma.$transaction(async (tx: any) => {
       for (const line of lines) {
         const variance = Number(line.variance || 0);
-        if (!variance) continue;
-        await applyStockPostingTx(tx, {
+        let lot = line.lot;
+        if (!lot && variance < 0) throw new BadRequestException(`${line.product?.sku || line.productId} needs an exact lot before stock can be reduced`);
+        if (!lot && variance > 0) {
+          const suffix = String(line.id).slice(-6).toUpperCase();
+          lot = await tx.inventoryLot.create({
+            data: {
+              id: ulid(),
+              lotNumber: `COUNT-${session.countNumber}-${suffix}`,
+              productId: line.productId,
+              sourceType: 'stock_count',
+              sourceId: session.id,
+              sourceLineId: line.id,
+              qualityStatus: 'available',
+              receivedAt: session.effectiveAt || new Date(),
+              unitCost: Number(line.unitCost || 0),
+              status: 'active',
+              attributes: {},
+              metadata: { countNumber: session.countNumber },
+              createdBy: actorUserId,
+              updatedAt: new Date(),
+            },
+          });
+        }
+        if (!variance) {
+          await tx.stockCountLine.update({ where: { id: line.id }, data: { status: 'posted', adjustmentPosted: true, updatedAt: new Date() } });
+          continue;
+        }
+        const locationId = line.locationId || session.locationId;
+        if (!locationId || !lot) throw new BadRequestException('Count posting requires an exact lot and location');
+        await applyLotStockPostingTx(tx, {
           productId: line.productId,
+          lotId: lot.id,
+          locationId,
+          idempotencyKey: `stock-count:${session.id}:${line.id}`,
           type: 'stock_count',
-          movementType: 'stock_count',
-          movementQuantity: variance,
-          ledgerType: 'stock_count',
           direction: variance >= 0 ? 'in' : 'out',
           quantity: Math.abs(variance),
           onHandDelta: variance,
-          locationId: session.locationId || null,
-          locationOnHandDelta: variance,
           reason: `Approved variance from ${session.countNumber}: ${line.reason || 'physical count'}`,
           createdBy: actorUserId,
           referenceType: 'StockCountSession',
           referenceId: session.id,
           sourceDocumentNo: session.countNumber,
+          effectiveAt: session.effectiveAt,
           metadata: {
             expected: line.expectedQuantity,
             counted: line.countedQuantity,
             variance: line.variance,
           },
+          requireOnHand: variance < 0,
+        });
+        await tx.stockCountLine.update({
+          where: { id: line.id },
+          data: { lotId: lot.id, status: 'posted', adjustmentPosted: true, updatedAt: new Date() },
         });
       }
       const approved = await tx.stockCountSession.update({
         where: { id },
-        data: { status: 'approved', approvedBy: actorUserId, approvedAt: new Date(), updatedAt: new Date() },
+        data: {
+          status: 'posted',
+          approvedBy: actorUserId,
+          submittedAt: session.submittedAt || new Date(),
+          approvedAt: new Date(),
+          frozenAt: new Date(),
+          postedAt: new Date(),
+          updatedAt: new Date(),
+        },
       });
       await tx.auditEvent.create({
         data: {
@@ -268,9 +411,331 @@ export class OperationsService {
           summary: `Approved ${session.countNumber}`,
           metadata: { lineCount: lines.length },
         },
-      }).catch(() => null);
+      });
       return this.decorateStockCount(approved.id, tx);
-    }, { timeout: 20000 });
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
+  async inventoryLots(args?: { productId?: string; locationId?: string; status?: string; search?: string; take?: number }) {
+    const where: any = {};
+    if (args?.productId) where.productId = args.productId;
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    if (args?.search) {
+      where.OR = [
+        { lotNumber: { contains: args.search, mode: 'insensitive' } },
+        { supplierBatch: { contains: args.search, mode: 'insensitive' } },
+        { product: { is: { OR: [
+          { sku: { contains: args.search, mode: 'insensitive' } },
+          { internalCode: { contains: args.search, mode: 'insensitive' } },
+          { name: { contains: args.search, mode: 'insensitive' } },
+        ] } } },
+      ];
+    }
+    return (this.prisma as any).inventoryLot.findMany({
+      where,
+      include: {
+        product: true,
+        balances: {
+          where: args?.locationId ? { locationId: args.locationId } : undefined,
+          include: { location: true },
+          orderBy: { updatedAt: 'desc' },
+        },
+      },
+      orderBy: { receivedAt: 'desc' },
+      take: this.limit(args?.take, 200),
+    });
+  }
+
+  async openingStockSessions(args?: { status?: string; take?: number }) {
+    const where: any = {};
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    return (this.prisma as any).openingStockSession.findMany({
+      where,
+      include: { location: true, lines: { include: { product: true, lot: true }, orderBy: { createdAt: 'asc' } } },
+      orderBy: { createdAt: 'desc' },
+      take: this.limit(args?.take, 80),
+    });
+  }
+
+  async createOpeningStockSession(input: any, actorUserId: string) {
+    const lines = this.parseLines(input.lines);
+    if (!lines.length) throw new BadRequestException('Opening stock requires at least one physical count line');
+    return this.prisma.$transaction(async (tx: any) => {
+      const location = input.locationId
+        ? await this.resolveStockLocationTx(tx, input.locationId)
+        : await this.ensureDefaultLocationTx(tx);
+      const productIds = Array.from(new Set(lines.map((line: any) => String(line.productId || '').trim()).filter(Boolean)));
+      const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+      const productMap = new Map((products as any[]).map((product) => [product.id, product]));
+      if (products.length !== productIds.length) throw new BadRequestException('Every opening line must reference an existing Product Master SKU');
+      const effectiveAt = input.effectiveAt ? new Date(input.effectiveAt) : new Date();
+      if (Number.isNaN(effectiveAt.getTime())) throw new BadRequestException('Opening-stock effective date is invalid');
+      const sessionNumber = await nextDocumentNumber(tx, 'opening_stock', 'OS', effectiveAt, {
+        existingNumbers: async (prefixForYear) => (await tx.openingStockSession.findMany({
+          where: { sessionNumber: { startsWith: prefixForYear } }, select: { sessionNumber: true },
+        })).map((row: any) => row.sessionNumber),
+      });
+      const session = await tx.openingStockSession.create({
+        data: {
+          id: ulid(), sessionNumber, status: input.submit ? 'submitted' : 'draft', locationId: location.id,
+          effectiveAt, fiscalYear: String(input.fiscalYear || this.fiscalYear(effectiveAt)),
+          valuationMode: input.valuationMode || 'unit_cost', notes: input.notes || '', createdBy: actorUserId,
+          submittedBy: input.submit ? actorUserId : null, submittedAt: input.submit ? new Date() : null,
+          metadata: { source: 'opening_stock_onboarding', ownerOverrideReason: input.ownerOverrideReason || null }, updatedAt: new Date(),
+        },
+      });
+      const identities = new Set<string>();
+      for (const [index, row] of lines.entries()) {
+        const product = productMap.get(String(row.productId)) as any;
+        const quantity = this.whole(row.quantity, `${product.sku} opening quantity`);
+        const lotCode = String(row.lotCode || row.supplierBatch || `OPEN-${index + 1}`).trim().toUpperCase();
+        const identity = `${product.id}:${lotCode}`;
+        if (identities.has(identity)) throw new BadRequestException(`${product.sku} has a duplicate opening lot code`);
+        identities.add(identity);
+        const unitCost = Number(row.unitCost || 0);
+        if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${product.sku} unit cost cannot be negative`);
+        await tx.openingStockLine.create({
+          data: {
+            id: ulid(), openingStockSessionId: session.id, productId: product.id, lotCode, quantity, unitCost,
+            supplierBatch: row.supplierBatch || null, qualityStatus: row.qualityStatus || 'available', rackBin: row.rackBin || null,
+            status: 'counted', metadata: {
+              lineNo: index + 1, packCount: Number(row.packCount || 0), labelTemplate: row.labelTemplate || 'stock_pack',
+              attributes: row.attributes || {},
+            }, updatedAt: new Date(),
+          },
+        });
+      }
+      await tx.auditEvent.create({
+        data: { id: ulid(), actorUserId, action: 'opening_stock.create', entityType: 'OpeningStockSession', entityId: session.id,
+          summary: `Created ${sessionNumber} with ${lines.length} physical count lines`, metadata: { locationId: location.id, lineCount: lines.length } },
+      });
+      return tx.openingStockSession.findUnique({
+        where: { id: session.id }, include: { location: true, lines: { include: { product: true, lot: true }, orderBy: { createdAt: 'asc' } } },
+      });
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
+  async approveOpeningStockSession(id: string, actorUserId: string) {
+    return this.prisma.$transaction(async (tx: any) => {
+      const session = await tx.openingStockSession.findUnique({
+        where: { id }, include: { location: true, lines: { include: { product: true }, orderBy: { createdAt: 'asc' } } },
+      });
+      if (!session) throw new NotFoundException('Opening-stock session not found');
+      if (session.status === 'posted') return session;
+      if (!['draft', 'submitted'].includes(session.status)) throw new BadRequestException(`${session.sessionNumber} cannot be posted from ${session.status}`);
+      if (!session.lines.length) throw new BadRequestException('Opening-stock session has no lines');
+      for (const line of session.lines) {
+        const existingLot = await tx.inventoryLot.findFirst({
+          where: { sourceType: 'opening_stock', sourceId: session.id, sourceLineId: line.id },
+        });
+        const lot = existingLot || await tx.inventoryLot.create({
+          data: {
+            id: ulid(), lotNumber: `${session.sessionNumber}-${String(line.metadata?.lineNo || 1).padStart(3, '0')}`,
+            productId: line.productId, sourceType: 'opening_stock', sourceId: session.id, sourceLineId: line.id,
+            supplierBatch: line.supplierBatch || null, qualityStatus: line.qualityStatus || 'available',
+            receivedAt: session.effectiveAt, unitCost: Number(line.unitCost || 0), status: 'active',
+            attributes: line.metadata?.attributes || {}, metadata: { openingLineId: line.id, rackBin: line.rackBin || null },
+            createdBy: actorUserId, updatedAt: new Date(),
+          },
+        });
+        const damaged = line.qualityStatus === 'damaged' ? Number(line.quantity) : 0;
+        const hold = line.qualityStatus === 'hold' || line.qualityStatus === 'inspection' ? Number(line.quantity) : 0;
+        await applyLotStockPostingTx(tx, {
+          productId: line.productId, lotId: lot.id, locationId: session.locationId,
+          idempotencyKey: `opening-stock:${session.id}:${line.id}`, type: 'opening_stock', direction: 'in',
+          quantity: Number(line.quantity), onHandDelta: Number(line.quantity), damagedDelta: damaged, holdDelta: hold,
+          reason: `Approved opening stock ${session.sessionNumber}`, createdBy: actorUserId,
+          referenceType: 'OpeningStockSession', referenceId: session.id, sourceDocumentNo: session.sessionNumber,
+          effectiveAt: session.effectiveAt,
+          unitCost: Number(line.unitCost || 0), metadata: { openingLineId: line.id, rackBin: line.rackBin || null },
+        });
+        await tx.openingStockLine.update({ where: { id: line.id }, data: { lotId: lot.id, status: 'posted', updatedAt: new Date() } });
+        const packCount = Math.max(0, Math.trunc(Number(line.metadata?.packCount || 0)));
+        if (packCount > 0) await this.createInternalLabelJobTx(tx, {
+          sourceType: 'inventory_lot', sourceId: lot.id, productId: line.productId, lotId: lot.id,
+          quantity: packCount, template: line.metadata?.labelTemplate || 'stock_pack', actorUserId,
+        });
+      }
+      const posted = await tx.openingStockSession.update({
+        where: { id }, data: { status: 'posted', submittedBy: session.submittedBy || actorUserId,
+          submittedAt: session.submittedAt || new Date(), approvedBy: actorUserId, approvedAt: new Date(), postedAt: new Date(), updatedAt: new Date() },
+        include: { location: true, lines: { include: { product: true, lot: true }, orderBy: { createdAt: 'asc' } } },
+      });
+      await tx.auditEvent.create({
+        data: { id: ulid(), actorUserId, action: 'opening_stock.post', entityType: 'OpeningStockSession', entityId: id,
+          summary: `Posted ${session.sessionNumber}`, metadata: { lineCount: session.lines.length, ownerOverride: session.createdBy === actorUserId } },
+      });
+      return posted;
+    }, { isolationLevel: 'Serializable', timeout: 60000 });
+  }
+
+  async stockTransfers(args?: { status?: string; take?: number }) {
+    const where: any = {};
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    return (this.prisma as any).stockTransfer.findMany({
+      where,
+      include: { sourceLocation: true, destinationLocation: true, lines: { include: { product: true, lot: true } } },
+      orderBy: { requestedAt: 'desc' }, take: this.limit(args?.take, 80),
+    });
+  }
+
+  async createStockTransfer(input: any, actorUserId: string) {
+    const lines = this.parseLines(input.lines);
+    if (!lines.length) throw new BadRequestException('Stock transfer requires at least one lot line');
+    return this.prisma.$transaction(async (tx: any) => {
+      const source = await this.resolveStockLocationTx(tx, input.sourceLocationId);
+      const destination = await this.resolveStockLocationTx(tx, input.destinationLocationId);
+      if (source.id === destination.id) throw new BadRequestException('Transfer source and destination must be different');
+      const transferNumber = await nextDocumentNumber(tx, 'stock_transfer', 'ST', new Date(), {
+        existingNumbers: async (prefixForYear) => (await tx.stockTransfer.findMany({
+          where: { transferNumber: { startsWith: prefixForYear } }, select: { transferNumber: true },
+        })).map((row: any) => row.transferNumber),
+      });
+      const transfer = await tx.stockTransfer.create({
+        data: { id: ulid(), transferNumber, status: input.submit ? 'submitted' : 'draft', sourceLocationId: source.id,
+          destinationLocationId: destination.id, requestedBy: actorUserId, notes: input.notes || '', metadata: {}, updatedAt: new Date() },
+      });
+      for (const row of lines) {
+        const lot = await tx.inventoryLot.findUnique({ where: { id: String(row.lotId || '') } });
+        if (!lot) throw new BadRequestException('Every transfer line requires an existing inventory lot');
+        const quantity = this.whole(row.quantity, `${lot.lotNumber} transfer quantity`);
+        const balance = await tx.inventoryLotBalance.findUnique({ where: { lotId_locationId: { lotId: lot.id, locationId: source.id } } });
+        if (!balance || quantity > Number(balance.available || 0)) throw new BadRequestException(`${lot.lotNumber} has only ${balance?.available || 0} available at ${source.code}`);
+        await tx.stockTransferLine.create({
+          data: { id: ulid(), stockTransferId: transfer.id, productId: lot.productId, lotId: lot.id,
+            requestedQuantity: quantity, status: 'requested', metadata: {}, updatedAt: new Date() },
+        });
+      }
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'stock_transfer.create', entityType: 'StockTransfer', entityId: transfer.id,
+        summary: `Created ${transferNumber}`, metadata: { lineCount: lines.length, sourceLocationId: source.id, destinationLocationId: destination.id } } });
+      return tx.stockTransfer.findUnique({ where: { id: transfer.id }, include: { sourceLocation: true, destinationLocation: true, lines: { include: { product: true, lot: true } } } });
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
+  async transitionStockTransfer(id: string, action: string, input: any, actorUserId: string) {
+    const normalizedAction = String(action || '').trim().toLowerCase();
+    if (!['approve', 'dispatch', 'receive', 'cancel'].includes(normalizedAction)) throw new BadRequestException('Unsupported stock-transfer action');
+    return this.prisma.$transaction(async (tx: any) => {
+      const transfer = await tx.stockTransfer.findUnique({ where: { id }, include: { lines: { include: { lot: true, product: true } } } });
+      if (!transfer) throw new NotFoundException('Stock transfer not found');
+      const transit = await this.ensureTransitLocationTx(tx);
+      if (normalizedAction === 'approve') {
+        if (!['draft', 'submitted'].includes(transfer.status)) throw new BadRequestException(`${transfer.transferNumber} cannot be approved from ${transfer.status}`);
+        await tx.stockTransfer.update({ where: { id }, data: { status: 'approved', approvedBy: actorUserId, approvedAt: new Date(), updatedAt: new Date() } });
+      } else if (normalizedAction === 'dispatch') {
+        if (transfer.status !== 'approved') throw new BadRequestException(`${transfer.transferNumber} must be approved before dispatch`);
+        for (const line of transfer.lines) {
+          const quantity = Number(line.requestedQuantity);
+          await applyLotStockPostingTx(tx, {
+            productId: line.productId, lotId: line.lotId, locationId: transfer.sourceLocationId,
+            idempotencyKey: `transfer:${id}:${line.id}:source-out`, type: 'transfer_out', direction: 'out', quantity,
+            onHandDelta: -quantity, reason: `Transfer ${transfer.transferNumber} dispatched`, createdBy: actorUserId,
+            referenceType: 'StockTransfer', referenceId: id, sourceDocumentNo: transfer.transferNumber, requireAvailable: true,
+          });
+          await applyLotStockPostingTx(tx, {
+            productId: line.productId, lotId: line.lotId, locationId: transit.id,
+            idempotencyKey: `transfer:${id}:${line.id}:transit-in`, type: 'transfer_transit', direction: 'in', quantity,
+            onHandDelta: quantity, reason: `Transfer ${transfer.transferNumber} in transit`, createdBy: actorUserId,
+            referenceType: 'StockTransfer', referenceId: id, sourceDocumentNo: transfer.transferNumber,
+          });
+          await tx.stockTransferLine.update({ where: { id: line.id }, data: { dispatchedQuantity: quantity, status: 'in_transit', updatedAt: new Date() } });
+        }
+        await tx.stockTransfer.update({ where: { id }, data: { status: 'in_transit', dispatchedBy: actorUserId, dispatchedAt: new Date(), updatedAt: new Date() } });
+      } else if (normalizedAction === 'receive') {
+        if (transfer.status !== 'in_transit') throw new BadRequestException(`${transfer.transferNumber} is not in transit`);
+        const receivedLines = new Map(this.parseLines(input?.lines).map((row: any) => [String(row.lineId || ''), row]));
+        for (const line of transfer.lines) {
+          const receivedInput: any = receivedLines.get(line.id) || {};
+          const received = receivedInput.receivedQuantity === undefined ? Number(line.dispatchedQuantity) : this.wholeOrZero(receivedInput.receivedQuantity, 'Received quantity');
+          const damaged = this.wholeOrZero(receivedInput.damagedQuantity || 0, 'Damaged quantity');
+          if (received + damaged !== Number(line.dispatchedQuantity)) throw new BadRequestException(`${line.lot.lotNumber} received plus damaged must equal dispatched quantity`);
+          const transitQuantity = Number(line.dispatchedQuantity);
+          await applyLotStockPostingTx(tx, {
+            productId: line.productId, lotId: line.lotId, locationId: transit.id,
+            idempotencyKey: `transfer:${id}:${line.id}:transit-out`, type: 'transfer_transit_clear', direction: 'out', quantity: transitQuantity,
+            onHandDelta: -transitQuantity, reason: `Transfer ${transfer.transferNumber} received`, createdBy: actorUserId,
+            referenceType: 'StockTransfer', referenceId: id, sourceDocumentNo: transfer.transferNumber, requireOnHand: true,
+          });
+          if (received > 0) await applyLotStockPostingTx(tx, {
+            productId: line.productId, lotId: line.lotId, locationId: transfer.destinationLocationId,
+            idempotencyKey: `transfer:${id}:${line.id}:destination-in`, type: 'transfer_in', direction: 'in', quantity: received,
+            onHandDelta: received, reason: `Transfer ${transfer.transferNumber} accepted`, createdBy: actorUserId,
+            referenceType: 'StockTransfer', referenceId: id, sourceDocumentNo: transfer.transferNumber,
+          });
+          if (damaged > 0) await applyLotStockPostingTx(tx, {
+            productId: line.productId, lotId: line.lotId, locationId: transfer.destinationLocationId,
+            idempotencyKey: `transfer:${id}:${line.id}:destination-damaged`, type: 'transfer_damage', direction: 'in', quantity: damaged,
+            onHandDelta: damaged, damagedDelta: damaged, reason: `Transfer ${transfer.transferNumber} damaged on receipt`, createdBy: actorUserId,
+            referenceType: 'StockTransfer', referenceId: id, sourceDocumentNo: transfer.transferNumber,
+          });
+          await tx.stockTransferLine.update({ where: { id: line.id }, data: { receivedQuantity: received, damagedQuantity: damaged, status: 'received', updatedAt: new Date() } });
+        }
+        await tx.stockTransfer.update({ where: { id }, data: { status: 'received', receivedBy: actorUserId, receivedAt: new Date(), updatedAt: new Date() } });
+      } else {
+        if (!['draft', 'submitted', 'approved'].includes(transfer.status)) throw new BadRequestException(`${transfer.transferNumber} cannot be cancelled from ${transfer.status}`);
+        await tx.stockTransfer.update({ where: { id }, data: { status: 'cancelled', metadata: { ...(transfer.metadata || {}), cancelReason: input?.reason || 'Cancelled' }, updatedAt: new Date() } });
+      }
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: `stock_transfer.${normalizedAction}`, entityType: 'StockTransfer', entityId: id,
+        summary: `${normalizedAction} ${transfer.transferNumber}`, metadata: { reason: input?.reason || null } } });
+      return tx.stockTransfer.findUnique({ where: { id }, include: { sourceLocation: true, destinationLocation: true, lines: { include: { product: true, lot: true } } } });
+    }, { isolationLevel: 'Serializable', timeout: 60000 });
+  }
+
+  async inventoryPeriodCloses(args?: { status?: string; take?: number }) {
+    const where: any = {};
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    return (this.prisma as any).inventoryPeriodClose.findMany({
+      where, include: { snapshots: { take: 20, orderBy: { stockValue: 'desc' } } }, orderBy: { effectiveAt: 'desc' }, take: this.limit(args?.take, 40),
+    });
+  }
+
+  async closeInventoryPeriod(input: any, actorUserId: string) {
+    const periodType = String(input.periodType || 'monthly').trim().toLowerCase();
+    if (!['monthly', 'year_end'].includes(periodType)) throw new BadRequestException('Period type must be monthly or year_end');
+    const periodKey = String(input.periodKey || '').trim();
+    if (!periodKey) throw new BadRequestException('Period key is required');
+    return this.prisma.$transaction(async (tx: any) => {
+      const existing = await tx.inventoryPeriodClose.findUnique({ where: { periodKey } });
+      if (existing?.status === 'closed') return tx.inventoryPeriodClose.findUnique({ where: { id: existing.id }, include: { snapshots: true } });
+      const countSession = input.countSessionId
+        ? await tx.stockCountSession.findUnique({ where: { id: input.countSessionId } })
+        : await tx.stockCountSession.findFirst({ where: { periodKey, countType: periodType, status: 'posted' }, orderBy: { postedAt: 'desc' } });
+      if (!countSession || countSession.status !== 'posted') throw new BadRequestException('A posted monthly/year-end physical count is required before period close');
+      const openTransfers = await tx.stockTransfer.count({ where: { status: { in: ['submitted', 'approved', 'in_transit'] } } });
+      if (openTransfers) throw new BadRequestException(`${openTransfers} stock transfer(s) must be completed or cancelled before period close`);
+      const effectiveAt = input.effectiveAt ? new Date(input.effectiveAt) : new Date();
+      const closeNumber = existing?.closeNumber || await nextDocumentNumber(tx, 'inventory_close', periodType === 'year_end' ? 'YC' : 'MC', effectiveAt, {
+        existingNumbers: async (prefixForYear) => (await tx.inventoryPeriodClose.findMany({ where: { closeNumber: { startsWith: prefixForYear } }, select: { closeNumber: true } })).map((row: any) => row.closeNumber),
+      });
+      const close = existing || await tx.inventoryPeriodClose.create({
+        data: { id: ulid(), closeNumber, periodType, periodKey, status: 'review', effectiveAt, openedAt: new Date(), countSessionId: countSession.id,
+          createdBy: actorUserId, notes: input.notes || '', metadata: {}, updatedAt: new Date() },
+      });
+      await tx.inventoryPeriodSnapshot.deleteMany({ where: { inventoryPeriodCloseId: close.id } });
+      const balances = await tx.inventoryLotBalance.findMany({ include: { lot: true } });
+      let totalQuantity = 0;
+      let totalValue = 0;
+      for (const balance of balances) {
+        const unitCost = Number(balance.lot?.unitCost || 0);
+        const stockValue = Number(balance.onHand || 0) * unitCost;
+        totalQuantity += Number(balance.onHand || 0);
+        totalValue += stockValue;
+        await tx.inventoryPeriodSnapshot.create({
+          data: { id: ulid(), inventoryPeriodCloseId: close.id, productId: balance.lot.productId, lotId: balance.lotId,
+            locationId: balance.locationId, onHand: balance.onHand, reserved: balance.reserved, damaged: balance.damaged,
+            hold: balance.hold, available: balance.available, unitCost, stockValue, metadata: {} },
+        });
+      }
+      const variance = await tx.stockCountLine.aggregate({ where: { stockCountId: countSession.id }, _sum: { variance: true, varianceValue: true } });
+      const closed = await tx.inventoryPeriodClose.update({
+        where: { id: close.id }, data: { status: 'closed', reviewedBy: actorUserId, closedBy: actorUserId, reviewedAt: new Date(), closedAt: new Date(),
+          totalQuantity, totalValue, varianceQuantity: Number(variance._sum.variance || 0), varianceValue: Number(variance._sum.varianceValue || 0), updatedAt: new Date() },
+        include: { snapshots: { take: 50, orderBy: { stockValue: 'desc' } } },
+      });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'inventory_period.close', entityType: 'InventoryPeriodClose', entityId: close.id,
+        summary: `Closed ${periodKey}`, metadata: { periodType, countSessionId: countSession.id, totalQuantity, totalValue } } });
+      return closed;
+    }, { isolationLevel: 'Serializable', timeout: 120000 });
   }
 
   async returnOrders(args?: { status?: string; take?: number }) {
@@ -287,10 +752,43 @@ export class OperationsService {
     return orders.map((order: any) => ({ ...order, lines: byReturn.get(order.id) || [] }));
   }
 
+  async returnableDispatchLines(args?: { search?: string; take?: number }) {
+    const search = String(args?.search || '').trim();
+    const lines = await this.prisma.dispatchLine.findMany({
+      where: {
+        status: 'delivered',
+        deliveredQuantity: { gt: 0 },
+        ...(search ? { OR: [{ sku: { contains: search, mode: 'insensitive' } }, { name: { contains: search, mode: 'insensitive' } }] } : {}),
+      },
+      include: { lot: true, location: true },
+      orderBy: { updatedAt: 'desc' },
+      take: this.limit(args?.take, 120),
+    });
+    const challanIds = Array.from(new Set(lines.map((line: any) => line.challanId).filter(Boolean))) as string[];
+    const orderIds = Array.from(new Set(lines.map((line: any) => line.salesOrderId).filter(Boolean))) as string[];
+    const [challans, orders] = await Promise.all([
+      challanIds.length ? this.prisma.dispatchChallan.findMany({ where: { id: { in: challanIds } }, include: { customer: true } }) : [],
+      orderIds.length ? this.prisma.salesOrder.findMany({ where: { id: { in: orderIds } } }) : [],
+    ]);
+    const challanMap = new Map(challans.map((row: any) => [row.id, row] as const));
+    const orderMap = new Map(orders.map((row: any) => [row.id, row] as const));
+    return lines.map((line: any) => ({
+      ...line,
+      returnableQuantity: Math.max(0, Number(line.deliveredQuantity || 0) - Number(line.returnedQuantity || 0)),
+      challan: line.challanId ? challanMap.get(line.challanId) || null : null,
+      salesOrder: line.salesOrderId ? orderMap.get(line.salesOrderId) || null : null,
+    })).filter((line: any) => line.returnableQuantity > 0);
+  }
+
   async createReturnOrder(input: any, actorUserId: string) {
     const lines = this.parseLines(input.lines);
     if (!lines.length) throw new BadRequestException('Add at least one return line');
-    return this.prisma.$transaction(async (tx: any) => {
+    const idempotencyKey = String(input.idempotencyKey || '').trim() || null;
+    if (idempotencyKey) {
+      const existing = await (this.prisma as any).returnOrder.findUnique({ where: { idempotencyKey } });
+      if (existing) return (await this.returnOrders({ take: 120 })).find((row: any) => row.id === existing.id) || existing;
+    }
+    const created = await this.prisma.$transaction(async (tx: any) => {
       const returnNumber = await nextDocumentNumber(tx, 'return', 'RT', new Date(), {
         existingNumbers: async (prefixForYear) => (await tx.returnOrder.findMany({
           where: { returnNumber: { startsWith: prefixForYear } },
@@ -304,6 +802,7 @@ export class OperationsService {
         data: {
           id: ulid(),
           returnNumber,
+          idempotencyKey,
           salesOrderId: input.salesOrderId || null,
           challanId: input.challanId || null,
           customerId: input.customerId || null,
@@ -317,45 +816,135 @@ export class OperationsService {
           metadata: input.metadata || {},
         },
       });
-      for (const row of lines) {
+      let maximumRefundAmount = 0;
+      for (const [rowIndex, row] of lines.entries()) {
         const quantity = this.whole(row.quantity, `${row.sku || 'Return'} quantity`);
-        await tx.returnLine.create({
+        const dispatchLine = row.dispatchLineId
+          ? await tx.dispatchLine.findUnique({ where: { id: String(row.dispatchLineId) } })
+          : null;
+        if (input.receive && !dispatchLine) throw new BadRequestException('A received customer return must select an item from a delivered challan');
+        if (dispatchLine && dispatchLine.status !== 'delivered') throw new BadRequestException(`${dispatchLine.sku} has not been confirmed delivered`);
+        if (input.challanId && dispatchLine?.challanId !== input.challanId) throw new BadRequestException('Return line does not belong to the selected challan');
+        if (input.salesOrderId && dispatchLine?.salesOrderId !== input.salesOrderId) throw new BadRequestException('Return line does not belong to the selected sales order');
+        const productId = String(row.productId || dispatchLine?.productId || '').trim();
+        if (dispatchLine) {
+          const returnable = Math.max(0, Number(dispatchLine.deliveredQuantity || 0) - Number(dispatchLine.returnedQuantity || 0));
+          if (quantity > returnable) throw new BadRequestException(`${dispatchLine.sku} has only ${returnable} delivered units left to return`);
+        }
+        const commercialLine = dispatchLine?.salesOrderLineId
+          ? await tx.salesOrderLine.findUnique({ where: { id: dispatchLine.salesOrderLineId } })
+          : null;
+        if (commercialLine) {
+          maximumRefundAmount += Number(commercialLine.lineTotal || 0) * quantity / Math.max(1, Number(commercialLine.orderedQuantity || 0));
+        }
+        const sourceAllocations = Array.isArray(row.lotAllocations)
+          ? row.lotAllocations
+          : Array.isArray(dispatchLine?.metadata?.lotAllocations) ? dispatchLine.metadata.lotAllocations : [];
+        const priorReturns = dispatchLine
+          ? await tx.returnLine.groupBy({
+              by: ['lotId'],
+              where: { dispatchLineId: dispatchLine.id, status: 'received', lotId: { not: null } },
+              _sum: { quantity: true },
+            })
+          : [];
+        const returnedByLot = new Map<string, number>(
+          priorReturns.map((prior: any) => [String(prior.lotId), Number(prior._sum.quantity || 0)]),
+        );
+        const selectedAllocations = row.lotId
+          ? [{ lotId: String(row.lotId), quantity }]
+          : sourceAllocations.map((allocation: any) => {
+              const lotId = String(allocation.lotId || '');
+              return {
+                ...allocation,
+                quantity: Math.max(0, Number(allocation.quantity || 0) - Number(returnedByLot.get(lotId) || 0)),
+              };
+            });
+        let remaining = quantity;
+        const postings: any[] = [];
+        for (const allocation of selectedAllocations) {
+          if (remaining <= 0) break;
+          const allocated = Math.min(remaining, Number(allocation.quantity || 0));
+          if (allocated > 0 && allocation.lotId) postings.push({ lotId: String(allocation.lotId), quantity: allocated });
+          remaining -= allocated;
+        }
+        if (remaining > 0 && productId) {
+          const legacyLot = await tx.inventoryLot.create({
+            data: {
+              id: ulid(), lotNumber: `${returnNumber}-${String(rowIndex + 1).padStart(3, '0')}`,
+              productId, sourceType: 'legacy_return', sourceId: order.id, sourceLineId: String(rowIndex + 1),
+              qualityStatus: row.disposition === 'resell' ? 'available' : 'inspection', receivedAt: new Date(),
+              status: 'active', attributes: {}, metadata: { legacyDispatchLineId: dispatchLine?.id || null },
+              createdBy: actorUserId, updatedAt: new Date(),
+            },
+          });
+          postings.push({ lotId: legacyLot.id, quantity: remaining });
+          remaining = 0;
+        }
+        if (input.receive && (!productId || remaining > 0)) throw new BadRequestException('A received return must resolve to a Product Master SKU and inventory lot');
+
+        for (const [postingIndex, posting] of postings.entries()) {
+          const disposition = String(row.disposition || 'inspect').toLowerCase();
+          const resellQuantity = disposition === 'resell' ? posting.quantity : 0;
+          const damagedQuantity = ['damaged', 'scrap'].includes(disposition) ? posting.quantity : 0;
+          const supplierReturnQuantity = disposition === 'supplier_return' ? posting.quantity : 0;
+          const holdQuantity = resellQuantity || damagedQuantity ? 0 : posting.quantity;
+          const returnLine = await tx.returnLine.create({
+            data: {
+              id: ulid(), returnOrderId: order.id, dispatchLineId: dispatchLine?.id || null,
+              salesOrderLineId: row.salesOrderLineId || dispatchLine?.salesOrderLineId || null,
+              productId: productId || null, lotId: posting.lotId, locationId: returnLocation.id,
+              sku: row.sku || dispatchLine?.sku || productId || 'RETURN', name: row.name || dispatchLine?.name || row.sku || 'Returned item',
+              quantity: posting.quantity, acceptedQuantity: input.receive ? posting.quantity : 0,
+              resellQuantity: input.receive ? resellQuantity : 0, damagedQuantity: input.receive ? damagedQuantity : 0,
+              supplierReturnQuantity: input.receive ? supplierReturnQuantity : 0, disposition,
+              status: input.receive ? 'received' : 'pending', updatedAt: new Date(),
+              metadata: { ...(row.metadata || {}), sourceAllocation: posting },
+            },
+          });
+          if (input.receive) {
+            await applyLotStockPostingTx(tx, {
+              productId, lotId: posting.lotId, locationId: returnLocation.id,
+              idempotencyKey: `return:${order.id}:${returnLine.id}:${postingIndex}`,
+              type: resellQuantity ? 'return_available' : damagedQuantity ? 'return_damaged' : 'return_inspection',
+              direction: 'in', quantity: posting.quantity, onHandDelta: posting.quantity,
+              damagedDelta: damagedQuantity, holdDelta: holdQuantity,
+              reason: `${returnNumber}: ${input.reason || 'Customer return'}`, relatedChallanId: input.challanId || null,
+              createdBy: actorUserId, referenceType: 'ReturnOrder', referenceId: order.id,
+              sourceDocumentNo: returnNumber, metadata: { disposition },
+            });
+          }
+        }
+        if (input.receive && dispatchLine) {
+          await tx.dispatchLine.update({
+            where: { id: dispatchLine.id }, data: { returnedQuantity: Number(dispatchLine.returnedQuantity || 0) + quantity, updatedAt: new Date() },
+          });
+          if (dispatchLine.salesOrderLineId) {
+            await tx.salesOrderLine.update({
+              where: { id: dispatchLine.salesOrderLineId }, data: { returnedQuantity: { increment: quantity }, updatedAt: new Date() },
+            });
+          }
+        }
+      }
+      const refundAmount = Number(input.refundAmount || 0);
+      if (!Number.isFinite(refundAmount) || refundAmount < 0) throw new BadRequestException('Refund amount must be zero or positive');
+      if (refundAmount > maximumRefundAmount + 0.01) {
+        throw new BadRequestException(`Refund amount cannot exceed the returned commercial value of ${maximumRefundAmount.toFixed(2)}`);
+      }
+      if (input.receive && refundAmount > 0) {
+        const creditNoteNumber = await nextDocumentNumber(tx, 'credit_note', 'CN', new Date(), {
+          existingNumbers: async (prefixForYear) => (await tx.creditNote.findMany({
+            where: { creditNoteNumber: { startsWith: prefixForYear } }, select: { creditNoteNumber: true },
+          })).map((row: any) => row.creditNoteNumber),
+        });
+        await tx.creditNote.create({
           data: {
-            id: ulid(),
-            returnOrderId: order.id,
-            productId: row.productId || null,
-            sku: row.sku || row.productId || 'RETURN',
-            name: row.name || row.sku || 'Returned item',
-            quantity,
-            disposition: row.disposition || 'inspect',
-            status: input.receive ? 'received' : 'pending',
-            updatedAt: new Date(),
-            metadata: row.metadata || {},
+            id: ulid(), creditNoteNumber, returnOrderId: order.id,
+            salesOrderId: input.salesOrderId || null, customerId: input.customerId || null,
+            amount: refundAmount, refundMode: String(input.refundMode || 'credit_note'),
+            status: 'issued', createdBy: actorUserId, notes: input.reason || 'Customer return',
+            metadata: { returnNumber, maximumRefundAmount }, updatedAt: new Date(),
           },
         });
-        if (input.receive && row.productId) {
-          const toAvailable = row.disposition === 'resell';
-          await applyStockPostingTx(tx, {
-            productId: row.productId,
-            type: toAvailable ? 'return_available' : 'return_damaged',
-            movementType: toAvailable ? 'return_available' : 'return_damaged',
-            ledgerType: toAvailable ? 'return_available' : 'return_damaged',
-            quantity,
-            onHandDelta: quantity,
-            damagedDelta: toAvailable ? 0 : quantity,
-            locationId: returnLocation.id,
-            locationOnHandDelta: quantity,
-            locationDamagedDelta: toAvailable ? 0 : quantity,
-            direction: 'in',
-            reason: `${returnNumber}: ${input.reason || 'Customer return'}`,
-            relatedChallanId: input.challanId || null,
-            createdBy: actorUserId,
-            referenceType: 'ReturnOrder',
-            referenceId: order.id,
-            sourceDocumentNo: returnNumber,
-            metadata: { disposition: row.disposition || 'inspect' },
-          });
-        }
       }
       await tx.auditEvent.create({
         data: {
@@ -367,10 +956,10 @@ export class OperationsService {
           summary: `Created ${returnNumber}`,
           metadata: { lineCount: lines.length },
         },
-      }).catch(() => null);
-      const [decorated] = await this.returnOrders({ take: 1 });
-      return decorated?.id === order.id ? decorated : order;
-    }, { timeout: 20000 });
+      });
+      return order;
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+    return (await this.returnOrders({ take: 120 })).find((row: any) => row.id === created.id) || created;
   }
 
   async stockReconciliation(args?: { productId?: string; take?: number }) {
@@ -384,14 +973,20 @@ export class OperationsService {
     } as any) as any[];
     const productIds = balances.map((balance) => balance.productId).filter(Boolean);
 
-    const [locationRows, reservations, orderLines, ledgerRows] = await Promise.all([
+    const [locationRows, lotBalanceRows, reservations, orderLines, ledgerRows, lotLedgerRows] = await Promise.all([
       productIds.length ? (this.prisma as any).stockBalanceByLocation.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
+      productIds.length ? (this.prisma as any).inventoryLotBalance.findMany({
+        where: { lot: { productId: { in: productIds } } },
+        include: { lot: { select: { productId: true } } },
+      }).catch(() => []) : [],
       productIds.length ? this.prisma.reservation.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
       productIds.length ? (this.prisma as any).salesOrderLine.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
       productIds.length ? (this.prisma as any).stockLedgerEntry.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
+      productIds.length ? (this.prisma as any).inventoryLotLedgerEntry.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
     ]);
 
     const locationByProduct = this.sumLocationBuckets(locationRows as any[]);
+    const lotByProduct = this.sumLotBuckets(lotBalanceRows as any[]);
     const reservedByProduct = this.sumReservationBuckets(reservations as any[], 'reserved');
     const backorderedByProduct = this.sumReservationBuckets(reservations as any[], 'backordered');
     const orderReservedByProduct = this.sumOrderLineBucket(orderLines as any[], 'reservedQuantity');
@@ -400,6 +995,10 @@ export class OperationsService {
     for (const entry of ledgerRows as any[]) {
       if (!entry.productId) continue;
       ledgerCountByProduct.set(entry.productId, (ledgerCountByProduct.get(entry.productId) || 0) + 1);
+    }
+    const lotLedgerCountByProduct = new Map<string, number>();
+    for (const entry of lotLedgerRows as any[]) {
+      lotLedgerCountByProduct.set(entry.productId, (lotLedgerCountByProduct.get(entry.productId) || 0) + 1);
     }
 
     const rows = balances.map((balance) => {
@@ -411,12 +1010,14 @@ export class OperationsService {
         hold: Number(balance.hold || 0),
       };
       const location = locationByProduct.get(balance.productId) || { onHand: 0, reserved: 0, damaged: 0, hold: 0, rowCount: 0 };
+      const lots = lotByProduct.get(balance.productId) || { onHand: 0, reserved: 0, damaged: 0, hold: 0, available: 0, rowCount: 0 };
       const expectedAvailable = Math.max(0, aggregate.onHand - aggregate.reserved - aggregate.damaged - aggregate.hold);
       const reservationReserved = Number(reservedByProduct.get(balance.productId) || 0);
       const reservationBackordered = Number(backorderedByProduct.get(balance.productId) || 0);
       const salesOrderReserved = Number(orderReservedByProduct.get(balance.productId) || 0);
       const salesOrderBackordered = Number(orderBackorderedByProduct.get(balance.productId) || 0);
       const ledgerEntries = Number(ledgerCountByProduct.get(balance.productId) || 0);
+      const lotLedgerEntries = Number(lotLedgerCountByProduct.get(balance.productId) || 0);
       const issues: any[] = [];
 
       const addIssue = (code: string, severity: 'critical' | 'warning', message: string) => issues.push({ code, severity, message });
@@ -438,6 +1039,11 @@ export class OperationsService {
       if (location.rowCount > 0 && Number(location.damaged || 0) !== aggregate.damaged) {
         addIssue('location_damaged_mismatch', 'critical', `Location damaged ${location.damaged} does not match aggregate ${aggregate.damaged}.`);
       }
+      for (const bucket of ['onHand', 'reserved', 'damaged', 'hold', 'available'] as const) {
+        if (Number(lots[bucket] || 0) !== Number(aggregate[bucket] || 0)) {
+          addIssue(`lot_${bucket}_mismatch`, 'critical', `Lot ${bucket} ${lots[bucket]} does not match aggregate ${aggregate[bucket]}.`);
+        }
+      }
       if (reservationReserved !== aggregate.reserved) {
         addIssue('reservation_reserved_mismatch', 'critical', `Active reservations total ${reservationReserved}, aggregate reserved is ${aggregate.reserved}.`);
       }
@@ -453,6 +1059,9 @@ export class OperationsService {
       if (!ledgerEntries && (aggregate.onHand || aggregate.reserved || aggregate.damaged || aggregate.hold)) {
         addIssue('missing_ledger', 'warning', 'Stock exists without ledger entries; check legacy imports or manual migration.');
       }
+      if (!lotLedgerEntries && (aggregate.onHand || aggregate.reserved || aggregate.damaged || aggregate.hold)) {
+        addIssue('missing_lot_ledger', 'critical', 'Physical stock exists without universal lot ledger entries.');
+      }
 
       const critical = issues.some((issue) => issue.severity === 'critical');
       return {
@@ -463,9 +1072,11 @@ export class OperationsService {
         brand: balance.product?.brand || '',
         aggregate,
         location,
+        lots,
         reservations: { reserved: reservationReserved, backordered: reservationBackordered },
         salesOrderLines: { reserved: salesOrderReserved, backordered: salesOrderBackordered },
         ledgerEntries,
+        lotLedgerEntries,
         status: critical ? 'critical' : issues.length ? 'warning' : 'ok',
         issues,
       };
@@ -519,6 +1130,270 @@ export class OperationsService {
     };
   }
 
+  async internalLabelJobs(args?: { sourceType?: string; sourceId?: string; status?: string; take?: number }) {
+    const where: any = {};
+    if (args?.sourceType) where.sourceType = args.sourceType;
+    if (args?.sourceId) where.sourceId = args.sourceId;
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    return this.prisma.internalLabelJob.findMany({
+      where,
+      include: {
+        instances: {
+          include: { product: true, lot: true, displaySample: true },
+          orderBy: { unitNumber: 'asc' },
+        },
+      },
+      orderBy: { requestedAt: 'desc' },
+      take: this.limit(args?.take, 80),
+    });
+  }
+
+  async createInternalLabelJob(input: any, actorUserId: string) {
+    const quantity = this.whole(input.quantity, 'Label quantity');
+    const template = String(input.template || 'stock_pack').trim().toLowerCase();
+    if (!['stock_pack', 'display_sample', 'shelf', 'carton'].includes(template)) throw new BadRequestException('Unsupported internal-label template');
+    return this.prisma.$transaction(async (tx: any) => {
+      let productId = String(input.productId || '').trim() || undefined;
+      let lotId = String(input.lotId || '').trim() || undefined;
+      let displaySampleId = String(input.displaySampleId || '').trim() || undefined;
+      let sourceType = String(input.sourceType || '').trim().toLowerCase();
+      let sourceId = String(input.sourceId || '').trim();
+      if (lotId) {
+        const lot = await tx.inventoryLot.findUnique({ where: { id: lotId } });
+        if (!lot) throw new NotFoundException('Inventory lot not found');
+        productId = lot.productId;
+        sourceType = sourceType || 'inventory_lot';
+        sourceId = sourceId || lot.id;
+      } else if (displaySampleId) {
+        const sample = await tx.displaySample.findUnique({ where: { id: displaySampleId } });
+        if (!sample) throw new NotFoundException('Display sample not found');
+        productId = sample.productId;
+        sourceType = sourceType || 'display_sample';
+        sourceId = sourceId || sample.id;
+      } else if (productId) {
+        const product = await tx.product.findUnique({ where: { id: productId } });
+        if (!product) throw new NotFoundException('Product Master SKU not found');
+        sourceType = sourceType || 'product';
+        sourceId = sourceId || product.id;
+      }
+      if (!sourceType || !sourceId || !productId) throw new BadRequestException('Select a Product Master SKU, inventory lot, or display sample');
+      const job = await this.createInternalLabelJobTx(tx, {
+        sourceType, sourceId, productId, lotId, displaySampleId, quantity, template, actorUserId,
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: 'internal_label.create', entityType: 'InternalLabelJob', entityId: job.id,
+          summary: `Generated ${job.jobNumber}`, metadata: { sourceType, sourceId, quantity, template },
+        },
+      });
+      return job;
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
+  async printInternalLabelJob(id: string, actorUserId: string) {
+    await this.prisma.$transaction(async (tx: any) => {
+      const job = await tx.internalLabelJob.findUnique({ where: { id }, include: { instances: true } });
+      if (!job) throw new NotFoundException('Internal label job not found');
+      const printable = job.instances.filter((instance: any) => instance.status === 'active');
+      if (!printable.length) throw new BadRequestException('No active labels remain in this job');
+      await tx.internalLabelInstance.updateMany({
+        where: { id: { in: printable.map((instance: any) => instance.id) } },
+        data: { printCount: { increment: 1 }, lastPrintedAt: new Date(), updatedAt: new Date() },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: 'internal_label.print', entityType: 'InternalLabelJob', entityId: id,
+          summary: `Printed ${job.jobNumber}`, metadata: { labelCount: printable.length },
+        },
+      });
+    });
+    return this.internalLabelPrintData(id);
+  }
+
+  async internalLabelPrintData(id: string) {
+    const job = await this.prisma.internalLabelJob.findUnique({
+      where: { id },
+      include: {
+        instances: {
+          include: {
+            product: true,
+            lot: { include: { balances: { include: { location: true } } } },
+            displaySample: true,
+          },
+          orderBy: { unitNumber: 'asc' },
+        },
+      },
+    });
+    if (!job) throw new NotFoundException('Internal label job not found');
+    const labels = await Promise.all(job.instances.map(async (instance: any) => {
+      const payload = {
+        version: 1,
+        system: 'Marble Park Retail OS',
+        labelCode: instance.labelCode,
+        sku: instance.product?.sku || null,
+        internalCode: instance.product?.internalCode || instance.displaySample?.internalCode || null,
+        productName: instance.product?.name || null,
+        brand: instance.product?.brand || null,
+        category: instance.product?.category || null,
+        finish: instance.product?.finish || null,
+        dimensions: instance.product?.dimensions || null,
+        lotNumber: instance.lot?.lotNumber || null,
+        supplierBatch: instance.lot?.supplierBatch || null,
+        receivedAt: instance.lot?.receivedAt || null,
+        displaySample: instance.displaySample?.sampleNumber || null,
+      };
+      return {
+        ...instance,
+        payload,
+        qrDataUrl: await QRCode.toDataURL(JSON.stringify(payload), { errorCorrectionLevel: 'M', margin: 1, width: 240 }),
+      };
+    }));
+    return { ...job, instances: labels, labels };
+  }
+
+  async scanInternalLabel(labelCode: string, input: any, actorUserId: string) {
+    const normalizedCode = String(labelCode || '').trim().toUpperCase();
+    if (!normalizedCode) throw new BadRequestException('Label code is required');
+    return this.prisma.$transaction(async (tx: any) => {
+      const instance = await tx.internalLabelInstance.findUnique({
+        where: { labelCode: normalizedCode },
+        include: { product: true, lot: true, displaySample: true, labelJob: true },
+      });
+      const result = instance?.status === 'active' ? 'success' : instance ? 'inactive' : 'not_found';
+      const event = await tx.internalScanEvent.create({
+        data: {
+          id: ulid(), labelInstanceId: instance?.id || null, labelCode: normalizedCode,
+          action: String(input?.action || 'lookup').trim().toLowerCase(), actorUserId,
+          locationId: input?.locationId || null, entityType: input?.entityType || null, entityId: input?.entityId || null,
+          result, metadata: input?.metadata || {},
+        },
+      });
+      return { result, event, label: instance || null };
+    });
+  }
+
+  async voidInternalLabel(id: string, reason: string, actorUserId: string) {
+    const normalizedReason = String(reason || '').trim();
+    if (!normalizedReason) throw new BadRequestException('A void reason is required');
+    return this.prisma.$transaction(async (tx: any) => {
+      const instance = await tx.internalLabelInstance.findUnique({ where: { id } });
+      if (!instance) throw new NotFoundException('Internal label not found');
+      if (instance.status === 'void') return instance;
+      const updated = await tx.internalLabelInstance.update({
+        where: { id }, data: { status: 'void', voidedAt: new Date(), voidReason: normalizedReason, updatedAt: new Date() },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: 'internal_label.void', entityType: 'InternalLabelInstance', entityId: id,
+          summary: `Voided ${instance.labelCode}`, metadata: { reason: normalizedReason },
+        },
+      });
+      return updated;
+    });
+  }
+
+  async stockAdjustmentRequests(args?: { status?: string; take?: number }) {
+    const where: any = {};
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    return this.prisma.stockAdjustmentApproval.findMany({
+      where,
+      include: { product: true, lot: true, location: true },
+      orderBy: { createdAt: 'desc' },
+      take: this.limit(args?.take, 100),
+    });
+  }
+
+  async requestStockAdjustment(input: any, actorUserId: string) {
+    const quantity = this.whole(input.quantity, 'Adjustment quantity');
+    const type = String(input.type || '').trim().toLowerCase();
+    const allowed = ['increase', 'decrease', 'damage', 'damage_release', 'hold', 'hold_release', 'scrap_damage'];
+    if (!allowed.includes(type)) throw new BadRequestException('Unsupported stock adjustment type');
+    const reason = String(input.reason || '').trim();
+    if (reason.length < 5) throw new BadRequestException('Provide a clear adjustment reason');
+    const [product, lot, location] = await Promise.all([
+      this.prisma.product.findUnique({ where: { id: String(input.productId || '') } }),
+      this.prisma.inventoryLot.findUnique({ where: { id: String(input.lotId || '') } }),
+      this.prisma.stockLocation.findUnique({ where: { id: String(input.locationId || '') } }),
+    ]);
+    if (!product || !lot || lot.productId !== product.id) throw new BadRequestException('Select a valid Product Master SKU and its exact lot');
+    if (!location || location.status !== 'active') throw new BadRequestException('Select an active stock location');
+    return this.prisma.$transaction(async (tx: any) => {
+      const request = await tx.stockAdjustmentApproval.create({
+        data: {
+          id: ulid(), productId: product.id, lotId: lot.id, locationId: location.id,
+          quantity, type, status: 'pending', reason, requestedBy: actorUserId,
+          referenceId: input.referenceId || null, metadata: input.metadata || {},
+        },
+        include: { product: true, lot: true, location: true },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: 'stock_adjustment.request', entityType: 'StockAdjustmentApproval', entityId: request.id,
+          summary: `Requested ${type} for ${product.sku}`, metadata: { quantity, lotId: lot.id, locationId: location.id, reason },
+        },
+      });
+      return request;
+    });
+  }
+
+  async decideStockAdjustment(id: string, action: string, input: any, actorUserId: string) {
+    const normalizedAction = String(action || '').trim().toLowerCase();
+    if (!['approve', 'reject'].includes(normalizedAction)) throw new BadRequestException('Adjustment action must be approve or reject');
+    return this.prisma.$transaction(async (tx: any) => {
+      const request = await tx.stockAdjustmentApproval.findUnique({
+        where: { id }, include: { product: true, lot: true, location: true },
+      });
+      if (!request) throw new NotFoundException('Stock adjustment request not found');
+      if (request.status !== 'pending') return request;
+      if (normalizedAction === 'reject') {
+        const reason = String(input?.reason || '').trim();
+        if (!reason) throw new BadRequestException('A rejection reason is required');
+        const rejected = await tx.stockAdjustmentApproval.update({
+          where: { id }, data: { status: 'rejected', approvedBy: actorUserId, decidedAt: new Date(), metadata: { ...(request.metadata as any), rejectionReason: reason } },
+          include: { product: true, lot: true, location: true },
+        });
+        await tx.auditEvent.create({
+          data: {
+            id: ulid(), actorUserId, action: 'stock_adjustment.reject', entityType: 'StockAdjustmentApproval', entityId: id,
+            summary: `Rejected ${request.type} for ${request.product.sku}`, metadata: { quantity: Number(request.quantity), requestedBy: request.requestedBy, reason },
+          },
+        });
+        return rejected;
+      }
+      const quantity = Number(request.quantity);
+      const deltas: Record<string, { onHandDelta?: number; damagedDelta?: number; holdDelta?: number; requireAvailable?: boolean; requireOnHand?: boolean }> = {
+        increase: { onHandDelta: quantity },
+        decrease: { onHandDelta: -quantity, requireAvailable: true },
+        damage: { damagedDelta: quantity, requireAvailable: true },
+        damage_release: { damagedDelta: -quantity },
+        hold: { holdDelta: quantity, requireAvailable: true },
+        hold_release: { holdDelta: -quantity },
+        scrap_damage: { onHandDelta: -quantity, damagedDelta: -quantity, requireOnHand: true },
+      };
+      const posting = deltas[request.type];
+      if (!posting) throw new BadRequestException('Adjustment type is no longer supported');
+      await applyLotStockPostingTx(tx, {
+        productId: request.productId, lotId: String(request.lotId), locationId: String(request.locationId),
+        idempotencyKey: `stock-adjustment:${request.id}:approved`, type: `adjustment_${request.type}`,
+        quantity, ...posting, reason: request.reason, createdBy: actorUserId,
+        referenceType: 'StockAdjustmentApproval', referenceId: request.id,
+        sourceDocumentNo: `ADJ-${request.id.slice(-8).toUpperCase()}`,
+        metadata: { requestedBy: request.requestedBy, approvedBy: actorUserId },
+      });
+      const approved = await tx.stockAdjustmentApproval.update({
+        where: { id }, data: { status: 'approved', approvedBy: actorUserId, decidedAt: new Date() },
+        include: { product: true, lot: true, location: true },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: 'stock_adjustment.approve', entityType: 'StockAdjustmentApproval', entityId: id,
+          summary: `Approved ${request.type} for ${request.product.sku}`, metadata: { quantity, requestedBy: request.requestedBy },
+        },
+      });
+      return approved;
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
   private async ensureDefaultLocationTx(tx: any) {
     const locations = await tx.stockLocation.findMany({
       where: { status: 'active' },
@@ -546,6 +1421,82 @@ export class OperationsService {
 
   private async ensureDefaultLocation() {
     return this.ensureDefaultLocationTx(this.prisma as any);
+  }
+
+  private fiscalYear(date: Date) {
+    const year = date.getFullYear();
+    const start = date.getMonth() >= 3 ? year : year - 1;
+    return `${start}-${String(start + 1).slice(-2)}`;
+  }
+
+  private async ensureTransitLocationTx(tx: any) {
+    const existing = await tx.stockLocation.findUnique({ where: { code: 'IN-TRANSIT' } });
+    if (existing) {
+      if (existing.status !== 'active') {
+        return tx.stockLocation.update({
+          where: { id: existing.id },
+          data: { status: 'active', updatedAt: new Date() },
+        });
+      }
+      return existing;
+    }
+    return tx.stockLocation.create({
+      data: {
+        id: ulid(),
+        code: 'IN-TRANSIT',
+        name: 'Stock in Transit',
+        type: 'transit',
+        status: 'active',
+        sortOrder: 9999,
+        metadata: { systemLocation: true, excludeFromAvailableStock: true },
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  private async createInternalLabelJobTx(tx: any, input: {
+    sourceType: string;
+    sourceId: string;
+    productId?: string;
+    lotId?: string;
+    displaySampleId?: string;
+    quantity: number;
+    template: string;
+    actorUserId: string;
+  }) {
+    const quantity = this.whole(input.quantity, 'Label quantity');
+    const existing = await tx.internalLabelJob.findFirst({
+      where: { sourceType: input.sourceType, sourceId: input.sourceId, template: input.template },
+      include: { instances: { orderBy: { unitNumber: 'asc' } } },
+    });
+    if (existing) return existing;
+    const requestedAt = new Date();
+    const jobNumber = await nextDocumentNumber(tx, 'internal_label', 'LB', requestedAt, {
+      existingNumbers: async (prefixForYear) => (await tx.internalLabelJob.findMany({
+        where: { jobNumber: { startsWith: prefixForYear } }, select: { jobNumber: true },
+      })).map((row: any) => row.jobNumber),
+    });
+    const job = await tx.internalLabelJob.create({
+      data: {
+        id: ulid(), jobNumber, sourceType: input.sourceType, sourceId: input.sourceId,
+        template: input.template, quantity, status: 'ready', requestedBy: input.actorUserId,
+        completedBy: input.actorUserId, completedAt: requestedAt,
+        metadata: { encoding: 'internal_url', nonGs1: true }, updatedAt: requestedAt,
+      },
+    });
+    for (let unitNumber = 1; unitNumber <= quantity; unitNumber += 1) {
+      await tx.internalLabelInstance.create({
+        data: {
+          id: ulid(), labelCode: `${jobNumber}-${String(unitNumber).padStart(4, '0')}`,
+          labelJobId: job.id, productId: input.productId || null, lotId: input.lotId || null,
+          displaySampleId: input.displaySampleId || null, unitNumber, status: 'active',
+          metadata: { sourceType: input.sourceType, sourceId: input.sourceId }, updatedAt: requestedAt,
+        },
+      });
+    }
+    return tx.internalLabelJob.findUnique({
+      where: { id: job.id }, include: { instances: { orderBy: { unitNumber: 'asc' } } },
+    });
   }
 
   private async applyLocationDeltaTx(
@@ -642,9 +1593,16 @@ export class OperationsService {
 
   private async decorateStockCount(id: string, tx?: any) {
     const client = tx || (this.prisma as any);
-    const session = await client.stockCountSession.findUnique({ where: { id } });
-    const lines = await client.stockCountLine.findMany({ where: { stockCountId: id } });
-    return { ...session, lines };
+    return client.stockCountSession.findUnique({
+      where: { id },
+      include: {
+        location: true,
+        lines: {
+          include: { product: true, lot: true, location: true },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
   }
 
   private parseLines(value: any) {
@@ -679,6 +1637,24 @@ export class OperationsService {
         reserved: current.reserved + Number(row.reserved || 0),
         damaged: current.damaged + Number(row.damaged || 0),
         hold: current.hold + Number(row.hold || 0),
+        rowCount: current.rowCount + 1,
+      });
+    }
+    return grouped;
+  }
+
+  private sumLotBuckets(rows: any[]) {
+    const grouped = new Map<string, any>();
+    for (const row of rows || []) {
+      const productId = row.lot?.productId;
+      if (!productId) continue;
+      const current = grouped.get(productId) || { onHand: 0, reserved: 0, damaged: 0, hold: 0, available: 0, rowCount: 0 };
+      grouped.set(productId, {
+        onHand: current.onHand + Number(row.onHand || 0),
+        reserved: current.reserved + Number(row.reserved || 0),
+        damaged: current.damaged + Number(row.damaged || 0),
+        hold: current.hold + Number(row.hold || 0),
+        available: current.available + Number(row.available || 0),
         rowCount: current.rowCount + 1,
       });
     }

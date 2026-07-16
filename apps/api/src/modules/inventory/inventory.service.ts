@@ -83,38 +83,16 @@ export class InventoryService {
   async create(data: CreateInventoryInput): Promise<any> {
     const quantity = Math.max(0, Math.trunc(Number(data.onHand || 0)));
     if (quantity > 0) {
-      await this.prisma.$transaction(async (tx) => {
-        await applyStockPostingTx(tx, {
-          productId: data.productId,
-          type: 'manual_inward',
-          movementType: 'inward',
-          ledgerType: 'manual_inward',
-          quantity,
-          onHandDelta: quantity,
-          locationOnHandDelta: quantity,
-          reason: 'Initial/top-up inventory entry',
-          createdBy: 'system',
-          referenceType: 'InventoryBalance',
-          metadata: { source: 'createInventory' },
-        });
-      }, { timeout: 10000 });
-      await this.notifyBackorderReady(data.productId, 'system');
-    } else {
-      await this.prisma.inventoryBalance.upsert({
-        where: { productId: data.productId },
-        update: { updatedAt: new Date() },
-        create: {
-          id: ulid(),
-          productId: data.productId,
-          onHand: 0,
-          available: 0,
-          reserved: 0,
-          damaged: 0,
-          hold: 0,
-          updatedAt: new Date(),
-        },
-      } as any);
+      throw new BadRequestException('Use Opening Stock or a Goods Receipt Note to add physical inventory');
     }
+    await this.prisma.inventoryBalance.upsert({
+      where: { productId: data.productId },
+      update: { updatedAt: new Date() },
+      create: {
+        id: ulid(), productId: data.productId, onHand: 0, available: 0,
+        reserved: 0, damaged: 0, hold: 0, updatedAt: new Date(),
+      },
+    } as any);
     return this.prisma.inventoryBalance.findUnique({
       where: { productId: data.productId },
       include: { product: true },
@@ -135,42 +113,7 @@ export class InventoryService {
         include: { product: true },
       } as any) as any;
     }
-
-    const targetOnHand = data.onHand ?? current.onHand;
-    const targetReserved = data.reserved ?? current.reserved;
-    const targetDamaged = data.damaged ?? current.damaged;
-    const onHandDelta = Math.trunc(Number(targetOnHand || 0)) - Number(current.onHand || 0);
-    const reservedDelta = Math.trunc(Number(targetReserved || 0)) - Number(current.reserved || 0);
-    const damagedDelta = Math.trunc(Number(targetDamaged || 0)) - Number(current.damaged || 0);
-    const quantity = Math.max(1, Math.abs(onHandDelta) + Math.abs(reservedDelta) + Math.abs(damagedDelta));
-
-    await this.prisma.$transaction(async (tx) => {
-      if (Object.keys(policyData).length) {
-        await tx.inventoryBalance.update({ where: { id }, data: { ...policyData, updatedAt: new Date() } });
-      }
-      await applyStockPostingTx(tx, {
-        productId: current.productId,
-        type: 'physical_adjustment',
-        movementType: 'adjustment',
-        ledgerType: 'physical_adjustment',
-        quantity,
-        movementQuantity: onHandDelta || reservedDelta || damagedDelta || quantity,
-        onHandDelta,
-        reservedDelta,
-        damagedDelta,
-        locationOnHandDelta: onHandDelta,
-        locationReservedDelta: reservedDelta,
-        locationDamagedDelta: damagedDelta,
-        reason: 'Manual inventory balance correction',
-        createdBy: 'system',
-        referenceType: 'InventoryBalance',
-        referenceId: id,
-        metadata: { source: 'updateInventory', target: { onHand: targetOnHand, reserved: targetReserved, damaged: targetDamaged } },
-      });
-    }, { timeout: 10000 });
-
-    if (onHandDelta > 0) await this.notifyBackorderReady(current.productId, 'system');
-    return this.findById(id);
+    throw new BadRequestException('Physical balances cannot be overwritten. Use stock count, GRN, reservation, dispatch, return, or approved adjustment workflows');
   }
 
   async adjustQuantity(
@@ -180,65 +123,9 @@ export class InventoryService {
     notes?: string,
     createdBy = 'system',
   ): Promise<any> {
-    const balance = await this.findById(id);
-    const quantity = Math.trunc(Number(adjustment || 0));
-    if (!Number.isFinite(quantity) || quantity === 0) throw new BadRequestException('Quantity must be a non-zero whole number');
-    if (type !== 'adjustment' && quantity < 0) throw new BadRequestException('Quantity must be positive for this movement');
-    
-    const posting: any = {
-      productId: balance.productId,
-      type,
-      movementType: type,
-      ledgerType: type,
-      quantity: Math.abs(quantity),
-      movementQuantity: quantity,
-      reason: notes || 'Manual inventory adjustment',
-      createdBy,
-      referenceType: 'InventoryBalance',
-      referenceId: id,
-      metadata: { source: 'adjustInventory' },
-    };
-
-    switch (type) {
-      case 'inward':
-        posting.onHandDelta = quantity;
-        posting.locationOnHandDelta = quantity;
-        break;
-      case 'outward':
-        posting.onHandDelta = -quantity;
-        posting.locationOnHandDelta = -quantity;
-        posting.requireAvailable = true;
-        posting.requireOnHand = true;
-        break;
-      case 'damage':
-        posting.damagedDelta = quantity;
-        posting.locationDamagedDelta = quantity;
-        posting.requireAvailable = true;
-        break;
-      case 'reserve':
-        posting.reservedDelta = quantity;
-        posting.locationReservedDelta = quantity;
-        posting.requireAvailable = true;
-        break;
-      case 'release':
-        posting.reservedDelta = -quantity;
-        posting.locationReservedDelta = -quantity;
-        posting.requireReserved = true;
-        break;
-      case 'adjustment':
-        posting.onHandDelta = quantity;
-        posting.locationOnHandDelta = quantity;
-        break;
-      default:
-        throw new BadRequestException('Unsupported inventory movement type');
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await applyStockPostingTx(tx, posting);
-    }, { timeout: 10000 });
-    if (type === 'inward' && quantity > 0) await this.notifyBackorderReady(balance.productId, createdBy);
-
-    return this.findById(id);
+    await this.findById(id);
+    void adjustment; void type; void notes; void createdBy;
+    throw new BadRequestException('Direct stock adjustment is disabled. Submit a physical count or approved lot adjustment');
   }
 
   async getStockSummary() {

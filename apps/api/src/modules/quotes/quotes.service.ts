@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
+import { releaseReservedLotsTx, reserveAvailableLotsTx } from '../common/lot-allocation';
 import { commercialTotalsFromLines, priceQuoteLines } from '../common/pricing';
 import { ulid } from 'ulid';
 
@@ -980,8 +981,18 @@ export class QuotesService {
   private normalizeTileLine(line: any, index: number) {
     const tileCode = String(line.tileCode || line.sku || '').trim();
     const tileSize = String(line.tileSize || line.size || line.dimensions || '').trim();
-    const qty = Math.trunc(Number(line.qty || line.quantity || 0));
-    const uom = String(line.uom || line.unit || 'box').toLowerCase() === 'pc' ? 'pc' : 'box';
+    const coveragePerPack = Number(line.coveragePerPack || 0);
+    const piecesPerPack = Math.max(1, Math.trunc(Number(line.piecesPerPack || line.pcsPerBox || 1)));
+    const pricingUom = String(line.pricingUom || line.salesUom || line.unit || 'BOX').trim().toUpperCase();
+    const areaPriced = ['SQFT', 'SQM', 'M2'].includes(pricingUom);
+    const requestedArea = Number(line.requestedArea || 0);
+    const wastagePercent = Number(line.wastagePercent || 0);
+    if (!Number.isFinite(wastagePercent) || wastagePercent < 0 || wastagePercent > 100) throw new BadRequestException(`Tile ${tileCode || index + 1} wastage must be between 0 and 100`);
+    if (areaPriced && coveragePerPack <= 0) throw new BadRequestException(`Tile ${tileCode || index + 1} needs coverage per pack in Product Master`);
+    const areaWithWastage = requestedArea > 0 ? requestedArea * (1 + wastagePercent / 100) : 0;
+    const calculatedPacks = areaWithWastage > 0 ? Math.ceil(areaWithWastage / coveragePerPack) : 0;
+    const qty = calculatedPacks || Math.trunc(Number(line.qty || line.quantity || 0));
+    const inventoryUom = String(line.inventoryUom || line.purchaseUom || line.unit || 'BOX').trim().toUpperCase();
     if (!tileCode) throw new BadRequestException(`Tile row ${index + 1} needs a tile code`);
     if (!tileSize) throw new BadRequestException(`Tile ${tileCode} needs a tile size`);
     if (!Number.isFinite(qty) || qty <= 0) throw new BadRequestException(`Tile ${tileCode} needs a positive whole-number quantity`);
@@ -995,15 +1006,25 @@ export class QuotesService {
       ...line,
       type: 'tile',
       category: 'Tiles',
-      productId: undefined,
+      productId: String(line.productId || '').trim(),
       sku: tileCode,
       name: String(line.name || `Tile ${tileCode} ${tileSize}`).trim(),
       tileCode,
       tileSize,
       dimensions: tileSize,
-      uom,
-      unit: uom === 'box' ? 'BOX' : 'PC',
-      pcsPerBox: Number(line.pcsPerBox || 0),
+      uom: inventoryUom.toLowerCase(),
+      unit: inventoryUom,
+      inventoryUom,
+      pricingUom,
+      rateBasis: areaPriced ? 'AREA' : pricingUom === 'PC' && inventoryUom !== 'PC' ? 'PIECE' : 'PACK',
+      piecesPerPack,
+      pcsPerBox: piecesPerPack,
+      coveragePerPack,
+      requestedArea: requestedArea > 0 ? requestedArea : null,
+      wastagePercent,
+      requiredArea: areaWithWastage || null,
+      calculatedPacks: qty,
+      coveredArea: coveragePerPack > 0 ? Number((qty * coveragePerPack).toFixed(4)) : null,
       qty,
       quantity: qty,
       price: listPrice,
@@ -1014,9 +1035,9 @@ export class QuotesService {
       taxRate: Number(line.taxRate ?? 18),
       area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
       quoteImage: line.quoteImage || line.customImageUrl || '',
-      source: 'tile-intent',
-      inventoryTracked: false,
-      nonStock: true,
+      source: 'product-master-tile',
+      inventoryTracked: true,
+      nonStock: false,
     };
   }
 
@@ -1026,10 +1047,10 @@ export class QuotesService {
       throw new BadRequestException(`At least one Product Master SKU or tile row is required before ${action}`);
     }
 
-    const productLines = lines.filter((line: any) => !this.isTileLine(line));
+    const productLines = lines;
     const missingProduct = productLines.find((line: any) => !String(line.productId || '').trim());
     if (missingProduct) {
-      throw new BadRequestException(`Every non-tile quote row must be selected from Product Master before ${action}`);
+        throw new BadRequestException(`Every quote row, including tile designs, must be selected from Product Master before ${action}`);
     }
 
     const productIds: string[] = Array.from(new Set(productLines.map((line: any) => String(line.productId || '').trim()).filter(Boolean) as string[]));
@@ -1039,11 +1060,20 @@ export class QuotesService {
     const productMap = new Map(products.map((product) => [product.id, product]));
 
     return lines.map((line: any, index: number) => {
-      if (this.isTileLine(line)) return this.normalizeTileLine(line, index);
       const productId = String(line.productId || '').trim();
       const product = productMap.get(productId) as any;
       if (!product || product.status !== 'active') {
         throw new BadRequestException(`${line.name || line.sku || `Line ${index + 1}`} is not an active Product Master SKU`);
+      }
+      if (this.isTileLine(line) || String(product.category || '').toLowerCase() === 'tiles') {
+        return this.normalizeTileLine({
+          ...line, productId: product.id, sku: product.sku, name: product.name, brand: product.brand,
+          tileSize: line.tileSize || product.dimensions, dimensions: product.dimensions,
+          listPrice: Number(product.sellPrice || 0), sellPrice: Number(product.sellPrice || 0),
+          floorPrice: Number(product.floorPrice || 0), media: line.media || product.media || {},
+          inventoryUom: product.purchaseUom || product.unit, pricingUom: product.salesUom || product.unit,
+          piecesPerPack: product.piecesPerPack, coveragePerPack: product.coveragePerPack,
+        }, index);
       }
       const qty = Math.trunc(Number(line.qty || line.quantity || 0));
       if (!Number.isFinite(qty) || qty <= 0) {
@@ -1123,8 +1153,10 @@ export class QuotesService {
       if (!productId || quantity <= 0) continue;
       const salesOrderLine = salesOrderLines.find((row: any) => row.quoteLineId === line.quoteLineId || row.lineKey === line.lineKey);
 
-      const balance = await tx.inventoryBalance.findUnique({ where: { productId } });
-      const available = Math.max(0, Number(balance?.available || 0));
+      const lotAvailability = await tx.inventoryLotBalance.aggregate({
+        where: { lot: { productId, status: 'active' } }, _sum: { available: true },
+      });
+      const available = Math.max(0, Number(lotAvailability._sum.available || 0));
       const reserveQty = Math.min(quantity, available);
       const backorderQty = Math.max(0, quantity - reserveQty);
 
@@ -1141,22 +1173,14 @@ export class QuotesService {
             updatedAt: new Date(),
           },
         });
-        await applyStockPostingTx(tx, {
-          productId,
-          type: 'reserve',
-          movementType: 'reserve',
-          ledgerType: 'reserve',
-          quantity: reserveQty,
-          reservedDelta: reserveQty,
-          locationReservedDelta: reserveQty,
-          requireAvailable: true,
-          reason: `Reserved for ${salesOrder.orderNumber}`,
-          relatedQuoteId: quote.id,
-          referenceType: 'Reservation',
-          referenceId: reservation.id,
-          sourceDocumentNo: salesOrder.orderNumber,
-          createdBy: quote.ownerId,
-          metadata: { source: 'sales_order_conversion', salesOrderId: salesOrder.id, salesOrderLineId: salesOrderLine?.id || null },
+        const allocations = await reserveAvailableLotsTx(tx, {
+          reservationId: reservation.id, salesOrderLineId: salesOrderLine?.id,
+          productId, quantity: reserveQty, actorUserId: quote.ownerId, quoteId: quote.id,
+          orderNumber: salesOrder.orderNumber,
+        });
+        const locations = Array.from(new Set(allocations.map((row: any) => row.locationId)));
+        await tx.reservation.update({
+          where: { id: reservation.id }, data: { locationId: locations.length === 1 ? locations[0] : null, updatedAt: new Date() },
         });
       }
 
@@ -1220,43 +1244,8 @@ export class QuotesService {
       });
     }
 
-    this.normalizeLines(salesOrder.lines || args.lines).forEach((line: any, index: number) => {
-      if (!this.isTileLine(line) || String(line.productId || '').trim()) return;
-      const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
-      if (quantity <= 0) return;
-      const sku = String(line.tileCode || line.sku || `TILE-${index + 1}`).trim();
-      rows.push({
-        id: ulid(),
-        sourceType: 'tile_special_order',
-        sourceLineKey: this.tileDemandKey(salesOrder.id, line, index),
-        sourceOrderId: salesOrder.id,
-        sourceQuoteId: quote.id,
-        customerId: quote.customerId,
-        ownerId: quote.ownerId,
-        sku,
-        name: String(line.name || `Tile ${sku}`).trim(),
-        category: 'Tiles',
-        brand: line.brand || 'Tile vendor',
-        finish: line.tileSize || line.dimensions || '',
-        unit: line.unit || line.uom || 'BOX',
-        quantity,
-        status: 'open',
-        vendorName: line.brand || 'Tile vendor',
-        notes: `${salesOrder.orderNumber} tile special order for ${quote.quoteNumber}`,
-        metadata: {
-          orderNumber: salesOrder.orderNumber,
-          quoteNumber: quote.quoteNumber,
-          tileCode: sku,
-          tileSize: line.tileSize || line.dimensions || '',
-          lineIndex: index,
-          source: 'sales_order_conversion',
-        },
-        updatedAt: new Date(),
-      });
-    });
-
     if (!rows.length) return;
-    await tx.purchaseDemand.createMany({ data: rows, skipDuplicates: true }).catch(() => null);
+    await tx.purchaseDemand.createMany({ data: rows, skipDuplicates: true });
   }
 
   private tileDemandKey(orderId: string, line: any, index: number) {
@@ -1268,22 +1257,18 @@ export class QuotesService {
     for (const reservation of reservations) {
       const balance = await tx.inventoryBalance.findUnique({ where: { productId: reservation.productId } });
       if (balance) {
-        await applyStockPostingTx(tx, {
-          productId: reservation.productId,
-          type: 'release',
-          movementType: 'release',
-          ledgerType: 'release',
-          quantity: Number(reservation.quantity || 0),
-          reservedDelta: -Number(reservation.quantity || 0),
-          locationReservedDelta: -Number(reservation.quantity || 0),
-          requireReserved: true,
-          reason,
-          relatedQuoteId: quoteId,
-          referenceType: 'Reservation',
-          referenceId: reservation.id,
-          createdBy: 'system',
-          metadata: { source: 'quote_release' },
-        });
+        const allocations = await tx.lotReservation.count({ where: { reservationId: reservation.id, status: 'reserved' } });
+        if (allocations > 0) {
+          await releaseReservedLotsTx(tx, { reservation, reason, actorUserId: 'system' });
+        } else {
+          await applyStockPostingTx(tx, {
+            productId: reservation.productId, type: 'release', movementType: 'release', ledgerType: 'release',
+            quantity: Number(reservation.quantity || 0), reservedDelta: -Number(reservation.quantity || 0),
+            locationReservedDelta: -Number(reservation.quantity || 0), requireReserved: true, reason,
+            relatedQuoteId: quoteId, referenceType: 'Reservation', referenceId: reservation.id,
+            createdBy: 'system', metadata: { source: 'legacy_quote_release' },
+          });
+        }
       }
       await tx.reservation.update({
         where: { id: reservation.id },

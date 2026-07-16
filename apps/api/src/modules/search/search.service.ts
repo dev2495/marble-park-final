@@ -6,7 +6,8 @@ export class SearchService {
   constructor(private prisma: PrismaService) {}
 
   async search(query: string) {
-    const q = query.toLowerCase();
+    const q = String(query || '').trim();
+    const normalized = q.toUpperCase();
     
     const [products, leads, quotes] = await Promise.all([
       this.prisma.product.findMany({
@@ -14,9 +15,13 @@ export class SearchService {
           OR: [
             { name: { contains: q, mode: 'insensitive' } },
             { sku: { contains: q, mode: 'insensitive' } },
+            { internalCode: { contains: q, mode: 'insensitive' } },
+            { brand: { contains: q, mode: 'insensitive' } },
+            { aliases: { some: { normalizedValue: { contains: normalized }, status: 'active' } } },
           ]
         },
-        take: 5
+        orderBy: [{ internalCode: 'asc' }, { name: 'asc' }],
+        take: 20
       }),
       this.prisma.lead.findMany({
         where: {

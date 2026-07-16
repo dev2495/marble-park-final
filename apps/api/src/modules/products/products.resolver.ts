@@ -12,6 +12,8 @@ export class ProductOutput {
   @Field({ nullable: true })
   sku?: string;
 
+  @Field({ nullable: true }) internalCode?: string;
+
   @Field({ nullable: true })
   name?: string;
 
@@ -47,6 +49,19 @@ export class ProductOutput {
 
   @Field(() => GraphQLJSON, { nullable: true })
   media?: any;
+
+  @Field({ nullable: true }) categoryId?: string;
+  @Field({ nullable: true }) brandId?: string;
+  @Field({ nullable: true }) finishId?: string;
+  @Field({ nullable: true }) materialId?: string;
+  @Field({ nullable: true }) tileSizeId?: string;
+  @Field({ nullable: true }) baseUom?: string;
+  @Field({ nullable: true }) purchaseUom?: string;
+  @Field({ nullable: true }) salesUom?: string;
+  @Field(() => Number, { nullable: true }) piecesPerPack?: number;
+  @Field(() => Number, { nullable: true }) coveragePerPack?: number;
+  @Field({ nullable: true }) hsnCode?: string;
+  @Field({ nullable: true }) allowLoose?: boolean;
 
   @Field(() => GraphQLISODateTime, { nullable: true })
   updatedAt?: Date;
@@ -90,6 +105,17 @@ export class CreateProductInput {
   @Field(() => GraphQLJSON, { nullable: true })
   media?: any;
 
+  @Field({ nullable: true }) internalCode?: string;
+  @Field({ nullable: true }) materialId?: string;
+  @Field({ nullable: true }) tileSizeId?: string;
+  @Field({ nullable: true }) baseUom?: string;
+  @Field({ nullable: true }) purchaseUom?: string;
+  @Field({ nullable: true }) salesUom?: string;
+  @Field(() => Number, { nullable: true }) piecesPerPack?: number;
+  @Field(() => Number, { nullable: true }) coveragePerPack?: number;
+  @Field({ nullable: true }) hsnCode?: string;
+  @Field({ nullable: true }) allowLoose?: boolean;
+
 }
 
 @InputType()
@@ -132,6 +158,40 @@ export class UpdateProductInput {
 
   @Field(() => String, { nullable: true })
   expectedUpdatedAt?: string;
+
+  @Field({ nullable: true }) internalCode?: string;
+  @Field({ nullable: true }) materialId?: string;
+  @Field({ nullable: true }) tileSizeId?: string;
+  @Field({ nullable: true }) baseUom?: string;
+  @Field({ nullable: true }) purchaseUom?: string;
+  @Field({ nullable: true }) salesUom?: string;
+  @Field(() => Number, { nullable: true }) piecesPerPack?: number;
+  @Field(() => Number, { nullable: true }) coveragePerPack?: number;
+  @Field({ nullable: true }) hsnCode?: string;
+  @Field({ nullable: true }) allowLoose?: boolean;
+}
+
+@InputType()
+class DisplaySampleInput {
+  @Field() productId!: string;
+  @Field({ nullable: true }) internalCode?: string;
+  @Field({ nullable: true }) locationId?: string;
+  @Field({ nullable: true }) displayZone?: string;
+  @Field({ nullable: true }) displayPosition?: string;
+  @Field({ nullable: true }) imageUrl?: string;
+  @Field({ nullable: true }) installedAt?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
+}
+
+@InputType()
+class UpdateDisplaySampleInput {
+  @Field({ nullable: true }) internalCode?: string;
+  @Field({ nullable: true }) locationId?: string;
+  @Field({ nullable: true }) displayZone?: string;
+  @Field({ nullable: true }) displayPosition?: string;
+  @Field({ nullable: true }) imageUrl?: string;
+  @Field({ nullable: true }) status?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
 }
 
 @Resolver()
@@ -181,6 +241,46 @@ export class ProductsResolver {
   async productStats(@Context() ctx: GraphqlRequestContext) {
     await requireSession(this.prisma, ctx);
     return this.products.getStats();
+  }
+
+  @Query(() => GraphQLJSON)
+  async productMasters(@Context() ctx: GraphqlRequestContext) {
+    await requireSession(this.prisma, ctx);
+    return this.products.getMasters();
+  }
+
+  @Query(() => [GraphQLJSON])
+  async displaySamples(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('productId', { nullable: true }) productId?: string,
+    @Args('locationId', { nullable: true }) locationId?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.products.displaySamples({ productId, locationId, status, take });
+  }
+
+  @Query(() => GraphQLJSON)
+  async tileDesignStats(@Context() ctx: GraphqlRequestContext) {
+    await requireSession(this.prisma, ctx);
+    return this.products.tileDesignStats();
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async createDisplaySample(@Args('input') input: DisplaySampleInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.createDisplaySample(input, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async updateDisplaySample(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: UpdateDisplaySampleInput,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.updateDisplaySample(id, input, user.id);
   }
 
   @Mutation(() => ProductOutput)

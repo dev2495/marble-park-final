@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
+import { nextDocumentNumber } from '../common/sequence';
 
 export interface CreateProductInput {
   sku: string;
@@ -15,6 +16,16 @@ export interface CreateProductInput {
   taxClass?: string;
   description?: string;
   media?: any;
+  internalCode?: string;
+  materialId?: string;
+  tileSizeId?: string;
+  baseUom?: string;
+  purchaseUom?: string;
+  salesUom?: string;
+  piecesPerPack?: number;
+  coveragePerPack?: number;
+  hsnCode?: string;
+  allowLoose?: boolean;
 }
 
 export interface UpdateProductInput {
@@ -31,6 +42,16 @@ export interface UpdateProductInput {
   status?: string;
   media?: any;
   expectedUpdatedAt?: string;
+  internalCode?: string;
+  materialId?: string;
+  tileSizeId?: string;
+  baseUom?: string;
+  purchaseUom?: string;
+  salesUom?: string;
+  piecesPerPack?: number;
+  coveragePerPack?: number;
+  hsnCode?: string;
+  allowLoose?: boolean;
 }
 
 @Injectable()
@@ -43,7 +64,9 @@ export class ProductsService {
       where.OR = [
         { name: { contains: args.search, mode: 'insensitive' } },
         { sku: { contains: args.search, mode: 'insensitive' } },
+        { internalCode: { contains: args.search, mode: 'insensitive' } },
         { brand: { contains: args.search, mode: 'insensitive' } },
+        { aliases: { some: { normalizedValue: { contains: String(args.search).trim().toUpperCase() }, status: 'active' } } },
       ];
     }
     if (args?.category) where.category = args.category;
@@ -84,9 +107,20 @@ export class ProductsService {
     if (existing) {
       throw new BadRequestException('Product with this SKU already exists');
     }
-    await this.ensureCategory(category);
-    await this.ensureBrand(brand);
-    await this.ensureFinish(finish);
+    const [categoryMaster, brandMaster, finishMaster] = await Promise.all([
+      this.ensureCategory(category), this.ensureBrand(brand), this.ensureFinish(finish),
+    ]);
+    const internalCode = this.normalizeInternalCode(data.internalCode || sku);
+    const existingInternal = await this.prisma.product.findFirst({ where: { internalCode } });
+    if (existingInternal) throw new BadRequestException('This internal product code is already assigned');
+    const uoms = [data.baseUom || data.unit || 'PC', data.purchaseUom || data.unit || 'PC', data.salesUom || data.unit || 'PC']
+      .map((value) => String(value).trim().toUpperCase());
+    const coveragePerPack = this.numberAtLeastZero(data.coveragePerPack || 0, 'Coverage per pack');
+    if (['SQFT', 'SQM', 'M2'].includes(uoms[2]) && coveragePerPack <= 0) {
+      throw new BadRequestException('Area-priced products require positive coverage per pack');
+    }
+    const validUoms = await this.prisma.unitOfMeasure.count({ where: { code: { in: Array.from(new Set(uoms)) }, status: 'active' } });
+    if (validUoms !== new Set(uoms).size) throw new BadRequestException('Base, purchase and sales UOM must use active UOM masters');
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
@@ -106,6 +140,17 @@ export class ProductsService {
           media: this.normalizeMedia(data.media),
           sourceRefs: {},
           description: data.description || '',
+          internalCode,
+          categoryId: categoryMaster?.id || null,
+          brandId: brandMaster?.id || null,
+          finishId: finishMaster?.id || null,
+          materialId: data.materialId || null,
+          tileSizeId: data.tileSizeId || null,
+          baseUom: uoms[0], purchaseUom: uoms[1], salesUom: uoms[2],
+          piecesPerPack: Math.max(1, Math.trunc(Number(data.piecesPerPack || 1))),
+          coveragePerPack,
+          hsnCode: String(data.hsnCode || '').trim() || null,
+          trackLots: true, allowLoose: Boolean(data.allowLoose),
           updatedAt: new Date(),
         } as any,
       });
@@ -120,6 +165,10 @@ export class ProductsService {
           hold: 0,
           updatedAt: new Date(),
         } as any,
+      });
+      await tx.productAlias.create({
+        data: { id: ulid(), productId: product.id, type: 'internal_code', value: internalCode,
+          normalizedValue: internalCode, status: 'active', isPrimary: true, metadata: {}, updatedAt: new Date() },
       });
       await tx.auditEvent.create({
         data: {
@@ -161,9 +210,28 @@ export class ProductsService {
       throw new BadRequestException('Floor price cannot exceed the sell price');
     }
     if (data.media !== undefined) update.media = this.normalizeMedia(data.media);
-    if (update.category) await this.ensureCategory(update.category);
-    if (update.brand) await this.ensureBrand(update.brand);
-    if (update.finish) await this.ensureFinish(update.finish);
+    if (update.category) update.categoryId = (await this.ensureCategory(update.category))?.id || null;
+    if (update.brand) update.brandId = (await this.ensureBrand(update.brand))?.id || null;
+    if (update.finish) update.finishId = (await this.ensureFinish(update.finish))?.id || null;
+    if (data.internalCode !== undefined) {
+      const internalCode = this.normalizeInternalCode(data.internalCode);
+      const duplicate = await this.prisma.product.findFirst({ where: { internalCode, id: { not: id } } });
+      if (duplicate) throw new BadRequestException('This internal product code is already assigned');
+      update.internalCode = internalCode;
+    }
+    for (const key of ['materialId', 'tileSizeId']) if ((data as any)[key] !== undefined) update[key] = (data as any)[key] || null;
+    for (const key of ['baseUom', 'purchaseUom', 'salesUom']) {
+      if ((data as any)[key] !== undefined) update[key] = String((data as any)[key]).trim().toUpperCase();
+    }
+    if (data.piecesPerPack !== undefined) update.piecesPerPack = Math.max(1, Math.trunc(Number(data.piecesPerPack || 1)));
+    if (data.coveragePerPack !== undefined) update.coveragePerPack = this.numberAtLeastZero(data.coveragePerPack, 'Coverage per pack');
+    if (data.hsnCode !== undefined) update.hsnCode = String(data.hsnCode || '').trim() || null;
+    if (data.allowLoose !== undefined) update.allowLoose = Boolean(data.allowLoose);
+    const effectiveSalesUom = update.salesUom ?? current.salesUom;
+    const effectiveCoverage = update.coveragePerPack ?? Number(current.coveragePerPack || 0);
+    if (['SQFT', 'SQM', 'M2'].includes(effectiveSalesUom) && effectiveCoverage <= 0) {
+      throw new BadRequestException('Area-priced products require positive coverage per pack');
+    }
 
     const updatedAt = new Date();
     update.updatedAt = updatedAt;
@@ -174,6 +242,14 @@ export class ProductsService {
       });
       if (result.count !== 1) throw new BadRequestException('This product was changed by another user. Refresh it before saving your changes.');
       const product = await tx.product.findUniqueOrThrow({ where: { id } });
+      if (data.internalCode !== undefined && product.internalCode) {
+        await tx.productAlias.upsert({
+          where: { type_normalizedValue: { type: 'internal_code', normalizedValue: product.internalCode } },
+          update: { productId: product.id, value: product.internalCode, status: 'active', isPrimary: true, updatedAt: new Date() },
+          create: { id: ulid(), productId: product.id, type: 'internal_code', value: product.internalCode,
+            normalizedValue: product.internalCode, status: 'active', isPrimary: true, metadata: {}, updatedAt: new Date() },
+        });
+      }
       await tx.auditEvent.create({
         data: {
           id: ulid(),
@@ -297,10 +373,99 @@ export class ProductsService {
     };
   }
 
+  async getMasters() {
+    const [categories, brands, finishes, materials, tileSizes, uoms, taxCodes] = await Promise.all([
+      this.prisma.productCategory.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+      this.prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+      this.prisma.productFinish.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+      this.prisma.productMaterial.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+      this.prisma.tileSize.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+      this.prisma.unitOfMeasure.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }] }),
+      this.prisma.taxCode.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { rate: 'asc' }] }),
+    ]);
+    return { categories, brands, finishes, materials, tileSizes, uoms, taxCodes };
+  }
+
+  async displaySamples(args?: { productId?: string; locationId?: string; status?: string; take?: number }) {
+    const where: any = {};
+    if (args?.productId) where.productId = args.productId;
+    if (args?.locationId) where.locationId = args.locationId;
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    return this.prisma.displaySample.findMany({ where, include: { product: true }, orderBy: { createdAt: 'desc' }, take: Math.min(300, args?.take || 100) });
+  }
+
+  async tileDesignStats() {
+    const tileWhere = { status: 'active', category: { equals: 'Tiles', mode: 'insensitive' as const } };
+    const [products, displaySamples] = await Promise.all([
+      this.prisma.product.findMany({ where: tileWhere, select: { internalCode: true, media: true } }),
+      this.prisma.displaySample.count({ where: { status: 'active', product: tileWhere } }),
+    ]);
+    const hasImage = (media: any) => Boolean(media?.primaryUrl || media?.url || media?.imageUrl || (Array.isArray(media?.images) && media.images.length));
+    return {
+      designs: products.length,
+      displaySamples,
+      missingImages: products.filter((product) => !hasImage(product.media)).length,
+      missingInternalCodes: products.filter((product) => !String(product.internalCode || '').trim()).length,
+    };
+  }
+
+  async createDisplaySample(input: any, actorUserId: string) {
+    const product = await this.findById(String(input.productId || ''));
+    const internalCode = this.normalizeInternalCode(input.internalCode || product.internalCode || product.sku);
+    const duplicate = await this.prisma.displaySample.findUnique({ where: { internalCode } });
+    if (duplicate) throw new BadRequestException('This display code is already registered');
+    return this.prisma.$transaction(async (tx: any) => {
+      const sampleNumber = await nextDocumentNumber(tx, 'display_sample', 'DS', new Date(), {
+        existingNumbers: async (prefixForYear) => (await tx.displaySample.findMany({ where: { sampleNumber: { startsWith: prefixForYear } }, select: { sampleNumber: true } })).map((row: any) => row.sampleNumber),
+      });
+      const sample = await tx.displaySample.create({ data: {
+        id: ulid(), sampleNumber, productId: product.id, internalCode, locationId: input.locationId || null,
+        displayZone: input.displayZone || null, displayPosition: input.displayPosition || null,
+        imageUrl: input.imageUrl || (product.media as any)?.primaryUrl || null, status: 'active', sellable: false,
+        installedAt: input.installedAt ? new Date(input.installedAt) : new Date(), metadata: input.metadata || {}, updatedAt: new Date(),
+      } });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'display_sample.create', entityType: 'DisplaySample', entityId: sample.id,
+        summary: `Registered display ${internalCode}`, metadata: { productId: product.id, sampleNumber } } });
+      return tx.displaySample.findUnique({ where: { id: sample.id }, include: { product: true } });
+    });
+  }
+
+  async updateDisplaySample(id: string, input: any, actorUserId: string) {
+    const existing = await this.prisma.displaySample.findUnique({ where: { id }, include: { product: true } });
+    if (!existing) throw new NotFoundException('Display sample not found');
+    const internalCode = input.internalCode === undefined ? existing.internalCode : this.normalizeInternalCode(input.internalCode);
+    const duplicate = await this.prisma.displaySample.findFirst({ where: { internalCode, id: { not: id } } });
+    if (duplicate) throw new BadRequestException('This display code is already registered');
+    const status = String(input.status ?? existing.status).trim().toLowerCase();
+    if (!['active', 'removed', 'maintenance'].includes(status)) throw new BadRequestException('Display status must be active, maintenance, or removed');
+    return this.prisma.$transaction(async (tx: any) => {
+      const sample = await tx.displaySample.update({
+        where: { id },
+        data: {
+          internalCode,
+          locationId: input.locationId === undefined ? existing.locationId : input.locationId || null,
+          displayZone: input.displayZone === undefined ? existing.displayZone : input.displayZone || null,
+          displayPosition: input.displayPosition === undefined ? existing.displayPosition : input.displayPosition || null,
+          imageUrl: input.imageUrl === undefined ? existing.imageUrl : input.imageUrl || null,
+          status,
+          removedAt: status === 'removed' ? new Date() : null,
+          metadata: input.metadata === undefined ? existing.metadata : { ...(existing.metadata as any), ...(input.metadata || {}) },
+          updatedAt: new Date(),
+        },
+        include: { product: true },
+      });
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: 'display_sample.update', entityType: 'DisplaySample', entityId: id,
+        summary: `Updated display ${internalCode}`, metadata: { status, locationId: sample.locationId },
+      } });
+      return sample;
+    });
+  }
+
   private async ensureCategory(name: string) {
     const clean = String(name || '').trim();
     if (!clean) return;
-    await this.prisma.productCategory.upsert({
+    return this.prisma.productCategory.upsert({
       where: { name: clean },
       update: { status: 'active', updatedAt: new Date() },
       create: {
@@ -378,7 +543,7 @@ export class ProductsService {
   private async ensureBrand(name: string) {
     const clean = String(name || '').trim();
     if (!clean) return;
-    await this.prisma.productBrand.upsert({
+    return this.prisma.productBrand.upsert({
       where: { name: clean },
       update: { status: 'active', updatedAt: new Date() },
       create: {
@@ -397,7 +562,7 @@ export class ProductsService {
   private async ensureFinish(name: string) {
     const clean = String(name || '').trim();
     if (!clean) return;
-    await this.prisma.productFinish.upsert({
+    return this.prisma.productFinish.upsert({
       where: { name: clean },
       update: { status: 'active', updatedAt: new Date() },
       create: {
@@ -415,5 +580,12 @@ export class ProductsService {
 
   private normalizeSku(sku: string) {
     return String(sku || '').trim().replace(/\s+/g, '').toUpperCase();
+  }
+
+  private normalizeInternalCode(value: string) {
+    const code = String(value || '').trim().toUpperCase().replace(/\s+/g, '-');
+    if (!code) throw new BadRequestException('Internal product code is required');
+    if (!/^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code)) throw new BadRequestException('Internal product code contains unsupported characters');
+    return code;
   }
 }

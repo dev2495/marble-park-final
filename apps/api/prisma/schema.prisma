@@ -294,6 +294,7 @@ model PurchaseOrderLine {
 model GoodsReceiptNote {
   id              String   @id
   grnNumber       String   @unique
+  idempotencyKey  String?  @unique
   purchaseOrderId String?
   vendorId        String?
   vendorName      String
@@ -318,6 +319,8 @@ model GoodsReceiptLine {
   goodsReceiptNoteId  String
   purchaseOrderLineId String?
   productId           String?
+  lot                 InventoryLot? @relation(fields: [lotId], references: [id])
+  lotId               String?
   sku                 String
   name                String
   orderedQuantity     Int
@@ -332,6 +335,7 @@ model GoodsReceiptLine {
   @@index([goodsReceiptNoteId])
   @@index([purchaseOrderLineId])
   @@index([productId])
+  @@index([lotId])
 }
 
 model Lead {
@@ -432,6 +436,7 @@ model ProductCategory {
   metadata    Json     @default("{}")
   createdAt   DateTime @default(now())
   updatedAt   DateTime
+  products    Product[] @relation("ProductCategoryMaster")
 }
 
 model ProductBrand {
@@ -444,6 +449,7 @@ model ProductBrand {
   metadata    Json     @default("{}")
   createdAt   DateTime @default(now())
   updatedAt   DateTime
+  products    Product[] @relation("ProductBrandMaster")
 }
 
 model ProductFinish {
@@ -456,6 +462,55 @@ model ProductFinish {
   metadata    Json     @default("{}")
   createdAt   DateTime @default(now())
   updatedAt   DateTime
+  products    Product[] @relation("ProductFinishMaster")
+}
+
+model ProductMaterial {
+  id          String   @id
+  name        String   @unique
+  code        String?  @unique
+  description String?
+  status      String   @default("active")
+  sortOrder   Int      @default(0)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  products    Product[] @relation("ProductMaterialMaster")
+
+  @@index([status])
+  @@index([sortOrder])
+}
+
+model UnitOfMeasure {
+  id           String   @id
+  code         String   @unique
+  name         String
+  dimension    String   @default("count")
+  decimalScale Int      @default(0)
+  status       String   @default("active")
+  sortOrder    Int      @default(0)
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+
+  @@index([dimension])
+  @@index([status])
+}
+
+model TaxCode {
+  id          String   @id
+  code        String   @unique
+  name        String
+  hsnCode     String?
+  rate        Float    @default(18)
+  status      String   @default("active")
+  sortOrder   Int      @default(0)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([hsnCode])
+  @@index([status])
 }
 
 model TileSize {
@@ -470,6 +525,7 @@ model TileSize {
   metadata    Json     @default("{}")
   createdAt   DateTime @default(now())
   updatedAt   DateTime
+  products    Product[] @relation("ProductTileSizeMaster")
 }
 
 model Product {
@@ -489,16 +545,94 @@ model Product {
   media        Json
   sourceRefs   Json
   description  String
+  internalCode String?           @unique
+  categoryId   String?
+  brandId      String?
+  finishId     String?
+  materialId   String?
+  tileSizeId   String?
+  baseUom      String            @default("PC")
+  purchaseUom  String            @default("PC")
+  salesUom     String            @default("PC")
+  piecesPerPack Int              @default(1)
+  coveragePerPack Float          @default(0)
+  hsnCode      String?
+  trackLots    Boolean           @default(true)
+  allowLoose   Boolean           @default(false)
+  categoryMaster ProductCategory? @relation("ProductCategoryMaster", fields: [categoryId], references: [id])
+  brandMaster  ProductBrand?     @relation("ProductBrandMaster", fields: [brandId], references: [id])
+  finishMaster ProductFinish?    @relation("ProductFinishMaster", fields: [finishId], references: [id])
+  materialMaster ProductMaterial? @relation("ProductMaterialMaster", fields: [materialId], references: [id])
+  tileSizeMaster TileSize?        @relation("ProductTileSizeMaster", fields: [tileSizeId], references: [id])
   createdAt    DateTime          @default(now())
   updatedAt    DateTime
   balances     InventoryBalance?
   reservations Reservation[]
+  aliases      ProductAlias[]
+  displaySamples DisplaySample[]
+  inventoryLots InventoryLot[]
+  lotLedgerEntries InventoryLotLedgerEntry[]
+  openingStockLines OpeningStockLine[]
+  transferLines StockTransferLine[]
+  pickLines PickLine[]
+  labelInstances InternalLabelInstance[]
+  stockCountLines StockCountLine[]
+  adjustmentApprovals StockAdjustmentApproval[]
+  returnLines ReturnLine[]
+  periodSnapshots InventoryPeriodSnapshot[]
 
   @@index([brand])
   @@index([category])
   @@index([finish])
   @@index([status])
   @@index([name])
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([finishId])
+  @@index([materialId])
+  @@index([tileSizeId])
+}
+
+model ProductAlias {
+  id        String   @id
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+  type      String
+  value     String
+  normalizedValue String
+  status    String   @default("active")
+  isPrimary Boolean  @default(false)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+
+  @@unique([type, normalizedValue])
+  @@index([productId, status])
+  @@index([normalizedValue])
+}
+
+model DisplaySample {
+  id              String   @id
+  sampleNumber    String   @unique
+  product         Product  @relation(fields: [productId], references: [id])
+  productId       String
+  internalCode    String   @unique
+  locationId      String?
+  displayZone     String?
+  displayPosition String?
+  imageUrl        String?
+  status          String   @default("active")
+  sellable        Boolean  @default(false)
+  installedAt     DateTime?
+  removedAt       DateTime?
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
+  labelInstances  InternalLabelInstance[]
+
+  @@index([productId])
+  @@index([locationId])
+  @@index([status])
 }
 
 model Quote {
@@ -556,15 +690,18 @@ model Reservation {
   salesOrderLineId String?
   product   Product  @relation(fields: [productId], references: [id])
   productId String
+  locationId String?
   quantity  Int
   status    String
   createdAt DateTime @default(now())
   updatedAt DateTime
+  lotAllocations LotReservation[]
 
   @@index([quoteId, status])
   @@index([salesOrderId, status])
   @@index([salesOrderLineId])
   @@index([productId, status])
+  @@index([locationId, status])
   @@index([status])
   @@index([createdAt(sort: Desc)])
 }
@@ -603,6 +740,7 @@ model SalesOrder {
 
   dispatchJob   DispatchJob? @relation("SalesOrderDispatchJob")
   dispatchChallans DispatchChallan[] @relation("SalesOrderChallans")
+  pickLists PickList[]
 
   @@index([quoteId])
   @@index([leadId])
@@ -685,6 +823,9 @@ model SalesOrderLine {
   metadata            Json     @default("{}")
   createdAt           DateTime @default(now())
   updatedAt           DateTime
+  lotReservations     LotReservation[]
+  pickLines           PickLine[]
+  returnLines         ReturnLine[]
 
   @@unique([salesOrderId, lineKey])
   @@index([salesOrderId])
@@ -759,6 +900,19 @@ model StockLocation {
   metadata  Json     @default("{}")
   createdAt DateTime @default(now())
   updatedAt DateTime
+  lotBalances InventoryLotBalance[]
+  lotLedgerEntries InventoryLotLedgerEntry[]
+  openingStockSessions OpeningStockSession[]
+  countLines StockCountLine[]
+  transferSources StockTransfer[] @relation("StockTransferSource")
+  transferDestinations StockTransfer[] @relation("StockTransferDestination")
+  pickLists PickList[]
+  pickLines PickLine[]
+  lotReservations LotReservation[]
+  countSessions StockCountSession[]
+  adjustmentApprovals StockAdjustmentApproval[]
+  dispatchLines DispatchLine[]
+  periodSnapshots InventoryPeriodSnapshot[]
 
   @@index([status])
   @@index([type])
@@ -783,6 +937,8 @@ model StockLedgerEntry {
   id               String   @id
   productId        String?
   locationId       String?
+  lotId            String?
+  idempotencyKey   String?  @unique
   type             String
   quantity         Int
   direction        String
@@ -797,9 +953,349 @@ model StockLedgerEntry {
 
   @@index([productId])
   @@index([locationId])
+  @@index([lotId])
   @@index([type])
   @@index([referenceType, referenceId])
   @@index([createdAt(sort: Desc)])
+}
+
+model InventoryLot {
+  id              String   @id
+  lotNumber       String   @unique
+  product         Product  @relation(fields: [productId], references: [id])
+  productId       String
+  sourceType      String
+  sourceId        String
+  sourceLineId    String?
+  supplierBatch   String?
+  qualityStatus   String   @default("available")
+  receivedAt      DateTime
+  manufacturedAt  DateTime?
+  expiryAt        DateTime?
+  unitCost        Float    @default(0)
+  status          String   @default("active")
+  attributes      Json     @default("{}")
+  metadata        Json     @default("{}")
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
+  balances        InventoryLotBalance[]
+  ledgerEntries   InventoryLotLedgerEntry[]
+  reservations    LotReservation[]
+  openingLines    OpeningStockLine[]
+  transferLines   StockTransferLine[]
+  countLines      StockCountLine[]
+  pickLines       PickLine[]
+  labelInstances  InternalLabelInstance[]
+  returnLines     ReturnLine[]
+  adjustmentApprovals StockAdjustmentApproval[]
+  dispatchLines   DispatchLine[]
+  periodSnapshots InventoryPeriodSnapshot[]
+  goodsReceiptLines GoodsReceiptLine[]
+
+  @@unique([sourceType, sourceId, sourceLineId])
+  @@index([productId, status])
+  @@index([supplierBatch])
+  @@index([receivedAt(sort: Desc)])
+  @@index([qualityStatus])
+}
+
+model InventoryLotBalance {
+  id         String        @id
+  lot        InventoryLot  @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  lotId      String
+  location   StockLocation @relation(fields: [locationId], references: [id])
+  locationId String
+  onHand     Int           @default(0)
+  reserved   Int           @default(0)
+  damaged    Int           @default(0)
+  hold       Int           @default(0)
+  available  Int           @default(0)
+  updatedAt  DateTime
+
+  @@unique([lotId, locationId])
+  @@index([locationId, available])
+  @@index([lotId])
+}
+
+model InventoryLotLedgerEntry {
+  id               String        @id
+  idempotencyKey   String        @unique
+  product          Product       @relation(fields: [productId], references: [id])
+  productId        String
+  lot              InventoryLot  @relation(fields: [lotId], references: [id])
+  lotId            String
+  location         StockLocation @relation(fields: [locationId], references: [id])
+  locationId       String
+  type             String
+  direction        String
+  quantity         Int
+  onHandDelta      Int           @default(0)
+  reservedDelta    Int           @default(0)
+  damagedDelta     Int           @default(0)
+  holdDelta        Int           @default(0)
+  balanceAfter     Json
+  referenceType    String
+  referenceId      String
+  sourceDocumentNo String?
+  unitCost         Float         @default(0)
+  reason           String
+  createdBy        String
+  metadata         Json          @default("{}")
+  createdAt        DateTime      @default(now())
+
+  @@index([productId, createdAt(sort: Desc)])
+  @@index([lotId, createdAt(sort: Desc)])
+  @@index([locationId, createdAt(sort: Desc)])
+  @@index([referenceType, referenceId])
+  @@index([type])
+}
+
+model OpeningStockSession {
+  id            String        @id
+  sessionNumber String        @unique
+  status        String        @default("draft")
+  location      StockLocation @relation(fields: [locationId], references: [id])
+  locationId    String
+  effectiveAt   DateTime
+  fiscalYear    String
+  valuationMode String        @default("unit_cost")
+  notes         String        @default("")
+  createdBy     String
+  submittedBy   String?
+  approvedBy    String?
+  submittedAt   DateTime?
+  approvedAt    DateTime?
+  postedAt      DateTime?
+  metadata      Json          @default("{}")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime
+  lines         OpeningStockLine[]
+
+  @@index([locationId])
+  @@index([status])
+  @@index([effectiveAt(sort: Desc)])
+  @@index([fiscalYear])
+}
+
+model OpeningStockLine {
+  id                    String              @id
+  openingStockSession   OpeningStockSession @relation(fields: [openingStockSessionId], references: [id], onDelete: Cascade)
+  openingStockSessionId String
+  product               Product             @relation(fields: [productId], references: [id])
+  productId             String
+  lot                   InventoryLot?       @relation(fields: [lotId], references: [id])
+  lotId                 String?
+  lotCode               String?
+  quantity              Int
+  unitCost              Float               @default(0)
+  supplierBatch         String?
+  qualityStatus         String              @default("available")
+  rackBin               String?
+  status                String              @default("counted")
+  metadata              Json                @default("{}")
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime
+
+  @@index([openingStockSessionId])
+  @@index([productId])
+  @@index([lotId])
+  @@index([status])
+}
+
+model StockTransfer {
+  id                    String        @id
+  transferNumber        String        @unique
+  status                String        @default("draft")
+  sourceLocation        StockLocation @relation("StockTransferSource", fields: [sourceLocationId], references: [id])
+  sourceLocationId      String
+  destinationLocation   StockLocation @relation("StockTransferDestination", fields: [destinationLocationId], references: [id])
+  destinationLocationId String
+  requestedBy           String
+  approvedBy            String?
+  dispatchedBy          String?
+  receivedBy            String?
+  requestedAt           DateTime      @default(now())
+  approvedAt            DateTime?
+  dispatchedAt          DateTime?
+  receivedAt            DateTime?
+  notes                 String        @default("")
+  metadata              Json          @default("{}")
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime
+  lines                 StockTransferLine[]
+
+  @@index([sourceLocationId, status])
+  @@index([destinationLocationId, status])
+  @@index([requestedAt(sort: Desc)])
+}
+
+model StockTransferLine {
+  id              String        @id
+  stockTransfer   StockTransfer @relation(fields: [stockTransferId], references: [id], onDelete: Cascade)
+  stockTransferId String
+  product         Product       @relation(fields: [productId], references: [id])
+  productId       String
+  lot             InventoryLot  @relation(fields: [lotId], references: [id])
+  lotId           String
+  requestedQuantity Int
+  dispatchedQuantity Int        @default(0)
+  receivedQuantity Int          @default(0)
+  damagedQuantity Int           @default(0)
+  status          String        @default("requested")
+  metadata        Json          @default("{}")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime
+
+  @@unique([stockTransferId, lotId])
+  @@index([productId])
+  @@index([lotId])
+  @@index([status])
+}
+
+model LotReservation {
+  id               String         @id
+  reservation      Reservation    @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  reservationId    String
+  salesOrderLine   SalesOrderLine @relation(fields: [salesOrderLineId], references: [id])
+  salesOrderLineId String
+  lot              InventoryLot   @relation(fields: [lotId], references: [id])
+  lotId            String
+  location         StockLocation  @relation(fields: [locationId], references: [id])
+  locationId       String
+  quantity         Int
+  status           String         @default("reserved")
+  reservedAt       DateTime       @default(now())
+  releasedAt       DateTime?
+  metadata         Json           @default("{}")
+  updatedAt        DateTime
+
+  @@unique([reservationId, lotId, locationId])
+  @@index([salesOrderLineId, status])
+  @@index([lotId, locationId, status])
+}
+
+model PickList {
+  id             String        @id
+  pickNumber     String        @unique
+  salesOrder     SalesOrder    @relation(fields: [salesOrderId], references: [id])
+  salesOrderId   String
+  location       StockLocation @relation(fields: [locationId], references: [id])
+  locationId     String
+  status         String        @default("draft")
+  assignedTo     String?
+  createdBy      String
+  startedAt      DateTime?
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  notes          String        @default("")
+  metadata       Json          @default("{}")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime
+  lines          PickLine[]
+
+  @@index([salesOrderId, status])
+  @@index([locationId, status])
+  @@index([createdAt(sort: Desc)])
+}
+
+model PickLine {
+  id               String         @id
+  pickList         PickList       @relation(fields: [pickListId], references: [id], onDelete: Cascade)
+  pickListId       String
+  salesOrderLine   SalesOrderLine @relation(fields: [salesOrderLineId], references: [id])
+  salesOrderLineId String
+  product          Product        @relation(fields: [productId], references: [id])
+  productId        String
+  lot              InventoryLot   @relation(fields: [lotId], references: [id])
+  lotId            String
+  location         StockLocation  @relation(fields: [locationId], references: [id])
+  locationId       String
+  requestedQuantity Int
+  pickedQuantity  Int             @default(0)
+  packedQuantity  Int             @default(0)
+  status          String          @default("pending")
+  pickedBy        String?
+  pickedAt        DateTime?
+  metadata        Json            @default("{}")
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime
+  dispatchLines   DispatchLine[]
+
+  @@unique([pickListId, salesOrderLineId, lotId, locationId])
+  @@index([salesOrderLineId])
+  @@index([lotId, locationId])
+  @@index([status])
+}
+
+model InternalLabelJob {
+  id           String   @id
+  jobNumber    String   @unique
+  sourceType   String
+  sourceId     String
+  template     String
+  quantity     Int
+  status       String   @default("queued")
+  requestedBy  String
+  completedBy  String?
+  requestedAt  DateTime @default(now())
+  completedAt  DateTime?
+  error        String?
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+  instances    InternalLabelInstance[]
+
+  @@index([sourceType, sourceId])
+  @@index([status, requestedAt(sort: Desc)])
+}
+
+model InternalLabelInstance {
+  id              String           @id
+  labelCode       String           @unique
+  labelJob        InternalLabelJob @relation(fields: [labelJobId], references: [id], onDelete: Cascade)
+  labelJobId      String
+  product         Product?         @relation(fields: [productId], references: [id])
+  productId       String?
+  lot             InventoryLot?    @relation(fields: [lotId], references: [id])
+  lotId           String?
+  displaySample   DisplaySample?   @relation(fields: [displaySampleId], references: [id])
+  displaySampleId String?
+  unitNumber      Int?
+  status          String           @default("active")
+  printCount      Int              @default(0)
+  lastPrintedAt   DateTime?
+  voidedAt        DateTime?
+  voidReason      String?
+  metadata        Json             @default("{}")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime
+  scans           InternalScanEvent[]
+
+  @@index([labelJobId])
+  @@index([productId])
+  @@index([lotId])
+  @@index([displaySampleId])
+  @@index([status])
+}
+
+model InternalScanEvent {
+  id              String                @id
+  labelInstance   InternalLabelInstance? @relation(fields: [labelInstanceId], references: [id])
+  labelInstanceId String?
+  labelCode       String
+  action          String
+  actorUserId     String
+  locationId      String?
+  entityType      String?
+  entityId        String?
+  result          String                @default("success")
+  metadata        Json                  @default("{}")
+  createdAt       DateTime              @default(now())
+
+  @@index([labelCode, createdAt(sort: Desc)])
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
 }
 
 model StockCountSession {
@@ -807,6 +1303,10 @@ model StockCountSession {
   countNumber String    @unique
   status      String    @default("draft")
   scope       String    @default("all")
+  countType   String    @default("cycle")
+  periodKey   String?
+  effectiveAt DateTime  @default(now())
+  location    StockLocation? @relation(fields: [locationId], references: [id])
   locationId  String?
   notes       String    @default("")
   createdBy   String
@@ -814,37 +1314,57 @@ model StockCountSession {
   startedAt   DateTime  @default(now())
   submittedAt DateTime?
   approvedAt  DateTime?
+  frozenAt    DateTime?
+  postedAt    DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime
   metadata    Json      @default("{}")
+  lines       StockCountLine[]
 
   @@index([status])
   @@index([locationId])
+  @@index([countType, periodKey])
   @@index([startedAt(sort: Desc)])
 }
 
 model StockCountLine {
   id               String   @id
+  stockCount       StockCountSession @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
   stockCountId     String
+  product          Product  @relation(fields: [productId], references: [id])
   productId        String
+  lot              InventoryLot? @relation(fields: [lotId], references: [id])
+  lotId            String?
+  location         StockLocation? @relation(fields: [locationId], references: [id])
+  locationId       String?
   expectedQuantity Int
   countedQuantity  Int
   variance         Int
+  unitCost         Float    @default(0)
+  varianceValue    Float    @default(0)
   reason           String   @default("")
   status           String   @default("counted")
+  adjustmentPosted Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime
   metadata         Json     @default("{}")
 
-  @@unique([stockCountId, productId])
+  @@unique([stockCountId, productId, lotId, locationId])
   @@index([stockCountId])
   @@index([productId])
+  @@index([lotId])
+  @@index([locationId])
   @@index([status])
 }
 
 model StockAdjustmentApproval {
   id          String    @id
+  product     Product   @relation(fields: [productId], references: [id])
   productId   String
+  lot         InventoryLot? @relation(fields: [lotId], references: [id])
+  lotId       String?
+  location    StockLocation? @relation(fields: [locationId], references: [id])
+  locationId  String?
   quantity    Int
   type        String
   status      String    @default("pending")
@@ -857,8 +1377,65 @@ model StockAdjustmentApproval {
   metadata    Json      @default("{}")
 
   @@index([productId])
+  @@index([lotId])
+  @@index([locationId])
   @@index([status])
   @@index([createdAt(sort: Desc)])
+}
+
+model InventoryPeriodClose {
+  id             String    @id
+  closeNumber    String    @unique
+  periodType     String
+  periodKey      String    @unique
+  status         String    @default("draft")
+  effectiveAt    DateTime
+  openedAt       DateTime?
+  countSessionId String?
+  totalQuantity  Int       @default(0)
+  totalValue     Float     @default(0)
+  varianceQuantity Int     @default(0)
+  varianceValue  Float     @default(0)
+  createdBy      String
+  reviewedBy     String?
+  closedBy       String?
+  reviewedAt     DateTime?
+  closedAt       DateTime?
+  notes          String    @default("")
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime
+  snapshots      InventoryPeriodSnapshot[]
+
+  @@index([periodType])
+  @@index([status])
+  @@index([effectiveAt(sort: Desc)])
+}
+
+model InventoryPeriodSnapshot {
+  id                 String               @id
+  inventoryPeriodClose InventoryPeriodClose @relation(fields: [inventoryPeriodCloseId], references: [id], onDelete: Cascade)
+  inventoryPeriodCloseId String
+  product            Product              @relation(fields: [productId], references: [id])
+  productId          String
+  lot                InventoryLot?         @relation(fields: [lotId], references: [id])
+  lotId              String?
+  location           StockLocation         @relation(fields: [locationId], references: [id])
+  locationId         String
+  onHand             Int
+  reserved           Int
+  damaged            Int
+  hold               Int
+  available          Int
+  unitCost           Float                @default(0)
+  stockValue         Float                @default(0)
+  metadata           Json                 @default("{}")
+  createdAt          DateTime             @default(now())
+
+  @@unique([inventoryPeriodCloseId, productId, lotId, locationId])
+  @@index([productId])
+  @@index([lotId])
+  @@index([locationId])
 }
 
 model ProductVendor {
@@ -932,6 +1509,12 @@ model DispatchLine {
   salesOrderLineId   String?
   dispatchKey        String
   productId          String?
+  pickLine           PickLine? @relation(fields: [pickLineId], references: [id])
+  pickLineId         String?
+  lot                InventoryLot? @relation(fields: [lotId], references: [id])
+  lotId              String?
+  location           StockLocation? @relation(fields: [locationId], references: [id])
+  locationId         String?
   sku                String
   name               String
   orderedQuantity    Int
@@ -943,12 +1526,16 @@ model DispatchLine {
   createdAt          DateTime @default(now())
   updatedAt          DateTime
   metadata           Json     @default("{}")
+  returnLines        ReturnLine[]
 
   @@index([dispatchJobId])
   @@index([challanId])
   @@index([salesOrderId])
   @@index([salesOrderLineId])
   @@index([productId])
+  @@index([pickLineId])
+  @@index([lotId])
+  @@index([locationId])
   @@index([status])
 }
 
@@ -976,7 +1563,7 @@ model Shipment {
 model DeliveryProof {
   id              String   @id
   shipmentId      String?
-  challanId       String
+  challanId       String   @unique
   receivedByName  String
   receivedByPhone String?
   proofType       String   @default("manual")
@@ -995,6 +1582,7 @@ model DeliveryProof {
 model ReturnOrder {
   id           String    @id
   returnNumber String    @unique
+  idempotencyKey String? @unique
   salesOrderId String?
   challanId    String?
   customerId   String?
@@ -1016,13 +1604,47 @@ model ReturnOrder {
   @@index([createdAt(sort: Desc)])
 }
 
+model CreditNote {
+  id            String   @id
+  creditNoteNumber String @unique
+  returnOrderId String   @unique
+  salesOrderId  String?
+  customerId    String?
+  amount        Float
+  refundMode    String
+  status        String   @default("issued")
+  issuedAt      DateTime @default(now())
+  createdBy     String
+  notes         String   @default("")
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+
+  @@index([salesOrderId])
+  @@index([customerId])
+  @@index([status])
+  @@index([issuedAt(sort: Desc)])
+}
+
 model ReturnLine {
   id            String   @id
   returnOrderId String
+  dispatchLine  DispatchLine? @relation(fields: [dispatchLineId], references: [id])
+  dispatchLineId String?
+  salesOrderLine SalesOrderLine? @relation(fields: [salesOrderLineId], references: [id])
+  salesOrderLineId String?
+  product       Product? @relation(fields: [productId], references: [id])
   productId     String?
+  lot           InventoryLot? @relation(fields: [lotId], references: [id])
+  lotId         String?
+  locationId    String?
   sku           String
   name          String
   quantity      Int
+  acceptedQuantity Int   @default(0)
+  resellQuantity Int     @default(0)
+  damagedQuantity Int    @default(0)
+  supplierReturnQuantity Int @default(0)
   disposition   String   @default("inspect")
   status        String   @default("pending")
   createdAt     DateTime @default(now())
@@ -1030,7 +1652,11 @@ model ReturnLine {
   metadata      Json     @default("{}")
 
   @@index([returnOrderId])
+  @@index([dispatchLineId])
+  @@index([salesOrderLineId])
   @@index([productId])
+  @@index([lotId])
+  @@index([locationId])
   @@index([status])
 }
 

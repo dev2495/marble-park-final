@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
+import { consumeExactReservedLotTx, consumeReservedLotsTx } from '../common/lot-allocation';
 import { ulid } from 'ulid';
 
 export interface CreateDispatchJobInput {
@@ -35,6 +36,15 @@ export interface CreateChallanInput {
   remarks?: string;
   notes?: string;
   packages?: number;
+  lines?: any;
+  pickListId?: string;
+}
+
+export interface CreatePickListInput {
+  salesOrderId: string;
+  locationId: string;
+  assignedTo?: string;
+  notes?: string;
   lines?: any;
 }
 
@@ -253,6 +263,10 @@ export class DispatchService {
       if (orders.length > 1) throw new BadRequestException('Choose the sales order to create a dispatch job. This quote has multiple partial orders.');
     }
     if (!salesOrder) throw new BadRequestException('A sales order is required to create a dispatch job');
+    const existingJob = await this.prisma.dispatchJob.findUnique({
+      where: { salesOrderId: salesOrder.id }, include: { customer: true },
+    } as any).catch(() => null);
+    if (existingJob) return existingJob;
     const quote = await this.prisma.quote.findUnique({
       where: { id: salesOrder.quoteId },
       include: { customer: true },
@@ -295,6 +309,162 @@ export class DispatchService {
     } as any) as any;
   }
 
+  async pickLists(args?: { salesOrderId?: string; status?: string; take?: number }) {
+    const where: any = {};
+    if (args?.salesOrderId) where.salesOrderId = args.salesOrderId;
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    return this.prisma.pickList.findMany({
+      where,
+      include: {
+        salesOrder: true,
+        location: true,
+        lines: { include: { salesOrderLine: true, product: true, lot: true, location: true }, orderBy: { createdAt: 'asc' } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.max(1, Math.min(200, Number(args?.take) || 80)),
+    });
+  }
+
+  async createPickList(input: CreatePickListInput, actorUserId: string) {
+    const requestedRows = this.normalizeLines(input.lines) || [];
+    return this.prisma.$transaction(async (tx: any) => {
+      const [salesOrder, location] = await Promise.all([
+        tx.salesOrder.findUnique({ where: { id: input.salesOrderId } }),
+        tx.stockLocation.findUnique({ where: { id: input.locationId } }),
+      ]);
+      if (!salesOrder) throw new NotFoundException('Sales order not found');
+      if (!location || location.status !== 'active') throw new BadRequestException('Select an active pick location');
+      const existing = await tx.pickList.findFirst({
+        where: { salesOrderId: salesOrder.id, locationId: location.id, status: { in: ['ready', 'picking', 'picked', 'partial_packed', 'packed', 'completed', 'challan_created'] } },
+        include: { salesOrder: true, location: true, lines: { include: { salesOrderLine: true, product: true, lot: true, location: true } } },
+      });
+      if (existing && !requestedRows.length) return existing;
+      const orderLines = await tx.salesOrderLine.findMany({ where: { salesOrderId: salesOrder.id, productId: { not: null } } });
+      const orderLineIds = orderLines.map((line: any) => line.id);
+      const allocations = await tx.lotReservation.findMany({
+        where: { salesOrderLineId: { in: orderLineIds }, locationId: location.id, status: 'reserved', quantity: { gt: 0 } },
+        include: { salesOrderLine: true, lot: true, location: true },
+        orderBy: { reservedAt: 'asc' },
+      });
+      const openPicks = await tx.pickLine.findMany({
+        where: {
+          salesOrderLineId: { in: orderLineIds }, locationId: location.id,
+          pickList: { status: { in: ['ready', 'picking', 'picked', 'partial_packed', 'packed', 'completed', 'challan_created'] } },
+        },
+      });
+      const openByIdentity = new Map<string, number>();
+      for (const line of openPicks) {
+        const key = `${line.salesOrderLineId}:${line.lotId}:${line.locationId}`;
+        openByIdentity.set(key, (openByIdentity.get(key) || 0) + Number(line.requestedQuantity || 0));
+      }
+      const requestedByIdentity = new Map<string, number>();
+      for (const row of requestedRows) {
+        const key = `${row.salesOrderLineId || ''}:${row.lotId || ''}:${row.locationId || location.id}`;
+        const quantity = Math.trunc(Number(row.quantity || row.requestedQuantity || 0));
+        if (quantity > 0) requestedByIdentity.set(key, quantity);
+      }
+      const selected = allocations.map((allocation: any) => {
+        const key = `${allocation.salesOrderLineId}:${allocation.lotId}:${allocation.locationId}`;
+        const available = Math.max(0, Number(allocation.quantity || 0) - Number(openByIdentity.get(key) || 0));
+        const requested = requestedRows.length ? Number(requestedByIdentity.get(key) || 0) : available;
+        if (requested > available) throw new BadRequestException(`${allocation.lot.lotNumber} has only ${available} unpicked reserved units`);
+        return { allocation, requested };
+      }).filter((row: any) => row.requested > 0);
+      if (!selected.length) throw new BadRequestException('No unpicked reserved stock is available at this location');
+      const pickNumber = await nextDocumentNumber(tx, 'pick_list', 'PK', new Date(), {
+        existingNumbers: async (prefixForYear) => (await tx.pickList.findMany({
+          where: { pickNumber: { startsWith: prefixForYear } }, select: { pickNumber: true },
+        })).map((row: any) => row.pickNumber),
+      });
+      const pick = await tx.pickList.create({
+        data: {
+          id: ulid(), pickNumber, salesOrderId: salesOrder.id, locationId: location.id,
+          status: 'ready', assignedTo: input.assignedTo || null, createdBy: actorUserId,
+          notes: input.notes || '', metadata: {}, updatedAt: new Date(),
+        },
+      });
+      for (const { allocation, requested } of selected) {
+        await tx.pickLine.create({
+          data: {
+            id: ulid(), pickListId: pick.id, salesOrderLineId: allocation.salesOrderLineId,
+            productId: allocation.salesOrderLine.productId, lotId: allocation.lotId, locationId: allocation.locationId,
+            requestedQuantity: requested, status: 'pending', metadata: { lotReservationId: allocation.id }, updatedAt: new Date(),
+          },
+        });
+      }
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: 'pick_list.create', entityType: 'PickList', entityId: pick.id,
+          summary: `Created ${pickNumber}`, metadata: { salesOrderId: salesOrder.id, locationId: location.id, lineCount: selected.length },
+        },
+      });
+      return tx.pickList.findUnique({
+        where: { id: pick.id },
+        include: { salesOrder: true, location: true, lines: { include: { salesOrderLine: true, product: true, lot: true, location: true } } },
+      });
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
+  async transitionPickList(id: string, action: string, input: any, actorUserId: string) {
+    const normalizedAction = String(action || '').trim().toLowerCase();
+    if (!['start', 'pick', 'pack', 'complete', 'cancel'].includes(normalizedAction)) throw new BadRequestException('Unsupported pick-list action');
+    const inputLines = new Map((this.normalizeLines(input?.lines) || []).map((row: any) => [String(row.pickLineId || row.id || ''), row]));
+    return this.prisma.$transaction(async (tx: any) => {
+      const pick = await tx.pickList.findUnique({ where: { id }, include: { lines: true } });
+      if (!pick) throw new NotFoundException('Pick list not found');
+      if (normalizedAction === 'cancel') {
+        if (!['ready', 'picking'].includes(pick.status)) throw new BadRequestException(`${pick.pickNumber} cannot be cancelled from ${pick.status}`);
+        await tx.pickLine.updateMany({ where: { pickListId: id }, data: { status: 'cancelled', updatedAt: new Date() } });
+        await tx.pickList.update({ where: { id }, data: { status: 'cancelled', cancelledAt: new Date(), updatedAt: new Date(), metadata: { ...(pick.metadata as any), cancelReason: input?.reason || 'Cancelled' } } });
+      } else if (normalizedAction === 'start') {
+        if (pick.status !== 'ready') throw new BadRequestException(`${pick.pickNumber} cannot start from ${pick.status}`);
+        await tx.pickList.update({ where: { id }, data: { status: 'picking', startedAt: new Date(), assignedTo: input?.assignedTo || pick.assignedTo || actorUserId, updatedAt: new Date() } });
+      } else if (normalizedAction === 'pick') {
+        if (!['ready', 'picking'].includes(pick.status)) throw new BadRequestException(`${pick.pickNumber} cannot be picked from ${pick.status}`);
+        for (const line of pick.lines) {
+          const row: any = inputLines.get(line.id);
+          if (!row) continue;
+          const quantity = Math.trunc(Number(row.pickedQuantity ?? row.quantity ?? 0));
+          if (quantity < 0 || quantity > line.requestedQuantity) throw new BadRequestException('Picked quantity must be between zero and requested quantity');
+          await tx.pickLine.update({ where: { id: line.id }, data: { pickedQuantity: quantity, status: quantity === line.requestedQuantity ? 'picked' : 'partial', pickedBy: actorUserId, pickedAt: new Date(), updatedAt: new Date() } });
+        }
+        const refreshed = await tx.pickLine.findMany({ where: { pickListId: id } });
+        const fullyPicked = refreshed.every((line: any) => line.pickedQuantity === line.requestedQuantity);
+        await tx.pickList.update({ where: { id }, data: { status: fullyPicked ? 'picked' : 'picking', startedAt: pick.startedAt || new Date(), updatedAt: new Date() } });
+      } else if (normalizedAction === 'pack') {
+        if (!['picking', 'picked', 'partial_packed'].includes(pick.status)) throw new BadRequestException(`${pick.pickNumber} cannot be packed from ${pick.status}`);
+        for (const line of pick.lines) {
+          const row: any = inputLines.get(line.id);
+          if (!row) continue;
+          const quantity = Math.trunc(Number(row.packedQuantity ?? row.quantity ?? 0));
+          if (quantity < 0 || quantity > line.pickedQuantity) throw new BadRequestException('Packed quantity cannot exceed picked quantity');
+          await tx.pickLine.update({ where: { id: line.id }, data: { packedQuantity: quantity, status: quantity === line.requestedQuantity ? 'packed' : 'partial_packed', updatedAt: new Date() } });
+        }
+        const refreshed = await tx.pickLine.findMany({ where: { pickListId: id } });
+        const fullyPacked = refreshed.every((line: any) => line.packedQuantity === line.requestedQuantity);
+        await tx.pickList.update({ where: { id }, data: { status: fullyPacked ? 'packed' : 'partial_packed', updatedAt: new Date() } });
+      } else {
+        if (!['packed', 'partial_packed'].includes(pick.status)) throw new BadRequestException(`${pick.pickNumber} must have packed quantities before completion`);
+        const packedTotal = pick.lines.reduce((sum: number, line: any) => sum + Number(line.packedQuantity || 0), 0);
+        if (packedTotal <= 0) throw new BadRequestException('Pack at least one unit before completing the pick list');
+        for (const line of pick.lines) {
+          if (line.packedQuantity > 0) {
+            await tx.pickLine.update({ where: { id: line.id }, data: { requestedQuantity: line.packedQuantity, pickedQuantity: line.packedQuantity, status: 'packed', updatedAt: new Date() } });
+          } else {
+            await tx.pickLine.update({ where: { id: line.id }, data: { requestedQuantity: 0, pickedQuantity: 0, status: 'cancelled', updatedAt: new Date() } });
+          }
+        }
+        await tx.pickList.update({ where: { id }, data: { status: 'completed', completedAt: new Date(), updatedAt: new Date() } });
+      }
+      await tx.auditEvent.create({
+        data: { id: ulid(), actorUserId, action: `pick_list.${normalizedAction}`, entityType: 'PickList', entityId: id, summary: `${normalizedAction} ${pick.pickNumber}`, metadata: {} },
+      });
+      return tx.pickList.findUnique({
+        where: { id }, include: { salesOrder: true, location: true, lines: { include: { salesOrderLine: true, product: true, lot: true, location: true } } },
+      });
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
   async createChallan(data: CreateChallanInput) {
     const dispatchJobId = data.dispatchJobId || data.jobId;
     if (!dispatchJobId) throw new BadRequestException('A dispatch job is required to create a challan');
@@ -309,44 +479,70 @@ export class DispatchService {
       : await this.prisma.salesOrder.findFirst({ where: { quoteId: job.quoteId } }).catch(() => null);
     if (!salesOrder) throw new BadRequestException('Dispatch requires a linked Sales Order. Convert the quote to a sales order first.');
 
+    if (!data.pickListId) throw new BadRequestException('Complete a pick list before creating a challan');
+    const pickList = await this.prisma.pickList.findUnique({
+      where: { id: data.pickListId },
+      include: { lines: { include: { salesOrderLine: true, product: true, lot: true, location: true } } },
+    });
+    if (!pickList || pickList.salesOrderId !== salesOrder.id) throw new BadRequestException('Selected pick list does not belong to this sales order');
+    if (!['packed', 'completed'].includes(pickList.status)) throw new BadRequestException('Pick list must be completed before challan creation');
+
     const contactPhone = data.contactPhone || data.driverPhone || job.customer?.mobile || '';
     if (!contactPhone) throw new BadRequestException('A driver/contact phone is required');
 
-    let challanLines = this.normalizeLines(data.lines) || [];
-    if (!challanLines.length) {
-      const queueJob = (await this.dispatchQueue()).find((row: any) => row.id === dispatchJobId);
-      if ((queueJob?.pendingInwardLines || []).length || (queueJob?.invalidLines || []).length) {
-        throw new BadRequestException('Select ready lines for partial dispatch. This job still has items not inwards yet.');
-      }
-      challanLines = (queueJob?.readyLines || []).map((line: any) => ({ ...line, dispatchQty: Number(line.dispatchableQty || 0) })).filter((line: any) => Number(line.dispatchQty || 0) > 0);
+    const priorDispatchLines = await this.prisma.dispatchLine.findMany({
+      where: { pickLineId: { in: pickList.lines.map((line: any) => line.id) }, status: { not: 'cancelled' } },
+    });
+    const priorByPickLine = new Map<string, number>();
+    for (const line of priorDispatchLines) {
+      if (!line.pickLineId) continue;
+      priorByPickLine.set(line.pickLineId, (priorByPickLine.get(line.pickLineId) || 0) + Number(line.packedQuantity || 0));
     }
+    const requestedLines = this.normalizeLines(data.lines) || [];
+    const requestedByPickLine = new Map(requestedLines.map((line: any) => [String(line.pickLineId || ''), Math.trunc(Number(line.dispatchQty || line.quantity || 0))]));
+    let challanLines = pickList.lines.map((line: any) => {
+      const availablePacked = Math.max(0, Number(line.packedQuantity || 0) - Number(priorByPickLine.get(line.id) || 0));
+      const dispatchQty = requestedLines.length ? Number(requestedByPickLine.get(line.id) || 0) : availablePacked;
+      if (dispatchQty > availablePacked) throw new BadRequestException(`${line.product.sku} has only ${availablePacked} packed units left on ${pickList.pickNumber}`);
+      return {
+        pickLineId: line.id,
+        salesOrderLineId: line.salesOrderLineId,
+        lineKey: line.salesOrderLine.lineKey,
+        quoteLineId: line.salesOrderLine.quoteLineId,
+        productId: line.productId,
+        lotId: line.lotId,
+        locationId: line.locationId,
+        sku: line.product.sku,
+        name: line.product.name,
+        category: line.product.category,
+        brand: line.product.brand,
+        finish: line.product.finish,
+        unit: line.salesOrderLine.unit,
+        dispatchQty,
+      };
+    }).filter((line: any) => line.dispatchQty > 0);
     if (!challanLines.length) throw new BadRequestException('Select at least one ready item to create a challan');
     await this.assertDispatchableLines(challanLines, job);
-    const challan = await this.prisma.dispatchChallan.create({
-      data: {
-        id: ulid(),
-        challanNumber: await this.generateChallanNumber(),
-        quoteId: data.quoteId || job.quoteId,
-        salesOrderId: data.salesOrderId || salesOrder.id,
-        dispatchJobId,
-        customerId: data.customerId || job.customerId,
-        status: 'pending',
-        vehicleNumber: data.vehicleNumber || data.vehicleNo,
-        driverName: data.driverName,
-        transporterName: data.transporterName || data.transporter,
-        contactPhone,
-        siteAddress: data.siteAddress || job.siteAddress,
-        remarks: data.remarks || data.notes || '',
-        lines: challanLines,
-        updatedAt: new Date(),
-      },
-      include: { customer: true, quote: true }
-    } as any) as any;
-    await this.createDispatchRecordsForChallan(challan, job, salesOrder, challanLines, data);
-    await this.prisma.dispatchJob.update({
-      where: { id: dispatchJobId },
-      data: { status: 'packed', updatedAt: new Date() },
-    }).catch(() => {});
+    const challan = await this.prisma.$transaction(async (tx: any) => {
+      const created = await tx.dispatchChallan.create({
+        data: {
+          id: ulid(), challanNumber: await this.generateChallanNumber(tx),
+          quoteId: data.quoteId || job.quoteId, salesOrderId: data.salesOrderId || salesOrder.id,
+          dispatchJobId, customerId: data.customerId || job.customerId, status: 'pending',
+          vehicleNumber: data.vehicleNumber || data.vehicleNo, driverName: data.driverName,
+          transporterName: data.transporterName || data.transporter, contactPhone,
+          siteAddress: data.siteAddress || job.siteAddress, remarks: data.remarks || data.notes || '',
+          lines: challanLines, updatedAt: new Date(),
+        },
+        include: { customer: true, quote: true },
+      });
+      await this.createDispatchRecordsForChallanTx(tx, created, job, salesOrder, challanLines, data);
+      await tx.dispatchJob.update({
+        where: { id: dispatchJobId }, data: { status: 'packed', updatedAt: new Date() },
+      });
+      await tx.pickList.update({ where: { id: pickList.id }, data: { status: 'challan_created', updatedAt: new Date() } });
+      return created;
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
     await this.notifications.create({
       title: 'Partial challan created',
       message: `${challan.challanNumber} created for ${job.customer?.name || 'customer'}. Dispatch only listed rows.`,
@@ -360,10 +556,39 @@ export class DispatchService {
     return challan;
   }
 
-  async updateChallanStatus(id: string, status: string) {
+  async confirmDelivery(id: string, input: any, actorUserId: string) {
+    const receivedByName = String(input?.receivedByName || '').trim();
+    if (!receivedByName) throw new BadRequestException('Recipient name is required to confirm delivery');
+    const proofType = String(input?.proofType || 'manual').trim().toLowerCase();
+    if (!['manual', 'otp', 'photo', 'signature'].includes(proofType)) throw new BadRequestException('Delivery proof type must be manual, OTP, photo, or signature');
+    const proofUrl = String(input?.proofUrl || '').trim() || null;
+    if (['photo', 'signature'].includes(proofType) && !proofUrl) throw new BadRequestException(`${proofType} delivery proof requires an uploaded proof file`);
+    return this.updateChallanStatus(id, 'delivered', actorUserId, {
+      receivedByName,
+      receivedByPhone: String(input?.receivedByPhone || '').trim() || null,
+      proofType,
+      proofUrl,
+      latitude: input?.latitude == null ? null : Number(input.latitude),
+      longitude: input?.longitude == null ? null : Number(input.longitude),
+      notes: String(input?.notes || '').trim(),
+      capturedAt: new Date().toISOString(),
+    });
+  }
+
+  async updateChallanStatus(id: string, status: string, actorUserId = 'system', deliveryProof?: any) {
     const challan = await this.prisma.dispatchChallan.findUnique({ where: { id } });
     if (!challan) throw new NotFoundException('Challan not found');
     if (challan.status === status) return challan as any;
+
+    const allowedTransitions: Record<string, string[]> = {
+      pending: ['dispatched', 'cancelled'],
+      dispatched: ['delivered', 'failed_delivery'],
+      failed_delivery: ['dispatched', 'cancelled'],
+    };
+    if (!(allowedTransitions[challan.status] || []).includes(status)) {
+      throw new BadRequestException(`Challan cannot move from ${challan.status} to ${status}`);
+    }
+    if (status === 'delivered' && !deliveryProof) throw new BadRequestException('Use delivery confirmation with recipient proof to mark a challan delivered');
 
     if (status === 'dispatched' && challan.status === 'pending') {
       const job = await this.prisma.dispatchJob.findUnique({ where: { id: challan.dispatchJobId } }).catch(() => null);
@@ -375,6 +600,7 @@ export class DispatchService {
       data.dispatchedAt = new Date();
     } else if (status === 'delivered') {
       data.deliveredAt = new Date();
+      data.proof = deliveryProof;
     }
     
     return this.prisma.$transaction(async (tx) => {
@@ -384,6 +610,11 @@ export class DispatchService {
 
       let updated: any = current;
       if (status === 'dispatched') {
+        if (current.status === 'failed_delivery') {
+          updated = await tx.dispatchChallan.update({ where: { id }, data });
+          await tx.shipment.updateMany({ where: { challanId: id }, data: { status: 'dispatched', updatedAt: new Date() } });
+          await this.refreshJobStatusTx(tx, updated.dispatchJobId);
+        } else {
         const claimed = await tx.dispatchChallan.updateMany({ where: { id, status: 'pending' }, data });
         updated = await tx.dispatchChallan.findUnique({ where: { id } });
         if (claimed.count !== 1) return updated;
@@ -413,9 +644,10 @@ export class DispatchService {
             },
           }).catch(() => null);
         }
+        }
       } else if (status === 'delivered') {
         updated = await tx.dispatchChallan.update({ where: { id }, data });
-        await this.markChallanDeliveredTx(tx, updated as any);
+        await this.markChallanDeliveredTx(tx, updated as any, actorUserId);
         await this.refreshJobStatusTx(tx, updated.dispatchJobId);
         const job = await tx.dispatchJob.findUnique({ where: { id: updated.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
         if (job?.quote?.ownerId) {
@@ -437,8 +669,15 @@ export class DispatchService {
         updated = await tx.dispatchChallan.update({ where: { id }, data });
       }
 
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: `dispatch_challan.${status}`, entityType: 'DispatchChallan', entityId: id,
+          summary: `${updated.challanNumber} marked ${status}`, metadata: status === 'delivered' ? { proofType: deliveryProof?.proofType, receivedByName: deliveryProof?.receivedByName } : {},
+        },
+      });
+
       return updated;
-    });
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
   }
 
   async findAllChallans(args?: { status?: string; dispatchJobId?: string }) {
@@ -463,28 +702,27 @@ export class DispatchService {
     return { pending, packed, dispatched, delivered };
   }
 
-  private async generateChallanNumber(): Promise<string> {
-    return nextDocumentNumber(this.prisma as any, 'challan', 'CH', new Date(), {
-      existingNumbers: async (prefixForYear) => (await this.prisma.dispatchChallan.findMany({
+  private async generateChallanNumber(client: any = this.prisma as any): Promise<string> {
+    return nextDocumentNumber(client, 'challan', 'CH', new Date(), {
+      existingNumbers: async (prefixForYear) => (await client.dispatchChallan.findMany({
         where: { challanNumber: { startsWith: prefixForYear } },
         select: { challanNumber: true },
       })).map((row) => row.challanNumber),
     });
   }
 
-  private async generateShipmentNumber(): Promise<string> {
-    return nextDocumentNumber(this.prisma as any, 'shipment', 'SHP', new Date(), {
-      existingNumbers: async (prefixForYear) => (await (this.prisma as any).shipment.findMany({
+  private async generateShipmentNumber(client: any = this.prisma as any): Promise<string> {
+    return nextDocumentNumber(client, 'shipment', 'SHP', new Date(), {
+      existingNumbers: async (prefixForYear) => (await client.shipment.findMany({
         where: { shipmentNumber: { startsWith: prefixForYear } },
         select: { shipmentNumber: true },
       })).map((row: any) => row.shipmentNumber),
     });
   }
 
-  private async createDispatchRecordsForChallan(challan: any, job: any, salesOrder: any, lines: any[], input: CreateChallanInput) {
+  private async createDispatchRecordsForChallanTx(tx: any, challan: any, job: any, salesOrder: any, lines: any[], input: CreateChallanInput) {
     const packageCount = Math.max(1, Math.trunc(Number(input.packages || 1)));
-    const shipmentNumber = await this.generateShipmentNumber();
-    await this.prisma.$transaction(async (tx: any) => {
+    const shipmentNumber = await this.generateShipmentNumber(tx);
       for (let index = 0; index < packageCount; index += 1) {
         await tx.dispatchPackage.create({
           data: {
@@ -529,7 +767,7 @@ export class DispatchService {
               line.quoteLineId ? { quoteLineId: String(line.quoteLineId) } : undefined,
               lineKey ? { lineKey } : undefined,
               productId ? { productId } : undefined,
-            ].filter((item: any) => Object.values(item)[0]),
+            ].filter(Boolean),
           },
         }).catch(() => null);
         await tx.dispatchLine.create({
@@ -539,6 +777,9 @@ export class DispatchService {
             challanId: challan.id,
             salesOrderId: salesOrder.id,
             salesOrderLineId: orderLine?.id || null,
+            pickLineId: line.pickLineId || null,
+            lotId: line.lotId || null,
+            locationId: line.locationId || null,
             dispatchKey,
             productId: productId || null,
             sku: String(line.sku || line.tileCode || productId || `LINE-${index + 1}`),
@@ -551,7 +792,6 @@ export class DispatchService {
           },
         });
       }
-    }, { timeout: 15000 });
   }
 
   private normalizeLines(lines: any) {
@@ -581,33 +821,13 @@ export class DispatchService {
         continue;
       }
 
-      await applyStockPostingTx(tx, {
-        productId,
-        type: 'dispatch',
-        movementType: 'dispatch',
-        ledgerType: 'dispatch',
-        quantity,
-        onHandDelta: -quantity,
-        reservedDelta: -quantity,
-        locationOnHandDelta: -quantity,
-        locationReservedDelta: -quantity,
-        requireReserved: true,
-        requireOnHand: true,
-        reason: `Dispatched on ${challan.challanNumber}`,
-        relatedQuoteId: challan.quoteId,
-        relatedChallanId: challan.id,
-        referenceType: 'DispatchChallan',
-        referenceId: challan.id,
-        sourceDocumentNo: challan.challanNumber,
-        createdBy: 'dispatch',
-        metadata: { quoteId: challan.quoteId },
-      });
       const salesOrder = challan.salesOrderId
         ? await tx.salesOrder.findUnique({ where: { id: challan.salesOrderId } }).catch(() => null)
         : await tx.salesOrder.findFirst({ where: { quoteId: challan.quoteId } }).catch(() => null);
+      let orderLine: any = null;
       if (salesOrder) {
         const lineKey = String(line.lineKey || line.quoteLineId || line.dispatchKey || '').trim();
-        const orderLine = await tx.salesOrderLine.findFirst({
+        orderLine = await tx.salesOrderLine.findFirst({
           where: {
             salesOrderId: salesOrder.id,
             OR: [
@@ -626,15 +846,35 @@ export class DispatchService {
               status: Number(orderLine.dispatchedQuantity || 0) + quantity >= Number(orderLine.orderedQuantity || 0) ? 'dispatched' : 'partial_dispatched',
               updatedAt: new Date(),
             },
-          }).catch(() => null);
+          });
         }
         await tx.dispatchLine.updateMany({
           where: orderLine ? { challanId: challan.id, salesOrderLineId: orderLine.id } : { challanId: challan.id, productId },
           data: { dispatchedQuantity: quantity, status: 'dispatched', updatedAt: new Date() },
-        }).catch(() => null);
+        });
+      }
+
+      if (line.pickLineId && line.lotId && line.locationId && orderLine) {
+        const consumedLots = await consumeExactReservedLotTx(tx, {
+          salesOrderLineId: orderLine.id, productId, lotId: String(line.lotId), locationId: String(line.locationId),
+          quantity, challanId: challan.id, challanNumber: challan.challanNumber, actorUserId: 'dispatch',
+        });
+        await tx.dispatchLine.updateMany({
+          where: { challanId: challan.id, pickLineId: String(line.pickLineId) },
+          data: { metadata: { quoteId: challan.quoteId, lotAllocations: consumedLots, pickControlled: true }, updatedAt: new Date() },
+        });
+        const pickedLine = await tx.pickLine.update({ where: { id: String(line.pickLineId) }, data: { status: 'dispatched', updatedAt: new Date() } });
+        const remainingPickLines = await tx.pickLine.count({
+          where: { pickListId: pickedLine.pickListId, status: { notIn: ['dispatched', 'cancelled'] } },
+        });
+        if (!remainingPickLines) {
+          await tx.pickList.update({ where: { id: pickedLine.pickListId }, data: { status: 'dispatched', updatedAt: new Date() } });
+        }
+        continue;
       }
 
       let remainingToDispatch = quantity;
+      const consumedLots: any[] = [];
       while (remainingToDispatch > 0) {
         const reservation = await tx.reservation.findFirst({
           where: { ...(salesOrder ? { salesOrderId: salesOrder.id } : { quoteId: challan.quoteId, salesOrderId: null }), productId, status: 'reserved' },
@@ -642,6 +882,10 @@ export class DispatchService {
         });
         if (!reservation) break;
         const consume = Math.min(remainingToDispatch, Number(reservation.quantity || 0));
+        consumedLots.push(...await consumeReservedLotsTx(tx, {
+          reservation, quantity: consume, challanId: challan.id, challanNumber: challan.challanNumber,
+          actorUserId: 'dispatch',
+        }));
         if (consume >= Number(reservation.quantity || 0)) {
           await tx.reservation.update({
             where: { id: reservation.id },
@@ -654,6 +898,16 @@ export class DispatchService {
           });
         }
         remainingToDispatch -= consume;
+      }
+      if (remainingToDispatch > 0) {
+        throw new BadRequestException(`${line.name || line.sku || productId} has ${quantity - remainingToDispatch} lot-reserved units, below dispatch quantity ${quantity}`);
+      }
+      const dispatchLines = await tx.dispatchLine.findMany({ where: { challanId: challan.id, productId } });
+      for (const dispatchLine of dispatchLines) {
+        await tx.dispatchLine.update({
+          where: { id: dispatchLine.id },
+          data: { metadata: { ...(dispatchLine.metadata || {}), quoteId: challan.quoteId, lotAllocations: consumedLots }, updatedAt: new Date() },
+        });
       }
     }
     await syncSalesOrderLinesForQuoteTx(tx, challan.quoteId);
@@ -710,37 +964,39 @@ export class DispatchService {
     }).catch(() => null);
   }
 
-  private async markChallanDeliveredTx(tx: any, challan: any) {
-    const shipment = await tx.shipment.findFirst({ where: { challanId: challan.id } }).catch(() => null);
+  private async markChallanDeliveredTx(tx: any, challan: any, actorUserId: string) {
+    const shipment = await tx.shipment.findFirst({ where: { challanId: challan.id } });
     await tx.shipment.updateMany({
       where: { challanId: challan.id },
       data: { status: 'delivered', deliveredAt: new Date(), updatedAt: new Date() },
-    }).catch(() => null);
-    const existingProof = await tx.deliveryProof.findFirst({ where: { challanId: challan.id } }).catch(() => null);
+    });
+    const existingProof = await tx.deliveryProof.findFirst({ where: { challanId: challan.id } });
     if (!existingProof) {
       await tx.deliveryProof.create({
         data: {
           id: ulid(),
           shipmentId: shipment?.id || null,
           challanId: challan.id,
-          receivedByName: (challan.proof as any)?.receivedBy || challan.driverName || 'Customer representative',
-          receivedByPhone: (challan.proof as any)?.phone || challan.contactPhone || null,
-          proofType: (challan.proof as any)?.type || 'manual',
-          proofUrl: (challan.proof as any)?.url || null,
-          createdBy: 'dispatch',
+          receivedByName: (challan.proof as any)?.receivedByName,
+          receivedByPhone: (challan.proof as any)?.receivedByPhone || null,
+          proofType: (challan.proof as any)?.proofType || 'manual',
+          proofUrl: (challan.proof as any)?.proofUrl || null,
+          latitude: (challan.proof as any)?.latitude ?? null,
+          longitude: (challan.proof as any)?.longitude ?? null,
+          createdBy: actorUserId,
           metadata: challan.proof || {},
         },
-      }).catch(() => null);
+      });
     }
-    const lines = await tx.dispatchLine.findMany({ where: { challanId: challan.id } }).catch(() => []);
+    const lines = await tx.dispatchLine.findMany({ where: { challanId: challan.id } });
     for (const line of lines) {
       const delivered = Number(line.packedQuantity || line.dispatchedQuantity || line.orderedQuantity || 0);
       await tx.dispatchLine.update({
         where: { id: line.id },
         data: { deliveredQuantity: delivered, status: 'delivered', updatedAt: new Date() },
-      }).catch(() => null);
+      });
       if (line.salesOrderLineId) {
-        const orderLine = await tx.salesOrderLine.findUnique({ where: { id: line.salesOrderLineId } }).catch(() => null);
+        const orderLine = await tx.salesOrderLine.findUnique({ where: { id: line.salesOrderLineId } });
         if (orderLine) {
           const nextDelivered = Math.min(Number(orderLine.orderedQuantity || 0), Number(orderLine.deliveredQuantity || 0) + delivered);
           await tx.salesOrderLine.update({
@@ -750,7 +1006,7 @@ export class DispatchService {
               status: nextDelivered >= Number(orderLine.orderedQuantity || 0) ? 'delivered' : 'partial_delivered',
               updatedAt: new Date(),
             },
-          }).catch(() => null);
+          });
         }
       }
     }

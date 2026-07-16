@@ -25,6 +25,8 @@ export interface StockPostingInput {
   referenceType?: string | null;
   referenceId?: string | null;
   sourceDocumentNo?: string | null;
+  lotId?: string | null;
+  idempotencyKey?: string | null;
   relatedQuoteId?: string | null;
   relatedChallanId?: string | null;
   metadata?: Record<string, unknown>;
@@ -33,6 +35,7 @@ export interface StockPostingInput {
   requireOnHand?: boolean;
   skipMovement?: boolean;
   skipLedger?: boolean;
+  effectiveAt?: Date | string;
 }
 
 export function wholeDelta(value: unknown) {
@@ -80,6 +83,17 @@ export async function applyStockPostingTx(tx: Tx, input: StockPostingInput) {
   const quantity = Math.abs(wholeDelta(input.quantity));
   if (quantity <= 0) throw new BadRequestException('Stock posting quantity must be greater than zero');
 
+  if (input.idempotencyKey) {
+    const existingPosting = await tx.stockLedgerEntry.findUnique({ where: { idempotencyKey: input.idempotencyKey } }).catch(() => null);
+    if (existingPosting) {
+      if (existingPosting.productId !== productId) throw new BadRequestException('Stock idempotency key belongs to another product');
+      return tx.inventoryBalance.findUnique({ where: { productId } });
+    }
+  }
+
+  const effectiveAt = normalizeEffectiveAt(input.effectiveAt);
+  await assertInventoryPeriodOpenTx(tx, effectiveAt);
+
   const onHandDelta = wholeDelta(input.onHandDelta);
   const reservedDelta = wholeDelta(input.reservedDelta);
   const damagedDelta = wholeDelta(input.damagedDelta);
@@ -115,6 +129,9 @@ export async function applyStockPostingTx(tx: Tx, input: StockPostingInput) {
   };
   if (next.onHand < 0 || next.reserved < 0 || next.damaged < 0 || next.hold < 0) {
     throw new BadRequestException('Stock posting would create a negative stock bucket');
+  }
+  if (next.reserved + next.damaged + next.hold > next.onHand) {
+    throw new BadRequestException('Reserved, damaged and held stock cannot exceed on-hand stock');
   }
   const nextAvailable = Math.max(0, next.onHand - next.reserved - next.damaged - next.hold);
 
@@ -166,6 +183,8 @@ export async function applyStockPostingTx(tx: Tx, input: StockPostingInput) {
         id: ulid(),
         productId,
         locationId: location?.id || null,
+        lotId: input.lotId || null,
+        idempotencyKey: input.idempotencyKey || null,
         type: input.ledgerType || input.type,
         quantity,
         direction: input.direction || inferLedgerDirection(onHandDelta, reservedDelta, damagedDelta, holdDelta),
@@ -177,13 +196,49 @@ export async function applyStockPostingTx(tx: Tx, input: StockPostingInput) {
         metadata: {
           before,
           after: { ...next, available: nextAvailable },
+          effectiveAt: effectiveAt.toISOString(),
           ...(input.metadata || {}),
         },
       },
-    }).catch(() => null);
+    });
   }
 
   return balance;
+}
+
+export async function assertInventoryPeriodOpenTx(tx: Tx, effectiveAt: Date | string = new Date()) {
+  const date = normalizeEffectiveAt(effectiveAt);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value || '';
+  const year = Number(value('year'));
+  const month = Number(value('month'));
+  const monthlyKey = `${year}-${String(month).padStart(2, '0')}`;
+  const fiscalStart = month >= 4 ? year : year - 1;
+  const fiscalEnd = fiscalStart + 1;
+  const yearEndKeys = [
+    `${fiscalStart}-${String(fiscalEnd).slice(-2)}`,
+    `${fiscalStart}-${fiscalEnd}`,
+    `FY${fiscalStart}-${String(fiscalEnd).slice(-2)}`,
+  ];
+  const closed = await tx.inventoryPeriodClose.findFirst({
+    where: {
+      status: 'closed',
+      OR: [
+        { periodType: 'monthly', periodKey: monthlyKey },
+        { periodType: 'year_end', periodKey: { in: yearEndKeys } },
+      ],
+    },
+    select: { closeNumber: true, periodKey: true },
+  }).catch(() => null);
+  if (closed) throw new BadRequestException(`Inventory period ${closed.periodKey} is closed (${closed.closeNumber}); stock posting is locked`);
+}
+
+function normalizeEffectiveAt(value?: Date | string) {
+  const date = value instanceof Date ? value : value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) throw new BadRequestException('Stock posting effective date is invalid');
+  return date;
 }
 
 async function applyLocationBucketDeltaTx(
@@ -225,6 +280,9 @@ async function applyLocationBucketDeltaTx(
   };
   if (next.onHand < 0 || next.reserved < 0 || next.damaged < 0 || next.hold < 0) {
     throw new BadRequestException('Location stock posting would create a negative stock bucket');
+  }
+  if (next.reserved + next.damaged + next.hold > next.onHand) {
+    throw new BadRequestException('Location reserved, damaged and held stock cannot exceed location on-hand stock');
   }
   if (existing) {
     return tx.stockBalanceByLocation.update({

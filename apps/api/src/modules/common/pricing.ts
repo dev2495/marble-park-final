@@ -42,6 +42,20 @@ export function finalUnitRate(line: any) {
   return { listPrice, discountPercent, unitRate };
 }
 
+function commercialQuantity(line: any, inventoryQuantity: number) {
+  const basis = String(line.rateBasis || 'PACK').trim().toUpperCase();
+  if (!['PACK', 'PIECE', 'AREA'].includes(basis)) throw new BadRequestException('Rate basis must be PACK, PIECE, or AREA');
+  const piecesPerPack = Math.max(1, Math.trunc(Number(line.piecesPerPack || line.pcsPerBox || 1)));
+  const coveragePerPack = Number(line.coveragePerPack || 0);
+  if (basis === 'AREA' && (!Number.isFinite(coveragePerPack) || coveragePerPack <= 0)) {
+    throw new BadRequestException(`${line.sku || line.name || 'Area-priced item'} needs positive coverage per pack in Product Master`);
+  }
+  const pricingQuantity = basis === 'PIECE'
+    ? inventoryQuantity * piecesPerPack
+    : basis === 'AREA' ? money(inventoryQuantity * coveragePerPack) : inventoryQuantity;
+  return { basis, piecesPerPack, coveragePerPack, pricingQuantity };
+}
+
 export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0) {
   const normalizedQuoteDiscount = percent(quoteDiscountPercent, 0, 'Quote discount');
   let totals: CommercialTotals = {
@@ -59,10 +73,11 @@ export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0)
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new BadRequestException('Each commercial line needs a positive whole-number quantity');
     }
+    const { basis, piecesPerPack, coveragePerPack, pricingQuantity } = commercialQuantity(line, quantity);
     const { listPrice, discountPercent, unitRate } = finalUnitRate(line);
     const taxRate = percent(line.taxRate, DEFAULT_TAX_RATE, 'Tax rate');
-    const listAmount = money(quantity * listPrice);
-    const lineSubtotal = money(quantity * unitRate);
+    const listAmount = money(pricingQuantity * listPrice);
+    const lineSubtotal = money(pricingQuantity * unitRate);
     const lineDiscountAmount = money(Math.max(0, listAmount - lineSubtotal));
     const quoteDiscountAmount = money(lineSubtotal * normalizedQuoteDiscount / 100);
     const taxableValue = money(lineSubtotal - quoteDiscountAmount);
@@ -85,6 +100,11 @@ export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0)
       ...line,
       qty: quantity,
       quantity,
+      inventoryQuantity: quantity,
+      pricingQuantity,
+      rateBasis: basis,
+      piecesPerPack,
+      coveragePerPack,
       price: listPrice,
       sellPrice: listPrice,
       listPrice,
@@ -115,7 +135,8 @@ export function commercialTotalsFromLines(lines: any[]) {
     const tax = money(line.taxAmount ?? 0);
     const unitRate = money(line.unitRate ?? line.specialRate ?? line.price ?? line.sellPrice ?? 0);
     const quantity = Math.trunc(Number(line.qty ?? line.quantity ?? 0));
-    const subtotal = money(unitRate * Math.max(0, quantity));
+    const pricingQuantity = Number(line.pricingQuantity ?? commercialQuantity(line, Math.max(0, quantity)).pricingQuantity);
+    const subtotal = money(unitRate * Math.max(0, pricingQuantity));
     return {
       subtotal: money(totals.subtotal + subtotal),
       lineDiscountAmount: money(totals.lineDiscountAmount + money(line.lineDiscountAmount ?? 0)),

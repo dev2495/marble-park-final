@@ -9,12 +9,10 @@ import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
 
 const DATA = gql`
   query StockCountPage($search: String, $locationId: String) {
-    inventoryBalances(search: $search, take: 80) {
-      id productId onHand available product { id sku name brand category }
-    }
+    inventoryLots(search: $search, locationId: $locationId, status: "active", take: 200)
     stockLocations(status: "active")
-    stockLocationBalances(locationId: $locationId, take: 250)
     stockCountSessions(take: 40)
+    inventoryPeriodCloses(take: 12)
   }
 `;
 
@@ -35,23 +33,24 @@ export default function StockCountPage() {
   const [locationId, setLocationId] = useState('');
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
+  const [countType, setCountType] = useState('cycle');
+  const [periodKey, setPeriodKey] = useState('');
   const { data, loading, error, refetch } = useQuery(DATA, { variables: { search: search || undefined, locationId: locationId || undefined }, fetchPolicy: 'cache-and-network' });
   const [create, { loading: creating, error: createError }] = useMutation(CREATE, { onCompleted: () => { setCounts({}); setNotes(''); refetch(); } });
   const [approve, { loading: approving, error: approveError }] = useMutation(APPROVE, { onCompleted: () => refetch() });
 
-  const balances = useMemo<any[]>(() => data?.inventoryBalances || [], [data?.inventoryBalances]);
+  const lots = useMemo<any[]>(() => (data?.inventoryLots || []).flatMap((lot: any) => (lot.balances || []).map((balance: any) => ({ ...balance, lot, product: lot.product }))), [data?.inventoryLots]);
   const locations = useMemo<any[]>(() => data?.stockLocations || [], [data?.stockLocations]);
   const defaultLocation = useMemo(() => locations.find((location) => location.defaultStockScope) || locations[0], [locations]);
   const selectedLocation = useMemo(() => locations.find((location) => location.id === locationId) || defaultLocation, [defaultLocation, locationId, locations]);
-  const locationBalances = useMemo<Map<string, any>>(() => new Map((data?.stockLocationBalances || []).map((row: any) => [row.productId, row])), [data?.stockLocationBalances]);
   const sessions = useMemo<any[]>(() => data?.stockCountSessions || [], [data?.stockCountSessions]);
-  const selectedLines = useMemo(() => balances
-    .filter((row) => counts[row.productId] !== undefined && counts[row.productId] !== '')
-    .map((row) => ({ productId: row.productId, countedQuantity: Number(counts[row.productId] || 0), reason: notes || 'Physical count' })), [balances, counts, notes]);
+  const selectedLines = useMemo(() => lots
+    .filter((row) => counts[row.lotId] !== undefined && counts[row.lotId] !== '')
+    .map((row) => ({ productId: row.product.id, lotId: row.lotId, locationId: row.locationId, countedQuantity: Number(counts[row.lotId] || 0), reason: notes || 'Physical count' })), [lots, counts, notes]);
 
   const submit = () => {
     if (!selectedLines.length) return;
-    create({ variables: { input: { scope: selectedLocation ? 'plant_location' : 'selected_skus', locationId: selectedLocation?.id || undefined, notes, submit: true, lines: JSON.stringify(selectedLines) } } });
+    create({ variables: { input: { scope: 'lot_location', countType, periodKey: periodKey || undefined, effectiveAt: new Date().toISOString(), device: 'web', locationId: selectedLocation?.id || undefined, notes, submit: true, lines: JSON.stringify(selectedLines) } } });
   };
 
   useEffect(() => {
@@ -82,17 +81,18 @@ export default function StockCountPage() {
               </select>
             </div>
           </div>
-          {loading && !balances.length ? <div className="p-5"><QueryLoading label="Loading SKUs..." /></div> : null}
+          <div className="grid gap-3 border-b border-[var(--line)] bg-[var(--bg-soft)] p-4 sm:grid-cols-2"><label className="text-xs font-semibold text-[var(--ink-4)]">Count type<select value={countType} onChange={(event) => setCountType(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]"><option value="cycle">Cycle count</option><option value="monthly">Monthly close count</option><option value="year_end">Year-end count</option></select></label><label className="text-xs font-semibold text-[var(--ink-4)]">Period key<Input className="mt-1" value={periodKey} onChange={(event) => setPeriodKey(event.target.value)} placeholder={countType === 'year_end' ? '2026-27' : '2026-07'} disabled={countType === 'cycle'} /></label></div>
+          {loading && !lots.length ? <div className="p-5"><QueryLoading label="Loading lots..." /></div> : null}
           <div className="max-h-[34rem] overflow-y-auto divide-y divide-[var(--line)]">
-            {balances.map((row) => (
-              <div key={row.id} className="grid gap-3 p-4 md:grid-cols-[1fr_8rem] md:items-center">
+            {lots.map((row) => (
+              <div key={`${row.lotId}:${row.locationId}`} className="grid gap-3 p-4 md:grid-cols-[1fr_8rem] md:items-center">
                 <div>
-                  <p className="text-sm font-bold text-[var(--ink)]">{row.product?.sku} · {row.product?.name}</p>
+                  <p className="text-sm font-bold text-[var(--ink)]">{row.product?.internalCode || row.product?.sku} · {row.product?.name}</p>
                   <p className="mt-1 text-xs font-medium text-[var(--ink-4)]">
-                    {selectedLocation ? `${selectedLocation.code} book ${locationBalances.get(row.productId)?.onHand ?? 0}` : `Book on hand ${row.onHand}`} · Total available {row.available}
+                    Lot {row.lot?.lotNumber} · book {row.onHand} · available {row.available} · damaged {row.damaged}
                   </p>
                 </div>
-                <Input type="number" min={0} value={counts[row.productId] || ''} onChange={(event) => setCounts((current) => ({ ...current, [row.productId]: event.target.value }))} placeholder="Counted" />
+                <Input type="number" min={0} value={counts[row.lotId] || ''} onChange={(event) => setCounts((current) => ({ ...current, [row.lotId]: event.target.value }))} placeholder="Counted" />
               </div>
             ))}
           </div>
@@ -109,7 +109,7 @@ export default function StockCountPage() {
               <div key={session.id} className="p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div><p className="font-bold text-[var(--ink)]">{session.countNumber}</p><p className="text-xs text-[var(--ink-4)]">{session.lines?.length || 0} rows · {session.status}</p></div>
-                  {session.status !== 'approved' ? <Button size="sm" disabled={approving} onClick={() => approve({ variables: { id: session.id } })}>Approve</Button> : <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase text-emerald-700">Approved</span>}
+                  {session.status !== 'posted' ? <Button size="sm" disabled={approving} onClick={() => approve({ variables: { id: session.id } })}>Post variance</Button> : <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase text-emerald-700">Posted</span>}
                 </div>
                 <div className="mt-3 space-y-1">
                   {(session.lines || []).slice(0, 4).map((line: any) => <p key={line.id} className="text-xs text-[var(--ink-4)]">Expected {line.expectedQuantity}, counted {line.countedQuantity}, variance {line.variance}</p>)}

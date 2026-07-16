@@ -44,6 +44,9 @@ class ReceivePurchaseOrderInput {
 
   @Field(() => String, { nullable: true })
   lines?: string;
+
+  @Field({ nullable: true })
+  idempotencyKey?: string;
 }
 
 @InputType()
@@ -74,6 +77,9 @@ class ManualGoodsReceiptInput {
 
   @Field(() => String, { nullable: true })
   lines?: string;
+
+  @Field({ nullable: true })
+  idempotencyKey?: string;
 }
 
 @Resolver()

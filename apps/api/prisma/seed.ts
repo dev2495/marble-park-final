@@ -4,7 +4,25 @@ const { ulid } = require('ulid');
 
 const prisma = new PrismaClient();
 
-async function main() {
+async function bootstrapProduction() {
+  const email = String(process.env.BOOTSTRAP_OWNER_EMAIL || '').trim().toLowerCase();
+  const password = String(process.env.BOOTSTRAP_OWNER_PASSWORD || '');
+  const name = String(process.env.BOOTSTRAP_OWNER_NAME || 'Devarsh').trim();
+  const phone = String(process.env.BOOTSTRAP_OWNER_PHONE || '').trim();
+  if (!email || !password) {
+    throw new Error('BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD are required. Use SEED_MODE=demo only for disposable demo data.');
+  }
+  if (password.length < 12) throw new Error('BOOTSTRAP_OWNER_PASSWORD must be at least 12 characters.');
+  const passwordHash = await bcrypt.hash(password, 12);
+  const owner = await prisma.user.upsert({
+    where: { email },
+    create: { id: ulid(), email, passwordHash, name, role: 'owner', phone, active: true },
+    update: { passwordHash, name, role: 'owner', phone, active: true, updatedAt: new Date() },
+  });
+  console.log(`Production owner ready: ${owner.email}`);
+}
+
+async function seedDemo() {
   console.log('Seeding Database for Marble Park retail ops...');
 
   await prisma.activity.deleteMany();
@@ -176,7 +194,9 @@ async function main() {
   console.log('--- SEEDING COMPLETE ---');
 }
 
-main()
+const run = process.env.SEED_MODE === 'demo' ? seedDemo : bootstrapProduction;
+
+run()
   .catch((error) => {
     console.error(error);
     process.exit(1);
