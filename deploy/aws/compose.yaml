@@ -82,9 +82,11 @@ services:
       web:
         condition: service_healthy
     networks:
+      - edge
       - app
 
 networks:
+  edge:
   app:
     internal: true
   data:

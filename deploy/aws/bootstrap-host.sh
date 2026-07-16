@@ -7,7 +7,17 @@ if [[ "$(id -u)" -eq 0 ]]; then
 fi
 
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg git awscli unattended-upgrades
+sudo apt-get install -y ca-certificates curl gnupg git unattended-upgrades
+
+# AWS CLI is only required when BACKUP_S3_URI is configured. Ubuntu 24.04 does
+# not publish the awscli package in every regional mirror, so it must not block
+# a server-only deployment.
+awscli_candidate="$(apt-cache policy awscli | awk '/Candidate:/ {print $2}')"
+if [[ -n "$awscli_candidate" && "$awscli_candidate" != "(none)" ]]; then
+  sudo apt-get install -y awscli
+else
+  echo "awscli is unavailable from apt; continuing without optional S3 backup support."
+fi
 
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
