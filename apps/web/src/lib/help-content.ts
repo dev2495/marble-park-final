@@ -1,0 +1,129 @@
+export type HelpGuide = {
+  id: string;
+  title: string;
+  summary: string;
+  roles: string[];
+  duration: string;
+  href: string;
+  video?: string;
+  image?: string;
+  flow: string[];
+  steps: string[];
+  checks: string[];
+  related: string[];
+};
+
+export const HELP_GUIDES: HelpGuide[] = [
+  {
+    id: 'setup-master-data', title: 'Set up master data and products', duration: '12 min', href: '/dashboard/master-data/products', roles: ['Owner', 'Inventory', 'Office'],
+    summary: 'Create controlled brands, categories, finishes, vendors, tile sizes and Product Master SKUs before any transaction uses them.',
+    video: '/help/videos/01-master-data-and-tiles.mp4', image: '/help/images/labels-and-lots.png',
+    flow: ['Masters', 'Product SKU', 'Display code', 'Opening stock / GRN', 'Saleable lot'],
+    steps: ['Create brand, category and finish records.', 'Create or bulk-import one Product Master SKU per saleable design.', 'For tiles, enter internal showroom code, size, pieces per box, box coverage, purchase UOM and default sales UOM.', 'Register displayed samples in Tile Master and print their QR labels.', 'Use Opening Stock only for go-live balances; use GRN for every later inward.'],
+    checks: ['SKU is immutable after creation.', 'A display sample is not saleable stock.', 'Stock exists only after a posted opening session or GRN.'],
+    related: ['tile-pricing', 'procurement-inward', 'labels-lots'],
+  },
+  {
+    id: 'tile-pricing', title: 'Quote tiles by area, piece or box', duration: '8 min', href: '/dashboard/quotes/new', roles: ['Sales', 'Owner', 'Office'],
+    summary: 'Choose the commercial rate basis per quote line while the system continues to reserve and dispatch whole physical boxes.',
+    video: '/help/videos/02-tile-pricing-and-quotes.mp4', image: '/help/images/quote-editor-tile-and-sanitaryware.png',
+    flow: ['Find display code', 'Choose Area / Pieces / Boxes', 'Enter need', 'System rounds boxes', 'Customer sees billed UOM'],
+    steps: ['Search the internal showroom code or SKU in Quote Studio.', 'Select Area, Pieces or Boxes on the tile line.', 'For Area, enter required area and wastage percentage.', 'For Pieces, enter requested pieces; the system rounds to full boxes.', 'For Boxes, enter the physical box count directly.', 'Review the billed quantity, physical boxes, rate/UOM, GST and quote image before saving.'],
+    checks: ['Area pricing needs positive coverage per box.', 'Piece pricing needs pieces per box.', 'Orders, reservations and dispatch always use the physical inventory quantity shown.'],
+    related: ['crm-quote', 'partial-order', 'setup-master-data'],
+  },
+  {
+    id: 'crm-quote', title: 'Run lead, intent and quote revisions', duration: '14 min', href: '/dashboard/leads', roles: ['Sales', 'Sales Manager', 'Office'],
+    summary: 'Capture the customer requirement, build room-wise selections, revise without losing history, and issue priced or selection-only PDFs.',
+    video: '/help/videos/03-crm-lead-to-quote.mp4', image: '/help/images/dashboard-with-e2e-records.png',
+    flow: ['Lead', 'Intent', 'Product selections', 'Quote revision', 'Customer decision'],
+    steps: ['Create or open the customer and lead.', 'Record site, budget, timeline and requirement notes.', 'Create an intent and add Product Master SKUs room by room.', 'Open Quote Studio from the intent or create a direct quote.', 'Edit the room, customer-facing image, rate, discount and GST.', 'Save a new revision when commercial lines must change after discussion.', 'Download the priced quotation or selection-only PDF and mark it sent.'],
+    checks: ['Every line must reference an active Product Master SKU.', 'Below-floor negotiated rates require approval.', 'Commercial lines freeze after an order; use a revision for a new agreement.'],
+    related: ['tile-pricing', 'partial-order', 'payments-documents'],
+  },
+  {
+    id: 'partial-order', title: 'Convert a quote in partial sales orders', duration: '11 min', href: '/dashboard/quotes', roles: ['Sales', 'Owner', 'Office'],
+    summary: 'Convert only confirmed quantities, keep the remainder open, and avoid creating duplicate quotes for the same customer decision.',
+    video: '/help/videos/04-partial-order-and-procurement.mp4', image: '/help/images/pending-inward.png',
+    flow: ['Confirmed quote lines', 'Select quantities', 'Sales order', 'Reserve stock', 'Backorder shortage'],
+    steps: ['Open the accepted quote and review Fulfilment.', 'Enter the quantity confirmed now for each line.', 'Choose cash or credit and record advance or terms.', 'Create the sales order; remaining quote quantities stay available.', 'Review reserved and backordered quantities.', 'Close the remainder only when the customer cancels it, with a reason.'],
+    checks: ['Selections cannot exceed remaining quote quantity.', 'Each conversion is idempotent and creates its own dispatch job.', 'Shortages automatically create purchase demand.'],
+    related: ['procurement-inward', 'dispatch-return', 'payments-documents'],
+  },
+  {
+    id: 'procurement-inward', title: 'Procure shortages and receive stock', duration: '13 min', href: '/dashboard/procurement', roles: ['Inventory', 'Office', 'Owner'],
+    summary: 'Turn open purchase demand into purchase orders, receive partial GRNs, and create traceable lots without breaking the customer order link.',
+    video: '/help/videos/04-partial-order-and-procurement.mp4', image: '/help/images/pending-inward.png',
+    flow: ['Backorder', 'Purchase demand', 'Purchase order', 'GRN', 'Lot / label', 'Allocation'],
+    steps: ['Open Procurement and filter open demand.', 'Group demand by vendor and create a purchase order.', 'Record supplier reference, expected date and ordered quantities.', 'Receive each delivery in GRN, including partial and damaged quantities.', 'Post the GRN to create inventory lots and internal label jobs.', 'Return to Pending Inward and confirm the customer shortage is allocated.'],
+    checks: ['Never add live stock directly to balances.', 'Damaged quantity is isolated from available stock.', 'Every inward retains PO, GRN, lot, location and source links.'],
+    related: ['labels-lots', 'partial-order', 'inventory-control'],
+  },
+  {
+    id: 'labels-lots', title: 'Print labels, scan and manage lots', duration: '9 min', href: '/dashboard/inventory/labels', roles: ['Inventory', 'Dispatch'],
+    summary: 'Generate QR labels for each inward or display sample and use exact-lot identity during picking, movement and return.',
+    video: '/help/videos/05-stock-dispatch-and-returns.mp4', image: '/help/images/labels-and-lots.png',
+    flow: ['GRN / opening / display', 'Label job', 'Print QR', 'Scan lot', 'Trace movement'],
+    steps: ['Open Labels & Scan after posting an inward.', 'Filter by source and choose the label template.', 'Print the required quantity and attach labels to boxes or sample displays.', 'Scan or search the code during stock review and dispatch.', 'Verify SKU, lot, location, inward reference, quantity and status before movement.'],
+    checks: ['A QR identifies the system record; it does not replace printed human-readable details.', 'Reprints keep the same lot identity.', 'Display labels identify samples, not saleable quantities.'],
+    related: ['procurement-inward', 'dispatch-return', 'inventory-control'],
+  },
+  {
+    id: 'dispatch-return', title: 'Pick, partially dispatch, deliver and return', duration: '15 min', href: '/dashboard/dispatch', roles: ['Dispatch', 'Inventory', 'Office'],
+    summary: 'Pick exact lots, create multiple challans against one order, prove delivery with OTP, and return stock to its original traceable lot.',
+    video: '/help/videos/05-stock-dispatch-and-returns.mp4', image: '/help/images/dispatch-partial-flow.png',
+    flow: ['Order line', 'Exact-lot pick', 'Pack', 'Challan', 'OTP delivery', 'Return / balance'],
+    steps: ['Open the order’s dispatch job and review ready, backordered and already dispatched quantities.', 'Select the exact lot and quantity to pick.', 'Confirm pack quantities and create the delivery challan.', 'Repeat later for remaining items; do not create another sales order.', 'Send and verify delivery OTP to close the challan.', 'For a return, select the original dispatch line, reason, disposition and received quantity.'],
+    checks: ['Cannot pick more than available or ordered balance.', 'Every challan is partial-safe.', 'A return must reference the original dispatch line and restores the correct lot when saleable.'],
+    related: ['partial-order', 'labels-lots', 'inventory-control'],
+  },
+  {
+    id: 'payments-documents', title: 'Track payments and documents', duration: '7 min', href: '/dashboard/payments', roles: ['Owner', 'Sales', 'Office'],
+    summary: 'Record cash advances or credit terms, monitor balance due, and retrieve the correct quote, order and receipt documents.',
+    flow: ['Sales order', 'Advance / credit', 'Receipt', 'Balance due', 'Document center'],
+    steps: ['Choose payment mode during order conversion.', 'For cash, enter the received advance; for credit, confirm terms and due date.', 'Post later receipts against the sales order.', 'Review payment status and remaining balance.', 'Open Document Center for quote PDF, sales order PDF and generated records.'],
+    checks: ['Receipt posting is idempotent.', 'Amount cannot exceed the order balance.', 'Credit orders remain visible until settled.'],
+    related: ['partial-order', 'reports-audit', 'crm-quote'],
+  },
+  {
+    id: 'inventory-control', title: 'Count, reconcile and correct stock', duration: '12 min', href: '/dashboard/inventory/control', roles: ['Inventory', 'Owner'],
+    summary: 'Use controlled counts, approvals and reconciliation instead of editing balances, preserving an auditable inventory ledger.',
+    image: '/help/images/reconciliation-clean.png',
+    flow: ['Freeze scope', 'Count', 'Review variance', 'Approve / post', 'Reconcile'],
+    steps: ['Create a stock count session for a location or scope.', 'Enter counted quantities by scanned lot.', 'Submit the count and review variance.', 'Approve and post the adjustment with reason.', 'Open Reconciliation to confirm lot, location, ledger and aggregate balances agree.'],
+    checks: ['Only posted sessions affect stock.', 'Adjustments require reason and permissions.', 'Reconciliation should show zero critical differences before go-live.'],
+    related: ['labels-lots', 'reports-audit', 'procurement-inward'],
+  },
+  {
+    id: 'reports-audit', title: 'Use reports, approvals and audit', duration: '8 min', href: '/dashboard/reports', roles: ['Owner', 'Sales Manager'],
+    summary: 'Monitor pipeline, orders, inventory and exceptions while retaining a searchable record of sensitive actions.',
+    flow: ['Operational event', 'Approval / audit', 'Report', 'Exception action'],
+    steps: ['Use Command Center for role-specific work queues.', 'Open Approvals for below-floor quotes and controlled changes.', 'Use Reports for sales, order, payment and stock summaries.', 'Open System Audit to inspect who changed what and when.', 'Follow exception links back to the operational record and resolve there.'],
+    checks: ['Reports are decision surfaces, not stock-editing tools.', 'Role permissions determine visible and allowed actions.', 'Audit records are append-only evidence.'],
+    related: ['payments-documents', 'inventory-control', 'crm-quote'],
+  },
+  {
+    id: 'users-settings', title: 'Manage users, roles and settings', duration: '6 min', href: '/dashboard/users', roles: ['Owner'],
+    summary: 'Issue named user accounts, apply least-privilege roles, test access, and maintain company/document settings.',
+    flow: ['Create user', 'Assign role', 'Permission check', 'Activate', 'Audit'],
+    steps: ['Create one named account per staff member.', 'Assign Sales, Office, Inventory, Dispatch, Manager or Owner role.', 'Apply an override only when the standard role needs a documented exception.', 'Test the user’s navigation and one allowed action.', 'Deactivate departed users instead of reusing accounts.'],
+    checks: ['Never share the owner login.', 'Users cannot grant permissions they do not control.', 'Password and role changes are auditable.'],
+    related: ['reports-audit', 'crm-quote', 'dispatch-return'],
+  },
+];
+
+export const HELP_ROUTE_MAP: Array<[string, string]> = [
+  ['/dashboard/master-data', 'setup-master-data'], ['/dashboard/products', 'setup-master-data'],
+  ['/dashboard/quotes/new', 'tile-pricing'], ['/dashboard/quotes', 'partial-order'],
+  ['/dashboard/leads', 'crm-quote'], ['/dashboard/intents', 'crm-quote'],
+  ['/dashboard/procurement', 'procurement-inward'], ['/dashboard/pending-inward', 'procurement-inward'], ['/dashboard/inventory/inwards', 'procurement-inward'],
+  ['/dashboard/inventory/labels', 'labels-lots'], ['/dashboard/dispatch', 'dispatch-return'], ['/dashboard/returns', 'dispatch-return'],
+  ['/dashboard/payments', 'payments-documents'], ['/dashboard/documents', 'payments-documents'],
+  ['/dashboard/inventory', 'inventory-control'], ['/dashboard/reports', 'reports-audit'], ['/dashboard/audit', 'reports-audit'], ['/dashboard/approvals', 'reports-audit'],
+  ['/dashboard/users', 'users-settings'], ['/dashboard/settings', 'users-settings'],
+];
+
+export function guideForRoute(pathname: string) {
+  const match = HELP_ROUTE_MAP.find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
+  return match?.[1] || 'crm-quote';
+}

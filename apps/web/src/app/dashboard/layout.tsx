@@ -9,7 +9,7 @@ import {
   KeyRound, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
   Truck, UserCircle2, Users, UserCog, UserCheck, BadgeCheck, CreditCard, FileText, MapPinned, RotateCcw, PackagePlus,
   Menu, X,
-  ArrowLeftRight, QrCode, Scale, BarChart3,
+  ArrowLeftRight, QrCode, Scale, BarChart3, HelpCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -19,6 +19,7 @@ import {
   DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem,
 } from '@/components/ui/dropdown-menu';
 import { ThemeToggle, ThemeToggleButton } from '@/components/theme-toggle';
+import { guideForRoute } from '@/lib/help-content';
 
 const ME_QUERY = gql`
   query LayoutMe {
@@ -103,6 +104,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
   {
     title: 'Account',
     items: [
+      { name: 'Help Center', href: '/dashboard/help', icon: HelpCircle, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
       { name: 'My Profile', href: '/dashboard/profile', icon: UserCircle2, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
     ],
   },
@@ -159,6 +161,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/master-data/vendors': 'Vendor Master',
   '/dashboard/settings': 'Settings',
   '/dashboard/profile': 'My Profile',
+  '/dashboard/help': 'Help Center',
 };
 
 /**
@@ -395,6 +398,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
               {/* Quick light/dark toggle */}
               <ThemeToggleButton className="hidden sm:inline-flex" />
+
+              <Link
+                href={`/dashboard/help#${guideForRoute(pathname)}`}
+                title="Help for this page"
+                aria-label="Help for this page"
+                className="grid h-9 w-9 place-items-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)] shadow-sm-soft transition-colors hover:bg-[var(--bg-soft)]"
+              >
+                <HelpCircle className="h-4 w-4" />
+              </Link>
 
               {/* ─── Notifications dropdown (Radix — close on outside click) ─── */}
               <DropdownMenu>

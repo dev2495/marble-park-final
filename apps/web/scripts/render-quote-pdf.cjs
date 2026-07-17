@@ -159,11 +159,17 @@ function imageSrc(line, requestUrl) {
 
 function rateFor(line) {
   const qty = Number(line.qty || line.quantity || 0);
+  const basis = String(line.rateBasis || 'PACK').toUpperCase();
+  const pricingQuantity = Number(line.pricingQuantity || (basis === 'AREA'
+    ? qty * Number(line.coveragePerPack || 0)
+    : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
+  const pricingUom = String(line.pricingUom || (basis === 'PIECE' ? 'PC' : line.unit || line.uom || 'BOX')).toUpperCase();
   const price = Number(line.price || line.sellPrice || 0);
   const discount = Number(line.discountPercent || line.discount || 0);
   const specialRate = Number(line.specialRate || line.specialPrice || 0);
   const unitRate = specialRate > 0 ? specialRate : price * (1 - discount / 100);
-  return { qty, price, discount, unitRate, amount: qty * unitRate };
+  const amount = Number.isFinite(Number(line.taxableValue)) ? Number(line.taxableValue) : pricingQuantity * unitRate;
+  return { qty, basis, pricingQuantity, pricingUom, price, discount, unitRate, amount };
 }
 
 function groupByArea(lines) {
@@ -420,7 +426,7 @@ function PricedAreaTable({ group, showPrices, requestUrl }) {
           e(Text, { style: styles.sku }, [line.sku || line.tileCode || '', line.brand || '', line.finish || '', line.tileSize || ''].filter(Boolean).join(' · ')),
           line.notes || line.description ? e(Text, { style: styles.meta }, line.notes || line.description) : null,
         ),
-        e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.qty} ${line.unit || line.uom || 'PC'}`),
+        e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}\n${rate.qty} ${line.inventoryUom || line.unit || line.uom || 'BOX'} stock`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, money(rate.price)) : null,
         showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, rate.discount ? `${rate.discount}%` : '-') : null,
         showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, money(rate.unitRate)) : null,
@@ -440,7 +446,8 @@ function PricedDocumentBody(payload, requestUrl) {
   const subtotal = lines.reduce((sum, line) => sum + rateFor(line).amount, 0);
   const discountAmount = subtotal * (Number(quote.discountPercent || 0) / 100);
   const taxable = Math.max(0, subtotal - discountAmount);
-  const tax = taxable * 0.18;
+  const storedTax = lines.reduce((sum, line) => sum + Number(line.taxAmount || 0), 0);
+  const tax = storedTax > 0 ? storedTax : taxable * 0.18;
   const total = taxable + tax;
   const terms = quoteMeta.terms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
   const bank = quoteMeta.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';

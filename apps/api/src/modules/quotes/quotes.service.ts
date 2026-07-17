@@ -978,19 +978,50 @@ export class QuotesService {
     return line?.type === 'tile' || line?.nonStock === true || String(line?.category || '').toLowerCase() === 'tiles';
   }
 
+  private tileRateForBasis(rate: unknown, sourceUom: string, targetBasis: string, piecesPerPack: unknown, coveragePerPack: unknown) {
+    const sourceRate = Number(rate || 0);
+    const pieces = Math.max(1, Math.trunc(Number(piecesPerPack || 1)));
+    const coverage = Number(coveragePerPack || 0);
+    const source = String(sourceUom || 'BOX').trim().toUpperCase();
+    const packRate = ['SQFT', 'SQM', 'M2'].includes(source)
+      ? sourceRate * Math.max(0, coverage)
+      : source === 'PC' ? sourceRate * pieces : sourceRate;
+    if (targetBasis === 'AREA') return coverage > 0 ? packRate / coverage : sourceRate;
+    if (targetBasis === 'PIECE') return packRate / pieces;
+    return packRate;
+  }
+
   private normalizeTileLine(line: any, index: number) {
     const tileCode = String(line.tileCode || line.sku || '').trim();
     const tileSize = String(line.tileSize || line.size || line.dimensions || '').trim();
     const coveragePerPack = Number(line.coveragePerPack || 0);
     const piecesPerPack = Math.max(1, Math.trunc(Number(line.piecesPerPack || line.pcsPerBox || 1)));
-    const pricingUom = String(line.pricingUom || line.salesUom || line.unit || 'BOX').trim().toUpperCase();
-    const areaPriced = ['SQFT', 'SQM', 'M2'].includes(pricingUom);
+    const requestedBasis = String(line.rateBasis || '').trim().toUpperCase();
+    const fallbackPricingUom = String(line.pricingUom || line.salesUom || line.unit || 'BOX').trim().toUpperCase();
+    const rateBasis = requestedBasis || (['SQFT', 'SQM', 'M2'].includes(fallbackPricingUom)
+      ? 'AREA'
+      : fallbackPricingUom === 'PC' ? 'PIECE' : 'PACK');
+    if (!['AREA', 'PIECE', 'PACK'].includes(rateBasis)) {
+      throw new BadRequestException(`Tile ${tileCode || index + 1} rate basis must be AREA, PIECE, or PACK`);
+    }
+    const pricingUom = rateBasis === 'PIECE'
+      ? 'PC'
+      : rateBasis === 'PACK'
+        ? String(line.inventoryUom || line.purchaseUom || line.unit || 'BOX').trim().toUpperCase()
+        : (['SQFT', 'SQM', 'M2'].includes(fallbackPricingUom) ? fallbackPricingUom : 'SQFT');
+    const areaPriced = rateBasis === 'AREA';
     const requestedArea = Number(line.requestedArea || 0);
+    const requestedPieces = Math.trunc(Number(line.requestedPieces || 0));
     const wastagePercent = Number(line.wastagePercent || 0);
     if (!Number.isFinite(wastagePercent) || wastagePercent < 0 || wastagePercent > 100) throw new BadRequestException(`Tile ${tileCode || index + 1} wastage must be between 0 and 100`);
     if (areaPriced && coveragePerPack <= 0) throw new BadRequestException(`Tile ${tileCode || index + 1} needs coverage per pack in Product Master`);
     const areaWithWastage = requestedArea > 0 ? requestedArea * (1 + wastagePercent / 100) : 0;
-    const calculatedPacks = areaWithWastage > 0 ? Math.ceil(areaWithWastage / coveragePerPack) : 0;
+    if (rateBasis === 'PIECE' && requestedPieces < 0) throw new BadRequestException(`Tile ${tileCode || index + 1} requested pieces cannot be negative`);
+    const calculatedPacks = areaPriced && areaWithWastage > 0
+      ? Math.ceil(areaWithWastage / coveragePerPack)
+      : rateBasis === 'PIECE' && requestedPieces > 0
+        ? Math.ceil(requestedPieces / piecesPerPack)
+        : 0;
     const qty = calculatedPacks || Math.trunc(Number(line.qty || line.quantity || 0));
     const inventoryUom = String(line.inventoryUom || line.purchaseUom || line.unit || 'BOX').trim().toUpperCase();
     if (!tileCode) throw new BadRequestException(`Tile row ${index + 1} needs a tile code`);
@@ -1016,13 +1047,15 @@ export class QuotesService {
       unit: inventoryUom,
       inventoryUom,
       pricingUom,
-      rateBasis: areaPriced ? 'AREA' : pricingUom === 'PC' && inventoryUom !== 'PC' ? 'PIECE' : 'PACK',
+      rateBasis,
       piecesPerPack,
       pcsPerBox: piecesPerPack,
       coveragePerPack,
       requestedArea: requestedArea > 0 ? requestedArea : null,
+      requestedPieces: requestedPieces > 0 ? requestedPieces : null,
       wastagePercent,
       requiredArea: areaWithWastage || null,
+      requiredPieces: rateBasis === 'PIECE' ? qty * piecesPerPack : null,
       calculatedPacks: qty,
       coveredArea: coveragePerPack > 0 ? Number((qty * coveragePerPack).toFixed(4)) : null,
       qty,
@@ -1066,12 +1099,25 @@ export class QuotesService {
         throw new BadRequestException(`${line.name || line.sku || `Line ${index + 1}`} is not an active Product Master SKU`);
       }
       if (this.isTileLine(line) || String(product.category || '').toLowerCase() === 'tiles') {
+        const inventoryUom = String(product.purchaseUom || product.unit || 'BOX').trim().toUpperCase();
+        const productSalesUom = String(product.salesUom || product.unit || inventoryUom).trim().toUpperCase();
+        const requestedBasis = String(line.rateBasis || '').trim().toUpperCase();
+        const inferredBasis = ['SQFT', 'SQM', 'M2'].includes(productSalesUom)
+          ? 'AREA'
+          : productSalesUom === 'PC' && inventoryUom !== 'PC' ? 'PIECE' : 'PACK';
+        const rateBasis = ['AREA', 'PIECE', 'PACK'].includes(requestedBasis) ? requestedBasis : inferredBasis;
+        const pricingUom = rateBasis === 'AREA'
+          ? (['SQFT', 'SQM', 'M2'].includes(String(line.pricingUom || '').toUpperCase()) ? String(line.pricingUom).toUpperCase() : (['SQFT', 'SQM', 'M2'].includes(productSalesUom) ? productSalesUom : 'SQFT'))
+          : rateBasis === 'PIECE' ? 'PC' : inventoryUom;
+        const defaultListPrice = this.tileRateForBasis(product.sellPrice, productSalesUom, rateBasis, product.piecesPerPack, product.coveragePerPack);
+        const floorPrice = this.tileRateForBasis(product.floorPrice, productSalesUom, rateBasis, product.piecesPerPack, product.coveragePerPack);
         return this.normalizeTileLine({
           ...line, productId: product.id, sku: product.sku, name: product.name, brand: product.brand,
           tileSize: line.tileSize || product.dimensions, dimensions: product.dimensions,
-          listPrice: Number(product.sellPrice || 0), sellPrice: Number(product.sellPrice || 0),
-          floorPrice: Number(product.floorPrice || 0), media: line.media || product.media || {},
-          inventoryUom: product.purchaseUom || product.unit, pricingUom: product.salesUom || product.unit,
+          listPrice: Number(line.listPrice ?? line.price ?? defaultListPrice), sellPrice: defaultListPrice,
+          floorPrice, media: line.media || product.media || {},
+          inventoryUom, pricingUom, rateBasis, sourceSalesUom: productSalesUom,
+          sourceSellPrice: Number(product.sellPrice || 0),
           piecesPerPack: product.piecesPerPack, coveragePerPack: product.coveragePerPack,
         }, index);
       }

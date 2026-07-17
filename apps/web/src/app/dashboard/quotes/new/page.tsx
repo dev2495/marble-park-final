@@ -39,13 +39,63 @@ function productImage(media: any) {
   return media.primaryUrl || media.primary || media.primaryImage || (typeof gallery[0] === 'string' ? gallery[0] : gallery[0]?.url) || '/catalogue-art/faucet.svg';
 }
 
+type TileRateBasis = 'AREA' | 'PIECE' | 'PACK';
+
+function isTileLine(line: any) {
+  return String(line.category || '').toLowerCase() === 'tiles';
+}
+
+function pricingBasis(line: any): TileRateBasis {
+  const explicit = String(line.rateBasis || '').toUpperCase();
+  if (explicit === 'AREA' || explicit === 'PIECE' || explicit === 'PACK') return explicit;
+  const uom = String(line.pricingUom || line.salesUom || line.unit || '').toUpperCase();
+  return ['SQFT', 'SQM', 'M2'].includes(uom) ? 'AREA' : uom === 'PC' ? 'PIECE' : 'PACK';
+}
+
 function areaPriced(line: any) {
-  return ['SQFT', 'SQM', 'M2'].includes(String(line.pricingUom || line.salesUom || '').toUpperCase()) && Number(line.coveragePerPack || 0) > 0;
+  return pricingBasis(line) === 'AREA' && Number(line.coveragePerPack || 0) > 0;
 }
 
 function packsForArea(requestedArea: number, wastagePercent: number, coveragePerPack: number) {
   if (requestedArea <= 0 || coveragePerPack <= 0) return 1;
   return Math.max(1, Math.ceil((requestedArea * (1 + Math.max(0, wastagePercent) / 100)) / coveragePerPack));
+}
+
+function packsForPieces(requestedPieces: number, piecesPerPack: number) {
+  if (requestedPieces <= 0 || piecesPerPack <= 0) return 1;
+  return Math.max(1, Math.ceil(requestedPieces / piecesPerPack));
+}
+
+function rateForBasis(rate: number, sourceUom: string, targetBasis: TileRateBasis, piecesPerPack: number, coveragePerPack: number) {
+  const source = String(sourceUom || 'BOX').toUpperCase();
+  const pieces = Math.max(1, Number(piecesPerPack || 1));
+  const coverage = Math.max(0, Number(coveragePerPack || 0));
+  const packRate = ['SQFT', 'SQM', 'M2'].includes(source) ? rate * coverage : source === 'PC' ? rate * pieces : rate;
+  if (targetBasis === 'AREA') return coverage > 0 ? packRate / coverage : rate;
+  if (targetBasis === 'PIECE') return packRate / pieces;
+  return packRate;
+}
+
+function TileQuantityEditor({ line, onChangeBasis, onChange }: { line: any; onChangeBasis: (basis: TileRateBasis) => void; onChange: (patch: any) => void }) {
+  const basis = pricingBasis(line);
+  const pieces = Math.max(1, Number(line.piecesPerPack || 1));
+  const coverage = Number(line.coveragePerPack || 0);
+  return <div className="mx-auto w-56 space-y-2.5">
+    <div className="grid grid-cols-3 rounded-md border border-[#d4d4d8] bg-[#f4f4f5] p-0.5" aria-label={`Pricing basis for ${line.name}`}>
+      {([['AREA', 'Area'], ['PIECE', 'Pieces'], ['PACK', 'Boxes']] as const).map(([value, label]) => <button key={value} type="button" disabled={value === 'AREA' && coverage <= 0} onClick={() => onChangeBasis(value)} className={`h-7 rounded text-[10px] font-semibold ${basis === value ? 'bg-white text-[#18181b] shadow-sm' : 'text-[#52525b] hover:text-[#18181b] disabled:cursor-not-allowed disabled:opacity-35'}`}>{label}</button>)}
+    </div>
+    {basis === 'AREA' ? <>
+      <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested area for ${line.name}`} type="number" min={0} value={line.requestedArea || 0} onChange={(event) => onChange({ requestedArea: Number(event.target.value || 0) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">{line.pricingUom}</div></div>
+      <div className="flex items-center justify-between gap-2 text-xs text-[#52525b]"><label>Waste <input aria-label={`Wastage for ${line.name}`} type="number" min={0} max={100} value={line.wastagePercent || 0} onChange={(event) => onChange({ wastagePercent: Number(event.target.value || 0) })} className="ml-1 h-7 w-12 rounded border border-[#e4e4e7] text-center"/>%</label><span className="font-semibold text-[#18181b]">{line.qty} {line.inventoryUom}</span></div>
+      <p className="text-[11px] text-[#52525b]">Covers {(Number(line.qty || 0) * coverage).toFixed(2)} {line.pricingUom}</p>
+    </> : basis === 'PIECE' ? <>
+      <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested pieces for ${line.name}`} type="number" min={1} step={1} value={line.requestedPieces || pieces} onChange={(event) => onChange({ requestedPieces: Number(event.target.value || 0) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">PC</div></div>
+      <p className="text-[11px] text-[#52525b]">{pieces} pc / {line.inventoryUom} → {line.qty} {line.inventoryUom} ({Number(line.qty || 0) * pieces} pc billed)</p>
+    </> : <>
+      <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Boxes for ${line.name}`} type="number" min={1} step={1} value={line.qty} onChange={(event) => onChange({ qty: Number(event.target.value || 0) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">{line.inventoryUom}</div></div>
+      <p className="text-[11px] text-[#52525b]">{pieces} pc and {coverage || 0} area units per {line.inventoryUom}</p>
+    </>}
+  </div>;
 }
 
 // Common bathroom / kitchen / living areas — used as quick-pick chips and
@@ -86,7 +136,12 @@ export default function QuoteBuilderPage() {
     const isTile = String(product.category || '').toLowerCase() === 'tiles';
     const pricingUom = product.salesUom || product.unit || 'PC';
     const coveragePerPack = Number(product.coveragePerPack || 0);
-    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty: 1, requestedArea: isTile && coveragePerPack > 0 ? coveragePerPack : 0, wastagePercent: isTile ? 10 : 0, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom: product.purchaseUom || product.unit || 'PC', pricingUom, rateBasis: ['SQFT', 'SQM', 'M2'].includes(String(pricingUom).toUpperCase()) ? 'AREA' : 'PACK', price: product.sellPrice || 0, listPrice: product.sellPrice || 0, specialRate: '', discountPercent: 0, taxRate: 18, unit: product.purchaseUom || product.unit || 'PC', category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
+    const inventoryUom = product.purchaseUom || product.unit || 'PC';
+    const rateBasis: TileRateBasis = ['SQFT', 'SQM', 'M2'].includes(String(pricingUom).toUpperCase()) ? 'AREA' : String(pricingUom).toUpperCase() === 'PC' && String(inventoryUom).toUpperCase() !== 'PC' ? 'PIECE' : 'PACK';
+    const wastagePercent = isTile ? 10 : 0;
+    const requestedArea = isTile && coveragePerPack > 0 ? coveragePerPack : 0;
+    const qty = rateBasis === 'AREA' ? packsForArea(requestedArea, wastagePercent, coveragePerPack) : 1;
+    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces: isTile ? Number(product.piecesPerPack || 1) : 0, wastagePercent, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom, pricingUom, rateBasis, sourceSalesUom: pricingUom, sourceSellPrice: Number(product.sellPrice || 0), price: product.sellPrice || 0, listPrice: product.sellPrice || 0, specialRate: '', discountPercent: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
     setSearchQuery('');
   };
   const updateQty = (id: string, qty: number) => setLines((current) => current.map((line) => line.id === id ? { ...line, qty } : line));
@@ -95,8 +150,35 @@ export default function QuoteBuilderPage() {
     const updated = { ...line, ...patch };
     if (areaPriced(updated) && ('requestedArea' in patch || 'wastagePercent' in patch || 'coveragePerPack' in patch)) {
       updated.qty = packsForArea(Number(updated.requestedArea || 0), Number(updated.wastagePercent || 0), Number(updated.coveragePerPack || 0));
+    } else if (pricingBasis(updated) === 'PIECE' && ('requestedPieces' in patch || 'piecesPerPack' in patch)) {
+      updated.qty = packsForPieces(Number(updated.requestedPieces || 0), Number(updated.piecesPerPack || 1));
     }
     return updated;
+  }));
+  const changeTileBasis = (id: string, basis: TileRateBasis) => setLines((current) => current.map((line) => {
+    if (line.id !== id) return line;
+    const sourceUom = String(line.sourceSalesUom || line.pricingUom || line.unit || 'BOX').toUpperCase();
+    const inventoryUom = String(line.inventoryUom || line.unit || 'BOX').toUpperCase();
+    const pricingUom = basis === 'AREA'
+      ? (['SQFT', 'SQM', 'M2'].includes(sourceUom) ? sourceUom : 'SQFT')
+      : basis === 'PIECE' ? 'PC' : inventoryUom;
+    const qty = Math.max(1, Number(line.qty || 1));
+    const requestedArea = basis === 'AREA' ? Number(line.requestedArea || qty * Number(line.coveragePerPack || 0)) : Number(line.requestedArea || 0);
+    const requestedPieces = basis === 'PIECE' ? Number(line.requestedPieces || qty * Number(line.piecesPerPack || 1)) : Number(line.requestedPieces || 0);
+    const nextQty = basis === 'AREA'
+      ? packsForArea(requestedArea, Number(line.wastagePercent || 0), Number(line.coveragePerPack || 0))
+      : basis === 'PIECE' ? packsForPieces(requestedPieces, Number(line.piecesPerPack || 1)) : qty;
+    return {
+      ...line,
+      rateBasis: basis,
+      pricingUom,
+      qty: nextQty,
+      requestedArea,
+      requestedPieces,
+      listPrice: rateForBasis(Number(line.sourceSellPrice ?? line.listPrice ?? line.price ?? 0), sourceUom, basis, Number(line.piecesPerPack || 1), Number(line.coveragePerPack || 0)),
+      price: rateForBasis(Number(line.sourceSellPrice ?? line.listPrice ?? line.price ?? 0), sourceUom, basis, Number(line.piecesPerPack || 1), Number(line.coveragePerPack || 0)),
+      specialRate: '',
+    };
   }));
   const removeLine = (id: string) => setLines((current) => current.filter((line) => line.id !== id));
   const lineCommercial = (line: any) => {
@@ -105,7 +187,7 @@ export default function QuoteBuilderPage() {
     const discountPercent = Number(line.discountPercent || 0);
     const specialRate = line.specialRate === '' || line.specialRate === null || line.specialRate === undefined ? null : Number(line.specialRate);
     const unitRate = specialRate !== null && Number.isFinite(specialRate) ? specialRate : listPrice * (1 - discountPercent / 100);
-    const pricingQuantity = areaPriced(line) ? quantity * Number(line.coveragePerPack || 0) : line.rateBasis === 'PIECE' ? quantity * Number(line.piecesPerPack || 1) : quantity;
+    const pricingQuantity = areaPriced(line) ? quantity * Number(line.coveragePerPack || 0) : pricingBasis(line) === 'PIECE' ? quantity * Number(line.piecesPerPack || 1) : quantity;
     const taxableValue = pricingQuantity * Math.max(0, unitRate);
     const taxAmount = taxableValue * Math.max(0, Number(line.taxRate ?? 18)) / 100;
     return { unitRate, pricingQuantity, taxableValue, taxAmount, total: taxableValue + taxAmount };
@@ -264,13 +346,13 @@ export default function QuoteBuilderPage() {
           </div>
 
           <div className="mt-6 overflow-hidden rounded-r4 border border-[#e4e4e7]/12 bg-white/70">
-            <table className="w-full min-w-[960px] text-left">
+            <table className="w-full min-w-[1080px] text-left">
               <thead className="bg-[#eff6ff]/70 text-xs font-medium uppercase tracking-widest text-[#52525b]"><tr><th className="px-4 py-4">Product</th><th className="px-4 py-4 text-center">Quantity / coverage</th><th className="px-4 py-4 text-right">List rate</th><th className="px-4 py-4 text-right">Negotiated</th><th className="px-4 py-4 text-right">GST</th><th className="px-4 py-4 text-right">Total</th><th className="px-4 py-4" /></tr></thead>
               <tbody className="divide-y divide-[#cbd5e1]/10">
                 {lines.map((line) => (
                   <tr key={line.id}>{(() => { const commercial = lineCommercial(line); return <>
                     <td className="px-4 py-4"><div className="flex items-center gap-4"><ProductImageFrame src={line.quoteImage || productImage(line.media)} alt={line.name} className="h-24 w-28 shrink-0 rounded-md" imageClassName="p-1.5" /><div className="min-w-0 space-y-2"><input list="mp-area-list" value={line.area || ''} onChange={(event)=>updateLine(line.id,{area:event.target.value})} placeholder="Area / room" className="h-8 w-full rounded-md border border-[#e4e4e7]/15 bg-white px-3 text-xs font-medium uppercase tracking-wider text-[#2563eb]" /><p className="font-black">{line.internalCode || line.sku} · {line.name}</p><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{line.sku} · {line.unit}</p><input value={line.quoteImage || ''} onChange={(event)=>updateLine(line.id,{quoteImage:event.target.value})} placeholder="Optional quote photo URL" className="h-8 w-full rounded-md border border-[#e4e4e7]/15 bg-white px-3 text-[10px] font-bold" /></div></div></td>
-                    <td className="px-4 py-4 text-center">{areaPriced(line) ? <div className="mx-auto w-44 space-y-2"><div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested area for ${line.name}`} type="number" min={0} value={line.requestedArea || 0} onChange={(event) => updateLine(line.id, { requestedArea: Number(event.target.value || 0) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">{line.pricingUom}</div></div><div className="flex items-center justify-between gap-2 text-xs text-[#52525b]"><label>Waste <input aria-label={`Wastage for ${line.name}`} type="number" min={0} max={100} value={line.wastagePercent || 0} onChange={(event) => updateLine(line.id, { wastagePercent: Number(event.target.value || 0) })} className="ml-1 h-7 w-12 rounded border border-[#e4e4e7] text-center"/>%</label><span className="font-semibold text-[#18181b]">{line.qty} {line.inventoryUom}</span></div><p className="text-[11px] text-[#52525b]">Covers {(Number(line.qty || 0) * Number(line.coveragePerPack || 0)).toFixed(2)} {line.pricingUom}</p></div> : <input type="number" value={line.qty} min={1} onChange={(event) => updateQty(line.id, Number(event.target.value) || 0)} className="h-10 w-20 rounded-md border border-[#e4e4e7] bg-white text-center text-sm font-semibold outline-none" />}</td>
+                    <td className="px-4 py-4 text-center">{isTileLine(line) ? <TileQuantityEditor line={line} onChangeBasis={(basis) => changeTileBasis(line.id, basis)} onChange={(patch) => updateLine(line.id, patch)} /> : <input type="number" value={line.qty} min={1} onChange={(event) => updateQty(line.id, Number(event.target.value) || 0)} className="h-10 w-20 rounded-md border border-[#e4e4e7] bg-white text-center text-sm font-semibold outline-none" />}</td>
                     <td className="px-4 py-4 text-right"><input aria-label={`List rate for ${line.name}`} type="number" min={0} value={line.listPrice ?? line.price ?? 0} onChange={(event) => updateLine(line.id, { listPrice: event.target.value, price: event.target.value })} className="h-10 w-28 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold" /><p className="mt-1 text-xs text-[#52525b]">per {line.pricingUom || line.unit}</p></td>
                     <td className="px-4 py-4 text-right"><input aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate} placeholder={money(commercial.unitRate)} onChange={(event) => updateLine(line.id, { specialRate: event.target.value })} className="h-10 w-28 rounded-xl border border-[#2563eb]/30 bg-[#eff6ff]/50 px-2 text-right text-sm font-black" /><input aria-label={`Discount percent for ${line.name}`} type="number" min={0} max={100} value={line.discountPercent || 0} onChange={(event) => updateLine(line.id, { discountPercent: event.target.value })} className="mt-1 h-7 w-28 rounded-lg border border-[#e4e4e7]/18 bg-white px-2 text-right text-[11px] font-bold" /></td>
                     <td className="px-4 py-4 text-right"><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate ?? 18} onChange={(event) => updateLine(line.id, { taxRate: event.target.value })} className="h-10 w-20 rounded-xl border border-[#e4e4e7]/18 bg-white px-2 text-right text-sm font-black" /><p className="mt-1 text-xs font-semibold text-[#52525b]">{money(commercial.taxAmount)}</p></td>
@@ -292,7 +374,7 @@ export default function QuoteBuilderPage() {
           <p className="mt-2 text-sm font-bold text-[#52525b]">{selectedCustomer?.name || 'Select a customer'}</p>
         </div>
         <div className="mt-5 flex-1 overflow-y-auto rounded-r4 border border-white/10 bg-white/[0.08] p-4 custom-scrollbar">
-          {lines.slice(0, 8).map((line) => <div key={line.id} className="mb-4 rounded-r4 bg-white/10 p-3"><ProductImageFrame src={productImage(line.media)} alt={line.name} className="mb-3 h-36 w-full rounded-[1.25rem]" imageClassName="p-2" /><div className="min-w-0"><p className="line-clamp-2 text-sm font-black">{line.name}</p><p className="mt-1 text-xs font-medium uppercase text-[#71717a]">{line.sku} · {line.qty} x {money(lineCommercial(line).unitRate)}</p></div></div>)}
+          {lines.slice(0, 8).map((line) => <div key={line.id} className="mb-4 rounded-r4 bg-white/10 p-3"><ProductImageFrame src={productImage(line.media)} alt={line.name} className="mb-3 h-36 w-full rounded-[1.25rem]" imageClassName="p-2" /><div className="min-w-0"><p className="line-clamp-2 text-sm font-black">{line.name}</p><p className="mt-1 text-xs font-medium uppercase text-[#71717a]">{line.sku} · {lineCommercial(line).pricingQuantity} {line.pricingUom || line.unit} × {money(lineCommercial(line).unitRate)}</p>{isTileLine(line) ? <p className="mt-1 text-[11px] text-white/65">Physical fulfilment: {line.qty} {line.inventoryUom}</p> : null}</div></div>)}
           {lines.length === 0 && <div className="grid h-full place-items-center text-center text-[#52525b]"><div><ImageIcon className="mx-auto mb-3 h-10 w-10" /><p className="text-sm font-bold">Product image preview appears after adding items.</p></div></div>}
         </div>
         <div className="mt-5 rounded-r4 bg-white p-5 text-[#18181b]">
