@@ -59,8 +59,8 @@ async function processExcelUpload(filePath, token) {
   assert(preview.status === 'ready_to_apply', `Excel preview should be ready_to_apply, got ${preview.status}`);
   assert(preview.total === 1 && preview.failed === 0, `Excel preview should read one clean row, got ${JSON.stringify(preview)}`);
   const applied = (await gql(
-    `mutation($uploadId: String!, $filename: String!, $kind: String!) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`,
-    { uploadId, filename, kind: 'excel' },
+    `mutation($uploadId: String!, $filename: String!, $kind: String!, $confirmationToken: String!) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, confirmationToken: $confirmationToken) { result } }`,
+    { uploadId, filename, kind: 'excel', confirmationToken: preview.confirmationToken },
     token,
   )).applyUploadedImport.result;
   return { preview, applied };

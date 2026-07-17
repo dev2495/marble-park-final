@@ -88,6 +88,17 @@ function cataloguePublicUrl(fileName: string) {
   return `${baseUrl}/catalogue-images/manual/${fileName}`;
 }
 
+function cleanupExpiredImportUploads() {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const name of fs.readdirSync(os.tmpdir())) {
+    if (!name.startsWith('marble-excel-import-')) continue;
+    const filePath = path.join(os.tmpdir(), name);
+    try {
+      if (fs.statSync(filePath).mtimeMs < cutoff) fs.rmSync(filePath, { force: true });
+    } catch { /* Another request may have removed it. */ }
+  }
+}
+
 @Resolver()
 export class ImportsResolver {
   constructor(
@@ -102,10 +113,14 @@ export class ImportsResolver {
   }
 
   @Mutation(() => ImportOutput)
-  async processExcelImport(@Args('filePath') filePath: string, @Context() ctx: GraphqlRequestContext) {
+  async processExcelImport(
+    @Args('filePath') filePath: string,
+    @Args('confirmationToken') confirmationToken: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
     const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     assertExcelFile(filePath);
-    const result = await this.imports.processExcelImport(assertManagedImportPath(filePath), user.id);
+    const result = await this.imports.processExcelImport(assertManagedImportPath(filePath), user.id, confirmationToken);
     return { id: `excel-${Date.now()}`, result };
   }
 
@@ -117,14 +132,19 @@ export class ImportsResolver {
   ) {
     const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     const filePath = writeUploadToTemp(filename, contentBase64);
-    const result = await this.imports.processExcelImport(filePath, user.id);
-    return { id: `excel-${Date.now()}`, result };
+    try {
+      const result = await this.imports.previewExcelImport(filePath, user.id);
+      return { id: `excel-${Date.now()}`, result: { ...result, compatibilityMode: 'preview_only', nextAction: 'beginImportUpload' } };
+    } finally {
+      fs.rmSync(filePath, { force: true });
+    }
   }
 
   @Mutation(() => ImportOutput)
   async beginImportUpload(@Args('filename') filename: string, @Context() ctx: GraphqlRequestContext) {
     await requirePermission(this.prisma, ctx, 'catalogue.import');
     assertExcelFile(filename);
+    cleanupExpiredImportUploads();
     const uploadId = ulid();
     const filePath = uploadTempPath(uploadId, filename);
     fs.rmSync(filePath, { force: true });
@@ -146,6 +166,18 @@ export class ImportsResolver {
     if (currentSize + chunk.length > MAX_EXCEL_UPLOAD_BYTES) throw new BadRequestException('Excel uploads are limited to 25 MB');
     fs.appendFileSync(filePath, chunk);
     return { id: uploadId, result: { uploadedBytes: currentSize + chunk.length } };
+  }
+
+  @Mutation(() => ImportOutput)
+  async cancelImportUpload(
+    @Args('uploadId') uploadId: string,
+    @Args('filename') filename: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
+    const filePath = uploadTempPath(uploadId, filename);
+    fs.rmSync(filePath, { force: true });
+    return { id: uploadId, result: { status: 'discarded' } };
   }
 
   @Mutation(() => ImportOutput)
@@ -191,6 +223,7 @@ export class ImportsResolver {
     @Args('uploadId') uploadId: string,
     @Args('filename') filename: string,
     @Args('kind') kind: string,
+    @Args('confirmationToken') confirmationToken: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
     if (kind !== 'excel') {
@@ -201,8 +234,12 @@ export class ImportsResolver {
     if (!fs.existsSync(filePath)) {
       throw new BadRequestException('Uploaded file was not found. Please upload again.');
     }
-    const result = await this.imports.processExcelImport(filePath, user.id);
-    return { id: uploadId, result };
+    try {
+      const result = await this.imports.processExcelImport(filePath, user.id, confirmationToken);
+      return { id: uploadId, result };
+    } finally {
+      fs.rmSync(filePath, { force: true });
+    }
   }
 
   @Mutation(() => ImportOutput)

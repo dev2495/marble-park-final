@@ -40,7 +40,7 @@ async function main() {
   assert(!dashboard.errors, `owner dashboard failed: ${JSON.stringify(dashboard.errors)}`);
   assert(dashboard.data.ownerDashboard.stats.totalProducts > 0, 'owner dashboard should return product stats');
 
-  const importsPublic = await gql(`mutation { processExcelImport(filePath: "/tmp/nope.xlsx") { id } }`);
+  const importsPublic = await gql(`mutation { processExcelImport(filePath: "/tmp/nope.xlsx", confirmationToken: "unconfirmed") { id } }`);
   assert(importsPublic.errors?.some((e) => /login|auth/i.test(e.message)), 'public import mutation must be rejected');
 
   console.log('regression smoke passed');
