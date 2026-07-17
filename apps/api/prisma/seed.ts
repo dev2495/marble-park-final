@@ -4,6 +4,57 @@ const { ulid } = require('ulid');
 
 const prisma = new PrismaClient();
 
+const productionCategories = [
+  ['SANITARYWARE', 'Sanitaryware'],
+  ['FAUCETS', 'Faucets'],
+  ['FAUCETS_SHOWERS', 'Faucets & Showers'],
+  ['TILES', 'Tiles'],
+  ['KITCHEN_SINKS', 'Kitchen Sinks'],
+  ['BATH_ACCESSORIES', 'Bath Accessories'],
+];
+
+const productionFinishes = [
+  ['CHROME', 'Chrome'],
+  ['GLOSS_WHITE', 'Gloss White'],
+  ['MATT', 'Matt'],
+  ['POLISHED', 'Polished'],
+  ['SATIN_STEEL', 'Satin Steel'],
+  ['BLACK', 'Black'],
+  ['BRUSHED_NICKEL', 'Brushed Nickel'],
+];
+
+const productionTileSizes = [
+  ['600X600', '600 x 600 mm', 4],
+  ['600X1200', '600 x 1200 mm', 2],
+  ['1200X600', '1200 x 600 mm', 2],
+  ['800X800', '800 x 800 mm', 2],
+];
+
+async function ensureProductionProductMasters() {
+  const now = new Date();
+  for (const [code, name] of productionCategories) {
+    await prisma.productCategory.upsert({
+      where: { name },
+      update: { code, status: 'active', updatedAt: now },
+      create: { id: ulid(), code, name, description: 'Retail product category', status: 'active', sortOrder: 100, metadata: { source: 'production-baseline' }, updatedAt: now },
+    });
+  }
+  for (const [code, name] of productionFinishes) {
+    await prisma.productFinish.upsert({
+      where: { name },
+      update: { code, status: 'active', updatedAt: now },
+      create: { id: ulid(), code, name, description: 'Retail product finish', status: 'active', sortOrder: 100, metadata: { source: 'production-baseline' }, updatedAt: now },
+    });
+  }
+  for (const [code, name, pcsPerBox] of productionTileSizes) {
+    await prisma.tileSize.upsert({
+      where: { name: String(name) },
+      update: { code: String(code), uom: 'BOX', pcsPerBox: Number(pcsPerBox), status: 'active', updatedAt: now },
+      create: { id: ulid(), code: String(code), name: String(name), uom: 'BOX', pcsPerBox: Number(pcsPerBox), description: 'Common tile size; adjust pack conversion per SKU where required', status: 'active', sortOrder: 100, metadata: { source: 'production-baseline' }, updatedAt: now },
+    });
+  }
+}
+
 async function bootstrapProduction() {
   const email = String(process.env.BOOTSTRAP_OWNER_EMAIL || '').trim().toLowerCase();
   const password = String(process.env.BOOTSTRAP_OWNER_PASSWORD || '');
@@ -19,7 +70,9 @@ async function bootstrapProduction() {
     create: { id: ulid(), email, passwordHash, name, role: 'owner', phone, active: true },
     update: { passwordHash, name, role: 'owner', phone, active: true, updatedAt: new Date() },
   });
+  await ensureProductionProductMasters();
   console.log(`Production owner ready: ${owner.email}`);
+  console.log('Production Product Master categories, finishes and tile sizes ready.');
 }
 
 async function seedDemo() {
