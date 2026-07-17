@@ -21,15 +21,16 @@ PUBLIC = ROOT / "apps" / "web" / "public" / "help"
 DATA = REPORT / "guide-data.json"
 OUTPUT = REPORT / "Marble-Park-ERP-Complete-User-Guide-2026-07-17.pdf"
 PUBLIC_OUTPUT = PUBLIC / "Marble-Park-ERP-User-Guide.pdf"
+LOGO = ROOT / "apps" / "web" / "public" / "brand" / "marble-park-logo.jpg"
 
 INK = colors.HexColor("#18181b")
 MUTED = colors.HexColor("#52525b")
-LINE = colors.HexColor("#dbe3ee")
-SOFT = colors.HexColor("#f5f8fc")
-BLUE = colors.HexColor("#2456a6")
-BLUE_SOFT = colors.HexColor("#eaf2ff")
-GREEN = colors.HexColor("#176b4d")
-GREEN_SOFT = colors.HexColor("#e8f7ef")
+LINE = colors.HexColor("#ded8d6")
+SOFT = colors.HexColor("#f7f4f3")
+BLUE = colors.HexColor("#8f241f")
+BLUE_SOFT = colors.HexColor("#fff0ee")
+GREEN = colors.HexColor("#0d7470")
+GREEN_SOFT = colors.HexColor("#e7f5f3")
 
 
 class GuideDoc(BaseDocTemplate):
@@ -42,9 +43,11 @@ class GuideDoc(BaseDocTemplate):
         canvas.saveState()
         canvas.setStrokeColor(LINE)
         canvas.line(self.leftMargin, A4[1] - 11 * mm, A4[0] - self.rightMargin, A4[1] - 11 * mm)
+        if LOGO.exists():
+            canvas.drawImage(str(LOGO), self.leftMargin, A4[1] - 9.6 * mm, width=4.2 * mm, height=6.3 * mm, preserveAspectRatio=True, anchor="c", mask="auto")
         canvas.setFont("Helvetica-Bold", 8)
         canvas.setFillColor(INK)
-        canvas.drawString(self.leftMargin, A4[1] - 8 * mm, "MP  MARBLE PARK ERP")
+        canvas.drawString(self.leftMargin + 6 * mm, A4[1] - 8 * mm, "MARBLE PARK ERP")
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(MUTED)
         canvas.drawRightString(A4[0] - self.rightMargin, 8 * mm, f"Complete user guide  |  {doc.page}")
@@ -96,7 +99,12 @@ def flow_table(flow):
 def build():
     payload = json.loads(DATA.read_text())
     guides = payload["guides"]
-    story = [Spacer(1, 20 * mm), Paragraph("MARBLE PARK RETAIL OPERATIONS", styles["Eyebrow"]), Paragraph("Complete user guide", styles["CoverTitle"]), Paragraph("Customer promise to physical fulfilment", ParagraphStyle("Subtitle", parent=styles["BodyMP"], fontSize=14, leading=20, alignment=TA_CENTER, textColor=MUTED)), Spacer(1, 12 * mm)]
+    story = [Spacer(1, 10 * mm)]
+    if LOGO.exists():
+        cover_logo = fit_image(LOGO, 24 * mm, 34 * mm)
+        cover_logo.hAlign = "CENTER"
+        story += [cover_logo, Spacer(1, 5 * mm)]
+    story += [Paragraph("MARBLE PARK RETAIL OPERATIONS", styles["Eyebrow"]), Paragraph("Complete user guide", styles["CoverTitle"]), Paragraph("Customer promise to physical fulfilment", ParagraphStyle("Subtitle", parent=styles["BodyMP"], fontSize=14, leading=20, alignment=TA_CENTER, textColor=MUTED)), Spacer(1, 12 * mm)]
     lifecycle = Table([[Paragraph(f"<b>0{i + 1}</b><br/>{label}", ParagraphStyle(f"Life{i}", parent=styles["BodyMP"], fontSize=8, leading=11, alignment=TA_CENTER, textColor=INK)) for i, label in enumerate(["Lead + intent", "Quote + revision", "Partial order", "Reserve / procure", "Pick + dispatch", "Payment + return"])]], colWidths=[29.5 * mm] * 6)
     lifecycle.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .6, LINE), ("INNERGRID", (0, 0), (-1, -1), .4, LINE), ("BACKGROUND", (0, 0), (-1, -1), SOFT), ("TOPPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 10)]))
     story += [lifecycle, Spacer(1, 14 * mm), Paragraph("For showroom sales, office, inventory, dispatch, managers and owners. This manual explains both the action and the control that proves the action was completed correctly.", ParagraphStyle("CoverBody", parent=styles["BodyMP"], fontSize=11, leading=17, alignment=TA_CENTER, textColor=MUTED)), PageBreak(), Paragraph("Guide index", styles["GuideTitle"])]

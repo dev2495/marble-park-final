@@ -18,12 +18,14 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem,
 } from '@/components/ui/dropdown-menu';
-import { ThemeToggle, ThemeToggleButton } from '@/components/theme-toggle';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { guideForRoute } from '@/lib/help-content';
+import { CompanyLogo } from '@/components/company-logo';
 
 const ME_QUERY = gql`
   query LayoutMe {
     me { id name email avatarUrl role effectivePermissions permissionOverrides }
+    documentSettings { data }
   }
 `;
 
@@ -206,6 +208,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [meData, meLoading, meError, router, user]);
 
   const me = meData?.me || user;
+  const company = meData?.documentSettings?.data || {};
+  const companyName = company.companyName || 'Marble Park';
+  const companyLogo = company.logoUrl || '/brand/marble-park-logo.jpg';
   const previewingRole = user?.role === 'admin' && roleOverride;
   const effectiveRole = previewingRole ? roleOverride : me?.role || user?.role || 'owner';
   const effectivePermissions = previewingRole ? [] : (me?.effectivePermissions || user?.effectivePermissions || []);
@@ -255,9 +260,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="flex h-full w-[16rem] flex-col overflow-hidden">
           <div className="flex h-16 items-center gap-3 border-b border-[var(--line)] px-4">
             <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[#2563eb] text-sm font-bold text-white shadow-[0_4px_12px_-4px_rgba(37,99,235,0.45)]">MP</div>
+              <CompanyLogo src={companyLogo} name={companyName} className="h-10 w-10" imageClassName="p-0.5" />
               <div className={cn('min-w-0 whitespace-nowrap', labelReveal)}>
-                <p className="text-base font-bold leading-tight text-[var(--ink)]">Marble Park</p>
+                <p className="text-base font-bold leading-tight text-[var(--ink)]">{companyName}</p>
                 <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
               </div>
             </Link>
@@ -346,7 +351,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </h1>
                 </div>
               </div>
-              <Link href="/dashboard" className="grid h-9 w-9 place-items-center rounded-md bg-[#2563eb] text-xs font-bold text-white lg:hidden">MP</Link>
+              <Link href="/dashboard" className="lg:hidden"><CompanyLogo src={companyLogo} name={companyName} className="h-9 w-9" /></Link>
             </div>
 
             <div className="flex items-center gap-2">
@@ -365,7 +370,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     placeholder="Search SKU, customer, lead, quote…"
                     className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)]"
                   />
-                  {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#2563eb]" /> : null}
+                  {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--brand-600)]" /> : null}
                 </div>
 
                 {showResults && deferredSearchQuery.length >= 2 ? (
@@ -397,7 +402,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               {/* Quick light/dark toggle */}
-              <ThemeToggleButton className="hidden sm:inline-flex" />
+              <ThemeToggle className="hidden sm:inline-flex" />
 
               <Link
                 href={`/dashboard/help#${guideForRoute(pathname)}`}
@@ -551,9 +556,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <aside className="relative flex h-full w-[86vw] max-w-[22rem] flex-col overflow-hidden border-r border-[var(--line)] bg-[var(--surface)] shadow-[0_24px_70px_-24px_rgba(24,24,27,0.35)]">
               <div className="flex h-16 items-center justify-between border-b border-[var(--line)] px-4">
                 <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} className="flex items-center gap-3">
-                  <div className="grid h-9 w-9 place-items-center rounded-md bg-[#2563eb] text-sm font-bold text-white">MP</div>
+                  <CompanyLogo src={companyLogo} name={companyName} className="h-10 w-10" />
                   <div>
-                    <p className="text-base font-bold text-[var(--ink)]">Marble Park</p>
+                    <p className="text-base font-bold text-[var(--ink)]">{companyName}</p>
                     <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
                   </div>
                 </Link>

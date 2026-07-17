@@ -23,6 +23,7 @@
       ],
       "steps": [
         "Create brand, category and finish records.",
+        "Upload the official logo in Brand Master and keep Quote footer enabled for brands that may appear on customer documents.",
         "Create or bulk-import one Product Master SKU per saleable design.",
         "For tiles, enter internal showroom code, size, pieces per box, box coverage, purchase UOM and default sales UOM.",
         "Register displayed samples in Tile Master and print their QR labels.",
@@ -103,7 +104,8 @@
         "Record site, budget, timeline and requirement notes.",
         "Create an intent and add Product Master SKUs room by room.",
         "Open Quote Studio from the intent or create a direct quote.",
-        "Edit the room, customer-facing image, rate, discount and GST.",
+        "Edit the room, customer-facing image, internal design code, rate, discount and GST.",
+        "In Quotation footer, select only the served-brand logos that belong on this customer document.",
         "Save a new revision when commercial lines must change after discussion.",
         "Download the priced quotation or selection-only PDF and mark it sent."
       ],
@@ -390,13 +392,16 @@
       ],
       "summary": "Issue named user accounts, apply least-privilege roles, test access, and maintain company/document settings.",
       "flow": [
+        "Company identity",
+        "Document defaults",
         "Create user",
         "Assign role",
         "Permission check",
-        "Activate",
         "Audit"
       ],
       "steps": [
+        "In Settings, maintain the company logo, address, GSTIN, phone, email, quotation title, default terms, bank details and footer.",
+        "Choose Light, Dark or System appearance; System follows the device preference.",
         "Create one named account per staff member.",
         "Assign Sales, Office, Inventory, Dispatch, Manager or Owner role.",
         "Apply an override only when the standard role needs a documented exception.",

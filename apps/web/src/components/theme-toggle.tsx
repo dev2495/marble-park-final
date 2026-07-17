@@ -159,13 +159,7 @@ export function ThemeToggleButton({ className = '' }: { className?: string }) {
       )}
       title={isDark ? 'Light mode' : 'Dark mode'}
     >
-      <span
-        aria-hidden="true"
-        className={cn(
-          'absolute inset-0 bg-[radial-gradient(circle_at_35%_25%,rgba(255,255,255,0.85),transparent_30%),linear-gradient(135deg,rgba(96,165,250,0.25),rgba(124,58,237,0.20))] transition-opacity duration-300',
-          isDark ? 'opacity-100' : 'opacity-60',
-        )}
-      />
+      <span aria-hidden="true" className="absolute inset-0 bg-[var(--brand-50)] opacity-60 transition-opacity duration-300 dark:bg-[var(--brand-950)]" />
       <Sun
         className={cn(
           'absolute h-4 w-4 text-amber-500 transition-all duration-300 ease-out',
@@ -175,7 +169,7 @@ export function ThemeToggleButton({ className = '' }: { className?: string }) {
       />
       <Moon
         className={cn(
-          'absolute h-4 w-4 text-indigo-600 transition-all duration-300 ease-out dark:text-indigo-200',
+          'absolute h-4 w-4 text-[var(--brand-700)] transition-all duration-300 ease-out dark:text-[var(--brand-300)]',
           isDark ? '-rotate-90 scale-50 opacity-0' : 'rotate-0 scale-100 opacity-100',
         )}
         strokeWidth={1.9}

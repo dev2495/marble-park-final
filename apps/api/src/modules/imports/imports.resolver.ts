@@ -217,6 +217,10 @@ export class ImportsResolver {
       await requireSession(this.prisma, ctx);
     } else if (effectiveScope === 'product-image') {
       await requirePermission(this.prisma, ctx, 'products.manage');
+    } else if (effectiveScope === 'brand-logo') {
+      await requirePermission(this.prisma, ctx, 'master_data.manage');
+    } else if (effectiveScope === 'company-logo') {
+      await requirePermission(this.prisma, ctx, 'settings.manage');
     } else if (effectiveScope === 'delivery-proof') {
       await requirePermission(this.prisma, ctx, 'dispatch.manage');
     } else {

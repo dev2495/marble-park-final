@@ -23,22 +23,22 @@ const React = require('react');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
 
 const colors = {
-  ink: '#211b16',
-  paper: '#fffaf3',
-  cream: '#f7efe4',
-  line: '#ead7c0',
-  tan: '#8b6b4c',
-  gold: '#b57942',
-  green: '#24544d',
-  muted: '#6d5a49',
-  redAccent: '#c53d3d',
-  charcoal: '#1a1715',
+  ink: '#222222',
+  paper: '#ffffff',
+  cream: '#f6f3f2',
+  line: '#ddd6d4',
+  tan: '#7f211d',
+  gold: '#9d2a24',
+  green: '#0d7470',
+  muted: '#66615f',
+  redAccent: '#9d2a24',
+  charcoal: '#171717',
   cardBg: '#ffffff',
 };
 
 const styles = StyleSheet.create({
   // Shared
-  page: { backgroundColor: colors.paper, padding: 28, color: colors.ink, fontFamily: 'Helvetica' },
+  page: { backgroundColor: colors.paper, paddingTop: 24, paddingLeft: 28, paddingRight: 28, paddingBottom: 34, color: colors.ink, fontFamily: 'Helvetica' },
   pagePadded: { backgroundColor: colors.paper, paddingTop: 28, paddingBottom: 70, paddingLeft: 28, paddingRight: 28, color: colors.ink, fontFamily: 'Helvetica' },
   // ---- Cover page (selection layout) ----
   coverPage: { padding: 0, backgroundColor: '#ffffff', color: colors.ink, fontFamily: 'Helvetica' },
@@ -46,6 +46,8 @@ const styles = StyleSheet.create({
   coverHeroBg: { position: 'absolute', top: 60, left: 0, right: 0, height: 460, backgroundColor: colors.line },
   coverHero: { position: 'absolute', top: 60, left: 0, right: 0, height: 460, objectFit: 'cover' },
   coverBrandWordmark: { position: 'absolute', top: 80, left: 28, right: 28, fontSize: 64, fontWeight: 900, letterSpacing: 4, color: '#ffffff', textAlign: 'center', textShadow: '0 2px 8px rgba(0,0,0,0.45)' },
+  coverIdentity: { position: 'absolute', top: 82, left: 28, width: 112, height: 142, backgroundColor: '#000000', padding: 8, alignItems: 'center', justifyContent: 'center' },
+  coverIdentityLogo: { width: 96, height: 126, objectFit: 'contain' },
   coverQuotationTab: { position: 'absolute', left: '20%', right: '20%', bottom: 195, backgroundColor: colors.charcoal, paddingVertical: 12, paddingHorizontal: 28, borderRadius: 0 },
   coverQuotationText: { fontSize: 26, fontWeight: 900, color: '#ffffff', textAlign: 'center', letterSpacing: 4 },
   coverRibbon: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.charcoal, color: '#ffffff', paddingVertical: 22, paddingHorizontal: 36 },
@@ -65,32 +67,36 @@ const styles = StyleSheet.create({
   cardImage: { width: '100%', height: '100%', objectFit: 'cover' },
   cardImagePlaceholder: { fontSize: 9.5, color: colors.tan, textAlign: 'center' },
   // ---- Priced quote layout (kept compact) ----
-  topRule: { height: 4, backgroundColor: colors.ink, borderRadius: 99, marginBottom: 14 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 },
+  topRule: { height: 4, backgroundColor: colors.redAccent, marginBottom: 10 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
   logoBox: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.ink, color: colors.paper, alignItems: 'center', justifyContent: 'center' },
   logoText: { fontSize: 15, fontWeight: 800 },
-  brandWrap: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  companyLogoBox: { width: 54, height: 54, backgroundColor: '#000000', padding: 4, alignItems: 'center', justifyContent: 'center' },
+  companyLogo: { width: 46, height: 46, objectFit: 'contain' },
+  brandWrap: { width: '64%', flexDirection: 'row', gap: 10, alignItems: 'center' },
   brand: { fontSize: 23, fontWeight: 900, letterSpacing: 1.6 },
   subBrand: { marginTop: 3, fontSize: 7.5, color: colors.tan, letterSpacing: 3.4, textTransform: 'uppercase' },
-  quoteTitle: { fontSize: 24, fontWeight: 900, textAlign: 'right', letterSpacing: 1 },
+  companyMeta: { marginTop: 2, maxWidth: 245, fontSize: 6.8, color: colors.muted, lineHeight: 1.3 },
+  quoteIdentity: { width: '33%', alignItems: 'flex-end' },
+  quoteTitle: { maxWidth: 176, fontSize: 15, lineHeight: 1.1, fontWeight: 900, textAlign: 'right', letterSpacing: 0.8 },
   quoteDate: { marginTop: 3, fontSize: 8.5, color: colors.muted, textAlign: 'right' },
-  panels: { flexDirection: 'row', gap: 14, marginTop: 12, marginBottom: 14 },
-  panel: { flex: 1, minHeight: 78, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 12 },
+  panels: { flexDirection: 'row', gap: 12, marginTop: 7, marginBottom: 8 },
+  panel: { flex: 1, minHeight: 65, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9 },
   label: { fontSize: 7.2, fontWeight: 900, color: colors.tan, letterSpacing: 1.5, textTransform: 'uppercase' },
   value: { marginTop: 4, fontSize: 12, fontWeight: 900, color: colors.ink },
   text: { marginTop: 3, fontSize: 8.8, lineHeight: 1.35, color: colors.muted },
-  badgeRow: { flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap' },
+  badgeRow: { flexDirection: 'row', gap: 6, marginTop: 5, flexWrap: 'wrap' },
   badge: { borderRadius: 999, backgroundColor: colors.cream, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 8, paddingVertical: 4, fontSize: 7.2, fontWeight: 900, color: colors.tan, textTransform: 'uppercase', letterSpacing: 1.1 },
   areaBlock: { marginTop: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 16, backgroundColor: colors.cardBg, overflow: 'hidden' },
   areaHeader: { backgroundColor: colors.ink, color: colors.paper, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', justifyContent: 'space-between' },
   areaTitle: { fontSize: 10, fontWeight: 900, letterSpacing: 1.5, textTransform: 'uppercase' },
   areaCount: { fontSize: 8, color: '#e8c39b' },
   tableHeader: { flexDirection: 'row', backgroundColor: colors.line, paddingVertical: 7, paddingHorizontal: 8 },
-  tableRow: { flexDirection: 'row', minHeight: 72, paddingVertical: 7, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: '#f1e3d2' },
+  tableRow: { flexDirection: 'row', minHeight: 62, paddingVertical: 6, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: '#f1e3d2' },
   th: { fontSize: 6.8, fontWeight: 900, color: colors.muted, textTransform: 'uppercase', letterSpacing: 1.05 },
   td: { fontSize: 8.6, color: colors.ink, lineHeight: 1.25 },
   imageCol: { width: '13%' },
-  image: { width: 52, height: 52, objectFit: 'contain', borderRadius: 8, backgroundColor: colors.cream },
+  image: { width: 46, height: 46, objectFit: 'contain', borderRadius: 6, backgroundColor: colors.cream },
   descCol: { width: '33%', paddingRight: 6 },
   qtyCol: { width: '10%', textAlign: 'center' },
   rateCol: { width: '13%', textAlign: 'right' },
@@ -99,16 +105,24 @@ const styles = StyleSheet.create({
   amountCol: { width: '10%', textAlign: 'right' },
   sku: { marginTop: 4, fontSize: 7.2, color: colors.tan, letterSpacing: 0.8 },
   meta: { marginTop: 3, fontSize: 7.6, color: colors.muted },
-  totalsWrap: { marginTop: 14, flexDirection: 'row', gap: 16, alignItems: 'flex-start' },
-  notesBox: { flex: 1, minHeight: 92, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 12 },
-  totalsBox: { width: 210, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 12 },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 7 },
+  totalsWrap: { marginTop: 9, flexDirection: 'row', gap: 12, alignItems: 'stretch' },
+  notesBox: { flex: 1, minHeight: 72, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9 },
+  totalsBox: { width: 200, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9 },
+  totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   totalLabel: { fontSize: 8.6, color: colors.muted, fontWeight: 700 },
   totalValue: { fontSize: 8.8, color: colors.ink, fontWeight: 900 },
-  grand: { borderTopWidth: 2, borderTopColor: colors.ink, paddingTop: 8, marginTop: 3 },
-  grandText: { fontSize: 14, fontWeight: 900, color: colors.ink },
-  bottomGrid: { marginTop: 14, flexDirection: 'row', gap: 14 },
-  halfBox: { flex: 1, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 12, minHeight: 82 },
+  grand: { borderTopWidth: 2, borderTopColor: colors.ink, paddingTop: 5, marginTop: 1 },
+  grandText: { fontSize: 12, fontWeight: 900, color: colors.ink },
+  bottomGrid: { marginTop: 9, flexDirection: 'row', gap: 12 },
+  halfBox: { flex: 1, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9, minHeight: 60 },
+  brandStrip: { marginTop: 9, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 7 },
+  brandStripTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 },
+  brandStripTitle: { fontSize: 7.2, fontWeight: 900, color: colors.tan, letterSpacing: 1.5, textTransform: 'uppercase' },
+  brandStripHint: { fontSize: 6.5, color: colors.muted },
+  brandLogoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  brandLogoTile: { width: 77, height: 32, borderWidth: 1, borderColor: colors.line, backgroundColor: '#ffffff', padding: 4, alignItems: 'center', justifyContent: 'center' },
+  brandLogo: { width: 67, height: 23, objectFit: 'contain' },
+  brandLogoName: { fontSize: 6, fontWeight: 800, color: colors.ink, textAlign: 'center' },
   footer: { position: 'absolute', bottom: 18, left: 28, right: 28, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 7, flexDirection: 'row', justifyContent: 'space-between', color: colors.tan, fontSize: 7.4 },
   pageNumber: { color: colors.tan, fontSize: 7.4 },
   // ---- Closing thank-you page ----
@@ -188,6 +202,40 @@ function chunk(items, size) {
   return out;
 }
 
+function selectedBrands(payload, quoteMeta) {
+  if (quoteMeta.showBrandLogos === false) return [];
+  const brands = asArray(payload.brands).filter((brand) => {
+    const metadata = safeJson(brand.metadata, {});
+    return brand.status === 'active' && metadata.quoteEnabled !== false && metadata.logoUrl;
+  });
+  if (Array.isArray(quoteMeta.selectedBrandIds)) {
+    const ids = new Set(quoteMeta.selectedBrandIds.map(String));
+    return brands.filter((brand) => ids.has(String(brand.id))).slice(0, 18);
+  }
+  const names = new Set(asArray(payload.quote?.lines).map((line) => String(line.brand || '').trim().toLowerCase()).filter(Boolean));
+  return brands.filter((brand) => names.has(String(brand.name || '').trim().toLowerCase())).slice(0, 18);
+}
+
+function BrandStrip({ payload, quoteMeta, requestUrl }) {
+  const e = React.createElement;
+  const brands = selectedBrands(payload, quoteMeta);
+  if (!brands.length) return null;
+  return e(View, { style: styles.brandStrip, wrap: false },
+    e(View, { style: styles.brandStripTitleRow },
+      e(Text, { style: styles.brandStripTitle }, 'Brands selected for this quotation'),
+      e(Text, { style: styles.brandStripHint }, `${brands.length} served brand${brands.length === 1 ? '' : 's'}`),
+    ),
+    e(View, { style: styles.brandLogoGrid },
+      ...brands.map((brand) => {
+        const src = buildAbsoluteUrl(safeJson(brand.metadata, {}).logoUrl, requestUrl);
+        return e(View, { key: String(brand.id), style: styles.brandLogoTile },
+          src ? e(Image, { src, style: styles.brandLogo }) : e(Text, { style: styles.brandLogoName }, brand.name),
+        );
+      }),
+    ),
+  );
+}
+
 async function fetchQuote(id, apiUrl) {
   // Try Prisma first (fastest, fewer hops in production).
   try {
@@ -220,6 +268,8 @@ async function fetchQuote(id, apiUrl) {
       lines quoteMeta displayMode discountPercent notes
       customer owner lead approval
     }
+    documentSettings { data }
+    masterProductBrands(status: "active")
   }`;
   const fetchViaGraphql = async (token) => {
     const response = await fetch(apiUrl, {
@@ -239,7 +289,11 @@ async function fetchQuote(id, apiUrl) {
   if (!response.ok || payload.errors?.length || !payload.data?.quote) {
     throw new Error(payload.errors?.[0]?.message || 'Quote not found');
   }
-  return { quote: payload.data.quote, settings: null, brands: [] };
+  return {
+    quote: payload.data.quote,
+    settings: payload.data.documentSettings?.data || null,
+    brands: payload.data.masterProductBrands || [],
+  };
 }
 
 async function getPdfServiceToken(apiUrl) {
@@ -266,13 +320,14 @@ function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
   const e = React.createElement;
   const heroUrl = buildAbsoluteUrl(quoteMeta.coverImage || quote.coverImage || (quote.customer && quote.customer.coverImage), requestUrl);
   const company = (settings && settings.companyName) || quoteMeta.companyName || 'MARBLE PARK';
+  const companyLogo = buildAbsoluteUrl((settings && settings.logoUrl) || '/brand/marble-park-logo.jpg', requestUrl);
   const customerName = quote.customer?.name || 'Premium Client';
   const customerMobile = quote.customer?.mobile || quote.customer?.phone || '';
   const architect = quote.customer?.architectName || quoteMeta.architectName || '';
   const sales = quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team';
   const salesPhone = quote.owner?.phone || (settings && settings.supportPhone) || '';
   const date = fmtDate(quote.createdAt) || fmtDate(new Date());
-  const tagline = quoteMeta.tagline || 'Below Are The Best Quoted Rates, For The Material You Have Selected For Your Prestegious Project.';
+  const tagline = quoteMeta.tagline || (settings && settings.documentTagline) || 'Premium bath, tile and surface selections for considered spaces.';
 
   return e(Page, { size: 'A4', style: styles.coverPage },
     // Tagline
@@ -281,8 +336,9 @@ function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
     heroUrl
       ? e(Image, { src: heroUrl, style: styles.coverHero })
       : e(View, { style: styles.coverHeroBg }),
-    // Brand wordmark over the hero
-    e(Text, { style: styles.coverBrandWordmark }, String(company).toUpperCase()),
+    companyLogo
+      ? e(View, { style: styles.coverIdentity }, e(Image, { src: companyLogo, style: styles.coverIdentityLogo }))
+      : e(Text, { style: styles.coverBrandWordmark }, String(company).toUpperCase()),
     // QUOTATION pill
     e(View, { style: styles.coverQuotationTab },
       e(Text, { style: styles.coverQuotationText }, 'QUOTATION'),
@@ -381,7 +437,7 @@ function SelectionAreaPage({ group, requestUrl }) {
   );
 }
 
-function ClosingPage({ settings, terms, bank }) {
+function ClosingPage({ payload, settings, terms, bank, quoteMeta, requestUrl }) {
   const e = React.createElement;
   return e(Page, { size: 'A4', style: styles.closingPage },
     e(View, { style: styles.closingInner },
@@ -392,6 +448,7 @@ function ClosingPage({ settings, terms, bank }) {
       e(Text, { style: styles.closingTermsTitle }, 'Bank Details'),
       e(Text, { style: styles.closingText }, bank),
       settings?.supportEmail ? e(Text, { style: styles.closingText }, `For any questions: ${settings.supportEmail}${settings.supportPhone ? ` · ${settings.supportPhone}` : ''}`) : null,
+      e(BrandStrip, { payload, quoteMeta, requestUrl }),
     ),
   );
 }
@@ -419,11 +476,11 @@ function PricedAreaTable({ group, showPrices, requestUrl }) {
       const src = imageSrc(line, requestUrl);
       return e(View, { key: `${line.sku || line.tileCode || index}`, style: styles.tableRow },
         e(View, { style: styles.imageCol },
-          src ? e(Image, { src, style: styles.image }) : e(View, { style: styles.image }, e(Text, { style: { fontSize: 7, color: colors.tan, textAlign: 'center', marginTop: 21 } }, 'No image')),
+          src ? e(Image, { src, style: styles.image }) : e(View, { style: styles.image }, e(Text, { style: { fontSize: 7, color: colors.tan, textAlign: 'center', marginTop: 18 } }, 'No image')),
         ),
         e(View, { style: styles.descCol },
           e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
-          e(Text, { style: styles.sku }, [line.sku || line.tileCode || '', line.brand || '', line.finish || '', line.tileSize || ''].filter(Boolean).join(' · ')),
+          e(Text, { style: styles.sku }, [line.sku || line.tileCode || '', line.brand || '', line.finish || '', line.tileSize || '', `GST ${Number(line.taxRate || 18)}%`].filter(Boolean).join(' · ')),
           line.notes || line.description ? e(Text, { style: styles.meta }, line.notes || line.description) : null,
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}\n${rate.qty} ${line.inventoryUom || line.unit || line.uom || 'BOX'} stock`),
@@ -449,22 +506,25 @@ function PricedDocumentBody(payload, requestUrl) {
   const storedTax = lines.reduce((sum, line) => sum + Number(line.taxAmount || 0), 0);
   const tax = storedTax > 0 ? storedTax : taxable * 0.18;
   const total = taxable + tax;
-  const terms = quoteMeta.terms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
-  const bank = quoteMeta.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
+  const terms = quoteMeta.terms || settings.defaultTerms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
+  const bank = quoteMeta.bankDetails || settings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
   const remarks = quoteMeta.remarks || quote.notes || 'Selections can be revised area-wise before final order confirmation.';
+  const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.jpg', requestUrl);
+  const contactLine = [settings.companyAddress, settings.gstNumber ? `GSTIN ${settings.gstNumber}` : '', settings.supportPhone, settings.supportEmail].filter(Boolean).join(' · ');
 
   return e(Page, { size: 'A4', style: styles.page },
     e(View, { style: styles.topRule }),
     e(View, { style: styles.header },
       e(View, { style: styles.brandWrap },
-        e(View, { style: styles.logoBox }, e(Text, { style: styles.logoText }, 'MP')),
+        companyLogo ? e(View, { style: styles.companyLogoBox }, e(Image, { src: companyLogo, style: styles.companyLogo })) : e(View, { style: styles.logoBox }, e(Text, { style: styles.logoText }, 'MP')),
         e(View, null,
           e(Text, { style: styles.brand }, settings.companyName || 'MARBLE PARK'),
-          e(Text, { style: styles.subBrand }, 'Retail Ops'),
+          e(Text, { style: styles.subBrand }, settings.documentTagline || 'Premium Bath & Surface Studio'),
+          contactLine ? e(Text, { style: styles.companyMeta }, contactLine) : null,
         ),
       ),
-      e(View, null,
-        e(Text, { style: styles.quoteTitle }, 'QUOTATION'),
+      e(View, { style: styles.quoteIdentity },
+        e(Text, { style: styles.quoteTitle }, settings.quotationTitle || 'PROFORMA / QUOTATION'),
         e(Text, { style: styles.quoteDate }, `Date: ${fmtDate(quote.createdAt) || fmtDate(new Date())}`),
       ),
     ),
@@ -507,9 +567,10 @@ function PricedDocumentBody(payload, requestUrl) {
       e(View, { style: styles.halfBox }, e(Text, { style: styles.label }, 'Terms and Conditions'), e(Text, { style: styles.text }, terms)),
       e(View, { style: styles.halfBox }, e(Text, { style: styles.label }, 'Bank Details'), e(Text, { style: styles.text }, bank)),
     ),
+    e(BrandStrip, { payload, quoteMeta, requestUrl }),
     e(View, { style: styles.footer },
       e(Text, null, `Prepared by: ${quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team'}`),
-      e(Text, null, `Thank you for choosing Marble Park. ${settings.supportEmail || 'support@marblepark.in'}`),
+      e(Text, null, settings.documentFooter || `Thank you for choosing ${settings.companyName || 'Marble Park'}. ${settings.supportEmail || ''}`),
       e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}`, style: styles.pageNumber }),
     ),
   );
@@ -527,12 +588,12 @@ function buildDocument(payload, requestUrl) {
   const isSelection = quote.displayMode === 'selection' || quoteMeta.layout === 'selection';
 
   if (isSelection) {
-    const terms = quoteMeta.terms || 'Selection summary is for design coordination only. Final pricing, taxes, and delivery terms will be confirmed when the order is placed. Tile codes and shades may have small lot variations.';
-    const bank = quoteMeta.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
+    const terms = quoteMeta.terms || settings?.defaultTerms || 'Selection summary is for design coordination only. Final pricing, taxes, and delivery terms will be confirmed when the order is placed. Tile codes and shades may have small lot variations.';
+    const bank = quoteMeta.bankDetails || settings?.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
     return e(Document, null,
       e(CoverPage, { quote, settings, requestUrl, quoteMeta }),
       ...groups.flatMap((group) => SelectionAreaPage({ group, requestUrl })),
-      e(ClosingPage, { settings, terms, bank }),
+      e(ClosingPage, { payload, settings, terms, bank, quoteMeta, requestUrl }),
     );
   }
   return e(Document, null, PricedDocumentBody(payload, requestUrl));

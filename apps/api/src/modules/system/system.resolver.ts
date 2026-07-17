@@ -1,6 +1,6 @@
 import { Args, Context, Field, InputType, Mutation, ObjectType, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireRoles } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemService } from './system.service';
 
@@ -17,6 +17,15 @@ class UpdateSettingsInput {
   @Field({ nullable: true }) challanPrefix?: string;
   @Field(() => Number, { nullable: true }) approvalDiscountThreshold?: number;
   @Field({ nullable: true }) companyName?: string;
+  @Field({ nullable: true }) logoUrl?: string;
+  @Field({ nullable: true }) companyAddress?: string;
+  @Field({ nullable: true }) gstNumber?: string;
+  @Field({ nullable: true }) website?: string;
+  @Field({ nullable: true }) quotationTitle?: string;
+  @Field({ nullable: true }) documentTagline?: string;
+  @Field({ nullable: true }) defaultTerms?: string;
+  @Field({ nullable: true }) bankDetails?: string;
+  @Field({ nullable: true }) documentFooter?: string;
   @Field({ nullable: true }) supportPhone?: string;
   @Field({ nullable: true }) supportEmail?: string;
 }
@@ -92,6 +101,12 @@ export class SystemResolver {
   async appSettings(@Context() ctx: GraphqlRequestContext) {
     await requirePermission(this.prisma, ctx, 'settings.manage');
     return { data: await this.system.getSettings() };
+  }
+
+  @Query(() => SystemJsonOutput)
+  async documentSettings(@Context() ctx: GraphqlRequestContext) {
+    await requireSession(this.prisma, ctx);
+    return { data: await this.system.getDocumentSettings() };
   }
 
   @Mutation(() => SystemJsonOutput)

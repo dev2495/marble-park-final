@@ -33,6 +33,15 @@ model AppSetting {
   challanPrefix             String
   approvalDiscountThreshold Float
   companyName               String
+  logoUrl                   String   @default("/brand/marble-park-logo.jpg")
+  companyAddress            String   @default("")
+  gstNumber                 String   @default("")
+  website                   String   @default("")
+  quotationTitle            String   @default("PROFORMA / QUOTATION")
+  documentTagline           String   @default("Premium bath, tile and surface selections for considered spaces.")
+  defaultTerms              String   @default("")
+  bankDetails               String   @default("")
+  documentFooter            String   @default("")
   supportPhone              String
   supportEmail              String
   updatedAt                 DateTime

@@ -4,8 +4,8 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
   AlertTriangle, Building2, CheckCircle2, FileText, Globe2,
-  LifeBuoy, MapPin, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, SlidersHorizontal,
-  Warehouse,
+  ImagePlus, Landmark, LifeBuoy, Loader2, MapPin, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, SlidersHorizontal,
+  Upload, Warehouse,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,6 +23,12 @@ const DATA = gql`
 const SAVE_SETTINGS = gql`
   mutation SaveSettings($input: UpdateSettingsInput!) {
     updateAppSettings(input: $input) { data }
+  }
+`;
+
+const UPLOAD_COMPANY_LOGO = gql`
+  mutation UploadCompanyLogo($filename: String!, $contentBase64: String!, $scope: String) {
+    uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result }
   }
 `;
 
@@ -46,13 +52,29 @@ const UPDATE_STOCK_LOCATION = gql`
 
 const defaults = {
   companyName: 'Marble Park',
+  logoUrl: '/brand/marble-park-logo.jpg',
+  companyAddress: 'Near DCB Bank, Char Rasta, Vapi (Guj)-396191, India',
+  gstNumber: '24AHPPS9407D1Z3',
+  website: '',
+  quotationTitle: 'PROFORMA / QUOTATION',
+  documentTagline: 'Premium bath, tile and surface selections for considered spaces.',
+  defaultTerms: '1. Freight and labour are extra and subject to applicable GST.\n2. Payment is 100% advance unless otherwise agreed in writing.\n3. Goods once sold cannot be returned except through an approved return.\n4. Confirmed orders cannot be cancelled without written approval.\n5. Tile spacers must be used as recommended by the manufacturer.\n6. Product images are references and may vary from the supplied product.',
+  bankDetails: 'Account name: Marble Park\nBank: IDFC Bank\nAccount no.: 10033526350\nIFSC: IDFB0042441\nBranch: Vapi - 396195, Gujarat',
+  documentFooter: 'Thank you for choosing Marble Park. Product availability, shade and batch are confirmed at order stage.',
   canonicalAppUrl: '',
   quotePrefix: 'QT',
   challanPrefix: 'CH',
-  supportPhone: '',
+  supportPhone: '0260-2424498 · 9427119271 · 7506133166 · 9712508070',
   supportEmail: '',
   approvalDiscountThreshold: 15,
 };
+
+async function fileBase64(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
 
 const emptyPlant = {
   id: '',
@@ -96,6 +118,7 @@ function InfoCard({ icon: Icon, label, value, tone }: { icon: any; label: string
 export default function SettingsPage() {
   const { data, error, refetch } = useQuery(DATA, { fetchPolicy: 'cache-and-network' });
   const [save, { loading, error: saveError }] = useMutation(SAVE_SETTINGS, { onCompleted: () => { setSaved(true); refetch(); } });
+  const [uploadCompanyLogo] = useMutation(UPLOAD_COMPANY_LOGO);
   const [resetWorkspace, { loading: resetting, error: resetError }] = useMutation(RESET_WORKSPACE, { onCompleted: (result) => setResetMessage(`Workspace reset complete. Products: ${result?.resetClientWorkspace?.data?.counts?.products ?? 0}, users: ${result?.resetClientWorkspace?.data?.counts?.users ?? 0}.`) });
   const [createLocation, { loading: creatingLocation, error: createLocationError }] = useMutation(CREATE_STOCK_LOCATION, { onCompleted: () => { setPlantForm(emptyPlant); setPlantMessage('Plant created and stock scope updated.'); refetch(); } });
   const [updateLocation, { loading: updatingLocation, error: updateLocationError }] = useMutation(UPDATE_STOCK_LOCATION, { onCompleted: () => { setPlantForm(emptyPlant); setPlantMessage('Plant saved.'); refetch(); } });
@@ -106,6 +129,8 @@ export default function SettingsPage() {
   const [resetMessage, setResetMessage] = useState('');
   const [plantMessage, setPlantMessage] = useState('');
   const [browserOrigin, setBrowserOrigin] = useState('');
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoMessage, setLogoMessage] = useState('');
 
   useEffect(() => {
     setBrowserOrigin(window.location.origin);
@@ -128,6 +153,15 @@ export default function SettingsPage() {
       variables: {
         input: {
           companyName: form.companyName || defaults.companyName,
+          logoUrl: form.logoUrl || defaults.logoUrl,
+          companyAddress: form.companyAddress || '',
+          gstNumber: form.gstNumber || '',
+          website: form.website || '',
+          quotationTitle: form.quotationTitle || defaults.quotationTitle,
+          documentTagline: form.documentTagline || '',
+          defaultTerms: form.defaultTerms || '',
+          bankDetails: form.bankDetails || '',
+          documentFooter: form.documentFooter || '',
           canonicalAppUrl: form.canonicalAppUrl || browserOrigin,
           quotePrefix: form.quotePrefix || defaults.quotePrefix,
           challanPrefix: form.challanPrefix || defaults.challanPrefix,
@@ -137,6 +171,24 @@ export default function SettingsPage() {
         },
       },
     });
+  }
+
+  async function handleLogoUpload(file?: File) {
+    if (!file) return;
+    setLogoMessage('');
+    setUploadingLogo(true);
+    try {
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size <= 0 || file.size > 5 * 1024 * 1024) throw new Error('Use a JPG, PNG or WebP logo smaller than 5 MB.');
+      const result = await uploadCompanyLogo({ variables: { filename: file.name, contentBase64: await fileBase64(file), scope: 'company-logo' } });
+      const logoUrl = result.data?.uploadStoredAsset?.result?.publicUrl;
+      if (!logoUrl) throw new Error('The upload did not return a logo URL.');
+      setForm((current: any) => ({ ...current, logoUrl }));
+      setLogoMessage('Logo uploaded. Save settings to publish it everywhere.');
+    } catch (uploadError: any) {
+      setLogoMessage(uploadError.message || 'Logo upload failed.');
+    } finally {
+      setUploadingLogo(false);
+    }
   }
 
   async function submitReset() {
@@ -179,17 +231,16 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-7 pb-10">
-      <section className="mp-hero relative overflow-hidden p-7 lg:p-9">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(37,99,235,0.14),transparent_30%),radial-gradient(circle_at_90%_88%,rgba(124,58,237,0.13),transparent_28%)]" />
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+      <section className="border-b border-[var(--line)] pb-6 pt-2">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ink-4)]">System settings</p>
-            <h1 className="mt-3 max-w-5xl font-display text-4xl font-bold leading-[0.98] tracking-[-0.04em] text-[var(--ink)] lg:text-7xl">Company identity, document rules and live workspace controls.</h1>
-            <p className="mt-5 max-w-3xl text-base font-semibold leading-7 text-[var(--ink-3)]">
+            <h1 className="mt-2 max-w-4xl font-display text-3xl font-bold text-[var(--ink)] lg:text-4xl">Company identity and customer documents</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
               Keep quote PDFs, sales order links, approval thresholds and customer-facing contact information correct before client testing starts.
             </p>
           </div>
-          <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)]/78 p-4 shadow-sm-soft">
+          <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm-soft">
             <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">Workspace theme</p>
             <div className="mt-3"><ThemeToggle /></div>
           </div>
@@ -204,6 +255,7 @@ export default function SettingsPage() {
       {saved ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800"><CheckCircle2 className="mr-2 inline h-4 w-4" /> Settings saved.</div> : null}
       {resetMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{resetMessage}</div> : null}
       {plantMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{plantMessage}</div> : null}
+      {logoMessage ? <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--ink-2)]">{logoMessage}</div> : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <InfoCard icon={Building2} label="Company" value={summary.companyName} tone="bg-[var(--brand-50)] text-[var(--brand-700)]" />
@@ -213,7 +265,7 @@ export default function SettingsPage() {
       </section>
 
       <form onSubmit={submit} className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
-        <div className="mp-panel p-5 lg:p-6">
+        <div className="mp-panel p-5 lg:p-6 xl:col-span-2">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><Building2 className="h-5 w-5" /></div>
             <div>
@@ -221,15 +273,40 @@ export default function SettingsPage() {
               <p className="text-sm text-[var(--ink-4)]">Used by quote PDFs, sales order PDFs, links and customer-facing pages.</p>
             </div>
           </div>
+          <div className="mt-5 grid gap-5 md:grid-cols-[11rem_minmax(0,1fr)]">
+            <div className="overflow-hidden rounded-md border border-[var(--line)] bg-black">
+              <div className="grid h-44 place-items-center p-3">{form.logoUrl ? <img src={form.logoUrl} alt="Company logo preview" className="max-h-full max-w-full object-contain" /> : <ImagePlus className="h-7 w-7 text-white/55" />}</div>
+              <label className="flex cursor-pointer items-center justify-center gap-2 border-t border-white/15 px-3 py-2.5 text-xs font-semibold text-white">
+                {uploadingLogo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}{uploadingLogo ? 'Uploading' : 'Replace logo'}
+                <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={uploadingLogo} onChange={(event) => handleLogoUpload(event.target.files?.[0])} />
+              </label>
+            </div>
+            <div className="grid content-start gap-4">
+              <Field label="Company name"><Input value={form.companyName || ''} onChange={(e) => setForm({ ...form, companyName: e.target.value })} /></Field>
+              <Field label="GST number"><Input value={form.gstNumber || ''} onChange={(e) => setForm({ ...form, gstNumber: e.target.value.toUpperCase() })} placeholder="24AHPPS9407D1Z3" /></Field>
+              <Field label="Website"><Input value={form.website || ''} onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder="www.marblepark.in" /></Field>
+            </div>
+          </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <Field label="Company name"><Input value={form.companyName || ''} onChange={(e) => setForm({ ...form, companyName: e.target.value })} /></Field>
-            <Field label="Canonical app URL" helper="Live Railway URL should be used here; localhost is auto-replaced on this page."><Input value={form.canonicalAppUrl || ''} onChange={(e) => setForm({ ...form, canonicalAppUrl: e.target.value })} /></Field>
+            <Field label="Company address" className="md:col-span-2"><textarea value={form.companyAddress || ''} onChange={(e) => setForm({ ...form, companyAddress: e.target.value })} className="min-h-20 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" placeholder="Near DCB Bank, Char Rasta, Vapi (Guj)-396191, India" /></Field>
+            <Field label="Canonical app URL" helper="Used for links in generated documents."><Input value={form.canonicalAppUrl || ''} onChange={(e) => setForm({ ...form, canonicalAppUrl: e.target.value })} /></Field>
             <Field label="Quote prefix"><Input value={form.quotePrefix || ''} onChange={(e) => setForm({ ...form, quotePrefix: e.target.value.toUpperCase() })} /></Field>
             <Field label="Challan prefix"><Input value={form.challanPrefix || ''} onChange={(e) => setForm({ ...form, challanPrefix: e.target.value.toUpperCase() })} /></Field>
           </div>
         </div>
 
-        <div className="mp-panel p-5 lg:p-6">
+        <div className="mp-panel p-5 lg:p-6 xl:col-span-2">
+          <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><Landmark className="h-5 w-5" /></div><div><h2 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">Quotation defaults</h2><p className="text-sm text-[var(--ink-4)]">These values prefill every new customer quotation and remain editable on each quote.</p></div></div>
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            <Field label="Document title"><Input value={form.quotationTitle || ''} onChange={(e) => setForm({ ...form, quotationTitle: e.target.value })} /></Field>
+            <Field label="Document tagline"><Input value={form.documentTagline || ''} onChange={(e) => setForm({ ...form, documentTagline: e.target.value })} /></Field>
+            <Field label="Default terms"><textarea value={form.defaultTerms || ''} onChange={(e) => setForm({ ...form, defaultTerms: e.target.value })} className="min-h-32 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" placeholder="Freight, payment, return, cancellation and image-reference terms" /></Field>
+            <Field label="Bank details"><textarea value={form.bankDetails || ''} onChange={(e) => setForm({ ...form, bankDetails: e.target.value })} className="min-h-32 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" placeholder="Bank, account number, IFSC and branch" /></Field>
+            <Field label="Document footer" className="lg:col-span-2"><Input value={form.documentFooter || ''} onChange={(e) => setForm({ ...form, documentFooter: e.target.value })} placeholder="Thank you for choosing Marble Park." /></Field>
+          </div>
+        </div>
+
+        <div className="mp-panel p-5 lg:p-6 xl:col-span-2">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-r3 bg-emerald-50 text-emerald-700"><LifeBuoy className="h-5 w-5" /></div>
             <div>
@@ -237,7 +314,7 @@ export default function SettingsPage() {
               <p className="text-sm text-[var(--ink-4)]">Controls owner approval routing and contact details shown on generated documents.</p>
             </div>
           </div>
-          <div className="mt-5 grid gap-4">
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
             <Field label="Support phone"><Input value={form.supportPhone || ''} onChange={(e) => setForm({ ...form, supportPhone: e.target.value })} placeholder="Customer support number" /></Field>
             <Field label="Support email"><Input type="email" value={form.supportEmail || ''} onChange={(e) => setForm({ ...form, supportEmail: e.target.value })} placeholder="support@marblepark.in" /></Field>
             <Field label="Approval discount threshold" helper="Discount above this percentage asks owner/admin review before customer confirmation."><Input type="number" min={0} max={100} value={form.approvalDiscountThreshold ?? ''} onChange={(e) => setForm({ ...form, approvalDiscountThreshold: e.target.value })} /></Field>

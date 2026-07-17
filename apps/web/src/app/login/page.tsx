@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useMutation, gql } from '@apollo/client';
 import { ArrowRight, Bath, Boxes, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { CompanyLogo } from '@/components/company-logo';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Login page — HARDCODED safe colors. CSS variables intentionally NOT used
@@ -57,22 +58,22 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#070b17] text-white">
+    <main className="min-h-screen overflow-hidden bg-[#111111] text-white">
       <div className="relative grid min-h-screen lg:grid-cols-[1.08fr_0.92fr]">
-        <section className="relative hidden min-h-screen flex-col justify-between overflow-hidden border-r border-white/10 bg-[#080d1c] p-10 lg:flex xl:p-14">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(37,99,235,0.22),transparent_34%),radial-gradient(circle_at_80%_86%,rgba(14,165,233,0.16),transparent_34%)]" />
+        <section className="relative hidden min-h-screen flex-col justify-between overflow-hidden border-r border-white/10 bg-[#0d0d0d] p-10 lg:flex xl:p-14">
+          <div className="absolute inset-0 bg-[linear-gradient(145deg,rgba(157,42,36,0.18),transparent_46%),linear-gradient(0deg,rgba(255,255,255,0.02),rgba(255,255,255,0.02))]" />
           <div className="absolute left-10 top-36 h-px w-[78%] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
           <Link href="/" className="relative z-10 flex w-max items-center gap-3">
-            <div className="grid h-12 w-12 place-items-center rounded-lg bg-[#2563eb] text-sm font-black text-white shadow-[0_18px_44px_-18px_rgba(37,99,235,0.75)]">MP</div>
+            <CompanyLogo className="h-14 w-14" imageClassName="p-0.5" />
             <div>
               <div className="text-xl font-bold tracking-tight text-white">Marble Park</div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-200/75">Retail OS</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#d7aaa6]">Retail OS</div>
             </div>
           </Link>
 
           <div className="relative z-10 max-w-3xl">
-            <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-blue-300/10 px-3 py-1 text-xs font-semibold text-blue-100">
+            <span className="inline-flex items-center gap-2 rounded-full border border-[#bd4b44]/30 bg-[#9d2a24]/15 px-3 py-1 text-xs font-semibold text-[#f0c5c1]">
               <CheckCircle2 className="h-3.5 w-3.5" /> Built for sanitaryware & tile retail
             </span>
             <h1 className="mt-8 max-w-4xl text-5xl font-black leading-[1.04] tracking-[-0.035em] text-white xl:text-[4.45rem]">
@@ -85,9 +86,9 @@ export default function LoginPage() {
 
           <div className="relative z-10 grid grid-cols-3 gap-8 border-t border-white/10 pt-8">
             {[
-              ['12K+', 'SKUs catalogued'],
-              ['₹4.2Cr', 'Orders processed monthly'],
-              ['38', 'Store locations'],
+              ['Brand-led', 'Quotation PDFs'],
+              ['Lot-wise', 'Stock trace'],
+              ['Partial', 'Order & dispatch'],
             ].map(([value, label]) => (
               <div key={label}>
                 <div className="text-2xl font-black tabular-nums text-white">{value}</div>
@@ -103,7 +104,7 @@ export default function LoginPage() {
               [Users, 'CRM', 'Lead to confirmed order in one flow'],
             ].map(([Icon, title, label]: any) => (
               <div key={title} className="rounded-xl border border-white/10 bg-white/[0.045] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-                <Icon className="h-5 w-5 text-blue-200" />
+                <Icon className="h-5 w-5 text-[#d7aaa6]" />
                 <div className="mt-6 text-sm font-bold text-white">{title}</div>
                 <div className="mt-2 text-xs leading-5 text-slate-400">{label}</div>
               </div>
@@ -111,15 +112,15 @@ export default function LoginPage() {
           </div>
         </section>
 
-        <section className="relative flex min-h-screen items-center justify-center bg-[#0b1020] p-5 lg:p-10">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_72%_24%,rgba(37,99,235,0.16),transparent_32%)]" />
+        <section className="relative flex min-h-screen items-center justify-center bg-[#161616] p-5 lg:p-10">
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(155deg,rgba(157,42,36,0.13),transparent_42%)]" />
           <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.055] p-7 shadow-[0_30px_80px_-46px_rgba(0,0,0,0.9)] backdrop-blur-xl sm:p-9">
             <div className="mb-7 flex items-start justify-between gap-4">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Secure sign in</p>
                 <h2 className="mt-2 text-3xl font-black leading-tight tracking-[-0.025em] text-white">Sign in to your workspace</h2>
               </div>
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-blue-500/15 text-blue-200 ring-1 ring-blue-300/20">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[#9d2a24]/20 text-[#f0c5c1] ring-1 ring-[#bd4b44]/30">
                 <ShieldCheck className="h-5 w-5" />
               </div>
             </div>
@@ -143,7 +144,7 @@ export default function LoginPage() {
                     autoFocus
                     autoComplete="username"
                     placeholder="Enter your work email"
-                    className="h-11 w-full rounded-lg border border-white/10 bg-white/[0.065] pl-9 pr-3 text-sm font-medium text-white placeholder:text-slate-500 focus:border-blue-300/60 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
+                    className="h-11 w-full rounded-lg border border-white/10 bg-white/[0.065] pl-9 pr-3 text-sm font-medium text-white placeholder:text-slate-500 focus:border-[#bd4b44] focus:outline-none focus:ring-2 focus:ring-[#9d2a24]/30"
                   />
                 </div>
               </label>
@@ -159,7 +160,7 @@ export default function LoginPage() {
                     required
                     autoComplete="current-password"
                     placeholder="Enter your password"
-                    className="h-11 w-full rounded-lg border border-white/10 bg-white/[0.065] pl-9 pr-11 text-sm font-medium text-white placeholder:text-slate-500 focus:border-blue-300/60 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
+                    className="h-11 w-full rounded-lg border border-white/10 bg-white/[0.065] pl-9 pr-11 text-sm font-medium text-white placeholder:text-slate-500 focus:border-[#bd4b44] focus:outline-none focus:ring-2 focus:ring-[#9d2a24]/30"
                   />
                   <button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white" aria-label="Toggle password visibility">
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -167,7 +168,7 @@ export default function LoginPage() {
                 </div>
               </label>
 
-              <Button type="submit" onClick={handleSubmit} disabled={loading} size="lg" className="h-12 w-full gap-2 rounded-lg bg-[#2563eb] font-bold text-white shadow-[0_18px_38px_-20px_rgba(37,99,235,0.9)] hover:bg-[#1d4ed8]">
+              <Button type="submit" onClick={handleSubmit} disabled={loading} size="lg" className="h-12 w-full gap-2 rounded-lg bg-[#9d2a24] font-bold text-white shadow-[0_18px_38px_-20px_rgba(157,42,36,0.9)] hover:bg-[#7f211d]">
                 {loading ? 'Starting workspace…' : 'Start workspace'} <ArrowRight className="h-4 w-4" />
               </Button>
             </form>

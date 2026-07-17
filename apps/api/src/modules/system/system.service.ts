@@ -21,13 +21,40 @@ export class SystemService {
           challanPrefix: 'CH',
           approvalDiscountThreshold: 15,
           companyName: 'Marble Park',
-          supportPhone: '',
+          logoUrl: '/brand/marble-park-logo.jpg',
+          companyAddress: 'Near DCB Bank, Char Rasta, Vapi (Guj)-396191, India',
+          gstNumber: '24AHPPS9407D1Z3',
+          website: '',
+          quotationTitle: 'PROFORMA / QUOTATION',
+          documentTagline: 'Premium bath, tile and surface selections for considered spaces.',
+          defaultTerms: '1. Freight and labour are extra and subject to applicable GST.\n2. Payment is 100% advance unless otherwise agreed in writing.\n3. Goods once sold cannot be returned except through an approved return.\n4. Confirmed orders cannot be cancelled without written approval.\n5. Tile spacers must be used as recommended by the manufacturer.\n6. Product images are references and may vary from the supplied product.',
+          bankDetails: 'Account name: Marble Park\nBank: IDFC Bank\nAccount no.: 10033526350\nIFSC: IDFB0042441\nBranch: Vapi - 396195, Gujarat',
+          documentFooter: 'Thank you for choosing Marble Park. Product availability, shade and batch are confirmed at order stage.',
+          supportPhone: '0260-2424498 · 9427119271 · 7506133166 · 9712508070',
           supportEmail: '',
           updatedAt: new Date(),
         },
       });
     }
     return settings;
+  }
+
+  async getDocumentSettings() {
+    const settings = await this.getSettings();
+    return {
+      companyName: settings.companyName,
+      logoUrl: settings.logoUrl,
+      companyAddress: settings.companyAddress,
+      gstNumber: settings.gstNumber,
+      website: settings.website,
+      quotationTitle: settings.quotationTitle,
+      documentTagline: settings.documentTagline,
+      defaultTerms: settings.defaultTerms,
+      bankDetails: settings.bankDetails,
+      documentFooter: settings.documentFooter,
+      supportPhone: settings.supportPhone,
+      supportEmail: settings.supportEmail,
+    };
   }
 
   async updateSettings(input: any, actorUserId: string) {
@@ -40,6 +67,15 @@ export class SystemService {
         challanPrefix: input.challanPrefix ?? current.challanPrefix,
         approvalDiscountThreshold: input.approvalDiscountThreshold ?? current.approvalDiscountThreshold,
         companyName: input.companyName ?? current.companyName,
+        logoUrl: input.logoUrl ?? current.logoUrl,
+        companyAddress: input.companyAddress ?? current.companyAddress,
+        gstNumber: input.gstNumber ?? current.gstNumber,
+        website: input.website ?? current.website,
+        quotationTitle: input.quotationTitle ?? current.quotationTitle,
+        documentTagline: input.documentTagline ?? current.documentTagline,
+        defaultTerms: input.defaultTerms ?? current.defaultTerms,
+        bankDetails: input.bankDetails ?? current.bankDetails,
+        documentFooter: input.documentFooter ?? current.documentFooter,
         supportPhone: input.supportPhone ?? current.supportPhone,
         supportEmail: input.supportEmail ?? current.supportEmail,
         updatedAt: new Date(),

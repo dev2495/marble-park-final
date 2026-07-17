@@ -1176,6 +1176,7 @@ export class QuotesService {
     return {
       preparedBy: parsed.preparedBy || '',
       showBrandLogos: parsed.showBrandLogos !== false,
+      selectedBrandIds: Array.isArray(parsed.selectedBrandIds) ? parsed.selectedBrandIds.map(String) : undefined,
       terms: parsed.terms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, civil work and unloading are excluded unless mentioned.',
       bankDetails: parsed.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.',
       remarks: parsed.remarks || '',
