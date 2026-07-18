@@ -18,10 +18,10 @@ No import was applied in the screenshot because the legacy screen reports that A
 
 | Environment | Import screen detected | Result |
 |---|---|---|
-| `https://65-1-24-110.sslip.io/dashboard/master-data/imports` | `Create clean Product Master SKUs in bulk` | Current create-only, governed importer |
+| `https://65-1-24-110.sslip.io/dashboard/master-data/imports` | `Bulk-create saleable SKUs, review every value first` | Current create-only, governed importer |
 | `https://web-production-30835.up.railway.app/dashboard/master-data/imports` | `Preview first. Apply only after the sheet is clean` | Legacy create/update importer shown in the screenshot |
 
-The screenshot labels and controls exactly match repository commit `6f13f96`, including `Upload Excel catalogue`, `Create`, `Update`, `New categories`, and `Apply clean preview`. They do not match deployed importer commit `62d6e37`.
+The screenshot labels and controls exactly match repository commit `6f13f96`, including `Upload Excel catalogue`, `Create`, `Update`, `New categories`, and `Apply clean preview`. They do not match the isolated AWS release `13e8df7`.
 
 ### Workbook structure
 
@@ -117,11 +117,28 @@ The importer now checks active categories, brands, finishes, tile sizes, UOMs, a
 | Build and UI | API build, 48-route Next production build, targeted lint, desktop/mobile browser inspection, and zero browser-console errors passed |
 | Dependency audit | Clean `npm ci`, patched transitive overrides, rebuild, and `npm audit --omit=dev` with zero vulnerabilities passed |
 
+## Isolated AWS deployment verification
+
+Application release `13e8df7` was deployed to the dedicated Marble Park Lightsail host on 18 July 2026. Railway and the unrelated AWS account were not changed.
+
+| Production gate | Result |
+|---|---|
+| Pre-upgrade safety | Backup `/srv/marble-park/backups/20260718T142242Z` passed SHA-256 checks and restored all 71 public tables into an isolated verification database |
+| Image build | API and 48-route Next.js production images built successfully on the 4 GB host |
+| Schema | All 17 Prisma migrations applied; database reported `Database schema is up to date` |
+| Runtime | PostgreSQL, API, web, and Caddy containers healthy |
+| Public probes | `/healthz`, `/readyz`, `/api/health`, `/login`, and the authenticated importer route passed over HTTPS |
+| Live importer lifecycle | Temporary governed brand enabled a clean template; editable review, signed apply, zero-stock SKU, 4-unit GRN, exact lot, lot QR scan, display QR separation, duplicate blocking, and invalid-master blocking passed |
+| Test cleanup | Temporary brand, product, balances, lot, GRN, labels, display record, audit rows, and generated image were removed after the gate |
+| Responsive UI | Authenticated desktop and 390 x 844 mobile inspection passed with zero browser console errors |
+
+The post-test production database intentionally remains at zero Product Master SKUs and zero brands. This is a clean onboarding state, not an importer defect. The real Brand Master must be completed before the live-template and upload controls unlock.
+
 ## Current importer flow review
 
 | Stage | Current AWS behavior | Review |
 |---|---|---|
-| Template generation | Reads active masters from the real database and creates dropdowns | Correct; empty-brand state needs stronger warning |
+| Template generation | Reads active masters from the real database and creates dropdowns | Correct; empty-brand state is visibly blocked with a direct Brand Master action |
 | Upload | Chunked `.xlsx`, 25 MB maximum, 5,000 product rows | Correct |
 | Sheet selection | Accepts Product Master or strongly matching product sheets; skips support tabs | Correct and fixes this incident |
 | Preview | No writes; validates SKU, unique internal code, governed masters, UOM/tax, pack conversion, price, and images | Correct |
