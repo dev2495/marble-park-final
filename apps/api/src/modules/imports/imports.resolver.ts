@@ -112,15 +112,22 @@ export class ImportsResolver {
     return this.imports.productImportTemplate();
   }
 
+  @Query(() => GraphQLJSON)
+  async productImportReadiness(@Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
+    return this.imports.productImportReadiness();
+  }
+
   @Mutation(() => ImportOutput)
   async processExcelImport(
     @Args('filePath') filePath: string,
     @Args('confirmationToken') confirmationToken: string,
+    @Args('reviewRows', { type: () => GraphQLJSON, nullable: true }) reviewRows: any[] | undefined,
     @Context() ctx: GraphqlRequestContext,
   ) {
     const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
     assertExcelFile(filePath);
-    const result = await this.imports.processExcelImport(assertManagedImportPath(filePath), user.id, confirmationToken);
+    const result = await this.imports.processExcelImport(assertManagedImportPath(filePath), user.id, confirmationToken, reviewRows || []);
     return { id: `excel-${Date.now()}`, result };
   }
 
@@ -204,6 +211,7 @@ export class ImportsResolver {
     @Args('uploadId') uploadId: string,
     @Args('filename') filename: string,
     @Args('kind') kind: string,
+    @Args('reviewRows', { type: () => GraphQLJSON, nullable: true }) reviewRows: any[] | undefined,
     @Context() ctx: GraphqlRequestContext,
   ) {
     if (kind !== 'excel') {
@@ -214,7 +222,7 @@ export class ImportsResolver {
     if (!fs.existsSync(filePath)) {
       throw new BadRequestException('Uploaded file was not found. Please upload again.');
     }
-    const result = await this.imports.previewExcelImport(filePath, user.id);
+    const result = await this.imports.previewExcelImport(filePath, user.id, reviewRows || []);
     return { id: uploadId, result };
   }
 
@@ -224,6 +232,7 @@ export class ImportsResolver {
     @Args('filename') filename: string,
     @Args('kind') kind: string,
     @Args('confirmationToken') confirmationToken: string,
+    @Args('reviewRows', { type: () => GraphQLJSON, nullable: true }) reviewRows: any[] | undefined,
     @Context() ctx: GraphqlRequestContext,
   ) {
     if (kind !== 'excel') {
@@ -235,7 +244,7 @@ export class ImportsResolver {
       throw new BadRequestException('Uploaded file was not found. Please upload again.');
     }
     try {
-      const result = await this.imports.processExcelImport(filePath, user.id, confirmationToken);
+      const result = await this.imports.processExcelImport(filePath, user.id, confirmationToken, reviewRows || []);
       return { id: uploadId, result };
     } finally {
       fs.rmSync(filePath, { force: true });

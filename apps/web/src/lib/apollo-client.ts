@@ -19,11 +19,8 @@ const errorLink = onError(({ graphQLErrors, networkError, operation }) => {
       console.error(`[GraphQL error] ${operationName}: ${message} (code=${code})`);
       const isAuthError =
         code === 'UNAUTHENTICATED' ||
-        code === 'FORBIDDEN' ||
-        /unauthori[sz]ed|session expired|invalid session/i.test(message);
+        /session expired|invalid session|not authenticated|authentication required/i.test(message);
       if (isAuthError && typeof window !== 'undefined') {
-        try {
-        } catch {}
         if (!window.location.pathname.startsWith('/login')) {
           window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
         }

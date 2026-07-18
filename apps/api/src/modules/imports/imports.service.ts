@@ -38,6 +38,39 @@ type NormalizedProductRow = {
   range: string;
   imageUrl: string;
   allowLoose: boolean;
+  hasBaseUom: boolean;
+  hasPurchaseUom: boolean;
+  hasSalesUom: boolean;
+  hasPiecesPerPack: boolean;
+  hasCoveragePerPack: boolean;
+  hasTaxClass: boolean;
+  hasAllowLoose: boolean;
+};
+
+type ProductImportReviewRow = {
+  sheet: string;
+  rowNumber: number;
+  sku?: unknown;
+  internalCode?: unknown;
+  name?: unknown;
+  category?: unknown;
+  brand?: unknown;
+  finish?: unknown;
+  material?: unknown;
+  dimensions?: unknown;
+  baseUom?: unknown;
+  purchaseUom?: unknown;
+  salesUom?: unknown;
+  piecesPerPack?: unknown;
+  coveragePerPack?: unknown;
+  sellPrice?: unknown;
+  floorPrice?: unknown;
+  taxClass?: unknown;
+  hsnCode?: unknown;
+  allowLoose?: unknown;
+  range?: unknown;
+  imageUrl?: unknown;
+  description?: unknown;
 };
 
 const PRODUCT_IMPORT_HEADERS = [
@@ -53,17 +86,45 @@ const MAX_EMBEDDED_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024;
 export class ImportsService {
   constructor(private prisma: PrismaService) {}
 
+  async productImportReadiness() {
+    const masters = await this.masterSnapshot();
+    const hasTiles = masters.categories.some((row) => this.key(row.name) === 'tiles');
+    const checks = [
+      { key: 'categories', label: 'Categories', count: masters.categories.length, required: true, route: '/dashboard/master-data/categories' },
+      { key: 'brands', label: 'Brands', count: masters.brands.length, required: true, route: '/dashboard/master-data/brands' },
+      { key: 'finishes', label: 'Finishes', count: masters.finishes.length, required: true, route: '/dashboard/master-data/finishes' },
+      { key: 'materials', label: 'Materials', count: masters.materials.length, required: false, route: '/dashboard/master-data' },
+      { key: 'tileSizes', label: 'Tile sizes', count: masters.tileSizes.length, required: hasTiles, route: '/dashboard/master-data/tiles' },
+      { key: 'uoms', label: 'Units of measure', count: masters.uoms.length, required: true, route: '/dashboard/master-data' },
+      { key: 'taxCodes', label: 'Tax codes', count: masters.taxCodes.length, required: true, route: '/dashboard/master-data' },
+    ];
+    const blockers = checks.filter((check) => check.required && check.count === 0);
+    return {
+      ready: blockers.length === 0,
+      message: blockers.length
+        ? `Complete ${blockers.map((row) => row.label).join(', ')} before downloading or importing Product Master SKUs.`
+        : 'Master data is ready. Download a fresh workbook before each bulk import.',
+      checks,
+      blockers,
+      counts: Object.fromEntries(checks.map((check) => [check.key, check.count])),
+      options: {
+        categories: masters.categories.map((row) => row.name),
+        brands: masters.brands.map((row) => row.name),
+        finishes: masters.finishes.map((row) => row.name),
+        materials: masters.materials.map((row) => row.name),
+        tileSizes: masters.tileSizes.map((row) => row.name),
+        uoms: masters.uoms.map((row) => row.code),
+        taxCodes: masters.taxCodes.map((row) => row.code),
+      },
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
   async productImportTemplate() {
     const ExcelJS = require('exceljs');
-    const [categories, brands, finishes, materials, tileSizes, uoms, taxCodes] = await Promise.all([
-      this.prisma.productCategory.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true } }),
-      this.prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true } }),
-      this.prisma.productFinish.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true } }),
-      this.prisma.productMaterial.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true } }),
-      this.prisma.tileSize.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true, uom: true, pcsPerBox: true } }),
-      this.prisma.unitOfMeasure.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }], select: { code: true, name: true, dimension: true } }),
-      this.prisma.taxCode.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }], select: { code: true, name: true, rate: true, hsnCode: true } }),
-    ]);
+    const readiness = await this.productImportReadiness();
+    if (!readiness.ready) throw new BadRequestException(readiness.message);
+    const { categories, brands, finishes, materials, tileSizes, uoms, taxCodes } = await this.masterSnapshot();
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Marble Park Retail OS';
     workbook.created = new Date();
@@ -77,6 +138,8 @@ export class ImportsService {
     sheet.autoFilter = { from: 'A1', to: 'V1' };
     const widths = [18, 18, 32, 20, 20, 18, 20, 24, 13, 15, 13, 15, 18, 14, 14, 14, 13, 13, 20, 34, 18, 38];
     sheet.columns.forEach((column: any, index: number) => { column.width = widths[index] || 18; });
+    sheet.getColumn(1).numFmt = '@';
+    sheet.getColumn(2).numFmt = '@';
     sheet.getColumn(14).numFmt = '[$₹-en-IN]#,##0.00';
     sheet.getColumn(15).numFmt = '[$₹-en-IN]#,##0.00';
     sheet.getColumn(20).alignment = { wrapText: true };
@@ -91,7 +154,7 @@ export class ImportsService {
     instructions.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
     const instructionRows = [
       ['1', 'Use the Product Master tab', 'Enter one new saleable design/SKU per row. Do not rename the sheet or headers.'],
-      ['2', 'Choose governed values', 'Category, brand, finish, material, tile size, UOM and tax dropdowns come from the live system at download time.'],
+      ['2', 'Choose governed values', 'Category, brand, finish, material, tile size, UOM and tax dropdowns come from the live system at download time. Brand and finish are required.'],
       ['3', 'Add a product image', 'Either paste a public HTTPS image URL or use Excel Insert > Pictures and place one JPG/PNG/WebP image inside the Product Image cell on that row.'],
       ['4', 'Preview before creation', 'Upload the workbook in Excel Import Center. Nothing is written until every row passes and you explicitly confirm.'],
       ['5', 'Existing SKUs are protected', 'Bulk import creates new SKUs only. Edit existing products individually in Product Master; the SKU code itself remains locked.'],
@@ -126,8 +189,8 @@ export class ImportsService {
     lists.autoFilter = { from: 'A1', to: 'H1' };
 
     const validationByColumn: Record<number, { name: string; allowBlank: boolean }> = {
-      4: { name: 'Categories', allowBlank: false }, 5: { name: 'Brands', allowBlank: true },
-      6: { name: 'Finishes', allowBlank: true }, 7: { name: 'Materials', allowBlank: true },
+      4: { name: 'Categories', allowBlank: false }, 5: { name: 'Brands', allowBlank: false },
+      6: { name: 'Finishes', allowBlank: false }, 7: { name: 'Materials', allowBlank: true },
       8: { name: 'TileSizes', allowBlank: true }, 9: { name: 'UOMs', allowBlank: false },
       10: { name: 'UOMs', allowBlank: false }, 11: { name: 'UOMs', allowBlank: false },
       16: { name: 'TaxCodes', allowBlank: false }, 18: { name: 'YesNo', allowBlank: false },
@@ -140,7 +203,7 @@ export class ImportsService {
         };
       });
       sheet.getCell(rowNumber, 12).dataValidation = { type: 'whole', operator: 'greaterThanOrEqual', formulae: [1], allowBlank: false, showErrorMessage: true, error: 'Pieces per pack must be at least 1.' };
-      for (const column of [13, 14, 15]) sheet.getCell(rowNumber, column).dataValidation = { type: 'decimal', operator: 'greaterThanOrEqual', formulae: [0], allowBlank: column !== 13, showErrorMessage: true, error: 'Enter zero or a positive number.' };
+      for (const column of [13, 14, 15]) sheet.getCell(rowNumber, column).dataValidation = { type: 'decimal', operator: column === 14 ? 'greaterThan' : 'greaterThanOrEqual', formulae: [0], allowBlank: column !== 13 && column !== 14, showErrorMessage: true, error: column === 14 ? 'Sell Price must be greater than zero.' : 'Enter zero or a positive number.' };
     }
 
     const reference = workbook.addWorksheet('Reference details');
@@ -165,20 +228,22 @@ export class ImportsService {
       filename: `marble-park-product-master-live-${new Date().toISOString().slice(0, 10)}.xlsx`,
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', contentBase64: Buffer.from(buffer).toString('base64'),
       headers: PRODUCT_IMPORT_HEADERS, generatedAt: new Date().toISOString(),
-      masterCounts: { categories: categories.length, brands: brands.length, finishes: finishes.length, materials: materials.length, tileSizes: tileSizes.length, uoms: uoms.length, taxCodes: taxCodes.length },
+      masterCounts: readiness.counts,
+      readiness,
     };
   }
 
-  async previewExcelImport(filePath: string, uploadedBy = 'system'): Promise<any> {
+  async previewExcelImport(filePath: string, uploadedBy = 'system', reviewRows: ProductImportReviewRow[] = []): Promise<any> {
     this.assertExcelFile(filePath);
-    const { rows } = await this.readExcelRows(filePath, 'preview');
+    const { rows } = await this.readExcelRows(filePath, 'preview', reviewRows);
     const plan = await this.buildImportPlan(rows);
-    const confirmationToken = plan.failed || !plan.total ? null : this.confirmationToken(filePath, uploadedBy);
+    const confirmationToken = plan.failed || !plan.total ? null : this.confirmationToken(filePath, uploadedBy, reviewRows);
     await this.audit(uploadedBy, 'excel_import.preview', 'Product', 'excel-preview', `Excel import preview: ${plan.ready} ready, ${plan.failed} failed`, { filePath, ...this.auditPlan(plan) });
     return {
       source: 'excel-preview',
       status: !plan.total ? 'empty' : plan.failed ? 'needs_correction' : 'ready_to_apply',
       applyMode: 'all_or_nothing',
+      reviewMode: 'server_validated_editable',
       confirmationToken,
       message: !plan.total
         ? 'No populated Product Master rows were found. Add at least one SKU and upload the workbook again.'
@@ -189,12 +254,12 @@ export class ImportsService {
     };
   }
 
-  async processExcelImport(filePath: string, uploadedBy = 'system', confirmationToken = ''): Promise<any> {
+  async processExcelImport(filePath: string, uploadedBy = 'system', confirmationToken = '', reviewRows: ProductImportReviewRow[] = []): Promise<any> {
     this.assertExcelFile(filePath);
-    if (!confirmationToken || confirmationToken !== this.confirmationToken(filePath, uploadedBy)) {
-      throw new BadRequestException('This file has not been confirmed from its latest preview. Upload and preview it again.');
+    if (!confirmationToken || confirmationToken !== this.confirmationToken(filePath, uploadedBy, reviewRows)) {
+      throw new BadRequestException('This workbook or its reviewed rows have changed since validation. Revalidate the review and confirm again.');
     }
-    const previewRead = await this.readExcelRows(filePath, 'preview');
+    const previewRead = await this.readExcelRows(filePath, 'preview', reviewRows);
     const previewPlan = await this.buildImportPlan(previewRead.rows);
 
     if (previewPlan.failed || !previewPlan.total) {
@@ -211,7 +276,7 @@ export class ImportsService {
       };
     }
 
-    const applyRead = await this.readExcelRows(filePath, 'apply');
+    const applyRead = await this.readExcelRows(filePath, 'apply', reviewRows);
     const plan = await this.buildImportPlan(applyRead.rows);
     if (plan.failed) {
       this.removeFiles(applyRead.persistedFiles);
@@ -258,7 +323,7 @@ export class ImportsService {
     }
   }
 
-  private async readExcelRows(filePath: string, mode: ImportMode) {
+  private async readExcelRows(filePath: string, mode: ImportMode, reviewRows: ProductImportReviewRow[] = []) {
     const ExcelJS = require('exceljs');
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(filePath);
@@ -291,7 +356,58 @@ export class ImportsService {
       this.removeFiles(persistedFiles);
       throw new BadRequestException(`A workbook can contain at most ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} product rows.`);
     }
-    return { rows: allRows, persistedFiles };
+    return { rows: this.applyReviewRows(allRows, reviewRows), persistedFiles };
+  }
+
+  private applyReviewRows(rawRows: any[], reviewRows: ProductImportReviewRow[]) {
+    const reviewed = this.canonicalReviewRows(reviewRows);
+    if (!reviewed.length) return rawRows;
+    const rawByIdentity = new Map(rawRows.map((row) => [`${row.__sheet}\0${row.__rowNumber}`, row]));
+    const headerByField: Record<string, string> = {
+      sku: 'SKU', internalCode: 'Internal Code', name: 'Product Name', category: 'Category', brand: 'Brand', finish: 'Finish',
+      material: 'Material', dimensions: 'Tile Size / Dimensions', baseUom: 'Base UOM', purchaseUom: 'Purchase UOM', salesUom: 'Sales UOM',
+      piecesPerPack: 'Pieces Per Pack', coveragePerPack: 'Coverage Per Pack', sellPrice: 'Sell Price', floorPrice: 'Floor Price',
+      taxClass: 'Tax Code', hsnCode: 'HSN Code', allowLoose: 'Allow Loose', range: 'Range / Series', imageUrl: 'Image URL', description: 'Description',
+    };
+    for (const review of reviewed) {
+      const row = rawByIdentity.get(`${review.sheet}\0${review.rowNumber}`);
+      if (!row) throw new BadRequestException(`Reviewed row ${review.sheet} #${review.rowNumber} is not present in the uploaded Product Master sheet.`);
+      for (const [field, header] of Object.entries(headerByField)) {
+        if (Object.prototype.hasOwnProperty.call(review, field)) row[header] = (review as any)[field];
+      }
+      row.__reviewed = true;
+    }
+    return rawRows;
+  }
+
+  private canonicalReviewRows(value: unknown): ProductImportReviewRow[] {
+    if (value === undefined || value === null) return [];
+    if (!Array.isArray(value)) throw new BadRequestException('Reviewed import rows must be an array. Reopen the workbook preview and try again.');
+    if (value.length > MAX_IMPORT_ROWS) throw new BadRequestException(`A review can contain at most ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} rows.`);
+    const allowed = new Set([
+      'sku', 'internalCode', 'name', 'category', 'brand', 'finish', 'material', 'dimensions', 'baseUom', 'purchaseUom', 'salesUom',
+      'piecesPerPack', 'coveragePerPack', 'sellPrice', 'floorPrice', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description',
+    ]);
+    const identities = new Set<string>();
+    const rows = value.map((input: any) => {
+      const sheet = String(input?.sheet || '').trim();
+      const rowNumber = Number(input?.rowNumber);
+      if (!sheet || !Number.isInteger(rowNumber) || rowNumber < 2) throw new BadRequestException('Each reviewed row must retain its source sheet and Excel row number.');
+      const identity = `${sheet}\0${rowNumber}`;
+      if (identities.has(identity)) throw new BadRequestException(`${sheet} row ${rowNumber} appears more than once in the review.`);
+      identities.add(identity);
+      const row: any = { sheet, rowNumber };
+      for (const field of allowed) {
+        if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
+        const fieldValue = input[field];
+        if (fieldValue !== null && !['string', 'number', 'boolean'].includes(typeof fieldValue)) {
+          throw new BadRequestException(`${sheet} row ${rowNumber} has an unsupported ${field} value.`);
+        }
+        row[field] = fieldValue ?? '';
+      }
+      return row as ProductImportReviewRow;
+    });
+    return rows.sort((left, right) => left.sheet.localeCompare(right.sheet) || left.rowNumber - right.rowNumber);
   }
 
   private async buildImportPlan(rawRows: any[]) {
@@ -394,13 +510,35 @@ export class ImportsService {
         category: row.normalized.category,
         brand: row.normalized.brand,
         finish: row.normalized.finish,
+        material: row.normalized.material,
+        dimensions: row.normalized.dimensions,
         unit: row.normalized.unit,
+        baseUom: row.normalized.baseUom,
         purchaseUom: row.normalized.purchaseUom,
         salesUom: row.normalized.salesUom,
         piecesPerPack: row.normalized.piecesPerPack,
         coveragePerPack: row.normalized.coveragePerPack,
         sellPrice: row.normalized.sellPrice,
         floorPrice: row.normalized.floorPrice,
+        taxClass: row.normalized.taxClass,
+        hsnCode: row.normalized.hsnCode,
+        allowLoose: row.normalized.allowLoose,
+        range: row.normalized.range,
+        imageUrl: row.normalized.imageUrl === '__embedded_excel_image__' ? '' : row.normalized.imageUrl,
+        description: row.normalized.description,
+        provided: {
+          internalCode: row.normalized.hasInternalCode,
+          baseUom: row.normalized.hasBaseUom,
+          purchaseUom: row.normalized.hasPurchaseUom,
+          salesUom: row.normalized.hasSalesUom,
+          piecesPerPack: row.normalized.hasPiecesPerPack,
+          coveragePerPack: row.normalized.hasCoveragePerPack,
+          sellPrice: row.normalized.hasSellPrice,
+          floorPrice: row.normalized.hasFloorPrice,
+          taxClass: row.normalized.hasTaxClass,
+          allowLoose: row.normalized.hasAllowLoose,
+        },
+        stockTreatment: 'saleable_sku_zero_stock',
         imageStatus: row.normalized.imageUrl ? (row.normalized.imageUrl === '__embedded_excel_image__' ? 'embedded_image_detected' : 'image_url_ready') : 'no_image',
         imagePreviewUrl: row.normalized.imageUrl && row.normalized.imageUrl !== '__embedded_excel_image__' ? row.normalized.imageUrl : null,
         action,
@@ -434,6 +572,15 @@ export class ImportsService {
         materials: Array.from(missingMaterials).sort(),
         tileSizes: Array.from(missingTileSizes).sort(),
       },
+      masterOptions: {
+        categories: Array.from(categoryNames.values()).sort(),
+        brands: Array.from(brandNames.values()).sort(),
+        finishes: Array.from(finishNames.values()).sort(),
+        materials: Array.from(materialNames.values()).sort(),
+        tileSizes: Array.from(tileSizeNames.values()).sort(),
+        uoms: Array.from(validUoms).sort(),
+        taxCodes: Array.from(validTaxCodes).sort(),
+      },
     };
   }
 
@@ -447,6 +594,7 @@ export class ImportsService {
       imageCount: plan.imageCount,
       failures: plan.failures,
       masterGaps: plan.masterGaps,
+      masterOptions: plan.masterOptions,
       previewRows: plan.previewRows,
     };
   }
@@ -469,14 +617,22 @@ export class ImportsService {
     if (!row.sku) errors.push('SKU/code is required');
     if (row.sku.length > 80) errors.push('SKU/code must be 80 characters or fewer');
     if (row.sku && !/^[A-Z0-9][A-Z0-9._/-]*$/.test(row.sku)) errors.push('SKU/code may contain only letters, numbers, dot, underscore, slash and hyphen');
-    if (!row.internalCode) errors.push('Internal/showroom code is required');
+    if (!row.hasInternalCode || !row.internalCode) errors.push('Internal/showroom code is required and must be unique for this product');
     if (!row.name) errors.push('Product name/description is required');
     if (row.name.length > 240) errors.push('Product name must be 240 characters or fewer');
     if (!row.category) errors.push('Category is required');
+    if (!row.brand) errors.push('Brand is required. Create it in Brand Master before importing');
+    if (!row.finish) errors.push('Finish is required. Create it in Finish Master before importing');
     if (this.key(row.category) === 'tiles' && !row.dimensions) errors.push('Tile Size / Dimensions is required for tile products');
-    if (row.hasSellPrice && (!Number.isFinite(row.sellPrice) || row.sellPrice < 0)) errors.push('MRP/sell price must be zero or greater');
+    if (!row.hasBaseUom) errors.push('Base UOM is required');
+    if (!row.hasPurchaseUom) errors.push('Purchase UOM is required');
+    if (!row.hasSalesUom) errors.push('Sales UOM is required');
+    if (!row.hasPiecesPerPack) errors.push('Pieces per pack is required');
+    if (!row.hasTaxClass) errors.push('Tax Code is required');
+    if (!row.hasAllowLoose) errors.push('Allow Loose must be selected as Yes or No');
+    if (!row.hasSellPrice || !Number.isFinite(row.sellPrice) || row.sellPrice <= 0) errors.push('Sell Price is required and must be greater than zero');
     if (row.hasFloorPrice && (!Number.isFinite(row.floorPrice) || row.floorPrice < 0)) errors.push('Floor/dealer price must be zero or greater');
-    if (row.sellPrice > 0 && row.floorPrice > row.sellPrice) errors.push('Floor price cannot exceed sell price');
+    if (row.hasFloorPrice && row.sellPrice > 0 && row.floorPrice > row.sellPrice) errors.push('Floor price cannot exceed sell price');
     if (!Number.isInteger(row.piecesPerPack) || row.piecesPerPack <= 0) errors.push('Pieces per pack must be a positive whole number');
     if (!Number.isFinite(row.coveragePerPack) || row.coveragePerPack < 0) errors.push('Coverage per pack must be zero or greater');
     if (['SQFT', 'SQM', 'M2'].includes(row.salesUom) && row.coveragePerPack <= 0) errors.push('Area-priced rows require positive coverage per pack');
@@ -543,9 +699,15 @@ export class ImportsService {
     const finish = this.cleanText(pick('Finish', 'FINISH', 'Color', 'Colour', 'Surface', 'Shade'));
     const dimensions = this.cleanText(pick('Tile Size / Dimensions', 'Dimensions', 'DIMENSIONS', 'Size', 'SIZE', 'Tile Size'));
     const unit = pick('Unit', 'UOM', 'uom');
-    const purchaseUom = String(pick('Purchase UOM', 'Purchase Unit', 'Inventory UOM', 'Stock UOM') || unit || 'PC').trim().toUpperCase();
-    const salesUom = String(pick('Sales UOM', 'Rate UOM', 'Pricing UOM', 'Price Unit') || unit || 'PC').trim().toUpperCase();
-    const baseUom = String(pick('Base UOM', 'Base Unit') || (purchaseUom === 'BOX' ? 'PC' : purchaseUom)).trim().toUpperCase();
+    const purchaseUomValue = pick('Purchase UOM', 'Purchase Unit', 'Inventory UOM', 'Stock UOM');
+    const salesUomValue = pick('Sales UOM', 'Rate UOM', 'Pricing UOM', 'Price Unit');
+    const baseUomValue = pick('Base UOM', 'Base Unit');
+    const piecesPerPackValue = pick('Pieces Per Pack', 'Pieces/Box', 'PCS/BOX', 'Pcs Per Box', 'Pack Quantity');
+    const taxClassValue = pick('Tax Code', 'Tax Class', 'GST', 'GST Rate');
+    const allowLooseValue = pick('Allow Loose', 'Loose Sale', 'Allow Piece Sale');
+    const purchaseUom = String(purchaseUomValue || unit || 'PC').trim().toUpperCase();
+    const salesUom = String(salesUomValue || unit || 'PC').trim().toUpperCase();
+    const baseUom = String(baseUomValue || (purchaseUom === 'BOX' ? 'PC' : purchaseUom)).trim().toUpperCase();
     const sku = this.normalizeSku(pick('SKU', 'sku', 'Code', 'PRODUCT CODE', 'Product Code', 'Item Code', 'Article No', 'Article Number', 'Model No', 'Material Code'));
     const internalCode = pick('Internal Code', 'Showroom Code', 'Display Code', 'Sales Code', 'Internal SKU');
     const description = this.cleanText(pick('Long Description', 'Description', 'PRODUCT DESCRIPTION'));
@@ -563,10 +725,10 @@ export class ImportsService {
       baseUom,
       purchaseUom,
       salesUom,
-      piecesPerPack: this.wholeNumber(pick('Pieces Per Pack', 'Pieces/Box', 'PCS/BOX', 'Pcs Per Box', 'Pack Quantity'), 1),
+      piecesPerPack: this.wholeNumber(piecesPerPackValue, 1),
       coveragePerPack: this.number(pick('Coverage Per Pack', 'Coverage/Box', 'SQFT/BOX', 'SQM/BOX', 'Box Coverage'), 0),
       hsnCode: this.cleanText(pick('HSN', 'HSN Code', 'HSN/SAC')),
-      taxClass: this.normalizeTaxClass(pick('Tax Code', 'Tax Class', 'GST', 'GST Rate')),
+      taxClass: this.normalizeTaxClass(taxClassValue),
       sellPrice: this.money(price),
       floorPrice: this.money(floorPrice),
       hasBrand: Boolean(brand),
@@ -579,7 +741,14 @@ export class ImportsService {
       description,
       range: this.cleanText(pick('Range / Series', 'Range', 'RANGE', 'Series', 'Collection')) || '',
       imageUrl: this.cleanText(pick('__embeddedImageUrl', 'Image', 'Image URL', 'Photo', 'Photo URL', 'Media', 'Picture URL')) || '',
-      allowLoose: this.booleanValue(pick('Allow Loose', 'Loose Sale', 'Allow Piece Sale')),
+      allowLoose: this.booleanValue(allowLooseValue),
+      hasBaseUom: baseUomValue !== undefined,
+      hasPurchaseUom: purchaseUomValue !== undefined,
+      hasSalesUom: salesUomValue !== undefined,
+      hasPiecesPerPack: piecesPerPackValue !== undefined,
+      hasCoveragePerPack: pick('Coverage Per Pack', 'Coverage/Box', 'SQFT/BOX', 'SQM/BOX', 'Box Coverage') !== undefined,
+      hasTaxClass: taxClassValue !== undefined,
+      hasAllowLoose: allowLooseValue !== undefined,
     };
   }
 
@@ -725,13 +894,28 @@ export class ImportsService {
     return String(value || '').trim().toLowerCase();
   }
 
-  private confirmationToken(filePath: string, uploadedBy: string) {
+  private confirmationToken(filePath: string, uploadedBy: string, reviewRows: ProductImportReviewRow[] = []) {
     const secret = process.env.IMPORT_CONFIRMATION_SECRET || process.env.SESSION_SECRET || process.env.JWT_SECRET || 'marble-park-local-import-confirmation';
     const hmac = createHmac('sha256', secret);
     hmac.update(uploadedBy);
     hmac.update('\0');
     hmac.update(fs.readFileSync(filePath));
+    hmac.update('\0');
+    hmac.update(JSON.stringify(this.canonicalReviewRows(reviewRows)));
     return hmac.digest('hex');
+  }
+
+  private async masterSnapshot() {
+    const [categories, brands, finishes, materials, tileSizes, uoms, taxCodes] = await Promise.all([
+      this.prisma.productCategory.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true } }),
+      this.prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true } }),
+      this.prisma.productFinish.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true } }),
+      this.prisma.productMaterial.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true } }),
+      this.prisma.tileSize.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { name: true, code: true, uom: true, pcsPerBox: true } }),
+      this.prisma.unitOfMeasure.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }], select: { code: true, name: true, dimension: true } }),
+      this.prisma.taxCode.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }], select: { code: true, name: true, rate: true, hsnCode: true } }),
+    ]);
+    return { categories, brands, finishes, materials, tileSizes, uoms, taxCodes };
   }
 
   private removeFiles(files: string[]) {

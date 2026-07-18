@@ -19,8 +19,8 @@ export const HELP_GUIDES: HelpGuide[] = [
     summary: 'Create controlled brands, categories, finishes, vendors, tile sizes and Product Master SKUs before any transaction uses them.',
     video: '/help/videos/01-master-data-and-tiles.mp4', image: '/help/images/labels-and-lots.png',
     flow: ['Masters', 'Product SKU', 'Display code', 'Opening stock / GRN', 'Saleable lot'],
-    steps: ['Create brand, category and finish records.', 'Upload the official logo in Brand Master and keep Quote footer enabled for brands that may appear on customer documents.', 'Create or bulk-import one Product Master SKU per saleable design.', 'For tiles, enter internal showroom code, size, pieces per box, box coverage, purchase UOM and default sales UOM.', 'Register displayed samples in Tile Master and print their QR labels.', 'Use Opening Stock only for go-live balances; use GRN for every later inward.'],
-    checks: ['SKU is immutable after creation.', 'A display sample is not saleable stock.', 'Stock exists only after a posted opening session or GRN.'],
+    steps: ['Create brand, category, finish, UOM, tax and tile-size masters first.', 'Upload the official logo in Brand Master and keep Quote footer enabled for brands that may appear on customer documents.', 'Download a fresh Excel template so its dropdowns match live master data.', 'Upload the completed workbook, correct rows in the review editor, revalidate and confirm only when every row is clean.', 'For tiles, enter a unique internal showroom code, size, pieces per box, box coverage, purchase UOM and default sales UOM.', 'Record opening stock or a GRN to create physical lots, then print inward QR labels.', 'Register showroom displays separately in Tile Master and print display labels.'],
+    checks: ['SKU is immutable and internal/showroom code is unique after creation.', 'An imported Product Master SKU starts with zero stock.', 'A display sample is identified separately and never increases saleable stock.', 'Stock exists only after a posted opening session or GRN.'],
     related: ['tile-pricing', 'procurement-inward', 'labels-lots'],
   },
   {

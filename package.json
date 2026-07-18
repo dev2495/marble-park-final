@@ -36,6 +36,19 @@
   },
   "overrides": {
     "tmp": "0.2.7",
-    "shell-quote": "1.8.4"
+    "shell-quote": "1.8.4",
+    "next": {
+      "postcss": "8.5.14"
+    },
+    "exceljs": {
+      "uuid": "11.1.1"
+    },
+    "ws": "8.21.0",
+    "subscriptions-transport-ws": {
+      "ws": "7.5.11"
+    },
+    "tsx": {
+      "esbuild": "0.28.1"
+    }
   }
 }
