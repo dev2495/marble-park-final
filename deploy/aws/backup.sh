@@ -23,7 +23,10 @@ docker compose --env-file .env exec -T postgres \
   --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   > "${backup_dir}/database.dump"
 
-tar -C "$DATA_ROOT" -czf "${backup_dir}/assets.tar.gz" assets
+tar -C "$DATA_ROOT" \
+  --exclude='assets/document-vault/.incoming' \
+  --exclude='assets/document-vault/.trash' \
+  -czf "${backup_dir}/assets.tar.gz" assets
 sha256sum "${backup_dir}/database.dump" "${backup_dir}/assets.tar.gz" \
   > "${backup_dir}/SHA256SUMS"
 

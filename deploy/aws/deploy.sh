@@ -39,6 +39,11 @@ export COMPOSE_PARALLEL_LIMIT=1
 docker compose --env-file .env config --quiet
 docker compose --env-file .env build --pull
 docker compose --env-file .env up -d
+# Caddyfile is a single-file bind mount. Recreate Caddy so atomic source syncs
+# cannot leave the container attached to the previous file inode.
+docker compose --env-file .env up -d --force-recreate caddy
+docker compose --env-file .env exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+docker compose --env-file .env exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 docker compose --env-file .env exec -T api npm run db:seed --workspace=apps/api
 docker compose --env-file .env ps
 

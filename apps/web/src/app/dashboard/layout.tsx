@@ -72,7 +72,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
       { name: 'Quotes', href: '/dashboard/quotes', icon: FileSpreadsheet, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
       { name: 'Orders', href: '/dashboard/orders', icon: Receipt, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops'] },
       { name: 'Payments', href: '/dashboard/payments', icon: CreditCard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'], permission: 'payments.manage' },
-      { name: 'Documents', href: '/dashboard/documents', icon: FileText, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
+      { name: 'Documents', href: '/dashboard/documents', icon: FileText, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'], permission: 'documents.view' },
     ],
   },
   {
@@ -140,7 +140,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/intents': 'Intent Desk',
   '/dashboard/orders': 'Sales Orders',
   '/dashboard/payments': 'Payments',
-  '/dashboard/documents': 'Document Center',
+  '/dashboard/documents': 'File Vault',
   '/dashboard/quotes': 'Quote Register',
   '/dashboard/quotes/approvals': 'Approval Desk',
   '/dashboard/quotes/new': 'Quote Studio',

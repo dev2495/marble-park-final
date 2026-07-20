@@ -103,6 +103,8 @@ const permissionGroups = [
       ['payments.manage', 'Payments'],
       ['reports.view', 'Reports/readiness'],
       ['customers.force_create', 'Force-create duplicate customers'],
+      ['documents.view', 'View document vault'],
+      ['documents.manage', 'Upload, edit and share vault files'],
     ],
   },
 ] as const;

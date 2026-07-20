@@ -868,6 +868,49 @@ model DocumentJob {
   @@index([createdAt(sort: Desc)])
 }
 
+model VaultAsset {
+  id           String       @id
+  title        String
+  description  String       @default("")
+  category     String       @default("General")
+  originalName String
+  storageKey   String       @unique
+  contentType  String
+  extension    String
+  sizeBytes    Int
+  checksum     String
+  mediaKind    String
+  status       String       @default("active")
+  uploadedBy   String
+  archivedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime
+  shares       VaultShare[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([category, status])
+  @@index([mediaKind, status])
+  @@index([uploadedBy])
+}
+
+model VaultShare {
+  id            String     @id
+  token         String     @unique
+  assetId       String
+  asset         VaultAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy     String
+  allowDownload Boolean    @default(true)
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  viewCount     Int        @default(0)
+  lastViewedAt  DateTime?
+  createdAt     DateTime   @default(now())
+
+  @@index([assetId, revokedAt])
+  @@index([expiresAt])
+  @@index([createdBy])
+}
+
 model PaymentReceipt {
   id            String    @id
   receiptNumber String    @unique

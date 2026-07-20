@@ -86,6 +86,14 @@ export const HELP_GUIDES: HelpGuide[] = [
     related: ['partial-order', 'reports-audit', 'crm-quote'],
   },
   {
+    id: 'file-vault', title: 'Store, present and share files', duration: '6 min', href: '/dashboard/documents', roles: ['Owner', 'Sales', 'Office', 'Inventory', 'Dispatch'],
+    summary: 'Keep catalogues, product imagery, videos and working files in one searchable library with controlled public presentation links.',
+    flow: ['Upload files', 'Categorise', 'Preview', 'Create expiring link', 'Revoke / archive'],
+    steps: ['Open Documents and choose Add files.', 'Drop up to 20 files, select a category and add useful collection or brand notes.', 'Search or filter the library, then select a file to preview it.', 'For customer presentation, choose an expiry and whether to show a download button.', 'Create and copy the public link; recipients do not need a login.', 'Revoke a link after use or archive the file to revoke all active links together.', 'Owners can permanently delete an archived file when its storage must be reclaimed.'],
+    checks: ['PDF, image, browser video and audio formats preview inside the system.', 'Office documents download in their native format.', 'Archived files stay recoverable and cannot be opened from old public links.', 'Permanent deletion is restricted to owners/admins and only works after archive.', 'Uploads, edits, shares, revocations, archives and deletions are recorded in System Audit.'],
+    related: ['payments-documents', 'crm-quote', 'users-settings'],
+  },
+  {
     id: 'inventory-control', title: 'Count, reconcile and correct stock', duration: '12 min', href: '/dashboard/inventory/control', roles: ['Inventory', 'Owner'],
     summary: 'Use controlled counts, approvals and reconciliation instead of editing balances, preserving an auditable inventory ledger.',
     image: '/help/images/reconciliation-clean.png',
@@ -118,7 +126,7 @@ export const HELP_ROUTE_MAP: Array<[string, string]> = [
   ['/dashboard/leads', 'crm-quote'], ['/dashboard/intents', 'crm-quote'],
   ['/dashboard/procurement', 'procurement-inward'], ['/dashboard/pending-inward', 'procurement-inward'], ['/dashboard/inventory/inwards', 'procurement-inward'],
   ['/dashboard/inventory/labels', 'labels-lots'], ['/dashboard/dispatch', 'dispatch-return'], ['/dashboard/returns', 'dispatch-return'],
-  ['/dashboard/payments', 'payments-documents'], ['/dashboard/documents', 'payments-documents'],
+  ['/dashboard/payments', 'payments-documents'], ['/dashboard/documents', 'file-vault'],
   ['/dashboard/inventory', 'inventory-control'], ['/dashboard/reports', 'reports-audit'], ['/dashboard/audit', 'reports-audit'], ['/dashboard/approvals', 'reports-audit'],
   ['/dashboard/users', 'users-settings'], ['/dashboard/settings', 'users-settings'],
 ];
