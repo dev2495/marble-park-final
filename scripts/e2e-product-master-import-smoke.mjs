@@ -53,6 +53,7 @@ async function main() {
     const productSheet = downloaded.getWorksheet('Product Master');
     const lists = downloaded.getWorksheet('Live Master Lists');
     assert(productSheet && lists && downloaded.getWorksheet('How to use') && downloaded.getWorksheet('Reference details'), 'Template must include product, instructions, live lists and reference sheets');
+    assert(String(productSheet.getCell('A1').value).includes('*') && /optional/i.test(String(productSheet.getCell('N1').value)), 'Template headers must visibly distinguish required and optional columns');
     const definedNames = new Set(downloaded.definedNames.model.map((row) => row.name));
     for (const name of ['Categories', 'Brands', 'Finishes', 'Materials', 'TileSizes', 'UOMs', 'TaxCodes', 'YesNo']) assert(definedNames.has(name), `Template is missing ${name} dropdown range`);
     assert(productSheet.getCell('D2').dataValidation?.formulae?.[0] === 'Categories', 'Category cells must use the live Categories dropdown');
@@ -74,10 +75,7 @@ async function main() {
     const suffix = Date.now().toString(36).toUpperCase();
     const sku = `BULK-TILE-${suffix}`;
     createdSkus.push(sku);
-    const purchaseUom = uoms.includes('BOX') ? 'BOX' : uoms[0];
-    const salesUom = uoms.includes('SQFT') ? 'SQFT' : uoms[0];
-    const coverage = ['SQFT', 'SQM', 'M2'].includes(salesUom) ? 15.5 : 0;
-    sheet.addRow([sku, `BT-${suffix}`, 'Bulk imported porcelain tile', tileCategory, brands[0] || '', finishes[0] || '', materials[0] || '', tileSizes[0], uoms.includes('PC') ? 'PC' : uoms[0], purchaseUom, salesUom, 2, coverage, '', 115, taxCodes[0], '6907', 'No', 'Smoke series', '', '', 'Exact tile design row']);
+    sheet.addRow([sku, `BT-${suffix}`, 'Bulk imported porcelain tile', tileCategory, '', finishes[0] || '', materials[0] || '', '', '', '', '', '', '', '', 115, taxCodes[0], '', '', 'Smoke series', '', '', 'Exact tile design row']);
     sheet.getRow(2).height = 48;
     const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nDMAAAAASUVORK5CYII=', 'base64');
     const imageId = workbook.addImage({ buffer: pixel, extension: 'png' });
@@ -86,15 +84,15 @@ async function main() {
     const filename = `product-master-${suffix}.xlsx`;
     const uploadId = await uploadWorkbook(buffer, filename, token);
     const initialPreview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`, { uploadId, filename, kind: 'excel' }, token)).previewUploadedImport.result;
-    assert(initialPreview.status === 'needs_correction' && initialPreview.failed === 1 && /sell price/i.test(initialPreview.failures[0].error), 'Missing sell price must be blocked in initial preview');
-    const reviewRows = [{ sheet: 'Product Master', rowNumber: 2, sellPrice: 140 }];
+    assert(initialPreview.status === 'needs_correction' && initialPreview.failed === 1 && /brand/i.test(initialPreview.failures[0].error), 'Missing required brand must be blocked in initial preview');
+    const reviewRows = [{ sheet: 'Product Master', rowNumber: 2, brand: brands[0] }];
     const preview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $reviewRows: JSON) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, reviewRows: $reviewRows) { result } }`, { uploadId, filename, kind: 'excel', reviewRows }, token)).previewUploadedImport.result;
     assert(preview.status === 'ready_to_apply' && preview.ready === 1 && preview.failed === 0 && preview.confirmationToken, `Edited review must return one confirmed row: ${JSON.stringify(preview)}`);
-    assert(preview.previewRows[0].internalCode === `BT-${suffix}` && preview.previewRows[0].sellPrice === 140 && preview.previewRows[0].imageStatus === 'embedded_image_detected', 'Edited preview must retain identity/image and apply reviewed price');
+    assert(preview.previewRows[0].internalCode === `BT-${suffix}` && preview.previewRows[0].sellPrice === 0 && preview.previewRows[0].imageStatus === 'embedded_image_detected', 'Edited preview must retain identity/image and default an omitted price to zero');
 
     const unconfirmedUploadId = await uploadWorkbook(buffer, `unconfirmed-${filename}`, token);
     const unconfirmedPreview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $reviewRows: JSON) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, reviewRows: $reviewRows) { result } }`, { uploadId: unconfirmedUploadId, filename: `unconfirmed-${filename}`, kind: 'excel', reviewRows }, token)).previewUploadedImport.result;
-    const changedReviewRows = [{ sheet: 'Product Master', rowNumber: 2, sellPrice: 141 }];
+    const changedReviewRows = [{ sheet: 'Product Master', rowNumber: 2, brand: brands[0], sellPrice: 1 }];
     const unconfirmedError = await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $confirmationToken: String!, $reviewRows: JSON) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, confirmationToken: $confirmationToken, reviewRows: $reviewRows) { result } }`, { uploadId: unconfirmedUploadId, filename: `unconfirmed-${filename}`, kind: 'excel', confirmationToken: unconfirmedPreview.confirmationToken, reviewRows: changedReviewRows }, token, true);
     assert(/changed|revalidate/i.test(unconfirmedError), 'Apply must reject review edits that differ from the server-signed preview');
 
@@ -102,8 +100,8 @@ async function main() {
     assert(applied.status === 'applied' && applied.created === 1 && applied.updated === 0 && applied.failed === 0, 'Confirmed workbook must create new SKUs atomically without updates');
 
     const tile = await prisma.product.findUnique({ where: { sku }, include: { balances: true } });
-    assert(tile?.internalCode === `BT-${suffix}` && tile.purchaseUom === purchaseUom && tile.salesUom === salesUom && tile.piecesPerPack === 2 && tile.coveragePerPack === coverage, 'Imported tile must retain identity, units and pack conversion');
-    assert(tile.categoryId && tile.tileSizeId && tile.balances?.onHand === 0, 'Imported SKU must link governed masters and start with zero physical stock');
+    assert(tile?.internalCode === `BT-${suffix}` && tile.purchaseUom === 'BOX' && tile.salesUom === 'BOX' && tile.baseUom === 'PC' && tile.piecesPerPack === 1 && tile.coveragePerPack === 0 && Number(tile.sellPrice) === 0, 'Imported tile must use safe defaults when optional unit, box conversion and price fields are blank');
+    assert(tile.categoryId && !tile.tileSizeId && tile.balances?.onHand === 0, 'Imported SKU must link required masters, allow an omitted tile size and start with zero physical stock');
     assert(tile.media?.primaryUrl?.includes('/catalogue-images/manual/'), 'Embedded image must become managed Product Master media');
     managedImageNames.push(path.basename(tile.media.primaryUrl));
 

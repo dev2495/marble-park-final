@@ -27,6 +27,7 @@
     "smoke:production-hardening": "node scripts/e2e-production-hardening-smoke.mjs",
     "smoke:rbac-users": "node scripts/e2e-rbac-user-management-smoke.mjs",
     "smoke:readiness": "node scripts/e2e-readiness-import-smoke.mjs",
+    "smoke:product-create": "node scripts/e2e-product-create-optional-fields-smoke.mjs",
     "smoke:client-workflow": "node scripts/e2e-client-workflow-release-gate.mjs",
     "reset:client-data": "node scripts/reset-client-test-data.mjs"
   },

@@ -78,6 +78,11 @@ const PRODUCT_IMPORT_HEADERS = [
   'Base UOM', 'Purchase UOM', 'Sales UOM', 'Pieces Per Pack', 'Coverage Per Pack', 'Sell Price', 'Floor Price',
   'Tax Code', 'HSN Code', 'Allow Loose', 'Range / Series', 'Image URL', 'Product Image', 'Description',
 ];
+const PRODUCT_IMPORT_DISPLAY_HEADERS = PRODUCT_IMPORT_HEADERS.map((header) =>
+  ['SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Tax Code'].includes(header)
+    ? `${header} *`
+    : `${header} (Optional)`,
+);
 const MAX_IMPORT_ROWS = 5000;
 const MAX_EMBEDDED_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_EMBEDDED_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024;
@@ -88,13 +93,12 @@ export class ImportsService {
 
   async productImportReadiness() {
     const masters = await this.masterSnapshot();
-    const hasTiles = masters.categories.some((row) => this.key(row.name) === 'tiles');
     const checks = [
       { key: 'categories', label: 'Categories', count: masters.categories.length, required: true, route: '/dashboard/master-data/categories' },
       { key: 'brands', label: 'Brands', count: masters.brands.length, required: true, route: '/dashboard/master-data/brands' },
       { key: 'finishes', label: 'Finishes', count: masters.finishes.length, required: true, route: '/dashboard/master-data/finishes' },
       { key: 'materials', label: 'Materials', count: masters.materials.length, required: false, route: '/dashboard/master-data' },
-      { key: 'tileSizes', label: 'Tile sizes', count: masters.tileSizes.length, required: hasTiles, route: '/dashboard/master-data/tiles' },
+      { key: 'tileSizes', label: 'Tile sizes', count: masters.tileSizes.length, required: false, route: '/dashboard/master-data/tiles' },
       { key: 'uoms', label: 'Units of measure', count: masters.uoms.length, required: true, route: '/dashboard/master-data' },
       { key: 'taxCodes', label: 'Tax codes', count: masters.taxCodes.length, required: true, route: '/dashboard/master-data' },
     ];
@@ -129,9 +133,8 @@ export class ImportsService {
     workbook.creator = 'Marble Park Retail OS';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('Product Master');
-    sheet.addRow(PRODUCT_IMPORT_HEADERS);
+    sheet.addRow(PRODUCT_IMPORT_DISPLAY_HEADERS);
     sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF9F2520' } };
     sheet.getRow(1).height = 32;
     sheet.getRow(1).alignment = { vertical: 'middle', wrapText: true };
     sheet.views = [{ state: 'frozen', ySplit: 1 }];
@@ -144,6 +147,14 @@ export class ImportsService {
     sheet.getColumn(15).numFmt = '[$₹-en-IN]#,##0.00';
     sheet.getColumn(20).alignment = { wrapText: true };
     sheet.getColumn(22).alignment = { wrapText: true };
+    PRODUCT_IMPORT_HEADERS.forEach((header, index) => {
+      const required = !PRODUCT_IMPORT_DISPLAY_HEADERS[index].includes('(Optional)');
+      const cell = sheet.getCell(1, index + 1);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: required ? 'FF9F2520' : 'FF52525B' } };
+      cell.note = required
+        ? `${header} is required for every imported SKU.`
+        : `${header} is optional. Leave it blank and the system will use a safe default where needed.`;
+    });
 
     const instructions = workbook.addWorksheet('How to use');
     instructions.views = [{ showGridLines: false }];
@@ -154,11 +165,12 @@ export class ImportsService {
     instructions.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
     const instructionRows = [
       ['1', 'Use the Product Master tab', 'Enter one new saleable design/SKU per row. Do not rename the sheet or headers.'],
-      ['2', 'Choose governed values', 'Category, brand, finish, material, tile size, UOM and tax dropdowns come from the live system at download time. Brand and finish are required.'],
-      ['3', 'Add a product image', 'Either paste a public HTTPS image URL or use Excel Insert > Pictures and place one JPG/PNG/WebP image inside the Product Image cell on that row.'],
-      ['4', 'Preview before creation', 'Upload the workbook in Excel Import Center. Nothing is written until every row passes and you explicitly confirm.'],
-      ['5', 'Existing SKUs are protected', 'Bulk import creates new SKUs only. Edit existing products individually in Product Master; the SKU code itself remains locked.'],
-      ['6', 'Stock starts at zero', 'This creates Product Master records, not inventory. Record opening stock or a GRN afterward to create physical lots and QR labels.'],
+      ['2', 'Read the column labels', 'A red header with * is required. A grey header marked Optional may be left blank. Optional prices default to zero; optional units and box details use safe defaults.'],
+      ['3', 'Choose governed values', 'Dropdowns come from live master data at download time. Category, brand, finish and tax are required for bulk governance; material, tile size and conversion details are optional.'],
+      ['4', 'Add a product image', 'Optional: paste a public HTTPS image URL or use Excel Insert > Pictures and place one JPG/PNG/WebP image inside the Product Image cell on that row.'],
+      ['5', 'Preview before creation', 'Upload the workbook in Excel Import Center. Nothing is written until every row passes and you explicitly confirm.'],
+      ['6', 'Existing SKUs are protected', 'Bulk import creates new SKUs only. Edit existing products individually in Product Master; the SKU code itself remains locked.'],
+      ['7', 'Stock starts at zero', 'This creates Product Master records, not inventory. Record opening stock or a GRN afterward to create physical lots and QR labels.'],
     ];
     instructions.addRow([]);
     instructions.addRow(['Step', 'Action', 'Rule']);
@@ -191,9 +203,9 @@ export class ImportsService {
     const validationByColumn: Record<number, { name: string; allowBlank: boolean }> = {
       4: { name: 'Categories', allowBlank: false }, 5: { name: 'Brands', allowBlank: false },
       6: { name: 'Finishes', allowBlank: false }, 7: { name: 'Materials', allowBlank: true },
-      8: { name: 'TileSizes', allowBlank: true }, 9: { name: 'UOMs', allowBlank: false },
-      10: { name: 'UOMs', allowBlank: false }, 11: { name: 'UOMs', allowBlank: false },
-      16: { name: 'TaxCodes', allowBlank: false }, 18: { name: 'YesNo', allowBlank: false },
+      8: { name: 'TileSizes', allowBlank: true }, 9: { name: 'UOMs', allowBlank: true },
+      10: { name: 'UOMs', allowBlank: true }, 11: { name: 'UOMs', allowBlank: true },
+      16: { name: 'TaxCodes', allowBlank: false }, 18: { name: 'YesNo', allowBlank: true },
     };
     for (let rowNumber = 2; rowNumber <= MAX_IMPORT_ROWS + 1; rowNumber += 1) {
       Object.entries(validationByColumn).forEach(([column, config]) => {
@@ -202,8 +214,8 @@ export class ImportsService {
           errorStyle: 'error', errorTitle: 'Choose a live master value', error: 'Use the dropdown. Download a fresh template after master data changes.',
         };
       });
-      sheet.getCell(rowNumber, 12).dataValidation = { type: 'whole', operator: 'greaterThanOrEqual', formulae: [1], allowBlank: false, showErrorMessage: true, error: 'Pieces per pack must be at least 1.' };
-      for (const column of [13, 14, 15]) sheet.getCell(rowNumber, column).dataValidation = { type: 'decimal', operator: column === 14 ? 'greaterThan' : 'greaterThanOrEqual', formulae: [0], allowBlank: column !== 13 && column !== 14, showErrorMessage: true, error: column === 14 ? 'Sell Price must be greater than zero.' : 'Enter zero or a positive number.' };
+      sheet.getCell(rowNumber, 12).dataValidation = { type: 'whole', operator: 'greaterThanOrEqual', formulae: [1], allowBlank: true, showErrorMessage: true, error: 'When entered, pieces per pack must be at least 1.' };
+      for (const column of [13, 14, 15]) sheet.getCell(rowNumber, column).dataValidation = { type: 'decimal', operator: 'greaterThanOrEqual', formulae: [0], allowBlank: true, showErrorMessage: true, error: 'When entered, use zero or a positive number.' };
     }
 
     const reference = workbook.addWorksheet('Reference details');
@@ -623,19 +635,12 @@ export class ImportsService {
     if (!row.category) errors.push('Category is required');
     if (!row.brand) errors.push('Brand is required. Create it in Brand Master before importing');
     if (!row.finish) errors.push('Finish is required. Create it in Finish Master before importing');
-    if (this.key(row.category) === 'tiles' && !row.dimensions) errors.push('Tile Size / Dimensions is required for tile products');
-    if (!row.hasBaseUom) errors.push('Base UOM is required');
-    if (!row.hasPurchaseUom) errors.push('Purchase UOM is required');
-    if (!row.hasSalesUom) errors.push('Sales UOM is required');
-    if (!row.hasPiecesPerPack) errors.push('Pieces per pack is required');
     if (!row.hasTaxClass) errors.push('Tax Code is required');
-    if (!row.hasAllowLoose) errors.push('Allow Loose must be selected as Yes or No');
-    if (!row.hasSellPrice || !Number.isFinite(row.sellPrice) || row.sellPrice <= 0) errors.push('Sell Price is required and must be greater than zero');
+    if (row.hasSellPrice && (!Number.isFinite(row.sellPrice) || row.sellPrice < 0)) errors.push('Sell Price must be zero or greater');
     if (row.hasFloorPrice && (!Number.isFinite(row.floorPrice) || row.floorPrice < 0)) errors.push('Floor/dealer price must be zero or greater');
     if (row.hasFloorPrice && row.sellPrice > 0 && row.floorPrice > row.sellPrice) errors.push('Floor price cannot exceed sell price');
     if (!Number.isInteger(row.piecesPerPack) || row.piecesPerPack <= 0) errors.push('Pieces per pack must be a positive whole number');
     if (!Number.isFinite(row.coveragePerPack) || row.coveragePerPack < 0) errors.push('Coverage per pack must be zero or greater');
-    if (['SQFT', 'SQM', 'M2'].includes(row.salesUom) && row.coveragePerPack <= 0) errors.push('Area-priced rows require positive coverage per pack');
     if (row.imageUrl && row.imageUrl !== '__embedded_excel_image__' && !/^(https:\/\/|\/catalogue-images\/)/i.test(row.imageUrl)) {
       errors.push('Image URL must use HTTPS or a managed /catalogue-images/ path');
     }
@@ -695,6 +700,7 @@ export class ImportsService {
     };
     const price = pick('MRP', 'Price', 'SELL PRICE', 'Sell Price', 'Selling Price', 'MRP INR', 'MRP(INR)', 'List Price', 'Amount', 'Rate');
     const floorPrice = pick('Floor Price', 'FLOOR PRICE', 'Dealer Price', 'Net Price', 'Special Rate');
+    const category = this.cleanText(pick('Category', 'CATEGORY', 'Product Category', 'Group', 'Type'));
     const brand = this.cleanText(pick('Brand', 'BRAND', 'Make', 'Company'));
     const finish = this.cleanText(pick('Finish', 'FINISH', 'Color', 'Colour', 'Surface', 'Shade'));
     const dimensions = this.cleanText(pick('Tile Size / Dimensions', 'Dimensions', 'DIMENSIONS', 'Size', 'SIZE', 'Tile Size'));
@@ -705,8 +711,9 @@ export class ImportsService {
     const piecesPerPackValue = pick('Pieces Per Pack', 'Pieces/Box', 'PCS/BOX', 'Pcs Per Box', 'Pack Quantity');
     const taxClassValue = pick('Tax Code', 'Tax Class', 'GST', 'GST Rate');
     const allowLooseValue = pick('Allow Loose', 'Loose Sale', 'Allow Piece Sale');
-    const purchaseUom = String(purchaseUomValue || unit || 'PC').trim().toUpperCase();
-    const salesUom = String(salesUomValue || unit || 'PC').trim().toUpperCase();
+    const defaultUom = this.key(category) === 'tiles' ? 'BOX' : 'PC';
+    const purchaseUom = String(purchaseUomValue || unit || defaultUom).trim().toUpperCase();
+    const salesUom = String(salesUomValue || unit || defaultUom).trim().toUpperCase();
     const baseUom = String(baseUomValue || (purchaseUom === 'BOX' ? 'PC' : purchaseUom)).trim().toUpperCase();
     const sku = this.normalizeSku(pick('SKU', 'sku', 'Code', 'PRODUCT CODE', 'Product Code', 'Item Code', 'Article No', 'Article Number', 'Model No', 'Material Code'));
     const internalCode = pick('Internal Code', 'Showroom Code', 'Display Code', 'Sales Code', 'Internal SKU');
@@ -716,7 +723,7 @@ export class ImportsService {
       internalCode: this.normalizeInternalCode(internalCode || sku),
       hasInternalCode: internalCode !== undefined,
       name: this.cleanText(pick('Product Name', 'Item Name', 'Name', 'Product', 'PRODUCT DESCRIPTION', 'Item Description', 'Description')),
-      category: this.cleanText(pick('Category', 'CATEGORY', 'Product Category', 'Group', 'Type')),
+      category,
       brand,
       finish,
       material: this.cleanText(pick('Material', 'Body Material', 'Composition')),
@@ -837,14 +844,18 @@ export class ImportsService {
       material ? tx.productMaterial.findFirst({ where: { name: material, status: 'active' } }) : null,
       this.key(category) === 'tiles' && dimensions ? tx.tileSize.findFirst({ where: { name: dimensions, status: 'active' } }) : null,
     ]);
-    if (!categoryRow || (brand && !brandRow) || (finish && !finishRow) || (material && !materialRow) || (this.key(category) === 'tiles' && !tileSizeRow)) {
+    if (!categoryRow || (brand && !brandRow) || (finish && !finishRow) || (material && !materialRow) || (this.key(category) === 'tiles' && dimensions && !tileSizeRow)) {
       throw new BadRequestException('A selected master value changed after preview. Download a fresh template and preview again.');
     }
     return { category: categoryRow, brand: brandRow, finish: finishRow, material: materialRow, tileSize: tileSizeRow };
   }
 
   private normalizeHeader(value: string) {
-    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    return String(value || '')
+      .replace(/\s*\((optional|required)\)\s*/gi, '')
+      .replace(/\s*\*\s*$/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
   }
 
   private normalizeSku(value: any) {

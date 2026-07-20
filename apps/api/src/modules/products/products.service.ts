@@ -15,6 +15,7 @@ export interface CreateProductInput {
   floorPrice?: number;
   taxClass?: string;
   description?: string;
+  status?: string;
   media?: any;
   internalCode?: string;
   materialId?: string;
@@ -94,6 +95,7 @@ export class ProductsService {
     const category = String(data.category || '').trim();
     const brand = String(data.brand || '').trim();
     const finish = String(data.finish || '').trim();
+    const status = String(data.status || 'active').trim().toLowerCase();
     const sellPrice = Number(data.sellPrice || 0);
     const floorPrice = Number(data.floorPrice || 0);
     if (!sku) throw new BadRequestException('SKU is required');
@@ -102,6 +104,9 @@ export class ProductsService {
     if (!Number.isFinite(sellPrice) || sellPrice < 0) throw new BadRequestException('Sell price must be zero or greater');
     if (!Number.isFinite(floorPrice) || floorPrice < 0) throw new BadRequestException('Floor price must be zero or greater');
     if (sellPrice > 0 && floorPrice > sellPrice) throw new BadRequestException('Floor price cannot exceed the sell price');
+    if (!['active', 'inactive', 'archived'].includes(status)) {
+      throw new BadRequestException('Product status must be active, inactive, or archived');
+    }
 
     const existing = await this.findBySku(sku);
     if (existing) {
@@ -113,12 +118,10 @@ export class ProductsService {
     const internalCode = this.normalizeInternalCode(data.internalCode || sku);
     const existingInternal = await this.prisma.product.findFirst({ where: { internalCode } });
     if (existingInternal) throw new BadRequestException('This internal product code is already assigned');
-    const uoms = [data.baseUom || data.unit || 'PC', data.purchaseUom || data.unit || 'PC', data.salesUom || data.unit || 'PC']
+    const tileDefaults = category.toLowerCase() === 'tiles';
+    const uoms = [data.baseUom || (tileDefaults ? 'PC' : data.unit) || 'PC', data.purchaseUom || data.unit || (tileDefaults ? 'BOX' : 'PC'), data.salesUom || data.unit || (tileDefaults ? 'BOX' : 'PC')]
       .map((value) => String(value).trim().toUpperCase());
     const coveragePerPack = this.numberAtLeastZero(data.coveragePerPack || 0, 'Coverage per pack');
-    if (['SQFT', 'SQM', 'M2'].includes(uoms[2]) && coveragePerPack <= 0) {
-      throw new BadRequestException('Area-priced products require positive coverage per pack');
-    }
     const validUoms = await this.prisma.unitOfMeasure.count({ where: { code: { in: Array.from(new Set(uoms)) }, status: 'active' } });
     if (validUoms !== new Set(uoms).size) throw new BadRequestException('Base, purchase and sales UOM must use active UOM masters');
     return this.prisma.$transaction(async (tx) => {
@@ -131,12 +134,12 @@ export class ProductsService {
           brand,
           finish,
           dimensions: String(data.dimensions || '').trim(),
-          unit: String(data.unit || 'PC').trim().toUpperCase() || 'PC',
+          unit: String(data.unit || uoms[1]).trim().toUpperCase() || uoms[1],
           tags: [],
           sellPrice,
           floorPrice,
           taxClass: data.taxClass || 'GST_18',
-          status: 'active',
+          status,
           media: this.normalizeMedia(data.media),
           sourceRefs: {},
           description: data.description || '',
@@ -227,12 +230,6 @@ export class ProductsService {
     if (data.coveragePerPack !== undefined) update.coveragePerPack = this.numberAtLeastZero(data.coveragePerPack, 'Coverage per pack');
     if (data.hsnCode !== undefined) update.hsnCode = String(data.hsnCode || '').trim() || null;
     if (data.allowLoose !== undefined) update.allowLoose = Boolean(data.allowLoose);
-    const effectiveSalesUom = update.salesUom ?? current.salesUom;
-    const effectiveCoverage = update.coveragePerPack ?? Number(current.coveragePerPack || 0);
-    if (['SQFT', 'SQM', 'M2'].includes(effectiveSalesUom) && effectiveCoverage <= 0) {
-      throw new BadRequestException('Area-priced products require positive coverage per pack');
-    }
-
     const updatedAt = new Date();
     update.updatedAt = updatedAt;
     return this.prisma.$transaction(async (tx) => {

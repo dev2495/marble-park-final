@@ -102,6 +102,9 @@ export class CreateProductInput {
   @Field(() => String, { nullable: true })
   description?: string;
 
+  @Field(() => String, { nullable: true })
+  status?: string;
+
   @Field(() => GraphQLJSON, { nullable: true })
   media?: any;
 
