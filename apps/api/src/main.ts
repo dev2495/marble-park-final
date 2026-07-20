@@ -1,20 +1,21 @@
-import '@nestjs/platform-express';
+import { ExpressAdapter } from '@nestjs/platform-express';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bodyParser: false });
   const express = require('express');
   const fs = require('fs');
   const path = require('path');
-  app.use((req: any, res: any, next: () => void) => {
+  const server = express();
+  server.use((req: any, res: any, next: () => void) => {
     const requestId = randomUUID();
     req.requestId = requestId;
     res.setHeader('x-request-id', requestId);
     next();
   });
+  const app = await NestFactory.create(AppModule, new ExpressAdapter(server), { bodyParser: false });
   // A 5 MB image is base64-expanded to about 6.7 MB in the GraphQL payload.
   // Keep the global cap bounded while allowing the explicitly validated image path.
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '8mb' }));
