@@ -153,6 +153,12 @@ export class DispatchResolver {
     return this.dispatch.findAllChallans({ status, dispatchJobId });
   }
 
+  @Query(() => GraphQLJSON)
+  async dispatchChallan(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'dispatch.manage', ['admin', 'owner', 'sales_manager', 'dispatch_ops', 'inventory_manager', 'office_staff']);
+    return this.dispatch.findChallanById(id);
+  }
+
   @Query(() => [GraphQLJSON])
   async pickLists(
     @Context() ctx: GraphqlRequestContext,

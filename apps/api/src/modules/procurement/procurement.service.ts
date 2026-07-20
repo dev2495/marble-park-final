@@ -7,7 +7,8 @@ import { reserveAvailableLotsTx } from '../common/lot-allocation';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreatePurchaseOrderInput {
-  demandIds: string[];
+  demandIds?: string[];
+  lines?: any;
   vendorId?: string;
   vendorName?: string;
   expectedDate?: Date;
@@ -92,15 +93,29 @@ export class ProcurementService {
 
   async createPurchaseOrder(input: CreatePurchaseOrderInput, actorUserId: string) {
     const demandIds = Array.from(new Set((input.demandIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
-    if (!demandIds.length) throw new BadRequestException('Select at least one purchase demand row');
+    const directInputs = this.normalizeLines(input.lines);
+    if (!demandIds.length && !directInputs.length) throw new BadRequestException('Select purchase demand or add at least one Product Master line');
 
-    const demands = await (this.prisma as any).purchaseDemand.findMany({
+    const demands = demandIds.length ? await (this.prisma as any).purchaseDemand.findMany({
       where: { id: { in: demandIds }, status: { in: ['open', 'ordered', 'partial_received'] } },
       orderBy: { createdAt: 'asc' },
-    });
-    if (!demands.length) throw new BadRequestException('Selected demand rows are already closed or unavailable');
+    }) : [];
+    if (demandIds.length && !demands.length) throw new BadRequestException('Selected demand rows are already closed or unavailable');
     const invalidDemand = demands.find((demand: any) => !demand.productId);
     if (invalidDemand) throw new BadRequestException(`${invalidDemand.sku} must be linked to a Product Master SKU before purchase ordering`);
+
+    if (directInputs.some((line: any) => !String(line.productId || '').trim())) throw new BadRequestException('Every direct PO line must select a Product Master SKU');
+    const directProductIds = Array.from(new Set(directInputs.map((line: any) => String(line.productId).trim())));
+    const products = directProductIds.length ? await this.prisma.product.findMany({ where: { id: { in: directProductIds }, status: 'active' } }) : [];
+    const productById = new Map(products.map((product: any) => [product.id, product]));
+    const directLines = directInputs.map((line: any, index: number) => {
+      const product: any = productById.get(String(line.productId || ''));
+      if (!product) throw new BadRequestException(`Direct PO line ${index + 1} is not an active Product Master SKU`);
+      const orderedQuantity = this.whole(line.quantity ?? line.orderedQuantity, `${product.sku} quantity`);
+      const unitCost = Number(line.unitCost || 0);
+      if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${product.sku} unit cost must be zero or greater`);
+      return { product, orderedQuantity, unitCost, unit: String(line.unit || product.purchaseUom || product.unit || 'PC'), note: String(line.note || '').trim() };
+    });
 
     const vendor = input.vendorId
       ? await (this.prisma as any).vendor.findUnique({ where: { id: input.vendorId } }).catch(() => null)
@@ -124,8 +139,9 @@ export class ProcurementService {
           createdBy: actorUserId,
           notes: input.notes || '',
           metadata: {
-            source: 'purchase_demand_queue',
+            source: demandIds.length && directLines.length ? 'mixed_purchase_order' : demandIds.length ? 'purchase_demand_queue' : 'direct_product_master',
             demandIds,
+            directLineCount: directLines.length,
           },
           updatedAt: new Date(),
         },
@@ -209,6 +225,40 @@ export class ProcurementService {
         });
       }
 
+      for (const row of directLines) {
+        const product: any = row.product;
+        await tx.purchaseOrderLine.create({
+          data: {
+            id: ulid(),
+            purchaseOrderId: order.id,
+            productId: product.id,
+            sku: product.sku,
+            name: product.name,
+            category: product.category,
+            brand: product.brand,
+            finish: product.finish || null,
+            unit: row.unit,
+            orderedQuantity: row.orderedQuantity,
+            unitCost: row.unitCost,
+            status: 'ordered',
+            metadata: { source: 'direct_product_master', internalCode: product.internalCode || null, note: row.note || null },
+            updatedAt: new Date(),
+          },
+        });
+        if (input.vendorId) {
+          await tx.productVendor.upsert({
+            where: { productId_vendorId: { productId: product.id, vendorId: input.vendorId } },
+            update: { vendorName, preferred: true, status: 'active', updatedAt: new Date(), metadata: { source: 'direct_purchase_order', poNumber } },
+            create: { id: ulid(), productId: product.id, vendorId: input.vendorId, vendorName, preferred: true, status: 'active', updatedAt: new Date(), metadata: { source: 'direct_purchase_order', poNumber } },
+          });
+          await tx.reorderPolicy.upsert({
+            where: { productId: product.id },
+            update: { preferredVendorId: input.vendorId, reorderQuantity: row.orderedQuantity, reorderPoint: 0, updatedAt: new Date() },
+            create: { id: ulid(), productId: product.id, preferredVendorId: input.vendorId, reorderQuantity: row.orderedQuantity, reorderPoint: 0, updatedAt: new Date() },
+          });
+        }
+      }
+
       await tx.auditEvent.create({
         data: {
           id: ulid(),
@@ -217,7 +267,7 @@ export class ProcurementService {
           entityType: 'PurchaseOrder',
           entityId: order.id,
           summary: `Created ${order.poNumber} for ${vendorName}`,
-          metadata: { demandIds },
+          metadata: { demandIds, directLineCount: directLines.length },
         },
       });
       return order;

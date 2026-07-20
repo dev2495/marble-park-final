@@ -68,6 +68,7 @@ const styles = StyleSheet.create({
   topRule: { height: 4, backgroundColor: colors.ink, borderRadius: 99, marginBottom: 14 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 },
   logoBox: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.ink, color: colors.paper, alignItems: 'center', justifyContent: 'center' },
+  logoImage: { width: 44, height: 44, objectFit: 'contain', backgroundColor: '#ffffff', borderRadius: 6 },
   logoText: { fontSize: 15, fontWeight: 800 },
   brandWrap: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   brand: { fontSize: 23, fontWeight: 900, letterSpacing: 1.6 },
@@ -117,6 +118,14 @@ const styles = StyleSheet.create({
   closingHeading: { fontSize: 36, fontWeight: 900, marginBottom: 22, letterSpacing: 1, lineHeight: 1.05 },
   closingText: { fontSize: 11, lineHeight: 1.55, marginBottom: 18, color: '#dcd0c0' },
   closingTermsTitle: { fontSize: 12, fontWeight: 800, marginTop: 22, marginBottom: 8, color: '#ffffff', letterSpacing: 1.4, textTransform: 'uppercase' },
+  brandPage: { backgroundColor: '#ffffff', padding: 38, color: colors.ink, fontFamily: 'Helvetica' },
+  brandKicker: { fontSize: 8, fontWeight: 800, color: colors.redAccent, letterSpacing: 2, textTransform: 'uppercase' },
+  brandHeading: { marginTop: 8, fontSize: 25, fontWeight: 900 },
+  brandIntro: { marginTop: 7, maxWidth: 430, fontSize: 9.5, lineHeight: 1.45, color: colors.muted },
+  brandGrid: { marginTop: 28, flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  brandCard: { width: '30.5%', height: 92, borderWidth: 1, borderColor: colors.line, padding: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff' },
+  brandLogo: { width: '100%', height: 48, objectFit: 'contain' },
+  brandName: { marginTop: 7, fontSize: 7.5, fontWeight: 800, color: colors.muted, textAlign: 'center' },
 });
 
 function money(value) {
@@ -153,17 +162,35 @@ function buildAbsoluteUrl(raw, requestUrl) {
 
 function imageSrc(line, requestUrl) {
   const media = safeJson(line.media, {});
-  const raw = line.quoteImage || line.customImageUrl || media.primary || (Array.isArray(media.gallery) ? media.gallery[0] : null);
+  const firstGallery = Array.isArray(media.gallery) ? media.gallery[0] : null;
+  const raw = line.quoteImage
+    || line.customImageUrl
+    || media.primaryUrl
+    || media.primary
+    || media.primaryImage
+    || (typeof firstGallery === 'string' ? firstGallery : firstGallery?.url);
   return buildAbsoluteUrl(raw, requestUrl);
 }
 
 function rateFor(line) {
   const qty = Number(line.qty || line.quantity || 0);
-  const price = Number(line.price || line.sellPrice || 0);
+  const basis = String(line.rateBasis || 'PACK').toUpperCase();
+  const pricingQuantity = Number(line.pricingQuantity || (basis === 'AREA'
+    ? qty * Number(line.coveragePerPack || 0)
+    : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
+  const price = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
   const discount = Number(line.discountPercent || line.discount || 0);
   const specialRate = Number(line.specialRate || line.specialPrice || 0);
-  const unitRate = specialRate > 0 ? specialRate : price * (1 - discount / 100);
-  return { qty, price, discount, unitRate, amount: qty * unitRate };
+  const hasStoredUnitRate = line.unitRate !== null && line.unitRate !== undefined && line.unitRate !== '';
+  const storedUnitRate = Number(line.unitRate);
+  const unitRate = hasStoredUnitRate && Number.isFinite(storedUnitRate) && storedUnitRate >= 0
+    ? storedUnitRate
+    : specialRate > 0 ? specialRate : price * (1 - discount / 100);
+  const calculatedTaxable = pricingQuantity * Math.max(0, unitRate);
+  const hasStoredTaxable = line.taxableValue !== null && line.taxableValue !== undefined && line.taxableValue !== '';
+  const storedTaxable = Number(line.taxableValue);
+  const taxableValue = hasStoredTaxable && Number.isFinite(storedTaxable) && storedTaxable >= 0 ? storedTaxable : calculatedTaxable;
+  return { qty, pricingQuantity, price, discount, unitRate, taxableValue };
 }
 
 function groupByArea(lines) {
@@ -200,7 +227,7 @@ async function fetchQuote(id, apiUrl) {
         prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } }),
         prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], take: 80 }),
       ]);
-      if (quote) return { quote, settings, brands };
+      if (quote) return { quote, settings: settings?.data || settings || {}, brands };
     } finally {
       await prisma.$disconnect();
     }
@@ -214,6 +241,8 @@ async function fetchQuote(id, apiUrl) {
       lines quoteMeta displayMode discountPercent notes
       customer owner lead approval
     }
+    documentSettings { data }
+    masterProductBrands(status: "active")
   }`;
   const fetchViaGraphql = async (token) => {
     const response = await fetch(apiUrl, {
@@ -233,7 +262,11 @@ async function fetchQuote(id, apiUrl) {
   if (!response.ok || payload.errors?.length || !payload.data?.quote) {
     throw new Error(payload.errors?.[0]?.message || 'Quote not found');
   }
-  return { quote: payload.data.quote, settings: null, brands: [] };
+  return {
+    quote: payload.data.quote,
+    settings: payload.data.documentSettings?.data || {},
+    brands: asArray(payload.data.masterProductBrands),
+  };
 }
 
 async function getPdfServiceToken(apiUrl) {
@@ -392,7 +425,7 @@ function ClosingPage({ settings, terms, bank }) {
 
 // ============= Priced layout (inherited compact style) =============
 
-function PricedAreaTable({ group, showPrices, requestUrl }) {
+function PricedAreaTable({ group, showPrices, requestUrl, taxMode }) {
   const e = React.createElement;
   return e(View, { style: styles.areaBlock, wrap: false },
     e(View, { style: styles.areaHeader },
@@ -410,6 +443,8 @@ function PricedAreaTable({ group, showPrices, requestUrl }) {
     ),
     ...group.rows.map((line, index) => {
       const rate = rateFor(line);
+      const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
+      const lineTotal = rate.taxableValue + (rate.taxableValue * taxRate / 100);
       const src = imageSrc(line, requestUrl);
       return e(View, { key: `${line.sku || line.tileCode || index}`, style: styles.tableRow },
         e(View, { style: styles.imageCol },
@@ -424,9 +459,40 @@ function PricedAreaTable({ group, showPrices, requestUrl }) {
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, money(rate.price)) : null,
         showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, rate.discount ? `${rate.discount}%` : '-') : null,
         showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, money(rate.unitRate)) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.amount)) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(lineTotal)) : null,
       );
     }),
+  );
+}
+
+function selectedBrands(payload) {
+  const quote = payload.quote || {};
+  const quoteMeta = safeJson(quote.quoteMeta, {});
+  if (quoteMeta.showBrandLogos === false) return [];
+  const active = asArray(payload.brands).filter((brand) => brand?.metadata?.quoteEnabled !== false && brand?.metadata?.logoUrl);
+  const selectedIds = new Set(asArray(quoteMeta.selectedBrandIds).map(String));
+  if (selectedIds.size) return active.filter((brand) => selectedIds.has(String(brand.id)));
+  const lineNames = new Set(asArray(quote.lines).map((line) => String(line.brand || '').trim().toLowerCase()).filter(Boolean));
+  return active.filter((brand) => lineNames.has(String(brand.name || '').trim().toLowerCase()));
+}
+
+function BrandPortfolioPage({ brands, settings, requestUrl }) {
+  const e = React.createElement;
+  if (!brands.length) return null;
+  return e(Page, { size: 'A4', style: styles.brandPage },
+    e(Text, { style: styles.brandKicker }, 'Selected for this quotation'),
+    e(Text, { style: styles.brandHeading }, 'Brands in your selection'),
+    e(Text, { style: styles.brandIntro }, `This quotation includes products from ${brands.length} served brand${brands.length === 1 ? '' : 's'}. Final availability, finish, shade and batch are confirmed at order stage.`),
+    e(View, { style: styles.brandGrid },
+      ...brands.map((brand) => e(View, { key: String(brand.id || brand.name), style: styles.brandCard, wrap: false },
+        e(Image, { src: buildAbsoluteUrl(brand.metadata.logoUrl, requestUrl), style: styles.brandLogo }),
+        e(Text, { style: styles.brandName }, brand.name),
+      )),
+    ),
+    e(View, { style: styles.footer },
+      e(Text, null, settings.companyName || 'Marble Park'),
+      e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}`, style: styles.pageNumber }),
+    ),
   );
 }
 
@@ -437,10 +503,15 @@ function PricedDocumentBody(payload, requestUrl) {
   const lines = asArray(quote.lines);
   const quoteMeta = safeJson(quote.quoteMeta, {});
   const groups = groupByArea(lines);
-  const subtotal = lines.reduce((sum, line) => sum + rateFor(line).amount, 0);
+  const taxMode = quoteMeta.taxMode === 'non_gst' ? 'non_gst' : 'gst';
+  const subtotal = lines.reduce((sum, line) => sum + rateFor(line).taxableValue, 0);
   const discountAmount = subtotal * (Number(quote.discountPercent || 0) / 100);
+  const discountFactor = Math.max(0, 1 - Number(quote.discountPercent || 0) / 100);
   const taxable = Math.max(0, subtotal - discountAmount);
-  const tax = taxable * 0.18;
+  const tax = taxMode === 'non_gst' ? 0 : lines.reduce((sum, line) => {
+    const rate = rateFor(line);
+    return sum + rate.taxableValue * discountFactor * Math.max(0, Number(line.taxRate ?? 18)) / 100;
+  }, 0);
   const total = taxable + tax;
   const terms = quoteMeta.terms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
   const bank = quoteMeta.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
@@ -450,7 +521,9 @@ function PricedDocumentBody(payload, requestUrl) {
     e(View, { style: styles.topRule }),
     e(View, { style: styles.header },
       e(View, { style: styles.brandWrap },
-        e(View, { style: styles.logoBox }, e(Text, { style: styles.logoText }, 'MP')),
+        settings.logoUrl
+          ? e(Image, { src: buildAbsoluteUrl(settings.logoUrl, requestUrl), style: styles.logoImage })
+          : e(View, { style: styles.logoBox }, e(Text, { style: styles.logoText }, 'MP')),
         e(View, null,
           e(Text, { style: styles.brand }, settings.companyName || 'MARBLE PARK'),
           e(Text, { style: styles.subBrand }, 'Retail Ops'),
@@ -482,8 +555,9 @@ function PricedDocumentBody(payload, requestUrl) {
       e(Text, { style: styles.badge }, quote.projectName || quote.title || 'Retail selection'),
       e(Text, { style: styles.badge }, `${groups.length} area(s)`),
       e(Text, { style: styles.badge }, 'Prices shown'),
+      e(Text, { style: styles.badge }, taxMode === 'non_gst' ? 'Non-GST quotation' : 'GST quotation'),
     ),
-    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl })),
+    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode })),
     e(View, { style: styles.totalsWrap },
       e(View, { style: styles.notesBox },
         e(Text, { style: styles.label }, 'Remarks'),
@@ -492,7 +566,7 @@ function PricedDocumentBody(payload, requestUrl) {
       e(View, { style: styles.totalsBox },
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal))),
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, `Discount ${Number(quote.discountPercent || 0)}%`), e(Text, { style: styles.totalValue }, money(discountAmount))),
-        e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'GST 18%'), e(Text, { style: styles.totalValue }, money(tax))),
+        taxMode === 'gst' ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'GST'), e(Text, { style: styles.totalValue }, money(tax))) : null,
         e(View, { style: [styles.totalRow, styles.grand] }, e(Text, { style: styles.grandText }, 'Total'), e(Text, { style: styles.grandText }, money(total))),
       ),
     ),
@@ -502,7 +576,7 @@ function PricedDocumentBody(payload, requestUrl) {
     ),
     e(View, { style: styles.footer },
       e(Text, null, `Prepared by: ${quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team'}`),
-      e(Text, null, `Thank you for choosing Marble Park. ${settings.supportEmail || 'support@marblepark.in'}`),
+      e(Text, null, settings.documentFooter || `Thank you for choosing ${settings.companyName || 'Marble Park'}.`),
       e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}`, style: styles.pageNumber }),
     ),
   );
@@ -518,6 +592,8 @@ function buildDocument(payload, requestUrl) {
   const lines = asArray(quote.lines);
   const groups = groupByArea(lines);
   const isSelection = quote.displayMode === 'selection' || quoteMeta.layout === 'selection';
+  const brands = selectedBrands(payload);
+  const brandPage = BrandPortfolioPage({ brands, settings: settings || {}, requestUrl });
 
   if (isSelection) {
     const terms = quoteMeta.terms || 'Selection summary is for design coordination only. Final pricing, taxes, and delivery terms will be confirmed when the order is placed. Tile codes and shades may have small lot variations.';
@@ -525,10 +601,11 @@ function buildDocument(payload, requestUrl) {
     return e(Document, null,
       e(CoverPage, { quote, settings, requestUrl, quoteMeta }),
       ...groups.flatMap((group) => SelectionAreaPage({ group, requestUrl })),
+      brandPage,
       e(ClosingPage, { settings, terms, bank }),
     );
   }
-  return e(Document, null, PricedDocumentBody(payload, requestUrl));
+  return e(Document, null, PricedDocumentBody(payload, requestUrl), brandPage);
 }
 
 async function main() {

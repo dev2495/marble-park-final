@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 
 const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const WEB = process.env.WEB_URL || 'http://localhost:3000';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
@@ -25,7 +26,7 @@ async function main() {
   const token = login.login.token;
   const reservation = await prisma.reservation.findFirst({
     where: { status: 'reserved', salesOrderId: { not: null }, product: { sku: { startsWith: 'CLIENT-FLOW-' } } },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { createdAt: 'desc' },
   });
   assert(reservation?.salesOrderId, 'Run the procurement lot-allocation smoke test first');
   const location = await prisma.stockLocation.findFirst({ where: { code: 'MAIN' } });
@@ -52,6 +53,10 @@ async function main() {
     `mutation($input: CreateChallanInput!) { createChallan(input: $input) { id challanNumber status } }`,
     { input: { jobId: job.id, pickListId: pick.id, transporter: 'Store vehicle', vehicleNo: 'UAT-01', driverName: 'UAT Driver', driverPhone: '9000000001', packages: 1 } }, token,
   )).createChallan;
+  const slipResponse = await fetch(`${WEB}/api/pdf/dispatch/${challan.id}`);
+  assert(slipResponse.ok && slipResponse.headers.get('content-type')?.includes('application/pdf'), `Dispatch slip PDF must render (${slipResponse.status})`);
+  const slip = Buffer.from(await slipResponse.arrayBuffer());
+  assert(slip.subarray(0, 4).toString() === '%PDF' && slip.length > 5_000, 'Dispatch slip must be a non-empty PDF');
   await gql(`mutation($id: ID!, $status: String!) { updateChallanStatus(id: $id, status: $status) { id status } }`, { id: challan.id, status: 'dispatched' }, token);
 
   let unprovedDeliveryRejected = false;
@@ -93,7 +98,7 @@ async function main() {
   }
   assert(overReturnRejected, 'Return quantity above delivered balance must be rejected atomically');
 
-  console.log(JSON.stringify({ ok: true, pickNumber: pick.pickNumber, challanNumber: challan.challanNumber, proofType: proof.proofType, returnNumber: returned.returnNumber, restoredLot: sourceLine.lot.lotNumber }, null, 2));
+  console.log(JSON.stringify({ ok: true, pickNumber: pick.pickNumber, challanNumber: challan.challanNumber, dispatchSlipBytes: slip.length, proofType: proof.proofType, returnNumber: returned.returnNumber, restoredLot: sourceLine.lot.lotNumber }, null, 2));
 }
 
 main().catch((error) => {

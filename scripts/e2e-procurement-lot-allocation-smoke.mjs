@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 
 const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const WEB = process.env.WEB_URL || 'http://localhost:3000';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
@@ -33,6 +34,17 @@ async function main() {
     orderBy: { createdAt: 'desc' },
   });
   assert(product, 'Run e2e-client-workflow-release-gate.mjs first');
+  const directPo = (await gql(
+    `mutation($input: CreatePurchaseOrderInput!) { createPurchaseOrder(input: $input) }`,
+    { input: { demandIds: [], vendorName: 'Direct Product Master test vendor', lines: JSON.stringify([{ productId: product.id, quantity: 4, unit: product.purchaseUom || product.unit || 'PC', unitCost: 7100 }]), notes: 'Direct PO regression test' } },
+    token,
+  )).createPurchaseOrder;
+  assert(directPo.lines.length === 1 && directPo.lines[0].productId === product.id && Number(directPo.lines[0].orderedQuantity) === 4, 'Direct PO must create an exact Product Master line without a demand row');
+  assert(directPo.metadata?.source === 'direct_product_master', 'Direct PO source metadata must be explicit');
+  const directPdf = await fetch(`${WEB}/api/pdf/purchase-order/${directPo.id}`);
+  assert(directPdf.ok && directPdf.headers.get('content-type')?.includes('application/pdf'), `Direct PO PDF must render (${directPdf.status})`);
+  const directPdfBytes = Buffer.from(await directPdf.arrayBuffer());
+  assert(directPdfBytes.subarray(0, 4).toString() === '%PDF' && directPdfBytes.length > 5_000, 'Direct PO PDF must be a non-empty document');
   const demands = await prisma.purchaseDemand.findMany({
     where: { productId: product.id, status: 'open' },
     orderBy: { createdAt: 'asc' },
@@ -46,6 +58,8 @@ async function main() {
     token,
   )).createPurchaseOrder;
   assert(po.lines.length === 2 && po.lines.every((line) => line.productId === product.id), 'PO lines must stay linked to Product Master');
+  const demandPdf = await fetch(`${WEB}/api/pdf/purchase-order/${po.id}`);
+  assert(demandPdf.ok && demandPdf.headers.get('content-type')?.includes('application/pdf'), `Demand PO PDF must render (${demandPdf.status})`);
   const testedOrderIds = demands.map((row) => row.sourceOrderId).filter(Boolean);
 
   const location = await prisma.stockLocation.findFirst({ where: { code: 'MAIN' } });
@@ -102,6 +116,8 @@ async function main() {
     ok: true,
     sku: product.sku,
     poNumber: po.poNumber,
+    directPoNumber: directPo.poNumber,
+    directPoPdfBytes: directPdfBytes.length,
     grnCount: await prisma.goodsReceiptNote.count({ where: { purchaseOrderId: po.id } }),
     lots: await prisma.inventoryLot.count({ where: { productId: product.id, sourceType: 'grn' } }),
     inventory: { onHand: balance.onHand, reserved: balance.reserved, damaged: balance.damaged, available: balance.available },

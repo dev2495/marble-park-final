@@ -82,6 +82,7 @@ export default function QuoteDetailPage() {
   const [closeReason, setCloseReason] = useState('');
   const [editLines, setEditLines] = useState<any[]>([]);
   const [displayMode, setDisplayMode] = useState('priced');
+  const [taxMode, setTaxMode] = useState<'gst' | 'non_gst'>('gst');
   const [remarks, setRemarks] = useState('');
   const [terms, setTerms] = useState('');
   const [bankDetails, setBankDetails] = useState('');
@@ -130,6 +131,7 @@ export default function QuoteDetailPage() {
     const meta = quote.quoteMeta || {};
     setEditLines((Array.isArray(quote.lines) ? quote.lines : []).map((line: any) => ({ ...line, area: line.area || 'General Selection', quoteImage: line.quoteImage || line.customImageUrl || '' })));
     setDisplayMode(quote.displayMode || 'priced');
+    setTaxMode(meta.taxMode === 'non_gst' ? 'non_gst' : 'gst');
     setRemarks(meta.remarks || quote.notes || '');
     setTerms(meta.terms || documentSettings.defaultTerms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.');
     setBankDetails(meta.bankDetails || documentSettings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.');
@@ -173,7 +175,8 @@ export default function QuoteDetailPage() {
 
   const subtotal = useMemo(() => editLines.reduce((sum, line) => sum + lineRate(line).amount, 0), [editLines]);
   const quoteDiscount = subtotal * (Number(discountPercent || 0) / 100);
-  const tax = Math.max(0, subtotal - quoteDiscount) * 0.18;
+  const discountFactor = Math.max(0, 1 - Number(discountPercent || 0) / 100);
+  const tax = taxMode === 'non_gst' ? 0 : editLines.reduce((sum, line) => sum + lineRate(line).amount * discountFactor * Math.max(0, Number(line.taxRate ?? 18)) / 100, 0);
   const total = subtotal - quoteDiscount + tax;
   const showPrices = displayMode !== 'selection';
   const grouped = groupLines(editLines);
@@ -186,9 +189,9 @@ export default function QuoteDetailPage() {
       input: {
         displayMode,
         discountPercent: Number(discountPercent || 0),
-        lines: JSON.stringify(editLines),
+        lines: JSON.stringify(editLines.map((line) => ({ ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18) }))),
         coverImage: coverImage || undefined,
-        quoteMeta: JSON.stringify({ remarks, terms, bankDetails, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, coverImage, tagline }),
+        quoteMeta: JSON.stringify({ remarks, terms, bankDetails, taxMode, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, coverImage, tagline }),
       },
     },
   });
@@ -289,8 +292,9 @@ export default function QuoteDetailPage() {
     <section className="grid gap-5 xl:grid-cols-[1fr_0.42fr]">
       <div className="space-y-5">
         <div className="mp-card rounded-r5 p-5">
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-5">
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">PDF type</span><select value={displayMode} onChange={(event)=>setDisplayMode(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black"><option value="priced">Show prices - quotation</option><option value="selection">Hide prices - selection summary</option></select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Tax treatment</span><select value={taxMode} onChange={(event)=>setTaxMode(event.target.value as 'gst' | 'non_gst')} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black"><option value="gst">GST quotation</option><option value="non_gst">Without GST</option></select></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Quote discount %</span><input type="number" value={discountPercent} onChange={(event)=>setDiscountPercent(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>
             <label className="space-y-2 md:col-span-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Remarks</span><input value={remarks} onChange={(event)=>setRemarks(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>
           </div>
@@ -322,7 +326,7 @@ export default function QuoteDetailPage() {
 
       <aside className="space-y-5">
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Customer</h2><p className="mt-4 text-lg font-semibold text-[var(--ink)]">{quote.customer?.name || 'Customer'}</p><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">{quote.customer?.mobile || quote.customer?.phone}</p><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">{quote.customer?.siteAddress || quote.customer?.city}</p></div>
-        <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Totals</h2>{showPrices ? <div className="mt-5 space-y-3 text-sm font-bold text-[var(--ink-2)]"><div className="flex justify-between"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between"><span>Discount</span><span>{money(quoteDiscount)}</span></div><div className="flex justify-between"><span>GST 18%</span><span>{money(tax)}</span></div><div className="flex justify-between border-t border-[var(--line)] pt-4 text-2xl font-semibold text-[var(--ink)]"><span>Total</span><span>{money(total)}</span></div></div> : <p className="mt-4 rounded-2xl bg-[var(--brand-50)] p-4 text-sm font-black text-[var(--brand-700)]">Selection summary mode hides all prices in the PDF.</p>}</div>
+        <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Totals</h2>{showPrices ? <div className="mt-5 space-y-3 text-sm font-bold text-[var(--ink-2)]"><div className="flex justify-between"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between"><span>Discount</span><span>{money(quoteDiscount)}</span></div>{taxMode === 'gst' ? <div className="flex justify-between"><span>GST</span><span>{money(tax)}</span></div> : <div className="flex justify-between text-[var(--ink-4)]"><span>Tax treatment</span><span>Without GST</span></div>}<div className="flex justify-between border-t border-[var(--line)] pt-4 text-2xl font-semibold text-[var(--ink)]"><span>Total</span><span>{money(total)}</span></div></div> : <p className="mt-4 rounded-2xl bg-[var(--brand-50)] p-4 text-sm font-black text-[var(--brand-700)]">Selection summary mode hides all prices in the PDF.</p>}</div>
         <div className="mp-panel p-5">
           <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--brand-700)]">Quotation footer</p><h2 className="mt-1 text-xl font-semibold text-[var(--ink)]">Served brands</h2></div><span className="rounded-full bg-[var(--brand-50)] px-2.5 py-1 text-xs font-semibold text-[var(--brand-700)]">{selectedBrandIds.length} selected</span></div>
           <p className="mt-2 text-xs leading-5 text-[var(--ink-4)]">Only selected logos are printed in the customer PDF. Brand Master controls the artwork.</p>

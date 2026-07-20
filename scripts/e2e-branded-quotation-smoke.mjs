@@ -6,6 +6,7 @@ const WEB = process.env.WEB_URL || 'http://localhost:3000';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const PDF_OUTPUT = resolve(process.env.PDF_OUTPUT || 'output/pdf/marble-park-branded-quotation-sample.pdf');
+const NON_GST_PDF_OUTPUT = resolve(process.env.NON_GST_PDF_OUTPUT || 'output/pdf/marble-park-non-gst-quotation-sample.pdf');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -70,13 +71,13 @@ async function main() {
   assert(brands.every((brand) => brand.metadata?.logoUrl && brand.metadata?.quoteEnabled === true), 'Each Brand Master record must retain its quote logo');
 
   const createProduct = async (input) => (await gql(
-    `mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice } }`,
+    `mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice media } }`,
     { input }, token,
   )).createProduct;
   const [basin, mixer, tile] = await Promise.all([
-    createProduct({ sku: `MP-BASIN-${suffix}`, name: 'Premium wall-hung basin - sample quotation', category: 'Sanitaryware', brand: brands[0].name, finish: 'Gloss White', dimensions: '560 x 430 mm', unit: 'PC', sellPrice: 18450, floorPrice: 14800, taxClass: 'GST_18', description: 'Customer-facing branded quotation release gate' }),
-    createProduct({ sku: `MP-MIXER-${suffix}`, name: 'Tall basin mixer - quotation selection', category: 'Faucets', brand: brands[1].name, finish: 'Brushed Nickel', dimensions: '310 mm', unit: 'PC', sellPrice: 12900, floorPrice: 9900, taxClass: 'GST_18', description: 'Customer-facing image can be replaced by the sales team' }),
-    createProduct({ sku: `MP-TILE-${suffix}`, internalCode: `SHOW-${suffix}`, name: 'Large-format porcelain tile', category: 'Tiles', brand: brands[2].name, finish: 'Matt', dimensions: '600 x 1200 mm', unit: 'BOX', baseUom: 'PC', purchaseUom: 'BOX', salesUom: 'SQFT', piecesPerPack: 2, coveragePerPack: 15.5, sellPrice: 165, floorPrice: 130, taxClass: 'GST_18', description: 'Area-priced tile fulfilled as physical boxes' }),
+    createProduct({ sku: `MP-BASIN-${suffix}`, name: 'Premium wall-hung basin - sample quotation', category: 'Sanitaryware', brand: brands[0].name, finish: 'Gloss White', dimensions: '560 x 430 mm', unit: 'PC', sellPrice: 18450, floorPrice: 14800, taxClass: 'GST_18', media: { primaryUrl: '/brand/marble-park-logo.jpg', gallery: [] }, description: 'Customer-facing branded quotation release gate' }),
+    createProduct({ sku: `MP-MIXER-${suffix}`, name: 'Tall basin mixer - quotation selection', category: 'Faucets', brand: brands[1].name, finish: 'Brushed Nickel', dimensions: '310 mm', unit: 'PC', sellPrice: 12900, floorPrice: 9900, taxClass: 'GST_18', media: { primaryImage: '/brand/marble-park-legacy-reference.jpg', gallery: [] }, description: 'Customer-facing image can be replaced by the sales team' }),
+    createProduct({ sku: `MP-TILE-${suffix}`, internalCode: `SHOW-${suffix}`, name: 'Large-format porcelain tile', category: 'Tiles', brand: brands[2].name, finish: 'Matt', dimensions: '600 x 1200 mm', unit: 'BOX', baseUom: 'PC', purchaseUom: 'BOX', salesUom: 'SQFT', piecesPerPack: 2, coveragePerPack: 15.5, sellPrice: 165, floorPrice: 130, taxClass: 'GST_18', media: { gallery: [{ url: '/brand/client-served-brands-reference.png' }] }, description: 'Area-priced tile fulfilled as physical boxes' }),
   ]);
   const customer = (await gql(
     `mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`,
@@ -88,6 +89,7 @@ async function main() {
   const quoteMeta = {
     selectedBrandIds,
     showBrandLogos: true,
+    taxMode: 'gst',
     tagline: settings.documentTagline,
     terms: settings.defaultTerms,
     bankDetails: settings.bankDetails,
@@ -102,9 +104,9 @@ async function main() {
       displayMode: 'priced',
       quoteMeta: JSON.stringify(quoteMeta),
       lines: JSON.stringify([
-        { productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, discountPercent: 8, taxRate: 18, area: 'Master Bathroom', notes: 'Wall-hung basin with concealed fixing kit' },
-        { productId: mixer.id, sku: mixer.sku, name: mixer.name, category: mixer.category, brand: mixer.brand, finish: mixer.finish, qty: 1, unit: 'PC', price: mixer.sellPrice, listPrice: mixer.sellPrice, specialRate: 11500, taxRate: 18, area: 'Master Bathroom', notes: 'Customer-facing image can be replaced by the sales team' },
-        { productId: tile.id, sku: tile.sku, tileCode: tile.internalCode, tileSize: tile.dimensions, name: tile.name, category: tile.category, brand: tile.brand, finish: tile.finish, requestedArea: 92, wastagePercent: 8, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'SQFT', rateBasis: 'AREA', coveragePerPack: tile.coveragePerPack, piecesPerPack: tile.piecesPerPack, price: tile.sellPrice, listPrice: tile.sellPrice, taxRate: 18, area: 'Master Bathroom', notes: 'Billed by covered area; fulfilled as full boxes' },
+        { productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, discountPercent: 8, taxRate: 18, media: basin.media, area: 'Master Bathroom', notes: 'Wall-hung basin with concealed fixing kit' },
+        { productId: mixer.id, sku: mixer.sku, name: mixer.name, category: mixer.category, brand: mixer.brand, finish: mixer.finish, qty: 1, unit: 'PC', price: mixer.sellPrice, listPrice: mixer.sellPrice, specialRate: 11500, taxRate: 18, media: mixer.media, area: 'Master Bathroom', notes: 'Customer-facing image can be replaced by the sales team' },
+        { productId: tile.id, sku: tile.sku, tileCode: tile.internalCode, tileSize: tile.dimensions, name: tile.name, category: tile.category, brand: tile.brand, finish: tile.finish, requestedArea: 92, wastagePercent: 8, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'SQFT', rateBasis: 'AREA', coveragePerPack: tile.coveragePerPack, piecesPerPack: tile.piecesPerPack, price: tile.sellPrice, listPrice: tile.sellPrice, taxRate: 18, media: tile.media, area: 'Master Bathroom', notes: 'Billed by covered area; fulfilled as full boxes' },
       ]),
     } },
     token,
@@ -125,6 +127,24 @@ async function main() {
   await mkdir(dirname(PDF_OUTPUT), { recursive: true });
   await writeFile(PDF_OUTPUT, pdf);
 
+  const nonGstQuote = (await gql(
+    `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber lines quoteMeta } }`,
+    { input: {
+      customerId: customer.id,
+      title: 'Non-GST showroom quotation',
+      projectName: 'Sample non-GST option',
+      displayMode: 'priced',
+      quoteMeta: JSON.stringify({ ...quoteMeta, taxMode: 'non_gst', remarks: 'Customer requested a quotation without GST.' }),
+      lines: JSON.stringify([{ productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, taxRate: 0, media: basin.media, area: 'General Selection' }]),
+    } }, token,
+  )).createQuote;
+  assert(nonGstQuote.lines.every((line) => Number(line.taxRate) === 0 && Number(line.taxAmount) === 0), 'Non-GST quote must persist zero tax on every line');
+  const nonGstPdfResponse = await fetch(`${WEB}/api/pdf/quote/${nonGstQuote.id}`);
+  assert(nonGstPdfResponse.ok, `Non-GST quotation PDF must render (${nonGstPdfResponse.status})`);
+  const nonGstPdf = Buffer.from(await nonGstPdfResponse.arrayBuffer());
+  assert(nonGstPdf.subarray(0, 4).toString() === '%PDF' && nonGstPdf.length > 8_000, 'Non-GST quotation must be a non-empty PDF');
+  await writeFile(NON_GST_PDF_OUTPUT, nonGstPdf);
+
   console.log(JSON.stringify({
     ok: true,
     quoteId: quote.id,
@@ -135,6 +155,9 @@ async function main() {
     tilePricing: { boxes: tileLine.qty, billed: `${tileLine.pricingQuantity} ${tileLine.pricingUom}` },
     pdfOutput: PDF_OUTPUT,
     pdfBytes: pdf.length,
+    nonGstQuoteId: nonGstQuote.id,
+    nonGstPdfOutput: NON_GST_PDF_OUTPUT,
+    nonGstPdfBytes: nonGstPdf.length,
   }, null, 2));
 }
 

@@ -8,6 +8,7 @@ COPY apps/web/package.json ./apps/web/package.json
 RUN npm ci --legacy-peer-deps --workspace=apps/web --include-workspace-root
 
 COPY apps/web ./apps/web
+COPY scripts ./scripts
 ARG NEXT_PUBLIC_API_URL=https://api-production-bc49.up.railway.app/graphql
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN npm run build:web

@@ -7,6 +7,8 @@ import {
   Camera,
   Check,
   ClipboardList,
+  Download,
+  ExternalLink,
   Package,
   PackageCheck,
   PackageSearch,
@@ -510,6 +512,9 @@ export default function DispatchPage() {
                         <span className="text-xs font-semibold text-[var(--ink)]">
                           {challan.challanNumber} · {challan.status}
                         </span>
+                        <div className="flex flex-wrap gap-2">
+                        <Button asChild size="sm" variant="outline"><a href={`/api/pdf/dispatch/${challan.id}`} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-4 w-4" />Open slip</a></Button>
+                        <Button asChild size="sm" variant="ghost"><a href={`/api/pdf/dispatch/${challan.id}`} download><Download className="mr-2 h-4 w-4" />PDF</a></Button>
                         {challan.status === "pending" ? (
                           <Button
                             size="sm"
@@ -544,6 +549,7 @@ export default function DispatchPage() {
                             Delivered
                           </span>
                         )}
+                        </div>
                       </div>
                       {deliveryId === challan.id ? (
                         <div className="mt-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3">

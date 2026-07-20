@@ -6,8 +6,11 @@ import { ProcurementService } from './procurement.service';
 
 @InputType()
 class CreatePurchaseOrderInput {
-  @Field(() => [String])
-  demandIds!: string[];
+  @Field(() => [String], { nullable: true })
+  demandIds?: string[];
+
+  @Field(() => String, { nullable: true })
+  lines?: string;
 
   @Field({ nullable: true })
   vendorId?: string;

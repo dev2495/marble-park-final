@@ -17,6 +17,7 @@ const DATA = gql`
   query SettingsPageData {
     appSettings { data }
     stockLocations
+    masterProductBrands(status: "active")
   }
 `;
 
@@ -29,6 +30,12 @@ const SAVE_SETTINGS = gql`
 const UPLOAD_COMPANY_LOGO = gql`
   mutation UploadCompanyLogo($filename: String!, $contentBase64: String!, $scope: String) {
     uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result }
+  }
+`;
+
+const SAVE_PRODUCT_BRAND = gql`
+  mutation SaveProductBrandFromSettings($input: ProductBrandInput!) {
+    saveProductBrand(input: $input) { data }
   }
 `;
 
@@ -119,6 +126,7 @@ export default function SettingsPage() {
   const { data, error, refetch } = useQuery(DATA, { fetchPolicy: 'cache-and-network' });
   const [save, { loading, error: saveError }] = useMutation(SAVE_SETTINGS, { onCompleted: () => { setSaved(true); refetch(); } });
   const [uploadCompanyLogo] = useMutation(UPLOAD_COMPANY_LOGO);
+  const [saveProductBrand, { error: brandSaveError }] = useMutation(SAVE_PRODUCT_BRAND);
   const [resetWorkspace, { loading: resetting, error: resetError }] = useMutation(RESET_WORKSPACE, { onCompleted: (result) => setResetMessage(`Workspace reset complete. Products: ${result?.resetClientWorkspace?.data?.counts?.products ?? 0}, users: ${result?.resetClientWorkspace?.data?.counts?.users ?? 0}.`) });
   const [createLocation, { loading: creatingLocation, error: createLocationError }] = useMutation(CREATE_STOCK_LOCATION, { onCompleted: () => { setPlantForm(emptyPlant); setPlantMessage('Plant created and stock scope updated.'); refetch(); } });
   const [updateLocation, { loading: updatingLocation, error: updateLocationError }] = useMutation(UPDATE_STOCK_LOCATION, { onCompleted: () => { setPlantForm(emptyPlant); setPlantMessage('Plant saved.'); refetch(); } });
@@ -131,6 +139,8 @@ export default function SettingsPage() {
   const [browserOrigin, setBrowserOrigin] = useState('');
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoMessage, setLogoMessage] = useState('');
+  const [brandMessage, setBrandMessage] = useState('');
+  const [uploadingBrandId, setUploadingBrandId] = useState('');
 
   useEffect(() => {
     setBrowserOrigin(window.location.origin);
@@ -143,6 +153,7 @@ export default function SettingsPage() {
 
   const summary = useMemo(() => cleanSettings({ ...data?.appSettings?.data, ...form }, browserOrigin), [browserOrigin, data?.appSettings?.data, form]);
   const locations = useMemo<any[]>(() => data?.stockLocations || [], [data?.stockLocations]);
+  const brands = useMemo<any[]>(() => data?.masterProductBrands || [], [data?.masterProductBrands]);
   const activePlants = useMemo(() => locations.filter((location) => location.status === 'active'), [locations]);
   const defaultPlant = useMemo(() => locations.find((location) => location.defaultStockScope) || activePlants[0], [activePlants, locations]);
 
@@ -199,6 +210,39 @@ export default function SettingsPage() {
     setConfirmReset('');
   }
 
+  async function saveBrandPresentation(brand: any, patch: any) {
+    setBrandMessage('');
+    const metadata = { ...(brand.metadata || {}), ...patch };
+    await saveProductBrand({ variables: { input: {
+      id: brand.id,
+      name: brand.name,
+      code: brand.code || undefined,
+      description: brand.description || '',
+      status: brand.status || 'active',
+      sortOrder: Number(brand.sortOrder || 0),
+      metadata,
+    } } });
+    setBrandMessage(`${brand.name} quotation presentation saved.`);
+    await refetch();
+  }
+
+  async function handleBrandLogoUpload(brand: any, file?: File) {
+    if (!file) return;
+    setBrandMessage('');
+    setUploadingBrandId(String(brand.id));
+    try {
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size <= 0 || file.size > 5 * 1024 * 1024) throw new Error('Use a JPG, PNG or WebP logo smaller than 5 MB.');
+      const result = await uploadCompanyLogo({ variables: { filename: file.name, contentBase64: await fileBase64(file), scope: 'brand-logo' } });
+      const logoUrl = result.data?.uploadStoredAsset?.result?.publicUrl;
+      if (!logoUrl) throw new Error('The upload did not return a logo URL.');
+      await saveBrandPresentation(brand, { logoUrl, quoteEnabled: brand.metadata?.quoteEnabled !== false });
+    } catch (uploadError: any) {
+      setBrandMessage(uploadError.message || 'Brand logo upload failed.');
+    } finally {
+      setUploadingBrandId('');
+    }
+  }
+
   async function submitPlant(event: FormEvent) {
     event.preventDefault();
     setPlantMessage('');
@@ -249,6 +293,7 @@ export default function SettingsPage() {
 
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {saveError ? <QueryErrorBanner error={saveError} /> : null}
+      {brandSaveError ? <QueryErrorBanner error={brandSaveError} /> : null}
       {resetError ? <QueryErrorBanner error={resetError} /> : null}
       {createLocationError ? <QueryErrorBanner error={createLocationError} /> : null}
       {updateLocationError ? <QueryErrorBanner error={updateLocationError} /> : null}
@@ -256,6 +301,7 @@ export default function SettingsPage() {
       {resetMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{resetMessage}</div> : null}
       {plantMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{plantMessage}</div> : null}
       {logoMessage ? <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--ink-2)]">{logoMessage}</div> : null}
+      {brandMessage ? <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--ink-2)]">{brandMessage}</div> : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <InfoCard icon={Building2} label="Company" value={summary.companyName} tone="bg-[var(--brand-50)] text-[var(--brand-700)]" />
@@ -326,6 +372,24 @@ export default function SettingsPage() {
           <Button type="button" variant="outline" onClick={() => setForm(cleanSettings(data?.appSettings?.data || {}, browserOrigin))}><SlidersHorizontal className="mr-2 h-4 w-4" /> Restore saved values</Button>
         </div>
       </form>
+
+      <section className="mp-panel p-5 lg:p-6">
+        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+          <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--brand-700)]">Quotation presentation</p><h2 className="mt-2 text-2xl font-semibold text-[var(--ink)]">Served brand logos</h2><p className="mt-1 text-sm text-[var(--ink-4)]">Replace customer-facing artwork and decide which brands sales can include in quotation PDFs.</p></div>
+          <a href="/dashboard/master-data/brands" className="text-sm font-semibold text-[var(--brand-700)]">Open full Brand Master</a>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {brands.map((brand: any) => <article key={brand.id} className="rounded-md border border-[var(--line)] bg-[var(--surface)] p-4">
+            <div className="grid h-20 place-items-center rounded border border-[var(--line-soft)] bg-white p-3">{brand.metadata?.logoUrl ? <img src={brand.metadata.logoUrl} alt={`${brand.name} logo`} className="max-h-14 max-w-full object-contain" /> : <ImagePlus className="h-5 w-5 text-[var(--ink-5)]" />}</div>
+            <p className="mt-3 truncate text-sm font-semibold text-[var(--ink)]">{brand.name}</p>
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-[var(--line)] px-3 py-2 text-xs font-semibold text-[var(--ink-2)]">{uploadingBrandId === String(brand.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}{brand.metadata?.logoUrl ? 'Replace' : 'Upload'}<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={Boolean(uploadingBrandId)} onChange={(event) => handleBrandLogoUpload(brand, event.target.files?.[0])} /></label>
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ink-3)]"><input type="checkbox" checked={brand.metadata?.quoteEnabled !== false} onChange={(event) => saveBrandPresentation(brand, { quoteEnabled: event.target.checked })} className="h-4 w-4" />Quotes</label>
+            </div>
+          </article>)}
+        </div>
+        {!brands.length ? <p className="mt-5 rounded-md border border-dashed border-[var(--line)] p-6 text-center text-sm font-semibold text-[var(--ink-4)]">Create brands in Brand Master before assigning quotation logos.</p> : null}
+      </section>
 
       <section className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
         <form onSubmit={submitPlant} className="mp-panel p-5 lg:p-6">

@@ -3,15 +3,19 @@
 import { useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CheckCircle, Download, FileText, Image as ImageIcon, Plus, Search, Trash2 } from 'lucide-react';
+import { Building2, Check, CheckCircle, Download, FileText, Image as ImageIcon, Plus, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
 import { SelectMenu, SelectMenuTrigger, SelectMenuContent, SelectMenuItem, SelectMenuValue } from '@/components/ui/select-menu';
 
-const GET_CUSTOMERS = gql`
-  query GetCustomers { customers { id name email mobile siteAddress city } }
+const GET_QUOTE_SETUP = gql`
+  query GetQuoteSetup {
+    customers { id name email mobile siteAddress city }
+    documentSettings { data }
+    masterProductBrands(status: "active")
+  }
 `;
 
 const SEARCH_PRODUCTS = gql`
@@ -126,11 +130,15 @@ export default function QuoteBuilderPage() {
   const [success, setSuccess] = useState('');
   const [savedQuote, setSavedQuote] = useState<any>(null);
   const [displayMode, setDisplayMode] = useState<'priced' | 'selection'>('priced');
+  const [taxMode, setTaxMode] = useState<'gst' | 'non_gst'>('gst');
+  const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
   const [defaultArea, setDefaultArea] = useState('General Selection');
-  const { data: customerData, error: customerError } = useQuery(GET_CUSTOMERS);
+  const { data: customerData, error: customerError } = useQuery(GET_QUOTE_SETUP);
   const { data: searchData, loading: searching, error: searchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: searchQuery }, skip: searchQuery.length < 2 });
   const [createQuote, { loading: saving, error: saveError }] = useMutation(CREATE_QUOTE);
   const [validationError, setValidationError] = useState<string>('');
+  const documentSettings = customerData?.documentSettings?.data || {};
+  const brands = (customerData?.masterProductBrands || []).filter((brand: any) => brand.metadata?.logoUrl && brand.metadata?.quoteEnabled !== false);
 
   const addProduct = (product: any) => {
     const isTile = String(product.category || '').toLowerCase() === 'tiles';
@@ -142,6 +150,8 @@ export default function QuoteBuilderPage() {
     const requestedArea = isTile && coveragePerPack > 0 ? coveragePerPack : 0;
     const qty = rateBasis === 'AREA' ? packsForArea(requestedArea, wastagePercent, coveragePerPack) : 1;
     setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces: isTile ? Number(product.piecesPerPack || 1) : 0, wastagePercent, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom, pricingUom, rateBasis, sourceSalesUom: pricingUom, sourceSellPrice: Number(product.sellPrice || 0), price: product.sellPrice || 0, listPrice: product.sellPrice || 0, specialRate: '', discountPercent: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
+    const matchedBrand = brands.find((brand: any) => String(brand.name || '').trim().toLowerCase() === String(product.brand || '').trim().toLowerCase());
+    if (matchedBrand) setSelectedBrandIds((current) => current.includes(String(matchedBrand.id)) ? current : [...current, String(matchedBrand.id)]);
     setSearchQuery('');
   };
   const updateQty = (id: string, qty: number) => setLines((current) => current.map((line) => line.id === id ? { ...line, qty } : line));
@@ -189,7 +199,7 @@ export default function QuoteBuilderPage() {
     const unitRate = specialRate !== null && Number.isFinite(specialRate) ? specialRate : listPrice * (1 - discountPercent / 100);
     const pricingQuantity = areaPriced(line) ? quantity * Number(line.coveragePerPack || 0) : pricingBasis(line) === 'PIECE' ? quantity * Number(line.piecesPerPack || 1) : quantity;
     const taxableValue = pricingQuantity * Math.max(0, unitRate);
-    const taxAmount = taxableValue * Math.max(0, Number(line.taxRate ?? 18)) / 100;
+    const taxAmount = taxMode === 'non_gst' ? 0 : taxableValue * Math.max(0, Number(line.taxRate ?? 18)) / 100;
     return { unitRate, pricingQuantity, taxableValue, taxAmount, total: taxableValue + taxAmount };
   };
   const subtotal = lines.reduce((sum, line) => sum + lineCommercial(line).taxableValue, 0);
@@ -227,10 +237,10 @@ export default function QuoteBuilderPage() {
             projectName: projectTitle,
             title: projectTitle || 'Retail product quotation',
             displayMode,
-            quoteMeta: JSON.stringify({ remarks: 'Prepared from quote studio.', showBrandLogos: true }),
+            quoteMeta: JSON.stringify({ remarks: 'Prepared from quote studio.', taxMode, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds }),
             lines: JSON.stringify(lines.map(({ id, ...line }) => {
               const commercial = lineCommercial(line);
-              return { ...line, listPrice: Number(line.listPrice ?? line.price ?? 0), price: Number(line.listPrice ?? line.price ?? 0), unitRate: commercial.unitRate, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, total: commercial.total };
+              return { ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), listPrice: Number(line.listPrice ?? line.price ?? 0), price: Number(line.listPrice ?? line.price ?? 0), unitRate: commercial.unitRate, pricingQuantity: commercial.pricingQuantity, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, total: commercial.total };
             })),
           },
         },
@@ -286,6 +296,13 @@ export default function QuoteBuilderPage() {
                 </SelectMenuContent>
               </SelectMenu>
             </label>
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Tax treatment</span>
+              <div className="grid h-11 grid-cols-2 rounded-md border border-[#d4d4d8] bg-[#f4f4f5] p-1">
+                <button type="button" onClick={() => setTaxMode('gst')} className={`rounded text-xs font-semibold ${taxMode === 'gst' ? 'bg-white text-[#18181b] shadow-sm' : 'text-[#52525b]'}`}>GST quotation</button>
+                <button type="button" onClick={() => setTaxMode('non_gst')} className={`rounded text-xs font-semibold ${taxMode === 'non_gst' ? 'bg-white text-[#18181b] shadow-sm' : 'text-[#52525b]'}`}>Without GST</button>
+              </div>
+            </div>
             <label className="block space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Project / site</span>
               <Input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="e.g. Patel Residence bathroom package" className="h-11" />
@@ -320,6 +337,19 @@ export default function QuoteBuilderPage() {
                 ))}
               </div>
             </label>
+            <div className="rounded-md border border-[#e4e4e7] bg-white p-4 lg:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-10 w-10 place-items-center overflow-hidden rounded bg-black p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-white" />}</div>
+                  <div><p className="text-sm font-semibold text-[#18181b]">{documentSettings.companyName || 'Marble Park'}</p><p className="text-xs text-[#71717a]">Global quotation identity</p></div>
+                </div>
+                <span className="text-xs font-semibold text-[#52525b]">{selectedBrandIds.length} brand logo(s) selected</span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">
+                {brands.map((brand: any) => { const selected = selectedBrandIds.includes(String(brand.id)); return <button key={brand.id} type="button" title={brand.name} onClick={() => setSelectedBrandIds((current) => selected ? current.filter((id) => id !== String(brand.id)) : [...current, String(brand.id)])} className={`relative grid h-16 place-items-center rounded border bg-white p-2 ${selected ? 'border-[#2563eb] ring-2 ring-[#2563eb]/15' : 'border-[#e4e4e7]'}`}><img src={brand.metadata.logoUrl} alt={brand.name} className="max-h-9 max-w-full object-contain" />{selected ? <span className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-[#2563eb] text-white"><Check className="h-2.5 w-2.5" /></span> : null}</button>; })}
+              </div>
+              {!brands.length ? <p className="mt-3 text-xs font-semibold text-amber-700">Upload and enable served-brand logos in Settings or Brand Master before printing them.</p> : null}
+            </div>
           </div>
           <datalist id="mp-area-list">
             {AREA_SUGGESTIONS.map((area) => <option key={area} value={area} />)}
@@ -347,7 +377,7 @@ export default function QuoteBuilderPage() {
 
           <div className="mt-6 overflow-hidden rounded-r4 border border-[#e4e4e7]/12 bg-white/70">
             <table className="w-full min-w-[1080px] text-left">
-              <thead className="bg-[#eff6ff]/70 text-xs font-medium uppercase tracking-widest text-[#52525b]"><tr><th className="px-4 py-4">Product</th><th className="px-4 py-4 text-center">Quantity / coverage</th><th className="px-4 py-4 text-right">List rate</th><th className="px-4 py-4 text-right">Negotiated</th><th className="px-4 py-4 text-right">GST</th><th className="px-4 py-4 text-right">Total</th><th className="px-4 py-4" /></tr></thead>
+              <thead className="bg-[#eff6ff]/70 text-xs font-medium uppercase tracking-widest text-[#52525b]"><tr><th className="px-4 py-4">Product</th><th className="px-4 py-4 text-center">Quantity / coverage</th><th className="px-4 py-4 text-right">List rate</th><th className="px-4 py-4 text-right">Negotiated</th><th className="px-4 py-4 text-right">{taxMode === 'gst' ? 'GST' : 'Tax'}</th><th className="px-4 py-4 text-right">Total</th><th className="px-4 py-4" /></tr></thead>
               <tbody className="divide-y divide-[#cbd5e1]/10">
                 {lines.map((line) => (
                   <tr key={line.id}>{(() => { const commercial = lineCommercial(line); return <>
@@ -355,7 +385,7 @@ export default function QuoteBuilderPage() {
                     <td className="px-4 py-4 text-center">{isTileLine(line) ? <TileQuantityEditor line={line} onChangeBasis={(basis) => changeTileBasis(line.id, basis)} onChange={(patch) => updateLine(line.id, patch)} /> : <input type="number" value={line.qty} min={1} onChange={(event) => updateQty(line.id, Number(event.target.value) || 0)} className="h-10 w-20 rounded-md border border-[#e4e4e7] bg-white text-center text-sm font-semibold outline-none" />}</td>
                     <td className="px-4 py-4 text-right"><input aria-label={`List rate for ${line.name}`} type="number" min={0} value={line.listPrice ?? line.price ?? 0} onChange={(event) => updateLine(line.id, { listPrice: event.target.value, price: event.target.value })} className="h-10 w-28 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold" /><p className="mt-1 text-xs text-[#52525b]">per {line.pricingUom || line.unit}</p></td>
                     <td className="px-4 py-4 text-right"><input aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate} placeholder={money(commercial.unitRate)} onChange={(event) => updateLine(line.id, { specialRate: event.target.value })} className="h-10 w-28 rounded-xl border border-[#2563eb]/30 bg-[#eff6ff]/50 px-2 text-right text-sm font-black" /><input aria-label={`Discount percent for ${line.name}`} type="number" min={0} max={100} value={line.discountPercent || 0} onChange={(event) => updateLine(line.id, { discountPercent: event.target.value })} className="mt-1 h-7 w-28 rounded-lg border border-[#e4e4e7]/18 bg-white px-2 text-right text-[11px] font-bold" /></td>
-                    <td className="px-4 py-4 text-right"><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate ?? 18} onChange={(event) => updateLine(line.id, { taxRate: event.target.value })} className="h-10 w-20 rounded-xl border border-[#e4e4e7]/18 bg-white px-2 text-right text-sm font-black" /><p className="mt-1 text-xs font-semibold text-[#52525b]">{money(commercial.taxAmount)}</p></td>
+                    <td className="px-4 py-4 text-right">{taxMode === 'gst' ? <><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate ?? 18} onChange={(event) => updateLine(line.id, { taxRate: event.target.value })} className="h-10 w-20 rounded-xl border border-[#e4e4e7]/18 bg-white px-2 text-right text-sm font-black" /><p className="mt-1 text-xs font-semibold text-[#52525b]">{money(commercial.taxAmount)}</p></> : <span className="inline-flex rounded bg-[#f4f4f5] px-2 py-1 text-xs font-semibold text-[#52525b]">No GST</span>}</td>
                     <td className="px-4 py-4 text-right font-black text-[#059669]">{money(commercial.total)}</td>
                     <td className="px-4 py-4"><button onClick={() => removeLine(line.id)} className="rounded-xl p-2 text-[#52525b] hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4" /></button></td>
                   </>; })()}</tr>
@@ -379,7 +409,7 @@ export default function QuoteBuilderPage() {
         </div>
         <div className="mt-5 rounded-r4 bg-white p-5 text-[#18181b]">
           <div className="flex justify-between text-sm font-bold"><span>Subtotal</span><span>{money(subtotal)}</span></div>
-          <div className="mt-2 flex justify-between text-sm font-bold"><span>GST 18%</span><span>{money(tax)}</span></div>
+          {taxMode === 'gst' ? <div className="mt-2 flex justify-between text-sm font-bold"><span>GST</span><span>{money(tax)}</span></div> : <div className="mt-2 flex justify-between text-sm font-bold text-[#52525b]"><span>Tax treatment</span><span>Without GST</span></div>}
           <div className="mt-4 flex justify-between border-t border-[#e4e4e7]/12 pt-4 text-2xl font-black"><span>Total</span><span>{money(total)}</span></div>
         </div>
       </aside>

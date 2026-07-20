@@ -691,6 +691,18 @@ export class DispatchService {
     } as any) as any;
   }
 
+  async findChallanById(id: string) {
+    const challan = await this.prisma.dispatchChallan.findUnique({
+      where: { id },
+      include: { customer: true, quote: true },
+    } as any) as any;
+    if (!challan) throw new NotFoundException('Challan not found');
+    const salesOrder = challan.salesOrderId
+      ? await this.prisma.salesOrder.findUnique({ where: { id: challan.salesOrderId } }).catch(() => null)
+      : null;
+    return { ...challan, salesOrder };
+  }
+
   async getDashboardStats() {
     const [pending, packed, dispatched, delivered] = await Promise.all([
       this.prisma.dispatchJob.count({ where: { status: 'pending' } }),
