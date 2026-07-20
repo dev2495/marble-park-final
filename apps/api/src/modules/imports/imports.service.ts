@@ -167,7 +167,7 @@ export class ImportsService {
       ['1', 'Use the Product Master tab', 'Enter one new saleable design/SKU per row. Do not rename the sheet or headers.'],
       ['2', 'Read the column labels', 'A red header with * is required. A grey header marked Optional may be left blank. Optional prices default to zero; optional units and box details use safe defaults.'],
       ['3', 'Choose governed values', 'Dropdowns come from live master data at download time. Category, brand, finish and tax are required for bulk governance; material, tile size and conversion details are optional.'],
-      ['4', 'Add a product image', 'Optional: paste a public HTTPS image URL or use Excel Insert > Pictures and place one JPG/PNG/WebP image inside the Product Image cell on that row.'],
+      ['4', 'Add a product image', 'Optional: paste a public HTTPS image URL or use Excel Insert > Pictures > Place over cells. Keep one JPG/PNG/WebP picture inside the Product Image cell on that row. Do not use Place in Cell.'],
       ['5', 'Preview before creation', 'Upload the workbook in Excel Import Center. Nothing is written until every row passes and you explicitly confirm.'],
       ['6', 'Existing SKUs are protected', 'Bulk import creates new SKUs only. Edit existing products individually in Product Master; the SKU code itself remains locked.'],
       ['7', 'Stock starts at zero', 'This creates Product Master records, not inventory. Record opening stock or a GRN afterward to create physical lots and QR labels.'],
@@ -234,7 +234,7 @@ export class ImportsService {
     reference.columns = [{ width: 16 }, { width: 18 }, { width: 34 }, { width: 34 }];
 
     sheet.getCell('A2').note = 'Required. New immutable SKU code. Existing SKU codes are blocked.';
-    sheet.getCell('U2').note = 'Optional. Insert one JPG, PNG or WebP image and keep its top-left corner inside this row.';
+    sheet.getCell('U2').note = 'Optional. Use Insert > Pictures > Place over cells (not Place in Cell). Keep one JPG, PNG or WebP image with its top-left corner inside this row.';
     const buffer = await workbook.xlsx.writeBuffer();
     return {
       filename: `marble-park-product-master-live-${new Date().toISOString().slice(0, 10)}.xlsx`,
@@ -249,7 +249,7 @@ export class ImportsService {
     this.assertExcelFile(filePath);
     const { rows } = await this.readExcelRows(filePath, 'preview', reviewRows);
     const plan = await this.buildImportPlan(rows);
-    const confirmationToken = plan.failed || !plan.total ? null : this.confirmationToken(filePath, uploadedBy, reviewRows);
+    const confirmationToken = plan.failed || !plan.total ? null : this.confirmationToken(filePath, uploadedBy, plan);
     await this.audit(uploadedBy, 'excel_import.preview', 'Product', 'excel-preview', `Excel import preview: ${plan.ready} ready, ${plan.failed} failed`, { filePath, ...this.auditPlan(plan) });
     return {
       source: 'excel-preview',
@@ -268,11 +268,11 @@ export class ImportsService {
 
   async processExcelImport(filePath: string, uploadedBy = 'system', confirmationToken = '', reviewRows: ProductImportReviewRow[] = []): Promise<any> {
     this.assertExcelFile(filePath);
-    if (!confirmationToken || confirmationToken !== this.confirmationToken(filePath, uploadedBy, reviewRows)) {
-      throw new BadRequestException('This workbook or its reviewed rows have changed since validation. Revalidate the review and confirm again.');
-    }
     const previewRead = await this.readExcelRows(filePath, 'preview', reviewRows);
     const previewPlan = await this.buildImportPlan(previewRead.rows);
+    if (!confirmationToken || confirmationToken !== this.confirmationToken(filePath, uploadedBy, previewPlan)) {
+      throw new BadRequestException('This workbook or its reviewed rows have changed since validation. Revalidate the review and confirm again.');
+    }
 
     if (previewPlan.failed || !previewPlan.total) {
       await this.audit(uploadedBy, 'excel_import.blocked', 'Product', 'excel-apply-blocked', `Excel import blocked: ${previewPlan.failed} invalid row(s)`, { filePath, ...this.auditPlan(previewPlan) });
@@ -905,14 +905,21 @@ export class ImportsService {
     return String(value || '').trim().toLowerCase();
   }
 
-  private confirmationToken(filePath: string, uploadedBy: string, reviewRows: ProductImportReviewRow[] = []) {
+  private confirmationToken(filePath: string, uploadedBy: string, plan: any) {
     const secret = process.env.IMPORT_CONFIRMATION_SECRET || process.env.SESSION_SECRET || process.env.JWT_SECRET || 'marble-park-local-import-confirmation';
     const hmac = createHmac('sha256', secret);
     hmac.update(uploadedBy);
     hmac.update('\0');
     hmac.update(fs.readFileSync(filePath));
     hmac.update('\0');
-    hmac.update(JSON.stringify(this.canonicalReviewRows(reviewRows)));
+    // Sign the effective server-normalized values, not the browser's transport
+    // representation. Blank optional cells and their materialized defaults are
+    // semantically identical and must produce the same confirmation token.
+    hmac.update(JSON.stringify((plan.rows || []).map((row: any) => ({
+      sheet: row.sheet,
+      rowNumber: row.rowNumber,
+      normalized: row.normalized,
+    }))));
     return hmac.digest('hex');
   }
 

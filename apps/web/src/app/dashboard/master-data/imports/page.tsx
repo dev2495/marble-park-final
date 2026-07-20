@@ -63,6 +63,7 @@ export default function ImportCenterPage() {
   const [editing, setEditing] = useState('');
   const [reviewDirty, setReviewDirty] = useState(false);
   const [reviewed, setReviewed] = useState(false);
+  const [requiresRevalidation, setRequiresRevalidation] = useState(false);
   const [templateInfo, setTemplateInfo] = useState<any>(null);
   const readinessState = useQuery(READINESS, { fetchPolicy: 'network-only' });
   const readiness = readinessState.data?.productImportReadiness;
@@ -73,33 +74,35 @@ export default function ImportCenterPage() {
     onCompleted: (response) => {
       const next = response?.previewUploadedImport?.result;
       if (!next) return;
-      setPreview(next); setResult(null); setReviewed(false); setReviewDirty(false); setEditing('');
+      setPreview(next); setResult(null); setReviewed(false); setReviewDirty(false); setRequiresRevalidation(false); setEditing('');
       setReviewRows((next.previewRows || []).map(editableRow));
       setStatus(next.message || (next.failed ? 'Correct the highlighted rows and revalidate.' : 'Review is valid. Confirm when every row is correct.'));
     },
-    onError: (error) => setStatus(error.message),
+    onError: (error) => { setReviewed(false); setRequiresRevalidation(Boolean(preview)); setStatus(error.message); },
   });
   const [applyUpload, applyState] = useMutation(APPLY_UPLOAD, {
     onCompleted: (response) => {
       const next = response?.applyUploadedImport?.result;
       if (!next) return;
       setResult(next); setReviewed(false);
-      if (next.status === 'applied') setPreview(null);
+      if (next.status === 'applied') {
+        setPreview(null); setUpload(null); setReviewRows([]); setEditing(''); setRequiresRevalidation(false);
+      }
       setStatus(next.status === 'applied' ? `${next.created} Product Master SKU${next.created === 1 ? '' : 's'} created with zero stock.` : next.message || 'Import did not apply.');
       void readinessState.refetch();
     },
-    onError: (error) => setStatus(error.message),
+    onError: (error) => { setReviewed(false); setRequiresRevalidation(true); setStatus(error.message); },
   });
   const [loadTemplate, templateState] = useLazyQuery(TEMPLATE, { fetchPolicy: 'no-cache' });
 
   const active = result || preview;
   const options = preview?.masterOptions || readiness?.options || {};
   const isBusy = previewState.loading || applyState.loading;
-  const canApply = Boolean(upload && preview?.confirmationToken && !preview.failed && !reviewDirty && preview.total > 0 && reviewed && !result);
+  const canApply = Boolean(upload && preview?.confirmationToken && !preview.failed && !reviewDirty && !requiresRevalidation && preview.total > 0 && reviewed && !result);
   const currentStep = result?.status === 'applied' ? 4 : preview ? 3 : upload ? 2 : 1;
   const rowLabel = `${preview?.total || 0} ${preview?.total === 1 ? 'row' : 'rows'}`;
   const skuLabel = `${preview?.created || 0} ${preview?.created === 1 ? 'SKU' : 'SKUs'}`;
-  const statusTone = result?.status === 'applied' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : preview?.failed || reviewDirty ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)]';
+  const statusTone = result?.status === 'applied' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : preview?.failed || reviewDirty || requiresRevalidation ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)]';
 
   function updateRow(index: number, field: string, value: any) {
     setReviewRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row));
@@ -123,7 +126,7 @@ export default function ImportCenterPage() {
     if (!/\.xlsx$/i.test(file.name)) throw new Error('Only .xlsx Product Master workbooks are supported.');
     if (!file.size || file.size > 25 * 1024 * 1024) throw new Error('Choose a non-empty .xlsx workbook smaller than 25 MB.');
     if (upload) await cancelUpload({ variables: upload }).catch(() => null);
-    setPreview(null); setResult(null); setUpload(null); setReviewRows([]); setReviewed(false); setReviewDirty(false); setStatus('Creating secure upload session...');
+    setPreview(null); setResult(null); setUpload(null); setReviewRows([]); setReviewed(false); setReviewDirty(false); setRequiresRevalidation(false); setStatus('Creating secure upload session...');
     const begin = await beginUpload({ variables: { filename: file.name } });
     const uploadId = begin.data?.beginImportUpload?.result?.uploadId;
     if (!uploadId) throw new Error('Upload session was not created. Retry the upload.');
@@ -150,7 +153,7 @@ export default function ImportCenterPage() {
 
   async function discardPreview() {
     if (upload) await cancelUpload({ variables: upload }).catch(() => null);
-    setPreview(null); setResult(null); setUpload(null); setReviewRows([]); setReviewed(false); setReviewDirty(false); setEditing(''); setStatus('Preview discarded. Choose a fresh workbook when ready.');
+    setPreview(null); setResult(null); setUpload(null); setReviewRows([]); setReviewed(false); setReviewDirty(false); setRequiresRevalidation(false); setEditing(''); setStatus('Preview discarded. Choose a fresh workbook when ready.');
   }
 
   return <div className="space-y-6 pb-10">
@@ -165,7 +168,7 @@ export default function ImportCenterPage() {
     <section className="grid overflow-hidden rounded-r4 border border-[var(--line)] bg-[var(--surface)] sm:grid-cols-4">{['Download live template', 'Upload workbook', 'Edit and validate', 'Create SKUs'].map((label, index) => { const step = index + 1; const complete = currentStep > step || result?.status === 'applied'; const activeStep = currentStep === step; return <div key={label} className={`flex min-h-16 items-center gap-3 border-b border-[var(--line)] px-4 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 ${activeStep ? 'bg-[var(--brand-50)]' : ''}`}>{complete ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" /> : <Circle className={`h-5 w-5 shrink-0 ${activeStep ? 'text-[var(--brand-700)]' : 'text-[var(--ink-5)]'}`} />}<div><p className="text-[10px] font-semibold uppercase text-[var(--ink-5)]">Step {step}</p><p className="text-sm font-semibold text-[var(--ink)]">{label}</p></div></div>; })}</section>
 
     <section className="grid gap-5 xl:grid-cols-[0.72fr_1.28fr]">
-      <div className="space-y-5"><div className="mp-panel p-6"><div className="grid h-12 w-12 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><FileSpreadsheet className="h-6 w-6" /></div><h2 className="mt-5 text-2xl font-semibold text-[var(--ink)]">Workbook intake</h2><p className="mt-2 text-sm leading-6 text-[var(--ink-4)]">Required per row: unique SKU and internal code, name, category, brand, finish, and tax code. Grey workbook headers marked Optional may be left blank, including prices, HSN, images, material, tile size, UOM and box conversion details.</p>{templateInfo?.masterCounts ? <p className="mt-3 text-xs font-semibold text-[var(--ink-4)]">Downloaded with {templateInfo.masterCounts.brands} brands and {templateInfo.masterCounts.categories} categories.</p> : null}<label className={`mt-6 block rounded-r5 border border-dashed p-6 text-center ${readiness?.ready ? 'cursor-pointer border-[var(--line-strong)] bg-[var(--bg-soft)] hover:border-[var(--brand-400)]' : 'cursor-not-allowed border-amber-200 bg-amber-50 opacity-70'}`}><UploadCloud className="mx-auto h-9 w-9 text-[var(--brand-700)]" /><span className="mt-3 block text-sm font-semibold text-[var(--ink)]">Choose `.xlsx` file</span><span className="mt-1 block text-xs text-[var(--ink-4)]">25 MB maximum · 5,000 Product Master rows · preview only</span><input type="file" accept=".xlsx" className="sr-only" disabled={isBusy || !readiness?.ready} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; try { await uploadAndPreview(file); } catch (error: any) { setStatus(error?.message || 'Upload failed.'); } finally { event.target.value = ''; } }} /></label>{status ? <div className={`mt-5 rounded-r4 border p-4 text-sm font-semibold ${statusTone}`}>{status}</div> : null}{preview ? <><Button className="mt-4 w-full" variant="outline" disabled={!reviewDirty || isBusy} onClick={revalidateReview}><Save className="mr-2 h-4 w-4" />Revalidate edited rows</Button>{!preview.failed && !reviewDirty ? <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-r4 border border-[var(--line)] p-4"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[var(--brand-700)]" /><span><b className="block text-sm text-[var(--ink)]">I reviewed all {rowLabel}</b><span className="mt-1 block text-xs text-[var(--ink-4)]">Create {skuLabel} as saleable Product Master records with zero stock.</span></span></label> : null}<Button className="mt-3 w-full" size="lg" disabled={!canApply || isBusy} onClick={applyPreview}><ShieldCheck className="mr-2 h-4 w-4" />Confirm and create {skuLabel}</Button><Button className="mt-2 w-full" variant="outline" onClick={discardPreview}><RefreshCcw className="mr-2 h-4 w-4" />Discard preview</Button></> : null}</div>
+      <div className="space-y-5"><div className="mp-panel p-6"><div className="grid h-12 w-12 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><FileSpreadsheet className="h-6 w-6" /></div><h2 className="mt-5 text-2xl font-semibold text-[var(--ink)]">Workbook intake</h2><p className="mt-2 text-sm leading-6 text-[var(--ink-4)]">Required per row: unique SKU and internal code, name, category, brand, finish, and tax code. Grey workbook headers marked Optional may be left blank, including prices, HSN, images, material, tile size, UOM and box conversion details.</p>{templateInfo?.masterCounts ? <p className="mt-3 text-xs font-semibold text-[var(--ink-4)]">Downloaded with {templateInfo.masterCounts.brands} brands and {templateInfo.masterCounts.categories} categories.</p> : null}<label className={`mt-6 block rounded-r5 border border-dashed p-6 text-center ${readiness?.ready ? 'cursor-pointer border-[var(--line-strong)] bg-[var(--bg-soft)] hover:border-[var(--brand-400)]' : 'cursor-not-allowed border-amber-200 bg-amber-50 opacity-70'}`}><UploadCloud className="mx-auto h-9 w-9 text-[var(--brand-700)]" /><span className="mt-3 block text-sm font-semibold text-[var(--ink)]">Choose `.xlsx` file</span><span className="mt-1 block text-xs text-[var(--ink-4)]">25 MB maximum · 5,000 Product Master rows · preview only</span><input type="file" accept=".xlsx" className="sr-only" disabled={isBusy || !readiness?.ready} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; try { await uploadAndPreview(file); } catch (error: any) { setStatus(error?.message || 'Upload failed.'); } finally { event.target.value = ''; } }} /></label>{status ? <div className={`mt-5 rounded-r4 border p-4 text-sm font-semibold ${statusTone}`}>{status}</div> : null}{preview && preview.total > 0 && preview.imageCount === 0 ? <div className="mt-3 flex items-start gap-3 rounded-r4 border border-sky-200 bg-sky-50 p-4 text-sky-950"><ImageIcon className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="text-sm font-semibold">No product images found in this workbook</p><p className="mt-1 text-xs leading-5">These SKUs can be created without images. To import images, insert JPG, PNG or WebP pictures over the Product Image cells for their rows, or enter public HTTPS links in Image URL, then upload again.</p></div></div> : null}{preview ? <><Button className="mt-4 w-full" variant="outline" disabled={(!reviewDirty && !requiresRevalidation) || isBusy} onClick={revalidateReview}><Save className="mr-2 h-4 w-4" />{requiresRevalidation && !reviewDirty ? 'Revalidate preview' : 'Revalidate edited rows'}</Button>{!preview.failed && !reviewDirty && !requiresRevalidation ? <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-r4 border border-[var(--line)] p-4"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[var(--brand-700)]" /><span><b className="block text-sm text-[var(--ink)]">I reviewed all {rowLabel}</b><span className="mt-1 block text-xs text-[var(--ink-4)]">Create {skuLabel} as saleable Product Master records with zero stock.</span></span></label> : null}<Button className="mt-3 w-full" size="lg" disabled={!canApply || isBusy} onClick={applyPreview}><ShieldCheck className="mr-2 h-4 w-4" />Confirm and create {skuLabel}</Button><Button className="mt-2 w-full" variant="outline" onClick={discardPreview}><RefreshCcw className="mr-2 h-4 w-4" />Discard preview</Button></> : null}</div>
         <div className="mp-panel p-5"><div className="flex items-center gap-3"><Warehouse className="h-5 w-5 text-[var(--brand-700)]" /><h2 className="font-semibold text-[var(--ink)]">After creation</h2></div><div className="mt-4 space-y-3 text-sm text-[var(--ink-3)]"><p><b>Saleable SKU:</b> Product identity only; stock remains zero.</p><p><b>Physical stock:</b> Opening Stock for go-live or GRN for later inward creates lots and availability.</p><p><b>Display sample:</b> Register separately in Tile Master. It remains non-sellable and never increases stock.</p></div><div className="mt-4 grid gap-2"><Button asChild variant="outline"><Link href="/dashboard/inventory/inwards">Receive inward / GRN</Link></Button><Button asChild variant="outline"><Link href="/dashboard/inventory/labels">Print lot or display QR</Link></Button></div></div>
       </div>
 

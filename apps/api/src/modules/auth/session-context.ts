@@ -4,6 +4,7 @@ import type { AppDataLoaders } from '../common/dataloaders';
 import { PermissionKey, effectivePermissionsForUser, hasPermission } from './rbac';
 
 export type GraphqlRequestContext = {
+  requestId?: string;
   req?: {
     headers?: Record<string, string | string[] | undefined>;
   };

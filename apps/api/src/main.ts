@@ -1,6 +1,7 @@
 import '@nestjs/platform-express';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -8,6 +9,12 @@ async function bootstrap() {
   const express = require('express');
   const fs = require('fs');
   const path = require('path');
+  app.use((req: any, res: any, next: () => void) => {
+    const requestId = randomUUID();
+    req.requestId = requestId;
+    res.setHeader('x-request-id', requestId);
+    next();
+  });
   // A 5 MB image is base64-expanded to about 6.7 MB in the GraphQL payload.
   // Keep the global cap bounded while allowing the explicitly validated image path.
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '8mb' }));
@@ -50,6 +57,7 @@ async function bootstrap() {
       callback(new Error(`Origin ${origin} is not allowed by CORS`), false);
     },
     credentials: true,
+    exposedHeaders: ['x-request-id'],
   });
   
   app.useGlobalPipes(new ValidationPipe({

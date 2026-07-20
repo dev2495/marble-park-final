@@ -1,6 +1,7 @@
 import { ApolloClient, InMemoryCache, createHttpLink, from } from '@apollo/client';
 import { onError } from '@apollo/client/link/error';
 import { RetryLink } from '@apollo/client/link/retry';
+import { describeApolloError, emitApolloDiagnostic } from './apollo-errors';
 
 const httpLink = createHttpLink({
   uri: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql',
@@ -10,8 +11,8 @@ const httpLink = createHttpLink({
 // Surface GraphQL/network errors centrally and bounce the user to /login on 401-style
 // "Unauthorized" / "session expired" responses rather than rendering a broken page.
 const errorLink = onError(({ graphQLErrors, networkError, operation }) => {
+  const operationName = operation?.operationName || 'GraphQLOperation';
   if (graphQLErrors) {
-    const operationName = operation?.operationName || 'GraphQLOperation';
     for (const err of graphQLErrors) {
       const code = (err.extensions?.code || '').toString().toUpperCase();
       const message = err.message || 'GraphQL error';
@@ -31,6 +32,7 @@ const errorLink = onError(({ graphQLErrors, networkError, operation }) => {
     // eslint-disable-next-line no-console
     console.error(`[Network error] ${operation?.operationName || ''}:`, networkError.message);
   }
+  emitApolloDiagnostic(describeApolloError({ graphQLErrors, networkError }, operationName));
 });
 
 // Retry transient network failures (not GraphQL errors) with bounded backoff.
@@ -65,7 +67,10 @@ export const apolloClient = new ApolloClient({
       errorPolicy: 'all',
     },
     mutate: {
-      errorPolicy: 'all',
+      // A mutation must reject when the API rejects it. This guarantees every
+      // save/import action reaches its local catch state and the global error
+      // diagnostic instead of resolving with partial or missing data.
+      errorPolicy: 'none',
     },
   },
 });

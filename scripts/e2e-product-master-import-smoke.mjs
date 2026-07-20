@@ -42,6 +42,10 @@ async function main() {
   const managedImageNames = [];
   const lifecycle = { grnId: '', lotId: '', displayId: '', labelJobIds: [] };
   try {
+    const requestProbeResponse = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: 'query RequestReferenceProbe { productImportReadiness }' }) });
+    const requestProbe = await requestProbeResponse.json();
+    const requestReference = requestProbeResponse.headers.get('x-request-id');
+    assert(requestReference && requestProbe.errors?.[0]?.extensions?.requestId === requestReference, 'GraphQL errors must expose the same request reference in the response header and error extensions');
     const token = (await gql(`mutation($input: LoginInput!) { login(input: $input) { token } }`, { input: { email: TEST_EMAIL, password: TEST_PASSWORD } })).login.token;
     const readiness = (await gql(`query { productImportReadiness }`, {}, token)).productImportReadiness;
     assert(readiness.ready && readiness.blockers.length === 0, `Import preflight must be ready before template download: ${JSON.stringify(readiness.blockers)}`);
@@ -58,6 +62,7 @@ async function main() {
     for (const name of ['Categories', 'Brands', 'Finishes', 'Materials', 'TileSizes', 'UOMs', 'TaxCodes', 'YesNo']) assert(definedNames.has(name), `Template is missing ${name} dropdown range`);
     assert(productSheet.getCell('D2').dataValidation?.formulae?.[0] === 'Categories', 'Category cells must use the live Categories dropdown');
     assert(productSheet.getColumn(1).numFmt === '@' && productSheet.getColumn(2).numFmt === '@', 'SKU and internal-code columns must be formatted as Excel text');
+    assert(/place over cells/i.test(String(downloaded.getWorksheet('How to use').getCell('C8').value)), 'Image instructions must name the supported Excel image mode');
 
     const categories = listValues(lists, 1);
     const brands = listValues(lists, 2);
@@ -68,6 +73,30 @@ async function main() {
     const taxCodes = listValues(lists, 7);
     const tileCategory = categories.find((value) => value.toLowerCase() === 'tiles');
     assert(tileCategory && tileSizes.length && uoms.length && taxCodes.length, 'Live DB must contain Tiles, tile sizes, UOMs and tax codes for the import flow');
+
+    // Browser review materializes blank optional cells into explicit defaults.
+    // Applying that semantically identical payload must retain the initial token.
+    const cleanBook = new ExcelJS.Workbook();
+    const cleanSheet = cleanBook.addWorksheet('Product Master');
+    cleanSheet.addRow(template.headers);
+    const cleanSuffix = `${Date.now().toString(36).toUpperCase()}C`;
+    const cleanSku = `BULK-CLEAN-${cleanSuffix}`;
+    createdSkus.push(cleanSku);
+    cleanSheet.addRow([cleanSku, `BC-${cleanSuffix}`, 'Clean browser confirmation row', categories.find((value) => value !== tileCategory) || categories[0], brands[0], finishes[0], '', '', '', '', '', '', '', '', '', taxCodes[0]]);
+    const cleanFilename = `clean-browser-review-${cleanSuffix}.xlsx`;
+    const cleanUploadId = await uploadWorkbook(await cleanBook.xlsx.writeBuffer(), cleanFilename, token);
+    const cleanPreview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel' }, token)).previewUploadedImport.result;
+    assert(cleanPreview.status === 'ready_to_apply' && cleanPreview.confirmationToken, 'Clean workbook must be ready on its first preview');
+    const browserRows = cleanPreview.previewRows.map((row) => ({
+      sheet: row.sheet, rowNumber: row.rowNumber, sku: row.sku, internalCode: row.internalCode, name: row.name,
+      category: row.category, brand: row.brand, finish: row.finish, material: row.material || '', dimensions: row.dimensions || '',
+      baseUom: row.provided?.baseUom ? row.baseUom : '', purchaseUom: row.provided?.purchaseUom ? row.purchaseUom : '', salesUom: row.provided?.salesUom ? row.salesUom : '',
+      piecesPerPack: row.provided?.piecesPerPack ? row.piecesPerPack : '', coveragePerPack: row.provided?.coveragePerPack ? row.coveragePerPack : '',
+      sellPrice: row.provided?.sellPrice ? row.sellPrice : '', floorPrice: row.provided?.floorPrice ? row.floorPrice : '', taxClass: row.taxClass,
+      hsnCode: row.hsnCode || '', allowLoose: row.provided?.allowLoose ? (row.allowLoose ? 'Yes' : 'No') : '', range: row.range || '', imageUrl: row.imageUrl || '', description: row.description || '',
+    }));
+    const cleanApplied = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $confirmationToken: String!, $reviewRows: JSON) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, confirmationToken: $confirmationToken, reviewRows: $reviewRows) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel', confirmationToken: cleanPreview.confirmationToken, reviewRows: browserRows }, token)).applyUploadedImport.result;
+    assert(cleanApplied.status === 'applied' && cleanApplied.created === 1, 'Initial clean preview must apply with the browser-expanded review payload');
 
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Product Master');
@@ -151,7 +180,7 @@ async function main() {
     assert(invalidPreview.failed === 1 && /unknown category/i.test(invalidPreview.failures[0].error), 'Unknown master values must block the entire workbook');
     await cancelUpload(invalidUploadId, invalidFilename, token);
 
-    console.log(JSON.stringify({ ok: true, template: { filename: template.filename, masterCounts: template.masterCounts, dropdowns: [...definedNames] }, editableReview: { initialFailed: initialPreview.failed, ready: preview.ready, images: preview.imageCount }, applied: { created: applied.created, updated: applied.updated }, inward: { grnNumber: grn.grnNumber, lotNumber: lot.lotNumber, onHand: 4 }, labels: { lot: lotPrint.labels.length, display: displayPrint.labels.length }, displayStockSeparated: true, protectedExistingSku: duplicatePreview.failed, invalidRowsBlocked: invalidPreview.failed }, null, 2));
+    console.log(JSON.stringify({ ok: true, requestReferences: true, template: { filename: template.filename, masterCounts: template.masterCounts, dropdowns: [...definedNames] }, editableReview: { initialFailed: initialPreview.failed, ready: preview.ready, images: preview.imageCount }, applied: { created: applied.created, updated: applied.updated }, inward: { grnNumber: grn.grnNumber, lotNumber: lot.lotNumber, onHand: 4 }, labels: { lot: lotPrint.labels.length, display: displayPrint.labels.length }, displayStockSeparated: true, protectedExistingSku: duplicatePreview.failed, invalidRowsBlocked: invalidPreview.failed }, null, 2));
   } finally {
     const products = await prisma.product.findMany({ where: { sku: { in: createdSkus } }, select: { id: true } }).catch(() => []);
     const ids = products.map((row) => row.id);

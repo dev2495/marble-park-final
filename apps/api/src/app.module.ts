@@ -40,7 +40,20 @@ import { SearchModule } from './modules/search/search.module';
         // (Quote.customer, Quote.owner, Quote.lead, Lead.customer, Lead.owner).
         // Loaders are constructed fresh for each request so cached rows never
         // leak between users/sessions.
-        context: ({ req, res }: any) => ({ req, res, loaders: buildLoaders(prisma) }),
+        context: ({ req, res }: any) => ({ req, res, requestId: req.requestId, loaders: buildLoaders(prisma) }),
+        plugins: [{
+          async requestDidStart() {
+            return {
+              async didEncounterErrors({ errors, contextValue }: any) {
+                const requestId = contextValue?.requestId;
+                if (!requestId) return;
+                for (const error of errors || []) {
+                  error.extensions = { ...(error.extensions || {}), requestId };
+                }
+              },
+            };
+          },
+        }],
       }),
     }),
     PrismaModule,

@@ -243,12 +243,11 @@ export class ImportsResolver {
     if (!fs.existsSync(filePath)) {
       throw new BadRequestException('Uploaded file was not found. Please upload again.');
     }
-    try {
-      const result = await this.imports.processExcelImport(filePath, user.id, confirmationToken, reviewRows || []);
-      return { id: uploadId, result };
-    } finally {
+    const result = await this.imports.processExcelImport(filePath, user.id, confirmationToken, reviewRows || []);
+    if (result.status === 'applied') {
       fs.rmSync(filePath, { force: true });
     }
+    return { id: uploadId, result };
   }
 
   @Mutation(() => ImportOutput)
