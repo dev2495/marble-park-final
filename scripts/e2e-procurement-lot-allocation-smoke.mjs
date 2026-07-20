@@ -54,7 +54,7 @@ async function main() {
 
   const po = (await gql(
     `mutation($input: CreatePurchaseOrderInput!) { createPurchaseOrder(input: $input) }`,
-    { input: { demandIds: demands.map((row) => row.id), vendorName: 'Universal lifecycle test vendor', notes: 'Automated exact-lot procurement test' } },
+    { input: { demandIds: demands.map((row) => row.id), lines: JSON.stringify(demands.map((row) => ({ purchaseDemandId: row.id, unitCost: 7200 }))), vendorName: 'Universal lifecycle test vendor', notes: 'Automated exact-lot procurement test' } },
     token,
   )).createPurchaseOrder;
   assert(po.lines.length === 2 && po.lines.every((line) => line.productId === product.id), 'PO lines must stay linked to Product Master');

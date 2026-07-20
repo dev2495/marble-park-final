@@ -31,6 +31,26 @@ const s = StyleSheet.create({
 function money(value) { return `Rs. ${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function date(value) { const d = value ? new Date(value) : new Date(); return Number.isNaN(d.getTime()) ? '-' : d.toLocaleDateString('en-IN'); }
 function absolute(raw, requestUrl) { if (!raw) return null; try { return new URL(String(raw), requestUrl).href; } catch { return null; } }
+async function embeddedImage(raw, requestUrl, apiUrl) {
+  const url = absolute(raw, requestUrl);
+  if (!url || url.startsWith('data:')) return url;
+  const parsed = new URL(url);
+  const candidates = [];
+  if (parsed.pathname.startsWith('/catalogue-images/')) candidates.push(`${new URL(apiUrl).origin}${parsed.pathname}${parsed.search}`);
+  else if (/^\/(?:brand|catalogue-art)\//.test(parsed.pathname)) candidates.push(`http://127.0.0.1:${process.env.PORT || 3000}${parsed.pathname}${parsed.search}`);
+  candidates.push(url);
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(candidate);
+      if (!response.ok) continue;
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) continue;
+      const mime = response.headers.get('content-type')?.split(';')[0] || (parsed.pathname.endsWith('.png') ? 'image/png' : 'image/jpeg');
+      return `data:${mime};base64,${bytes.toString('base64')}`;
+    } catch {}
+  }
+  return null;
+}
 
 async function token(apiUrl) {
   const response = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: 'mutation($input: LoginInput!) { login(input: $input) { token } }', variables: { input: { email: process.env.QUOTE_PDF_EMAIL || process.env.PDF_SERVICE_EMAIL || 'admin@marblepark.com', password: process.env.QUOTE_PDF_PASSWORD || process.env.PDF_SERVICE_PASSWORD || 'password123' } } }) });
@@ -74,5 +94,5 @@ function build({ order, settings }, requestUrl) {
   ));
 }
 
-async function main() { const [, , id, requestUrl, apiUrl] = process.argv; if (!id || !requestUrl || !apiUrl) throw new Error('Usage: render-purchase-order-pdf.cjs <id> <requestUrl> <apiUrl>'); const data = await fetchData(id, apiUrl); process.stdout.write(await renderToBuffer(build(data, requestUrl))); }
+async function main() { const [, , id, requestUrl, apiUrl] = process.argv; if (!id || !requestUrl || !apiUrl) throw new Error('Usage: render-purchase-order-pdf.cjs <id> <requestUrl> <apiUrl>'); const data = await fetchData(id, apiUrl); data.settings.logoUrl = await embeddedImage(data.settings.logoUrl || '/brand/marble-park-logo.jpg', requestUrl, apiUrl); process.stdout.write(await renderToBuffer(build(data, requestUrl))); }
 main().catch((error) => { console.error(error?.stack || error); process.exit(1); });

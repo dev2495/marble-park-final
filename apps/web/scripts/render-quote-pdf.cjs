@@ -167,8 +167,72 @@ function buildAbsoluteUrl(raw, requestUrl) {
 
 function imageSrc(line, requestUrl) {
   const media = safeJson(line.media, {});
-  const raw = line.quoteImage || line.customImageUrl || media.primary || (Array.isArray(media.gallery) ? media.gallery[0] : null);
+  const firstGallery = Array.isArray(media.gallery) ? media.gallery[0] : null;
+  const raw = line._pdfImage
+    || line.quoteImage
+    || line.customImageUrl
+    || media.primaryUrl
+    || media.primary
+    || media.primaryImage
+    || (typeof firstGallery === 'string' ? firstGallery : firstGallery?.url);
   return buildAbsoluteUrl(raw, requestUrl);
+}
+
+function assetMime(url, contentType) {
+  const normalized = String(contentType || '').split(';')[0].trim().toLowerCase();
+  if (normalized.startsWith('image/')) return normalized;
+  const pathname = (() => { try { return new URL(url).pathname.toLowerCase(); } catch { return String(url).toLowerCase(); } })();
+  if (pathname.endsWith('.png')) return 'image/png';
+  if (pathname.endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
+async function hydrateImages(payload, requestUrl, apiUrl) {
+  const cache = new Map();
+  const toDataUri = async (raw) => {
+    const absolute = buildAbsoluteUrl(raw, requestUrl);
+    if (!absolute || absolute.startsWith('data:')) return absolute;
+    if (cache.has(absolute)) return cache.get(absolute);
+    const task = (async () => {
+      const candidates = [];
+      try {
+        const parsed = new URL(absolute);
+        if (/^\/catalogue-images\//.test(parsed.pathname)) {
+          const apiOrigin = new URL(apiUrl).origin;
+          candidates.push(`${apiOrigin}${parsed.pathname}${parsed.search}`);
+        } else if (/^\/(?:brand|catalogue-art)\//.test(parsed.pathname)) {
+          candidates.push(`http://127.0.0.1:${process.env.PORT || 3000}${parsed.pathname}${parsed.search}`);
+        }
+      } catch {}
+      candidates.push(absolute);
+      for (const candidate of candidates) {
+        try {
+          const response = await fetch(candidate);
+          if (!response.ok) continue;
+          const content = Buffer.from(await response.arrayBuffer());
+          if (!content.length) continue;
+          return `data:${assetMime(candidate, response.headers.get('content-type'))};base64,${content.toString('base64')}`;
+        } catch {}
+      }
+      return null;
+    })();
+    cache.set(absolute, task);
+    return task;
+  };
+
+  const settings = { ...(payload.settings || {}) };
+  settings.logoUrl = await toDataUri(settings.logoUrl || '/brand/marble-park-logo.jpg');
+  const brands = await Promise.all(asArray(payload.brands).map(async (brand) => ({
+    ...brand,
+    metadata: { ...safeJson(brand.metadata, {}), logoUrl: await toDataUri(safeJson(brand.metadata, {}).logoUrl) },
+  })));
+  const quote = { ...payload.quote };
+  quote.lines = await Promise.all(asArray(quote.lines).map(async (line) => ({ ...line, _pdfImage: await toDataUri(imageSrc(line, requestUrl)) })));
+  const quoteMeta = safeJson(quote.quoteMeta, {});
+  if (quoteMeta.coverImage) quoteMeta.coverImage = await toDataUri(quoteMeta.coverImage);
+  quote.quoteMeta = quoteMeta;
+  if (quote.coverImage) quote.coverImage = await toDataUri(quote.coverImage);
+  return { ...payload, quote, settings, brands };
 }
 
 function rateFor(line) {
@@ -178,11 +242,14 @@ function rateFor(line) {
     ? qty * Number(line.coveragePerPack || 0)
     : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
   const pricingUom = String(line.pricingUom || (basis === 'PIECE' ? 'PC' : line.unit || line.uom || 'BOX')).toUpperCase();
-  const price = Number(line.price || line.sellPrice || 0);
+  const price = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
   const discount = Number(line.discountPercent || line.discount || 0);
   const specialRate = Number(line.specialRate || line.specialPrice || 0);
-  const unitRate = specialRate > 0 ? specialRate : price * (1 - discount / 100);
-  const amount = Number.isFinite(Number(line.taxableValue)) ? Number(line.taxableValue) : pricingQuantity * unitRate;
+  const hasStoredUnitRate = line.unitRate !== null && line.unitRate !== undefined && line.unitRate !== '';
+  const storedUnitRate = Number(line.unitRate);
+  const unitRate = hasStoredUnitRate && Number.isFinite(storedUnitRate) && storedUnitRate >= 0 ? storedUnitRate : specialRate > 0 ? specialRate : price * (1 - discount / 100);
+  const hasStoredTaxable = line.taxableValue !== null && line.taxableValue !== undefined && line.taxableValue !== '';
+  const amount = hasStoredTaxable && Number.isFinite(Number(line.taxableValue)) ? Number(line.taxableValue) : pricingQuantity * unitRate;
   return { qty, basis, pricingQuantity, pricingUom, price, discount, unitRate, amount };
 }
 
@@ -254,7 +321,7 @@ async function fetchQuote(id, apiUrl) {
         prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } }),
         prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], take: 80 }),
       ]);
-      if (quote) return { quote, settings, brands };
+      if (quote) return { quote, settings: settings?.data || settings || {}, brands };
     } finally {
       await prisma.$disconnect();
     }
@@ -455,7 +522,7 @@ function ClosingPage({ payload, settings, terms, bank, quoteMeta, requestUrl }) 
 
 // ============= Priced layout (inherited compact style) =============
 
-function PricedAreaTable({ group, showPrices, requestUrl }) {
+function PricedAreaTable({ group, showPrices, requestUrl, taxMode }) {
   const e = React.createElement;
   return e(View, { style: styles.areaBlock, wrap: false },
     e(View, { style: styles.areaHeader },
@@ -480,7 +547,7 @@ function PricedAreaTable({ group, showPrices, requestUrl }) {
         ),
         e(View, { style: styles.descCol },
           e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
-          e(Text, { style: styles.sku }, [line.sku || line.tileCode || '', line.brand || '', line.finish || '', line.tileSize || '', `GST ${Number(line.taxRate || 18)}%`].filter(Boolean).join(' · ')),
+          e(Text, { style: styles.sku }, [line.sku || line.tileCode || '', line.brand || '', line.finish || '', line.tileSize || ''].filter(Boolean).join(' · ')),
           line.notes || line.description ? e(Text, { style: styles.meta }, line.notes || line.description) : null,
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}\n${rate.qty} ${line.inventoryUom || line.unit || line.uom || 'BOX'} stock`),
@@ -500,13 +567,15 @@ function PricedDocumentBody(payload, requestUrl) {
   const lines = asArray(quote.lines);
   const quoteMeta = safeJson(quote.quoteMeta, {});
   const groups = groupByArea(lines);
+  const taxMode = quoteMeta.taxMode === 'non_gst' ? 'non_gst' : 'gst';
   const subtotal = lines.reduce((sum, line) => sum + rateFor(line).amount, 0);
   const discountAmount = subtotal * (Number(quote.discountPercent || 0) / 100);
   const taxable = Math.max(0, subtotal - discountAmount);
-  const storedTax = lines.reduce((sum, line) => sum + Number(line.taxAmount || 0), 0);
-  const tax = storedTax > 0 ? storedTax : taxable * 0.18;
+  const discountFactor = Math.max(0, 1 - Number(quote.discountPercent || 0) / 100);
+  const tax = taxMode === 'non_gst' ? 0 : lines.reduce((sum, line) => sum + rateFor(line).amount * discountFactor * Math.max(0, Number(line.taxRate ?? 18)) / 100, 0);
   const total = taxable + tax;
-  const terms = quoteMeta.terms || settings.defaultTerms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
+  const rawTerms = quoteMeta.terms || settings.defaultTerms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
+  const terms = taxMode === 'non_gst' ? String(rawTerms).split('\n').filter((line) => !/\bGST\b/i.test(line)).join('\n') : rawTerms;
   const bank = quoteMeta.bankDetails || settings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
   const remarks = quoteMeta.remarks || quote.notes || 'Selections can be revised area-wise before final order confirmation.';
   const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.jpg', requestUrl);
@@ -549,8 +618,9 @@ function PricedDocumentBody(payload, requestUrl) {
       e(Text, { style: styles.badge }, quote.projectName || quote.title || 'Retail selection'),
       e(Text, { style: styles.badge }, `${groups.length} area(s)`),
       e(Text, { style: styles.badge }, 'Prices shown'),
+      e(Text, { style: styles.badge }, taxMode === 'non_gst' ? 'Without GST' : 'GST quotation'),
     ),
-    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl })),
+    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode })),
     e(View, { style: styles.totalsWrap },
       e(View, { style: styles.notesBox },
         e(Text, { style: styles.label }, 'Remarks'),
@@ -559,7 +629,7 @@ function PricedDocumentBody(payload, requestUrl) {
       e(View, { style: styles.totalsBox },
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal))),
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, `Discount ${Number(quote.discountPercent || 0)}%`), e(Text, { style: styles.totalValue }, money(discountAmount))),
-        e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'GST 18%'), e(Text, { style: styles.totalValue }, money(tax))),
+        taxMode === 'gst' ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'GST'), e(Text, { style: styles.totalValue }, money(tax))) : null,
         e(View, { style: [styles.totalRow, styles.grand] }, e(Text, { style: styles.grandText }, 'Total'), e(Text, { style: styles.grandText }, money(total))),
       ),
     ),
@@ -604,7 +674,7 @@ async function main() {
   if (!id || !requestUrl || !apiUrl) {
     throw new Error('Usage: render-quote-pdf.cjs <id> <requestUrl> <apiUrl>');
   }
-  const payload = await fetchQuote(id, apiUrl);
+  const payload = await hydrateImages(await fetchQuote(id, apiUrl), requestUrl, apiUrl);
   const buffer = await renderToBuffer(buildDocument(payload, requestUrl));
   process.stdout.write(buffer);
 }

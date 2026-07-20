@@ -23,6 +23,15 @@ const s = StyleSheet.create({
 });
 function date(value) { const d = value ? new Date(value) : new Date(); return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString('en-IN'); }
 function absolute(raw, base) { if (!raw) return null; try { return new URL(String(raw), base).href; } catch { return null; } }
+async function embeddedImage(raw, requestUrl, apiUrl) {
+  const url = absolute(raw, requestUrl); if (!url || url.startsWith('data:')) return url;
+  const parsed = new URL(url); const candidates = [];
+  if (parsed.pathname.startsWith('/catalogue-images/')) candidates.push(`${new URL(apiUrl).origin}${parsed.pathname}${parsed.search}`);
+  else if (/^\/(?:brand|catalogue-art)\//.test(parsed.pathname)) candidates.push(`http://127.0.0.1:${process.env.PORT || 3000}${parsed.pathname}${parsed.search}`);
+  candidates.push(url);
+  for (const candidate of candidates) { try { const response = await fetch(candidate); if (!response.ok) continue; const bytes = Buffer.from(await response.arrayBuffer()); if (!bytes.length) continue; const mime = response.headers.get('content-type')?.split(';')[0] || (parsed.pathname.endsWith('.png') ? 'image/png' : 'image/jpeg'); return `data:${mime};base64,${bytes.toString('base64')}`; } catch {} }
+  return null;
+}
 async function token(apiUrl) { const response = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: 'mutation($input: LoginInput!) { login(input: $input) { token } }', variables: { input: { email: process.env.QUOTE_PDF_EMAIL || process.env.PDF_SERVICE_EMAIL || 'admin@marblepark.com', password: process.env.QUOTE_PDF_PASSWORD || process.env.PDF_SERVICE_PASSWORD || 'password123' } } }) }); const payload = await response.json(); if (!payload.data?.login?.token) throw new Error(payload.errors?.[0]?.message || 'PDF service login failed'); return payload.data.login.token; }
 async function fetchData(id, apiUrl) { const auth = await token(apiUrl); const response = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${auth}` }, body: JSON.stringify({ query: 'query($id: ID!) { dispatchChallan(id: $id) documentSettings { data } }', variables: { id } }) }); const payload = await response.json(); if (!response.ok || payload.errors?.length || !payload.data?.dispatchChallan) throw new Error(payload.errors?.[0]?.message || 'Dispatch slip not found'); return { challan: payload.data.dispatchChallan, settings: payload.data.documentSettings?.data || {} }; }
 function build({ challan, settings }, requestUrl) {
@@ -38,5 +47,5 @@ function build({ challan, settings }, requestUrl) {
     e(View, { style: s.remarks }, e(Text, { style: s.label }, 'Remarks'), e(Text, { style: s.small }, challan.remarks || 'Goods dispatched in the quantities listed above.')), e(View, { style: s.signatures }, e(Text, { style: s.sign }, 'Warehouse authorised signatory'), e(Text, { style: s.sign }, 'Customer acknowledgement')), e(View, { style: s.footer }, e(Text, null, settings.supportPhone || settings.supportEmail || ''), e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}` })),
   ));
 }
-async function main() { const [, , id, requestUrl, apiUrl] = process.argv; if (!id || !requestUrl || !apiUrl) throw new Error('Usage: render-dispatch-slip-pdf.cjs <id> <requestUrl> <apiUrl>'); process.stdout.write(await renderToBuffer(build(await fetchData(id, apiUrl), requestUrl))); }
+async function main() { const [, , id, requestUrl, apiUrl] = process.argv; if (!id || !requestUrl || !apiUrl) throw new Error('Usage: render-dispatch-slip-pdf.cjs <id> <requestUrl> <apiUrl>'); const data = await fetchData(id, apiUrl); data.settings.logoUrl = await embeddedImage(data.settings.logoUrl || '/brand/marble-park-logo.jpg', requestUrl, apiUrl); process.stdout.write(await renderToBuffer(build(data, requestUrl))); }
 main().catch((error) => { console.error(error?.stack || error); process.exit(1); });

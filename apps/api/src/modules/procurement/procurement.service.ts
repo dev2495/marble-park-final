@@ -93,7 +93,9 @@ export class ProcurementService {
 
   async createPurchaseOrder(input: CreatePurchaseOrderInput, actorUserId: string) {
     const demandIds = Array.from(new Set((input.demandIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
-    const directInputs = this.normalizeLines(input.lines);
+    const lineInputs = this.normalizeLines(input.lines);
+    const demandCostInputs = lineInputs.filter((line: any) => String(line.purchaseDemandId || '').trim());
+    const directInputs = lineInputs.filter((line: any) => !String(line.purchaseDemandId || '').trim());
     if (!demandIds.length && !directInputs.length) throw new BadRequestException('Select purchase demand or add at least one Product Master line');
 
     const demands = demandIds.length ? await (this.prisma as any).purchaseDemand.findMany({
@@ -101,8 +103,19 @@ export class ProcurementService {
       orderBy: { createdAt: 'asc' },
     }) : [];
     if (demandIds.length && !demands.length) throw new BadRequestException('Selected demand rows are already closed or unavailable');
+    const selectedDemandIds = new Set(demands.map((demand: any) => demand.id));
+    const unknownDemandCost = demandCostInputs.find((line: any) => !selectedDemandIds.has(String(line.purchaseDemandId)));
+    if (unknownDemandCost) throw new BadRequestException('A demand cost override does not belong to the selected purchase demand');
     const invalidDemand = demands.find((demand: any) => !demand.productId);
     if (invalidDemand) throw new BadRequestException(`${invalidDemand.sku} must be linked to a Product Master SKU before purchase ordering`);
+    const demandCostById = new Map(demandCostInputs.map((line: any) => [String(line.purchaseDemandId), Number(line.unitCost || 0)]));
+    const demandLines = demands.map((demand: any) => {
+      const unitCost = demandCostById.has(demand.id)
+        ? Number(demandCostById.get(demand.id))
+        : Number((demand.metadata || {})?.unitCost || 0);
+      if (!Number.isFinite(unitCost) || unitCost <= 0) throw new BadRequestException(`${demand.sku} requires a positive unit cost before creating the supplier PO`);
+      return { demand, unitCost };
+    });
 
     if (directInputs.some((line: any) => !String(line.productId || '').trim())) throw new BadRequestException('Every direct PO line must select a Product Master SKU');
     const directProductIds = Array.from(new Set(directInputs.map((line: any) => String(line.productId).trim())));
@@ -113,7 +126,7 @@ export class ProcurementService {
       if (!product) throw new BadRequestException(`Direct PO line ${index + 1} is not an active Product Master SKU`);
       const orderedQuantity = this.whole(line.quantity ?? line.orderedQuantity, `${product.sku} quantity`);
       const unitCost = Number(line.unitCost || 0);
-      if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${product.sku} unit cost must be zero or greater`);
+      if (!Number.isFinite(unitCost) || unitCost <= 0) throw new BadRequestException(`${product.sku} requires a positive unit cost before creating the supplier PO`);
       return { product, orderedQuantity, unitCost, unit: String(line.unit || product.purchaseUom || product.unit || 'PC'), note: String(line.note || '').trim() };
     });
 
@@ -147,7 +160,8 @@ export class ProcurementService {
         },
       });
 
-      for (const demand of demands) {
+      for (const demandLine of demandLines) {
+        const { demand, unitCost } = demandLine;
         await tx.purchaseOrderLine.create({
           data: {
             id: ulid(),
@@ -161,7 +175,7 @@ export class ProcurementService {
             finish: demand.finish || null,
             unit: demand.unit || 'PC',
             orderedQuantity: Math.max(0, Number(demand.quantity || 0) - Number(demand.receivedQuantity || 0)),
-            unitCost: Number((demand.metadata || {})?.unitCost || 0),
+            unitCost,
             status: 'ordered',
             metadata: {
               sourceLineKey: demand.sourceLineKey,

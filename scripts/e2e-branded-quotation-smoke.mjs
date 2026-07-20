@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
@@ -33,6 +33,12 @@ async function main() {
   );
   const token = login.login.token;
   assert(token, 'Admin login must return a session token');
+  const uploadedImage = (await gql(
+    `mutation($filename: String!, $contentBase64: String!, $scope: String) { uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result } }`,
+    { filename: `branded-quote-${suffix}.jpg`, contentBase64: (await readFile(resolve('apps/web/public/brand/marble-park-logo.jpg'))).toString('base64'), scope: 'product-image' },
+    token,
+  )).uploadStoredAsset.result.publicUrl;
+  assert(/^https:\/\//.test(uploadedImage) || /^\/catalogue-images\/manual\//.test(uploadedImage), 'Product image upload must return an approved persistent URL');
 
   const settings = (await gql(
     `mutation($input: UpdateSettingsInput!) { updateAppSettings(input: $input) { data } }`,
@@ -75,9 +81,9 @@ async function main() {
     { input }, token,
   )).createProduct;
   const [basin, mixer, tile] = await Promise.all([
-    createProduct({ sku: `MP-BASIN-${suffix}`, name: 'Premium wall-hung basin - sample quotation', category: 'Sanitaryware', brand: brands[0].name, finish: 'Gloss White', dimensions: '560 x 430 mm', unit: 'PC', sellPrice: 18450, floorPrice: 14800, taxClass: 'GST_18', media: { primaryUrl: '/brand/marble-park-logo.jpg', gallery: [] }, description: 'Customer-facing branded quotation release gate' }),
-    createProduct({ sku: `MP-MIXER-${suffix}`, name: 'Tall basin mixer - quotation selection', category: 'Faucets', brand: brands[1].name, finish: 'Brushed Nickel', dimensions: '310 mm', unit: 'PC', sellPrice: 12900, floorPrice: 9900, taxClass: 'GST_18', media: { primaryImage: '/brand/marble-park-legacy-reference.jpg', gallery: [] }, description: 'Customer-facing image can be replaced by the sales team' }),
-    createProduct({ sku: `MP-TILE-${suffix}`, internalCode: `SHOW-${suffix}`, name: 'Large-format porcelain tile', category: 'Tiles', brand: brands[2].name, finish: 'Matt', dimensions: '600 x 1200 mm', unit: 'BOX', baseUom: 'PC', purchaseUom: 'BOX', salesUom: 'SQFT', piecesPerPack: 2, coveragePerPack: 15.5, sellPrice: 165, floorPrice: 130, taxClass: 'GST_18', media: { gallery: [{ url: '/brand/client-served-brands-reference.png' }] }, description: 'Area-priced tile fulfilled as physical boxes' }),
+    createProduct({ sku: `MP-BASIN-${suffix}`, name: 'Premium wall-hung basin - sample quotation', category: 'Sanitaryware', brand: brands[0].name, finish: 'Gloss White', dimensions: '560 x 430 mm', unit: 'PC', sellPrice: 18450, floorPrice: 14800, taxClass: 'GST_18', media: { gallery: [uploadedImage], primaryUrl: uploadedImage }, description: 'Customer-facing branded quotation release gate' }),
+    createProduct({ sku: `MP-MIXER-${suffix}`, name: 'Tall basin mixer - quotation selection', category: 'Faucets', brand: brands[1].name, finish: 'Brushed Nickel', dimensions: '310 mm', unit: 'PC', sellPrice: 12900, floorPrice: 9900, taxClass: 'GST_18', media: { gallery: [uploadedImage], primaryImage: uploadedImage }, description: 'Customer-facing image can be replaced by the sales team' }),
+    createProduct({ sku: `MP-TILE-${suffix}`, internalCode: `SHOW-${suffix}`, name: 'Large-format porcelain tile', category: 'Tiles', brand: brands[2].name, finish: 'Matt', dimensions: '600 x 1200 mm', unit: 'BOX', baseUom: 'PC', purchaseUom: 'BOX', salesUom: 'SQFT', piecesPerPack: 2, coveragePerPack: 15.5, sellPrice: 165, floorPrice: 130, taxClass: 'GST_18', media: { gallery: [{ url: uploadedImage }] }, description: 'Area-priced tile fulfilled as physical boxes' }),
   ]);
   const customer = (await gql(
     `mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`,
@@ -104,8 +110,8 @@ async function main() {
       displayMode: 'priced',
       quoteMeta: JSON.stringify(quoteMeta),
       lines: JSON.stringify([
-        { productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, discountPercent: 8, taxRate: 18, media: basin.media, area: 'Master Bathroom', notes: 'Wall-hung basin with concealed fixing kit' },
-        { productId: mixer.id, sku: mixer.sku, name: mixer.name, category: mixer.category, brand: mixer.brand, finish: mixer.finish, qty: 1, unit: 'PC', price: mixer.sellPrice, listPrice: mixer.sellPrice, specialRate: 11500, taxRate: 18, media: mixer.media, area: 'Master Bathroom', notes: 'Customer-facing image can be replaced by the sales team' },
+        { productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, discountPercent: 8, taxRate: 18, media: { primaryUrl: uploadedImage }, area: 'Master Bathroom', notes: 'Wall-hung basin with concealed fixing kit' },
+        { productId: mixer.id, sku: mixer.sku, name: mixer.name, category: mixer.category, brand: mixer.brand, finish: mixer.finish, qty: 1, unit: 'PC', price: mixer.sellPrice, listPrice: mixer.sellPrice, specialRate: 11500, taxRate: 18, media: { primaryImage: uploadedImage }, area: 'Master Bathroom', notes: 'Customer-facing image can be replaced by the sales team' },
         { productId: tile.id, sku: tile.sku, tileCode: tile.internalCode, tileSize: tile.dimensions, name: tile.name, category: tile.category, brand: tile.brand, finish: tile.finish, requestedArea: 92, wastagePercent: 8, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'SQFT', rateBasis: 'AREA', coveragePerPack: tile.coveragePerPack, piecesPerPack: tile.piecesPerPack, price: tile.sellPrice, listPrice: tile.sellPrice, taxRate: 18, media: tile.media, area: 'Master Bathroom', notes: 'Billed by covered area; fulfilled as full boxes' },
       ]),
     } },

@@ -47,6 +47,7 @@ function statusTone(status?: string) {
 
 export default function ProcurementPage() {
   const [selectedDemand, setSelectedDemand] = useState<Record<string, boolean>>({});
+  const [demandCostRows, setDemandCostRows] = useState<Record<string, string>>({});
   const [vendorId, setVendorId] = useState('');
   const [vendorName, setVendorName] = useState('');
   const [expectedDate, setExpectedDate] = useState('');
@@ -71,7 +72,7 @@ export default function ProcurementPage() {
     notifyOnNetworkStatusChange: false,
   });
   const { data: productSearchData, error: productSearchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: productSearch }, skip: productSearch.trim().length < 2 });
-  const [createPo, { loading: creatingPo, error: createPoError }] = useMutation(CREATE_PO, { onCompleted: (result) => { const po = result.createPurchaseOrder; setPoMessage(`${po.poNumber} created. Open the supplier PDF or select it for GRN receiving.`); setActivePoId(po.id); setSelectedDemand({}); setDirectLines([]); setVendorId(''); setVendorName(''); setExpectedDate(''); setPoNotes(''); setProductSearch(''); refetch(); } });
+  const [createPo, { loading: creatingPo, error: createPoError }] = useMutation(CREATE_PO, { onCompleted: (result) => { const po = result.createPurchaseOrder; setPoMessage(`${po.poNumber} created. Open the supplier PDF or select it for GRN receiving.`); setActivePoId(po.id); setSelectedDemand({}); setDemandCostRows({}); setDirectLines([]); setVendorId(''); setVendorName(''); setExpectedDate(''); setPoNotes(''); setProductSearch(''); refetch(); } });
   const [receivePo, { loading: receivingPo, error: receivePoError }] = useMutation(RECEIVE_PO, { onCompleted: (result) => { setReceiveMessage(`Posted ${result.receivePurchaseOrder?.grnNumber || 'GRN'} and updated inventory/backorder allocation.`); setReceiveRows({}); setDamagedRows({}); setBatchRows({}); setCostRows({}); setReceiptKey(crypto.randomUUID()); setSupplierChallan(''); setSupplierBill(''); refetch(); } });
 
   const summary = data?.procurementSummary || {};
@@ -85,7 +86,8 @@ export default function ProcurementPage() {
   const activePo = useMemo(() => purchaseOrders.find((po) => po.id === activePoId) || purchaseOrders.find((po) => ['ordered', 'partial_received'].includes(po.status)) || purchaseOrders[0], [purchaseOrders, activePoId]);
   const selectedIds = Object.entries(selectedDemand).filter(([, checked]) => checked).map(([id]) => id);
   const selectedRows = demands.filter((row) => selectedIds.includes(row.id));
-  const selectedValue = selectedRows.reduce((sum, row) => sum + Number(row.quantity || 0) * Number(row.metadata?.unitCost || 0), 0);
+  const selectedValue = selectedRows.reduce((sum, row) => sum + Number(row.quantity || 0) * Number(demandCostRows[row.id] || 0), 0);
+  const selectedDemandCostsValid = selectedRows.length > 0 && selectedRows.every((row) => Number(demandCostRows[row.id] || 0) > 0);
 
   useEffect(() => {
     if (!receiveLocationId && defaultLocation?.id) setReceiveLocationId(defaultLocation.id);
@@ -97,6 +99,7 @@ export default function ProcurementPage() {
       variables: {
         input: {
           demandIds: selectedIds,
+          lines: JSON.stringify(selectedRows.map((row) => ({ purchaseDemandId: row.id, unitCost: Number(demandCostRows[row.id] || 0) }))),
           vendorId: vendorId || undefined,
           vendorName: vendorName || vendors.find((vendor) => vendor.id === vendorId)?.name || selectedRows[0]?.vendorName || selectedRows[0]?.brand || 'Vendor confirmation pending',
           expectedDate: expectedDate ? new Date(expectedDate).toISOString() : undefined,
@@ -180,7 +183,7 @@ export default function ProcurementPage() {
           {productSearch.length >= 2 && productSearchData?.globalSearch?.products?.length ? <div className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-md border border-[var(--line)] bg-[var(--surface)] p-2 shadow-xl">{productSearchData.globalSearch.products.map((product: any) => <button key={product.id} type="button" onClick={() => addDirectProduct(product)} className="flex w-full items-center justify-between rounded p-3 text-left hover:bg-[var(--brand-50)]"><span><span className="block text-sm font-bold text-[var(--ink)]">{product.internalCode || product.sku} · {product.name}</span><span className="text-xs font-semibold text-[var(--ink-4)]">{product.sku} · {product.brand}</span></span><Plus className="h-4 w-4" /></button>)}</div> : null}
         </div>
         {directLines.length ? <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="border-b border-[var(--line)] text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]"><tr><th className="p-3">Product</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3">Unit cost</th><th /></tr></thead><tbody className="divide-y divide-[var(--line)]">{directLines.map((line) => <tr key={line.productId}><td className="p-3"><p className="font-bold text-[var(--ink)]">{line.internalCode || line.sku} · {line.name}</p><p className="text-xs text-[var(--ink-4)]">{line.brand}</p></td><td className="p-3"><Input aria-label={`Quantity for ${line.sku}`} type="number" min={1} step={1} value={line.quantity} onChange={(event) => updateDirectLine(line.productId, { quantity: Number(event.target.value) })} className="w-28" /></td><td className="p-3"><Input value={line.unit} onChange={(event) => updateDirectLine(line.productId, { unit: event.target.value })} className="w-24" /></td><td className="p-3"><Input aria-label={`Unit cost for ${line.sku}`} type="number" min={0} value={line.unitCost} onChange={(event) => updateDirectLine(line.productId, { unitCost: Number(event.target.value) })} className="w-32" /></td><td className="p-3"><button type="button" title="Remove line" onClick={() => setDirectLines((current) => current.filter((row) => row.productId !== line.productId))} className="grid h-9 w-9 place-items-center rounded text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></td></tr>)}</tbody></table></div> : null}
-        <div className="mt-5 grid gap-3 md:grid-cols-[1fr_12rem_auto]"><select value={vendorId} onChange={(event) => { setVendorId(event.target.value); setVendorName(vendors.find((vendor) => vendor.id === event.target.value)?.name || ''); }} className="h-11 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink)]"><option value="">Select vendor from master</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select><Input type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} /><Button onClick={submitDirectPo} disabled={!vendorId || !directLines.length || directLines.some((line) => Number(line.quantity) <= 0) || creatingPo}><Send className="mr-2 h-4 w-4" />Create direct PO</Button></div>
+        <div className="mt-5 grid gap-3 md:grid-cols-[1fr_12rem_auto]"><select value={vendorId} onChange={(event) => { setVendorId(event.target.value); setVendorName(vendors.find((vendor) => vendor.id === event.target.value)?.name || ''); }} className="h-11 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink)]"><option value="">Select vendor from master</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select><Input type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} /><Button onClick={submitDirectPo} disabled={!vendorId || !directLines.length || directLines.some((line) => Number(line.quantity) <= 0 || Number(line.unitCost) <= 0) || creatingPo}><Send className="mr-2 h-4 w-4" />Create direct PO</Button></div>
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
@@ -211,7 +214,10 @@ export default function ProcurementPage() {
                 <button
                   key={row.id}
                   type="button"
-                  onClick={() => setSelectedDemand((current) => ({ ...current, [row.id]: !checked }))}
+                  onClick={() => {
+                    setSelectedDemand((current) => ({ ...current, [row.id]: !checked }));
+                    if (!checked && demandCostRows[row.id] === undefined) setDemandCostRows((current) => ({ ...current, [row.id]: String(row.metadata?.unitCost || '') }));
+                  }}
                   className={cn('mb-2 w-full rounded-r4 border p-4 text-left transition-all', checked ? 'border-[var(--brand-400)] bg-[var(--brand-50)] shadow-sm-soft' : 'border-[var(--line)] bg-[var(--surface)] hover:border-[var(--line-strong)]')}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -248,9 +254,10 @@ export default function ProcurementPage() {
               <Input type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} />
             </div>
             <textarea value={poNotes} onChange={(event) => setPoNotes(event.target.value)} placeholder="PO note / vendor follow-up detail" className="mt-3 min-h-[72px] w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" />
+            {selectedRows.length ? <div className="mt-3 space-y-2">{selectedRows.map((row) => <label key={row.id} className="grid items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-xs font-bold text-[var(--ink-3)] sm:grid-cols-[1fr_9rem]"><span className="truncate">{row.sku} · {row.name} · {row.quantity} {row.unit || 'PC'}</span><Input aria-label={`Unit cost for ${row.sku}`} type="number" min={0.01} step="0.01" value={demandCostRows[row.id] || ''} onChange={(event) => setDemandCostRows((current) => ({ ...current, [row.id]: event.target.value }))} placeholder="Unit cost" /></label>)}</div> : null}
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">{selectedIds.length} row(s) selected · Estimated {money(selectedValue)}</p>
-              <Button onClick={submitPo} disabled={!selectedIds.length || creatingPo}><Send className="mr-2 h-4 w-4" /> Create vendor PO</Button>
+              <Button onClick={submitPo} disabled={!selectedDemandCostsValid || creatingPo}><Send className="mr-2 h-4 w-4" /> Create vendor PO</Button>
             </div>
           </div>
         </div>
