@@ -27,6 +27,9 @@ export function describeApolloError(error: any, operation?: string): ApolloDiagn
     const path = primary.path?.join?.('.') || undefined;
     if (codes.includes('UNAUTHENTICATED')) return { title: 'Session expired', message, hint: 'Sign in again, then retry your last action.', code, requestId, operation, path };
     if (codes.includes('FORBIDDEN')) return { title: 'Permission required', message, hint: 'Ask an owner to grant the required role or permission.', code, requestId, operation, path };
+    if (/commercial lines are frozen|order exists.*quote revision/i.test(message)) {
+      return { title: 'Commercial terms are locked', message, hint: 'Use Revise quote to change quantity, rate, discount or tax. Document layout and images can still be saved here.', code, requestId, operation, path };
+    }
     if (codes.some((item: string) => ['BAD_USER_INPUT', 'BAD_REQUEST'].includes(item)) || /required|invalid|unknown|duplicate|cannot|must|exceed|changed|revalidate/i.test(message)) {
       return { title: 'Check the entered information', message, hint: 'Correct the stated fields and submit again. No confirmed data was changed.', code, requestId, operation, path };
     }

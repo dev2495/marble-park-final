@@ -8,6 +8,7 @@ type ProductImageFrameProps = {
   imageClassName?: string;
   label?: string;
   fit?: 'contain' | 'cover';
+  eager?: boolean;
 };
 
 export function ProductImageFrame({
@@ -17,21 +18,19 @@ export function ProductImageFrame({
   imageClassName,
   label,
   fit = 'contain',
+  eager = false,
 }: ProductImageFrameProps) {
   return (
     <div className={cn('relative isolate overflow-hidden bg-[#eaf0fa]', className)}>
       {src ? (
         <>
-          <img
-            src={src}
-            alt=""
-            aria-hidden="true"
-            className="absolute inset-0 h-full w-full scale-105 object-cover opacity-18 blur-[6px] saturate-95"
-          />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(255,250,243,0.72),transparent_48%),linear-gradient(180deg,rgba(255,250,243,0.08),rgba(216,173,120,0.24))]" />
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.72),rgba(226,232,240,0.46))]" />
           <img
             src={src}
             alt={alt}
+            loading={eager ? 'eager' : 'lazy'}
+            decoding="async"
+            fetchPriority={eager ? 'high' : 'auto'}
             className={cn(
               'relative z-10 h-full w-full drop-shadow-2xl transition-transform duration-500',
               fit === 'cover' ? 'object-cover' : 'object-contain p-2',

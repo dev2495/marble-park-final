@@ -250,6 +250,7 @@ export class ImportsService {
     const { rows } = await this.readExcelRows(filePath, 'preview', reviewRows);
     const plan = await this.buildImportPlan(rows);
     const confirmationToken = plan.failed || !plan.total ? null : this.confirmationToken(filePath, uploadedBy, plan);
+    await this.writePreviewSnapshot(filePath, uploadedBy, reviewRows, plan, confirmationToken);
     await this.audit(uploadedBy, 'excel_import.preview', 'Product', 'excel-preview', `Excel import preview: ${plan.ready} ready, ${plan.failed} failed`, { filePath, ...this.auditPlan(plan) });
     return {
       source: 'excel-preview',
@@ -268,19 +269,21 @@ export class ImportsService {
 
   async processExcelImport(filePath: string, uploadedBy = 'system', confirmationToken = '', reviewRows: ProductImportReviewRow[] = []): Promise<any> {
     this.assertExcelFile(filePath);
-    const previewRead = await this.readExcelRows(filePath, 'preview', reviewRows);
-    const previewPlan = await this.buildImportPlan(previewRead.rows);
-    if (!confirmationToken || confirmationToken !== this.confirmationToken(filePath, uploadedBy, previewPlan)) {
+    const snapshot = await this.readPreviewSnapshot(filePath);
+    const canonicalReview = this.canonicalReviewRows(reviewRows);
+    const snapshotReview = Array.isArray(snapshot?.reviewRows) ? snapshot.reviewRows : [];
+    const snapshotStillMatchesFile = snapshot?.plan ? this.confirmationToken(filePath, uploadedBy, snapshot.plan) : '';
+    if (!snapshot || snapshot.uploadedBy !== uploadedBy || !confirmationToken || confirmationToken !== snapshot.confirmationToken || confirmationToken !== snapshotStillMatchesFile || JSON.stringify(canonicalReview) !== JSON.stringify(snapshotReview)) {
       throw new BadRequestException('This workbook or its reviewed rows have changed since validation. Revalidate the review and confirm again.');
     }
 
-    if (previewPlan.failed || !previewPlan.total) {
-      await this.audit(uploadedBy, 'excel_import.blocked', 'Product', 'excel-apply-blocked', `Excel import blocked: ${previewPlan.failed} invalid row(s)`, { filePath, ...this.auditPlan(previewPlan) });
+    if (snapshot.plan.failed || !snapshot.plan.total) {
+      await this.audit(uploadedBy, 'excel_import.blocked', 'Product', 'excel-apply-blocked', `Excel import blocked: ${snapshot.plan.failed} invalid row(s)`, { filePath, ...this.auditPlan(snapshot.plan) });
       return {
         source: 'excel-apply',
         status: 'blocked_by_validation',
-        message: previewPlan.total ? 'Import was not applied. Product Master changed or the file now has invalid rows; preview it again.' : 'Import was not applied because no product rows were found.',
-        ...this.publicPlan(previewPlan),
+        message: snapshot.plan.total ? 'Import was not applied. Product Master changed or the file now has invalid rows; preview it again.' : 'Import was not applied because no product rows were found.',
+        ...this.publicPlan(snapshot.plan),
         applied: 0,
         created: 0,
         updated: 0,
@@ -298,12 +301,14 @@ export class ImportsService {
     let appliedProducts: any[] = [];
     try {
       appliedProducts = await this.prisma.$transaction(async (tx) => {
-        const rows: any[] = [];
-        for (const row of plan.rows) {
-          const product = await this.applyProductRowTx(tx, row.normalized, uploadedBy);
-          rows.push({ id: product.id, sku: product.sku, action: row.action });
+        const rows = plan.rows.map((row: any) => ({ id: ulid(), sku: row.normalized.sku, action: row.action, normalized: row.normalized }));
+        for (let offset = 0; offset < rows.length; offset += 400) {
+          const batch = rows.slice(offset, offset + 400);
+          await tx.product.createMany({ data: batch.map((row: any) => this.productCreateData(row.id, row.normalized, uploadedBy)) });
+          await tx.productAlias.createMany({ data: batch.map((row: any) => ({ id: ulid(), productId: row.id, type: 'internal_code', value: row.normalized.internalCode, normalizedValue: row.normalized.internalCode, status: 'active', isPrimary: true, metadata: { source: 'excel-import' }, updatedAt: new Date() })) });
+          await tx.inventoryBalance.createMany({ data: batch.map((row: any) => ({ id: ulid(), productId: row.id, onHand: 0, available: 0, reserved: 0, damaged: 0, hold: 0, updatedAt: new Date() })) });
         }
-        return rows;
+        return rows.map(({ id, sku, action }: any) => ({ id, sku, action }));
       }, { timeout: 60000 });
     } catch (error) {
       this.removeFiles(applyRead.persistedFiles);
@@ -312,6 +317,7 @@ export class ImportsService {
 
     const created = plan.rows.filter((row) => row.action === 'created').length;
     await this.audit(uploadedBy, 'excel_import.apply', 'Product', 'excel-transaction-import', `Excel import applied: ${created} created, 0 failed`, { filePath, total: plan.total, created, updated: 0, failed: 0 });
+    await fs.promises.rm(this.previewSnapshotPath(filePath), { force: true });
 
     return {
       source: 'excel-apply',
@@ -439,11 +445,11 @@ export class ImportsService {
     const [existingProducts, internalCodeOwners, categories, brands, finishes, materials, tileSizes, uoms, taxCodes] = await Promise.all([
       skus.length ? this.prisma.product.findMany({ where: { sku: { in: skus } }, select: { id: true, sku: true, internalCode: true } }) : [],
       internalCodes.length ? this.prisma.product.findMany({ where: { internalCode: { in: internalCodes } }, select: { id: true, sku: true, internalCode: true } }) : [],
-      this.prisma.productCategory.findMany({ where: { status: 'active' }, select: { name: true } }),
-      this.prisma.productBrand.findMany({ where: { status: 'active' }, select: { name: true } }),
-      this.prisma.productFinish.findMany({ where: { status: 'active' }, select: { name: true } }),
-      this.prisma.productMaterial.findMany({ where: { status: 'active' }, select: { name: true } }),
-      this.prisma.tileSize.findMany({ where: { status: 'active' }, select: { name: true } }),
+      this.prisma.productCategory.findMany({ where: { status: 'active' }, select: { id: true, name: true } }),
+      this.prisma.productBrand.findMany({ where: { status: 'active' }, select: { id: true, name: true } }),
+      this.prisma.productFinish.findMany({ where: { status: 'active' }, select: { id: true, name: true } }),
+      this.prisma.productMaterial.findMany({ where: { status: 'active' }, select: { id: true, name: true } }),
+      this.prisma.tileSize.findMany({ where: { status: 'active' }, select: { id: true, name: true } }),
       this.prisma.unitOfMeasure.findMany({ where: { status: 'active' }, select: { code: true } }),
       this.prisma.taxCode.findMany({ where: { status: 'active' }, select: { code: true } }),
     ]);
@@ -453,11 +459,16 @@ export class ImportsService {
     const internalCodeOwner = new Map((internalCodeOwners as Array<{ sku: string; internalCode: string | null }>).filter((product) => product.internalCode).map((product) => [product.internalCode as string, product.sku] as const));
     const validUoms = new Set(uoms.map((row) => row.code));
     const validTaxCodes = new Set(taxCodes.map((row) => row.code));
-    const categoryNames = new Map(categories.map((row) => [this.key(row.name), row.name] as const));
-    const brandNames = new Map(brands.map((row) => [this.key(row.name), row.name] as const));
-    const finishNames = new Map(finishes.map((row) => [this.key(row.name), row.name] as const));
-    const materialNames = new Map(materials.map((row) => [this.key(row.name), row.name] as const));
-    const tileSizeNames = new Map(tileSizes.map((row) => [this.key(row.name), row.name] as const));
+    const categoryNames = new Map<string, string>(categories.map((row) => [this.key(row.name), row.name]));
+    const brandNames = new Map<string, string>(brands.map((row) => [this.key(row.name), row.name]));
+    const finishNames = new Map<string, string>(finishes.map((row) => [this.key(row.name), row.name]));
+    const materialNames = new Map<string, string>(materials.map((row) => [this.key(row.name), row.name]));
+    const tileSizeNames = new Map<string, string>(tileSizes.map((row) => [this.key(row.name), row.name]));
+    const categoryIds = new Map(categories.map((row) => [this.key(row.name), row.id] as const));
+    const brandIds = new Map(brands.map((row) => [this.key(row.name), row.id] as const));
+    const finishIds = new Map(finishes.map((row) => [this.key(row.name), row.id] as const));
+    const materialIds = new Map(materials.map((row) => [this.key(row.name), row.id] as const));
+    const tileSizeIds = new Map(tileSizes.map((row) => [this.key(row.name), row.id] as const));
     const missingCategories = new Set<string>();
     const missingBrands = new Set<string>();
     const missingFinishes = new Set<string>();
@@ -475,6 +486,13 @@ export class ImportsService {
       row.normalized.finish = finishNames.get(this.key(row.normalized.finish)) || row.normalized.finish;
       row.normalized.material = materialNames.get(this.key(row.normalized.material)) || row.normalized.material;
       row.normalized.dimensions = tileSizeNames.get(this.key(row.normalized.dimensions)) || row.normalized.dimensions;
+      (row.normalized as any).masterIds = {
+        categoryId: categoryIds.get(this.key(row.normalized.category)) || null,
+        brandId: brandIds.get(this.key(row.normalized.brand)) || null,
+        finishId: finishIds.get(this.key(row.normalized.finish)) || null,
+        materialId: materialIds.get(this.key(row.normalized.material)) || null,
+        tileSizeId: this.key(row.normalized.category) === 'tiles' ? tileSizeIds.get(this.key(row.normalized.dimensions)) || null : null,
+      };
       const existingProduct = existingBySku.get(row.normalized.sku);
       if (existingProduct) errors.push('SKU already exists. Edit it individually in Product Master; bulk import creates new SKUs only');
       if (row.normalized.sku) {
@@ -572,7 +590,7 @@ export class ImportsService {
       imageCount: readyRows.filter((row) => row.imageStatus !== 'no_image').length,
       failures: failures.slice(0, 80),
       rows: readyRows,
-      previewRows: rows.slice(0, 250).map((row) => {
+      previewRows: rows.map((row) => {
         const publicRow = { ...row };
         delete publicRow.normalized;
         return publicRow;
@@ -921,6 +939,62 @@ export class ImportsService {
       normalized: row.normalized,
     }))));
     return hmac.digest('hex');
+  }
+
+  private previewSnapshotPath(filePath: string) {
+    return `${filePath}.preview.json`;
+  }
+
+  private async writePreviewSnapshot(filePath: string, uploadedBy: string, reviewRows: ProductImportReviewRow[], plan: any, confirmationToken: string | null) {
+    const snapshot = { uploadedBy, reviewRows: this.canonicalReviewRows(reviewRows), confirmationToken, plan };
+    await fs.promises.writeFile(this.previewSnapshotPath(filePath), JSON.stringify(snapshot), { mode: 0o600 });
+  }
+
+  private async readPreviewSnapshot(filePath: string): Promise<any | null> {
+    try {
+      return JSON.parse(await fs.promises.readFile(this.previewSnapshotPath(filePath), 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+
+  private productCreateData(id: string, normalized: NormalizedProductRow & { masterIds?: any }, uploadedBy: string) {
+    const media = normalized.imageUrl && normalized.imageUrl !== '__embedded_excel_image__'
+      ? { primaryUrl: normalized.imageUrl, gallery: [{ url: normalized.imageUrl }], source: 'excel-import', exactSkuMatch: true }
+      : {};
+    return {
+      id,
+      sku: normalized.sku,
+      name: normalized.name,
+      category: normalized.category,
+      brand: normalized.brand,
+      finish: normalized.finish,
+      dimensions: normalized.dimensions,
+      internalCode: normalized.internalCode,
+      categoryId: normalized.masterIds?.categoryId || null,
+      brandId: normalized.masterIds?.brandId || null,
+      finishId: normalized.masterIds?.finishId || null,
+      materialId: normalized.masterIds?.materialId || null,
+      tileSizeId: normalized.masterIds?.tileSizeId || null,
+      unit: normalized.purchaseUom,
+      baseUom: normalized.baseUom,
+      purchaseUom: normalized.purchaseUom,
+      salesUom: normalized.salesUom,
+      piecesPerPack: normalized.piecesPerPack,
+      coveragePerPack: normalized.coveragePerPack,
+      hsnCode: normalized.hsnCode || null,
+      trackLots: true,
+      allowLoose: normalized.allowLoose,
+      tags: [],
+      sellPrice: normalized.sellPrice,
+      floorPrice: normalized.floorPrice,
+      taxClass: normalized.taxClass,
+      status: 'active',
+      media,
+      sourceRefs: { createdFrom: 'excel-import', uploadedBy, range: normalized.range },
+      description: normalized.description,
+      updatedAt: new Date(),
+    } as any;
   }
 
   private async masterSnapshot() {

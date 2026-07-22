@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import Link from 'next/link';
-import { Archive, ArrowLeft, ArrowRight, Boxes, ImagePlus, PackagePlus, Plus, Save, ScanLine, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, ArrowRight, Boxes, ChevronLeft, ChevronRight, ImagePlus, PackagePlus, Plus, Save, ScanLine, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 
 const MASTER_DATA = gql`
   query ProductMasterData {
@@ -13,14 +14,17 @@ const MASTER_DATA = gql`
   }
 `;
 const GET_PRODUCTS = gql`
-  query ProductRegister($search: String, $take: Int, $includeInactive: Boolean) {
-    products(search: $search, take: $take, includeInactive: $includeInactive) {
+  query ProductRegister($search: String, $take: Int, $skip: Int, $includeInactive: Boolean) {
+    products(search: $search, take: $take, skip: $skip, includeInactive: $includeInactive) {
       id sku internalCode name category brand finish dimensions unit sellPrice floorPrice taxClass status description media updatedAt
       categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
     }
   }
 `;
-const CREATE_PRODUCT = gql`mutation CreateProduct($input: CreateProductInput!) { createProduct(input: $input) { id sku updatedAt } }`;
+const CREATE_PRODUCT = gql`mutation CreateProduct($input: CreateProductInput!) { createProduct(input: $input) {
+  id sku internalCode name category brand finish dimensions unit sellPrice floorPrice taxClass status description media updatedAt
+  categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
+} }`;
 const UPDATE_PRODUCT = gql`mutation UpdateProduct($id: ID!, $input: UpdateProductInput!) { updateProduct(id: $id, input: $input) { id sku updatedAt status } }`;
 const ARCHIVE_PRODUCT = gql`mutation ArchiveProduct($id: ID!) { deleteProduct(id: $id) { id sku status updatedAt } }`;
 const UPLOAD_ASSET = gql`
@@ -73,14 +77,17 @@ async function fileBase64(file: File) {
 }
 
 export default function ProductMasterPage() {
+  const pageSize = 50;
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<any>(emptyProduct);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
   const [messageTone, setMessageTone] = useState<'info' | 'success' | 'error'>('info');
   const { data: masterData } = useQuery(MASTER_DATA);
-  const { data, refetch } = useQuery(GET_PRODUCTS, { variables: { search, take: 120, includeInactive: true } });
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const { data, loading: loadingProducts, refetch } = useQuery(GET_PRODUCTS, { variables: { search: debouncedSearch || undefined, take: pageSize + 1, skip: page * pageSize, includeInactive: true } });
   const [createProduct, { loading: creating }] = useMutation(CREATE_PRODUCT);
   const [updateProduct, { loading: updating }] = useMutation(UPDATE_PRODUCT);
   const [archiveProduct, { loading: archiving }] = useMutation(ARCHIVE_PRODUCT);
@@ -94,7 +101,9 @@ export default function ProductMasterPage() {
   const tileSizes = masters.tileSizes || [];
   const uoms = masters.uoms || [];
   const taxCodes = masters.taxCodes || [];
-  const products = data?.products || [];
+  const productPage = data?.products || [];
+  const products = productPage.slice(0, pageSize);
+  const hasNextPage = productPage.length > pageSize;
   const isEditing = Boolean(selectedId);
   const saving = creating || updating;
   const isTile = String(form.category || '').trim().toLowerCase() === 'tiles';
@@ -197,8 +206,7 @@ export default function ProductMasterPage() {
       } else {
         const result = await createProduct({ variables: { input: { ...shared, sku: form.sku } } });
         if ((result as any).errors?.length) throw new Error((result as any).errors.map((item: any) => item.message).join(' | '));
-        const refreshed = await refetch();
-        const created = refreshed.data?.products?.find((product: any) => product.id === result.data?.createProduct?.id);
+        const created = result.data?.createProduct;
         if (created) chooseProduct(created);
         else startNew();
         setMessageTone('success');
@@ -310,7 +318,7 @@ export default function ProductMasterPage() {
         <div className="mt-3 flex flex-wrap gap-3"><Button disabled={saving || uploading || !canSave} onClick={saveProduct}><Save className="mr-2 h-4 w-4" /> {saving ? 'Saving...' : isEditing ? 'Save changes' : 'Create SKU'}</Button>{isEditing && form.status !== 'archived' ? <Button variant="outline" disabled={archiving} onClick={archiveCurrent}><Archive className="mr-2 h-4 w-4" /> Archive SKU</Button> : null}</div>
       </div>
 
-      <div className="mp-card min-w-0 rounded-r5 p-5"><div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><h2 className="text-xl font-semibold text-[#18181b]">SKU register</h2><Input placeholder="Search SKU/name" value={search} onChange={(event) => setSearch(event.target.value)} className="w-full sm:max-w-xs" /></div><div className="mt-5 max-h-[54rem] min-w-0 space-y-2 overflow-y-auto custom-scrollbar">{products.map((product: any) => { const image = mediaUrls(product.media)[0]; return <button type="button" onClick={() => chooseProduct(product)} key={product.id} className={`flex min-w-0 w-full gap-4 rounded-lg p-3 text-left transition ${selectedId === product.id ? 'bg-[#dbeafe]' : 'bg-white hover:bg-[#f7faff]'}`}>{image ? <img src={image} alt="" className="h-14 w-14 shrink-0 rounded-lg bg-[#f7faff] object-contain p-1" /> : <div className="h-14 w-14 shrink-0 rounded-lg bg-[#f4f4f5]" />}<div className="min-w-0"><p className="truncate font-semibold text-[#18181b]">{product.sku} · {product.name}</p><p className="mt-1 truncate text-xs font-bold text-[#52525b]">{[product.category, product.brand, product.finish].filter(Boolean).join(' · ')} · ₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</p><span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${product.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{product.status}</span></div></button>; })}{!products.length ? <p className="p-5 text-sm font-semibold text-[#52525b]">No products found.</p> : null}</div></div>
+      <div className="mp-card min-w-0 rounded-r5 p-5"><div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><h2 className="text-xl font-semibold text-[#18181b]">SKU register</h2><Input placeholder="Search SKU/name" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} className="w-full sm:max-w-xs" /></div><div className="mt-5 max-h-[54rem] min-w-0 space-y-2 overflow-y-auto custom-scrollbar">{loadingProducts && !products.length ? <p className="p-5 text-sm font-semibold text-[#52525b]">Loading products...</p> : null}{products.map((product: any) => { const image = mediaUrls(product.media)[0]; return <button type="button" onClick={() => chooseProduct(product)} key={product.id} className={`flex min-w-0 w-full gap-4 rounded-lg p-3 text-left transition ${selectedId === product.id ? 'bg-[#dbeafe]' : 'bg-white hover:bg-[#f7faff]'}`}>{image ? <img src={image} alt="" loading="lazy" decoding="async" className="h-14 w-14 shrink-0 rounded-lg bg-[#f7faff] object-contain p-1" /> : <div className="h-14 w-14 shrink-0 rounded-lg bg-[#f4f4f5]" />}<div className="min-w-0"><p className="truncate font-semibold text-[#18181b]">{product.sku} · {product.name}</p><p className="mt-1 truncate text-xs font-bold text-[#52525b]">{[product.category, product.brand, product.finish].filter(Boolean).join(' · ')} · ₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</p><span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${product.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{product.status}</span></div></button>; })}{!loadingProducts && !products.length ? <p className="p-5 text-sm font-semibold text-[#52525b]">No products found.</p> : null}</div>{page > 0 || hasNextPage ? <nav aria-label="Product register pages" className="mt-4 flex items-center justify-between border-t border-[#e4e4e7] pt-4"><Button variant="outline" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}><ChevronLeft className="mr-2 h-4 w-4" />Previous</Button><span className="text-xs font-semibold text-[#71717a]">Page {page + 1}</span><Button variant="outline" disabled={!hasNextPage} onClick={() => setPage((current) => current + 1)}>Next<ChevronRight className="ml-2 h-4 w-4" /></Button></nav> : null}</div>
     </section>
   </div>;
 }

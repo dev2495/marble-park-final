@@ -35,6 +35,13 @@ export interface UpdateQuoteInput {
   coverImage?: string;
 }
 
+export interface UpdateQuotePresentationInput {
+  displayMode?: string;
+  quoteMeta?: any;
+  coverImage?: string;
+  linePresentation?: any[] | string;
+}
+
 export interface CreateSalesOrderInput {
   quoteId: string;
   paymentMode: string;
@@ -321,6 +328,50 @@ export class QuotesService {
         metadata: { pdfUrl: `/api/pdf/quote/${updated.id}` },
       },
     ]);
+    return updated;
+  }
+
+  async updatePresentation(id: string, data: UpdateQuotePresentationInput, actorUserId: string): Promise<any> {
+    const current = await this.findById(id);
+    const updateData: any = {};
+    if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
+    if (data.coverImage !== undefined) updateData.coverImage = String(data.coverImage || '');
+    if (data.quoteMeta !== undefined) {
+      updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, await this.assertQuoteLines(current.lines, 'updating quote presentation'));
+    }
+
+    if (data.linePresentation !== undefined) {
+      let patches: any;
+      try {
+        patches = typeof data.linePresentation === 'string' ? JSON.parse(data.linePresentation || '[]') : data.linePresentation;
+      } catch {
+        throw new BadRequestException('Quote presentation rows must be valid JSON. Reload the quote and try again.');
+      }
+      if (!Array.isArray(patches) || patches.length > 500) throw new BadRequestException('Quote presentation rows are invalid or exceed 500 items.');
+      const byKey = new Map(patches.map((patch: any, index: number) => [String(patch?.lineKey || patch?.id || `index:${index}`), patch]));
+      const currentLines = await this.assertQuoteLines(current.lines, 'updating quote presentation');
+      updateData.lines = currentLines.map((line: any, index: number) => {
+        const key = String(line.lineKey || line.id || `index:${index}`);
+        const patch: any = byKey.get(key);
+        if (!patch) return line;
+        return {
+          ...line,
+          area: String(patch.area ?? line.area ?? '').slice(0, 160),
+          quoteImage: String(patch.quoteImage ?? line.quoteImage ?? '').slice(0, 2048),
+          customImageUrl: String(patch.customImageUrl ?? patch.quoteImage ?? line.customImageUrl ?? '').slice(0, 2048),
+          designCode: String(patch.designCode ?? line.designCode ?? '').slice(0, 120),
+        };
+      });
+    }
+
+    if (!Object.keys(updateData).length) return current;
+    const updated = await this.prisma.quote.update({ where: { id }, data: updateData, include: quoteInclude } as any) as any;
+    await this.audit(actorUserId, 'quote.presentation.update', id, `Updated document presentation for ${updated.quoteNumber}`, {
+      displayMode: updateData.displayMode,
+      coverImageChanged: data.coverImage !== undefined,
+      quoteMetaChanged: data.quoteMeta !== undefined,
+      linePresentationCount: Array.isArray(data.linePresentation) ? data.linePresentation.length : undefined,
+    });
     return updated;
   }
 

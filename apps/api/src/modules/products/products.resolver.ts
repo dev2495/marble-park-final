@@ -210,10 +210,11 @@ export class ProductsResolver {
     @Args('search', { nullable: true }) search?: string,
     @Args('category', { nullable: true }) category?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('includeInactive', { nullable: true }) includeInactive?: boolean,
   ) {
     await requireSession(this.prisma, ctx);
-    return this.products.findAll({ search, category, take, includeInactive });
+    return this.products.findAll({ search, category, take, skip, includeInactive });
   }
 
   @Query(() => ProductOutput)

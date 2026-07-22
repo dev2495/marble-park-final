@@ -94,5 +94,5 @@ function build({ order, settings }, requestUrl) {
   ));
 }
 
-async function main() { const [, , id, requestUrl, apiUrl] = process.argv; if (!id || !requestUrl || !apiUrl) throw new Error('Usage: render-purchase-order-pdf.cjs <id> <requestUrl> <apiUrl>'); const data = await fetchData(id, apiUrl); data.settings.logoUrl = await embeddedImage(data.settings.logoUrl || '/brand/marble-park-logo.jpg', requestUrl, apiUrl); process.stdout.write(await renderToBuffer(build(data, requestUrl))); }
+async function main() { const [, , id, requestUrl, apiUrl] = process.argv; if (!id || !requestUrl || !apiUrl) throw new Error('Usage: render-purchase-order-pdf.cjs <id> <requestUrl> <apiUrl>'); const data = await fetchData(id, apiUrl); data.settings.logoUrl = await embeddedImage(data.settings.logoUrl || '/brand/marble-park-logo.png', requestUrl, apiUrl); process.stdout.write(await renderToBuffer(build(data, requestUrl))); }
 main().catch((error) => { console.error(error?.stack || error); process.exit(1); });

@@ -1,9 +1,11 @@
 import { PrismaClient } from '@prisma/client';
+import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
 
 const API = process.env.API_URL || 'http://localhost:4100/graphql';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
+const cleanupContext = { productIds: [], customerIds: [], quoteIds: [], leadIds: [] };
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -39,6 +41,7 @@ async function main() {
     { input: { sku: suffix, name: 'Client workflow release-gate mixer', category: 'Faucets', brand: 'Release Gate', finish: 'Chrome', dimensions: '180 mm', unit: 'PC', sellPrice: 12000, floorPrice: 9000, taxClass: 'GST_18' } },
     token,
   )).data.createProduct;
+  cleanupContext.productIds.push(product.id);
   const updated = (await gql(
     `mutation($id: ID!, $input: UpdateProductInput!) { updateProduct(id: $id, input: $input) { id sku name sellPrice floorPrice status updatedAt media } }`,
     { id: product.id, input: { name: 'Client workflow release-gate mixer updated', sellPrice: 12500, floorPrice: 9000, media: { primaryUrl: null, gallery: [] }, expectedUpdatedAt: product.updatedAt } },
@@ -51,6 +54,7 @@ async function main() {
     { input: { name: `Client workflow customer ${suffix}`, phone: '9000000011', email: `${suffix.toLowerCase()}@example.test`, city: 'Ahmedabad', address: 'Release-gate test site', forceCreate: true } },
     token,
   )).data.createCustomer;
+  cleanupContext.customerIds.push(customer.id);
 
   const quoteInput = (quantity) => ({
     customerId: customer.id,
@@ -62,6 +66,8 @@ async function main() {
     `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber leadId lines approvalStatus status } }`,
     { input: quoteInput(5) }, token,
   )).data.createQuote;
+  cleanupContext.quoteIds.push(quote.id);
+  cleanupContext.leadIds.push(quote.leadId);
   assert(quote.leadId, 'A direct customer quote must auto-create its internal lead link');
   const quoteLine = Array.isArray(quote.lines) ? quote.lines[0] : JSON.parse(quote.lines)[0];
   assert(Number(quoteLine.listPrice) === 12500 && Number(quoteLine.unitRate) === 10000 && Number(quoteLine.taxAmount) === 9000, 'Quote must retain the negotiated rate and canonical tax calculation');
@@ -81,6 +87,24 @@ async function main() {
     { input: { quoteId: quote.id, paymentMode: 'cash', advanceAmount: 1000, paymentTerms: 'Cash on order', idempotencyKey: firstKey, lines: JSON.stringify([{ quoteLineId, quantity: 2 }]) } }, token,
   )).data.createSalesOrderFromQuote;
   assert(retriedOrder.id === firstOrder.id, 'Repeating an idempotency key must return the original sales order');
+
+  const presentationLines = [{ lineKey: quoteLine.lineKey, area: 'Client-approved master bathroom', customImageUrl: '/brand/marble-park-logo.png', designCode: 'CLIENT-SELECTION-01' }];
+  const presentationUpdate = (await gql(
+    `mutation($id: ID!, $input: UpdateQuotePresentationInput!) { updateQuotePresentation(id: $id, input: $input) { id displayMode lines } }`,
+    { id: quote.id, input: { displayMode: 'priced', linePresentation: JSON.stringify(presentationLines) } }, token,
+  )).data.updateQuotePresentation;
+  assert(presentationUpdate.lines.some((line) => line.area === 'Client-approved master bathroom' && line.customImageUrl === '/brand/marble-park-logo.png'), 'Post-order document presentation changes must remain editable');
+
+  let commercialEditRejected = false;
+  try {
+    await gql(
+      `mutation($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id } }`,
+      { id: quote.id, input: { lines: JSON.stringify([{ ...quoteLine, qty: 99 }]) } }, token,
+    );
+  } catch (error) {
+    commercialEditRejected = /frozen|revision/i.test(String(error.message));
+  }
+  assert(commercialEditRejected, 'Commercial terms must remain frozen after the first order and require a quote revision');
 
   fulfillment = (await gql(`query($quoteId: ID!) { quoteFulfillment(quoteId: $quoteId) }`, { quoteId: quote.id }, token)).data.quoteFulfillment;
   assert(fulfillment.lines[0].ordered === 2 && fulfillment.lines[0].remaining === 3, 'Partial conversion must leave the unconfirmed balance on the same quote');
@@ -117,6 +141,9 @@ async function main() {
   const remainderQuote = (await gql(
     `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id } }`, { input: quoteInput(2) }, token,
   )).data.createQuote;
+  cleanupContext.quoteIds.push(remainderQuote.id);
+  const remainderLead = await prisma.quote.findUnique({ where: { id: remainderQuote.id }, select: { leadId: true } });
+  if (remainderLead?.leadId) cleanupContext.leadIds.push(remainderLead.leadId);
   const remainderFulfillment = (await gql(`query($quoteId: ID!) { quoteFulfillment(quoteId: $quoteId) }`, { quoteId: remainderQuote.id }, token)).data.quoteFulfillment;
   await gql(`mutation($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`, { input: { quoteId: remainderQuote.id, paymentMode: 'cash', idempotencyKey: `${suffix}-REMAINDER-ORDER`, lines: JSON.stringify([{ quoteLineId: remainderFulfillment.lines[0].id, quantity: 1 }]) } }, token);
   await gql(`mutation($quoteId: ID!, $reason: String!) { closeQuoteRemainder(quoteId: $quoteId, reason: $reason) { id status } }`, { quoteId: remainderQuote.id, reason: 'Customer cancelled the final unit during release-gate verification.' }, token);
@@ -139,5 +166,6 @@ main().catch((error) => {
   console.error(error.stack || error.message);
   process.exitCode = 1;
 }).finally(async () => {
+  if (process.env.KEEP_E2E_RECORDS !== '1') await cleanupE2eRecords(prisma, cleanupContext);
   await prisma.$disconnect();
 });

@@ -21,6 +21,7 @@ const QUOTE_DETAIL = gql`
 `;
 
 const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id displayMode lines quoteMeta approvalStatus status } }`;
+const UPDATE_QUOTE_PRESENTATION = gql`mutation UpdateQuotePresentation($id: ID!, $input: UpdateQuotePresentationInput!) { updateQuotePresentation(id: $id, input: $input) { id displayMode lines quoteMeta coverImage } }`;
 const SEND_QUOTE = gql`mutation SendQuote($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
 const CREATE_SALES_ORDER = gql`mutation CreateSalesOrderFromQuote($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`;
 const START_REVISION_FROM_QUOTE = gql`mutation StartRevisionFromQuote($quoteId: String!) { startQuoteRevision(quoteId: $quoteId) }`;
@@ -95,6 +96,7 @@ export default function QuoteDetailPage() {
   const { data, loading, error, refetch } = useQuery(QUOTE_DETAIL, { variables: { id } });
   const { data: fulfillmentData, refetch: refetchFulfillment } = useQuery(QUOTE_FULFILLMENT, { variables: { quoteId: id }, skip: !id });
   const [updateQuote, { loading: savingQuote, error: updateError }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
+  const [updatePresentation, { loading: savingPresentation, error: presentationError }] = useMutation(UPDATE_QUOTE_PRESENTATION, { onCompleted: () => refetch() });
   const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
   const [createSalesOrder, { loading: creatingOrder, error: createOrderError }] = useMutation(CREATE_SALES_ORDER, {
     onCompleted: (result) => {
@@ -120,11 +122,11 @@ export default function QuoteDetailPage() {
       if (intent?.id) router.push(`/dashboard/intents/${intent.id}`);
     },
   });
-  const mutationError = updateError || sendError || createOrderError || reviseError || closeRemainderError;
   const quote = data?.quote;
   const documentSettings = data?.documentSettings?.data || {};
   const brands = useMemo<any[]>(() => (data?.masterProductBrands || []).filter((brand: any) => brand.metadata?.logoUrl && brand.metadata?.quoteEnabled !== false), [data?.masterProductBrands]);
   const fulfillment = fulfillmentData?.quoteFulfillment;
+  const commercialLocked = Boolean(fulfillment?.orders?.length);
 
   useEffect(() => {
     if (!quote) return;
@@ -183,18 +185,26 @@ export default function QuoteDetailPage() {
   const quotedBrandIds = brands.filter((brand: any) => editLines.some((line: any) => String(line.brand || '').trim().toLowerCase() === String(brand.name || '').trim().toLowerCase())).map((brand: any) => String(brand.id));
 
   const updateLine = (index: number, patch: any) => setEditLines((current) => current.map((line, idx) => idx === index ? { ...line, ...patch } : line));
-  const saveQuote = () => updateQuote({
-    variables: {
-      id: quote.id,
-      input: {
-        displayMode,
-        discountPercent: Number(discountPercent || 0),
-        lines: JSON.stringify(editLines.map((line) => ({ ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18) }))),
-        coverImage: coverImage || undefined,
-        quoteMeta: JSON.stringify({ remarks, terms, bankDetails, taxMode, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, coverImage, tagline }),
-      },
-    },
+  const presentationInput = () => ({
+    displayMode,
+    coverImage,
+    quoteMeta: JSON.stringify({ remarks, terms, bankDetails, taxMode, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, coverImage, tagline }),
+    linePresentation: JSON.stringify(editLines.map((line, index) => ({
+      lineKey: line.lineKey || line.id || `index:${index}`,
+      area: line.area || '',
+      quoteImage: line.quoteImage || '',
+      customImageUrl: line.customImageUrl || line.quoteImage || '',
+      designCode: line.designCode || '',
+    }))),
   });
+  const saveQuote = () => commercialLocked
+    ? updatePresentation({ variables: { id: quote.id, input: presentationInput() } })
+    : updateQuote({ variables: { id: quote.id, input: {
+      ...presentationInput(),
+      linePresentation: undefined,
+      discountPercent: Number(discountPercent || 0),
+      lines: JSON.stringify(editLines.map((line) => ({ ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18) }))),
+    } } });
 
   if (loading && !quote) return <div role="status" aria-live="polite" className="mp-card rounded-r5 p-10 text-center font-bold text-[var(--ink-4)]">Loading quote...</div>;
   if (error && !quote) return <div className="mp-card rounded-r5 p-6"><QueryErrorBanner error={error} onRetry={() => refetch()} /></div>;
@@ -202,7 +212,7 @@ export default function QuoteDetailPage() {
 
   return <div className="space-y-6 pb-10">
     {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
-    {mutationError ? <QueryErrorBanner error={mutationError} /> : null}
+    {commercialLocked ? <section className="flex flex-col gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">Commercial terms are locked after sales-order conversion.</p><p className="mt-1 text-xs leading-5 text-amber-800">You can still save cover, room labels, product images, terms and brand logos. Revise the quote to change quantity, rates, discount or GST.</p></div><Button size="sm" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}><PenLine className="mr-2 h-4 w-4" />Revise commercial terms</Button></section> : null}
     <section className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-6 shadow-md-soft">
       <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
         <div>
@@ -222,7 +232,7 @@ export default function QuoteDetailPage() {
               <PenLine className="mr-2 h-5 w-5" /> {revising ? 'Starting...' : 'Revise quote'}
             </Button>
           ) : null}
-          <Button disabled={savingQuote || quote.status === 'superseded'} onClick={saveQuote} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" /> Save quote layout</Button>
+          <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded'} onClick={saveQuote} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Save quote changes'}</Button>
           <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button>
           {quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
         </div>
@@ -294,8 +304,8 @@ export default function QuoteDetailPage() {
         <div className="mp-card rounded-r5 p-5">
           <div className="grid gap-4 md:grid-cols-5">
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">PDF type</span><select value={displayMode} onChange={(event)=>setDisplayMode(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black"><option value="priced">Show prices - quotation</option><option value="selection">Hide prices - selection summary</option></select></label>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Tax treatment</span><select value={taxMode} onChange={(event)=>setTaxMode(event.target.value as 'gst' | 'non_gst')} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black"><option value="gst">GST quotation</option><option value="non_gst">Without GST</option></select></label>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Quote discount %</span><input type="number" value={discountPercent} onChange={(event)=>setDiscountPercent(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Tax treatment</span><select disabled={commercialLocked} value={taxMode} onChange={(event)=>setTaxMode(event.target.value as 'gst' | 'non_gst')} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55"><option value="gst">GST quotation</option><option value="non_gst">Without GST</option></select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Quote discount %</span><input disabled={commercialLocked} type="number" value={discountPercent} onChange={(event)=>setDiscountPercent(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
             <label className="space-y-2 md:col-span-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Remarks</span><input value={remarks} onChange={(event)=>setRemarks(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>
           </div>
         </div>
@@ -314,10 +324,10 @@ export default function QuoteDetailPage() {
                   <p className="text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{line.sku || line.tileCode} · {line.brand || line.category || ''}</p>
                   <div className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-[var(--brand-700)]"/><input value={line.quoteImage || ''} onChange={(event)=>updateLine(index,{quoteImage:event.target.value})} placeholder="Optional quote image URL" className="h-9 flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold" /></div>
                 </div>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty</span><input type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black" /></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">List rate</span><input type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} onChange={(event)=>updateLine(index,{listPrice:Number(event.target.value),price:Number(event.target.value),sellPrice:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black" /></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Disc %</span><input type="number" value={line.discountPercent || line.discount || 0} onChange={(event)=>updateLine(index,{discountPercent:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black" /></label>
-                <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Negotiated / total</p><input aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate ?? line.specialPrice ?? ''} placeholder={String(rate.specialRate)} onChange={(event)=>updateLine(index,{specialRate:event.target.value})} className="mt-1 h-10 w-full rounded-xl border border-[var(--brand-400)] bg-[var(--brand-50)] px-2 text-right text-sm font-black" />{showPrices && <p className="mt-1 text-xl font-black text-[var(--success)]">{money(rate.amount)}</p>}</div>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty</span><input disabled={commercialLocked} type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">List rate</span><input disabled={commercialLocked} type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} onChange={(event)=>updateLine(index,{listPrice:Number(event.target.value),price:Number(event.target.value),sellPrice:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Disc %</span><input disabled={commercialLocked} type="number" value={line.discountPercent || line.discount || 0} onChange={(event)=>updateLine(index,{discountPercent:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
+                <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Negotiated / total</p><input disabled={commercialLocked} aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate ?? line.specialPrice ?? ''} placeholder={String(rate.specialRate)} onChange={(event)=>updateLine(index,{specialRate:event.target.value})} className="mt-1 h-10 w-full rounded-xl border border-[var(--brand-400)] bg-[var(--brand-50)] px-2 text-right text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" />{showPrices && <p className="mt-1 text-xl font-black text-[var(--success)]">{money(rate.amount)}</p>}</div>
               </article>;
             })}
           </div>
@@ -343,7 +353,7 @@ export default function QuoteDetailPage() {
           </div>
           {!brands.length ? <Link href="/dashboard/master-data/brands" className="mt-4 flex items-center gap-2 rounded-md border border-dashed border-[var(--line-strong)] p-3 text-xs font-semibold text-[var(--brand-700)]"><ImageIcon className="h-4 w-4" />Upload logos in Brand Master</Link> : null}
         </div>
-        <div className="mp-panel p-5"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center overflow-hidden rounded-md bg-black p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-white" />}</div><div><p className="font-semibold text-[var(--ink)]">{documentSettings.companyName || 'Marble Park'}</p><p className="text-xs text-[var(--ink-4)]">{documentSettings.gstNumber ? `GSTIN ${documentSettings.gstNumber}` : 'Company profile managed globally'}</p></div></div><Link href="/dashboard/settings" className="mt-4 inline-flex text-xs font-semibold text-[var(--brand-700)]">Edit global quotation identity</Link></div>
+        <div className="mp-panel p-5"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center overflow-hidden rounded-md border border-[var(--line)] bg-white p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-[var(--ink-4)]" />}</div><div><p className="font-semibold text-[var(--ink)]">{documentSettings.companyName || 'Marble Park'}</p><p className="text-xs text-[var(--ink-4)]">{documentSettings.gstNumber ? `GSTIN ${documentSettings.gstNumber}` : 'Company profile managed globally'}</p></div></div><Link href="/dashboard/settings" className="mt-4 inline-flex text-xs font-semibold text-[var(--brand-700)]">Edit global quotation identity</Link></div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">PDF terms</h2><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Terms</span><textarea value={terms} onChange={(event)=>setTerms(event.target.value)} className="min-h-28 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-xs font-bold" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Bank details</span><textarea value={bankDetails} onChange={(event)=>setBankDetails(event.target.value)} className="min-h-24 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-xs font-bold" /></label></div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert selected quantity</h2><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">Choose only the quantities being confirmed now. The remaining balance stays on this quote for the next order or an explicit close-out.</p><div className="mt-4 space-y-2">{(fulfillment?.lines || []).map((line: any) => <label key={line.id} className="grid grid-cols-[1fr_5.5rem] items-center gap-3 rounded-lg border border-[var(--line)] p-3"><span className="min-w-0"><span className="block truncate text-sm font-bold text-[var(--ink)]">{line.sku} · {line.name}</span><span className="text-xs font-semibold text-[var(--ink-4)]">Ordered {line.ordered} of {line.quantity} · remaining {line.remaining}</span></span><input aria-label={`Order quantity for ${line.sku}`} type="number" min={0} max={line.remaining} value={orderQuantities[line.id] ?? ''} onChange={(event) => setOrderQuantities((current) => ({ ...current, [line.id]: event.target.value }))} disabled={!line.remaining} className="h-10 rounded-lg border border-[var(--brand-400)] bg-[var(--brand-50)] px-2 text-right text-sm font-black" /></label>)}{fulfillment && !fulfillment.lines?.length ? <p className="text-sm font-semibold text-[var(--ink-4)]">No remaining quote lines.</p> : null}</div><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Advance / full paid</span><input type="number" min={0} value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>}<label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Payment terms</span><input value={paymentTerms} onChange={(e)=>setPaymentTerms(e.target.value)} placeholder={paymentMode === 'credit' ? 'Net 30' : 'Cash on order'} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Promised dispatch date</span><input type="date" value={promisedDate} onChange={(e)=>setPromisedDate(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>{orderMessage && <div className="mt-3 rounded-2xl bg-[var(--brand-50)] p-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[var(--brand-600)] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder || quote.status === 'superseded' || !(fulfillment?.lines || []).some((line: any) => Number(orderQuantities[line.id] || 0) > 0)} onClick={()=>{ const key = orderKey || (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`); setOrderKey(key); createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),paymentTerms:paymentTerms || undefined,promisedDate:promisedDate || undefined,idempotencyKey:key,lines:JSON.stringify((fulfillment?.lines || []).map((line: any) => ({ quoteLineId: line.id, quantity: Number(orderQuantities[line.id] || 0) })).filter((line: any) => line.quantity > 0)),notes:'Created from quote detail'}}}); }}>{creatingOrder ? 'Creating...' : 'Create selected sales order'}</Button>{(fulfillment?.orders || []).length ? <div className="mt-5 border-t border-[var(--line)] pt-4"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Orders from this quote</p>{fulfillment.orders.map((order: any) => <div key={order.id} className="mt-2 flex justify-between gap-3 text-sm font-bold"><span>{order.orderNumber} · {order.status}</span><span>{money(order.totalAmount)}</span></div>)}</div> : null}<div className="mt-5 border-t border-[var(--line)] pt-4"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Close unused remainder</p><input value={closeReason} onChange={(event) => setCloseReason(event.target.value)} placeholder="Reason required to close remaining quantity" className="mt-2 h-10 w-full rounded-lg border border-[var(--line)] px-3 text-sm font-semibold" /><Button variant="outline" className="mt-2 w-full" disabled={closingRemainder || !closeReason.trim() || !(fulfillment?.lines || []).some((line: any) => Number(line.remaining || 0) > 0)} onClick={() => closeRemainder({ variables: { quoteId: quote.id, reason: closeReason } })}>{closingRemainder ? 'Closing...' : 'Close remaining quantity'}</Button></div></div>
       </aside>

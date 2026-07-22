@@ -21,7 +21,7 @@ PUBLIC = ROOT / "apps" / "web" / "public" / "help"
 DATA = REPORT / "guide-data.json"
 OUTPUT = REPORT / "Marble-Park-ERP-Complete-User-Guide-2026-07-17.pdf"
 PUBLIC_OUTPUT = PUBLIC / "Marble-Park-ERP-User-Guide.pdf"
-LOGO = ROOT / "apps" / "web" / "public" / "brand" / "marble-park-logo.jpg"
+LOGO = ROOT / "apps" / "web" / "public" / "brand" / "marble-park-logo.png"
 
 INK = colors.HexColor("#18181b")
 MUTED = colors.HexColor("#52525b")

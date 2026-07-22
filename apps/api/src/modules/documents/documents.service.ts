@@ -247,7 +247,7 @@ export class DocumentsService {
     });
     const uploaderIds = Array.from(new Set(assets.map((asset) => asset.uploadedBy)));
     const uploaders = uploaderIds.length ? await this.prisma.user.findMany({ where: { id: { in: uploaderIds } }, select: { id: true, name: true, email: true } }) : [];
-    const uploaderById = new Map(uploaders.map((user) => [user.id, user]));
+    const uploaderById = new Map<string, (typeof uploaders)[number]>(uploaders.map((user) => [user.id, user]));
     return assets.map((asset) => publicAsset(asset, uploaderById));
   }
 

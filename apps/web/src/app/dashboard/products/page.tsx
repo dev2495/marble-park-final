@@ -5,15 +5,16 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useQuery, gql } from '@apollo/client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bath, Boxes, Grid3X3, Image as ImageIcon, PackageSearch, Search, ShieldCheck, Sparkles, Tag, Wrench, X } from 'lucide-react';
+import { Bath, Boxes, ChevronLeft, ChevronRight, Grid3X3, Image as ImageIcon, PackageSearch, Search, ShieldCheck, Sparkles, Tag, Wrench, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { ProductImageFrame } from '@/components/product-image-frame';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 
 const GET_PRODUCTS = gql`
-  query Products($search: String, $category: String, $take: Int) {
-    products(search: $search, category: $category, take: $take) {
+  query Products($search: String, $category: String, $take: Int, $skip: Int) {
+    products(search: $search, category: $category, take: $take, skip: $skip) {
       id
       sku
       name
@@ -87,17 +88,22 @@ function galleryFor(product: any) {
 }
 
 export default function ProductsPage() {
+  const pageSize = 36;
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
+  const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [galleryProduct, setGalleryProduct] = useState<any>(null);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [portalReady, setPortalReady] = useState(false);
-  const { data, loading, error, refetch } = useQuery(GET_PRODUCTS, { variables: { search, category: category || undefined, take: 180 } });
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const { data, loading, error, refetch } = useQuery(GET_PRODUCTS, { variables: { search: debouncedSearch || undefined, category: category || undefined, take: pageSize + 1, skip: page * pageSize } });
   const { data: categoriesData, error: categoriesError } = useQuery(GET_CATEGORIES);
   const { data: statsData, error: statsError } = useQuery(GET_PRODUCT_STATS);
 
-  const products = useMemo<any[]>(() => data?.products || [], [data?.products]);
+  const productPage = useMemo<any[]>(() => data?.products || [], [data?.products]);
+  const products = useMemo<any[]>(() => productPage.slice(0, pageSize), [productPage]);
+  const hasNextPage = productPage.length > pageSize;
   const stats = statsData?.productStats;
   const categories = useMemo<any[]>(() => categoriesData?.productCategories || [], [categoriesData?.productCategories]);
   const selected = useMemo(() => products.find((p: any) => p.id === selectedId) || products[0] || emptyPreview, [products, selectedId]);
@@ -188,6 +194,7 @@ export default function ProductsPage() {
                   <ProductImageFrame
                     src={galleryFor(selected)[0]}
                     alt={selected.name}
+                    eager
                     label={selected.category}
                     className="aspect-[4/3] rounded-r4"
                     imageClassName="p-3 group-hover:scale-[1.02]"
@@ -241,16 +248,16 @@ export default function ProductsPage() {
           <Input
             placeholder="Search SKU, brand, faucet, sink, WC, tile..."
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => { setSearch(event.target.value); setPage(0); }}
             className="h-[3.25rem] rounded-2xl border-[var(--line)] bg-[var(--surface)] pl-11 text-sm font-bold shadow-sm"
           />
         </div>
         <div className="flex gap-2 overflow-x-auto pb-1 lg:pb-0">
-          <Button onClick={() => setCategory('')} variant={!category ? 'default' : 'outline'} className="rounded-2xl font-black">
+          <Button onClick={() => { setCategory(''); setPage(0); }} variant={!category ? 'default' : 'outline'} className="rounded-2xl font-black">
             All
           </Button>
           {categories.map((item: string) => (
-            <Button key={item} onClick={() => setCategory(item)} variant={category === item ? 'default' : 'outline'} className="whitespace-nowrap rounded-2xl font-black">
+            <Button key={item} onClick={() => { setCategory(item); setPage(0); }} variant={category === item ? 'default' : 'outline'} className="whitespace-nowrap rounded-2xl font-black">
               {item}
             </Button>
           ))}
@@ -276,16 +283,13 @@ export default function ProductsPage() {
         <div className="rounded-r5 border border-dashed border-[var(--line)] bg-[var(--surface)]/70 p-16 text-center text-[var(--ink-4)]">No products found.</div>
       ) : (
         <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {products.map((product: any, index: number) => {
+          {products.map((product: any) => {
             const productLook = getLook(product.category);
             const ProductIcon = productLook.icon;
             const margin = product.floorPrice ? Math.max(0, product.sellPrice - product.floorPrice) : 0;
             return (
-              <motion.article
+              <article
                 key={product.id}
-                initial={{ opacity: 0, y: 18 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.025 }}
                 onClick={() => { setSelectedId(product.id); if (galleryFor(product).length > 0) { setGalleryProduct(product); setGalleryIndex(0); } }}
                 className="mp-card group overflow-hidden rounded-r5 text-left transition-all hover:-translate-y-1 hover:shadow-2xl"
               >
@@ -326,11 +330,12 @@ export default function ProductsPage() {
                   </div>
                   {galleryFor(product).length > 0 && <Button type="button" size="sm" variant="outline" className="w-full rounded-2xl" onClick={(event) => { event.stopPropagation(); setSelectedId(product.id); setGalleryProduct(product); setGalleryIndex(0); }}>Open full-size gallery</Button>}
                 </div>
-              </motion.article>
+              </article>
             );
           })}
         </section>
       )}
+      {!loading && (page > 0 || hasNextPage) ? <nav aria-label="Catalogue pages" className="mp-panel flex items-center justify-between rounded-r4 p-3"><Button variant="outline" disabled={page === 0} onClick={() => { setPage((current) => Math.max(0, current - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}><ChevronLeft className="mr-2 h-4 w-4" />Previous</Button><span className="text-sm font-semibold text-[var(--ink-4)]">Page {page + 1}</span><Button variant="outline" disabled={!hasNextPage} onClick={() => { setPage((current) => current + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Next<ChevronRight className="ml-2 h-4 w-4" /></Button></nav> : null}
     </div>
   );
 }

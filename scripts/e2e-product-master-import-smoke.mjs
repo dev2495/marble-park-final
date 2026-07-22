@@ -95,7 +95,8 @@ async function main() {
       sellPrice: row.provided?.sellPrice ? row.sellPrice : '', floorPrice: row.provided?.floorPrice ? row.floorPrice : '', taxClass: row.taxClass,
       hsnCode: row.hsnCode || '', allowLoose: row.provided?.allowLoose ? (row.allowLoose ? 'Yes' : 'No') : '', range: row.range || '', imageUrl: row.imageUrl || '', description: row.description || '',
     }));
-    const cleanApplied = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $confirmationToken: String!, $reviewRows: JSON) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, confirmationToken: $confirmationToken, reviewRows: $reviewRows) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel', confirmationToken: cleanPreview.confirmationToken, reviewRows: browserRows }, token)).applyUploadedImport.result;
+    const cleanRevalidated = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $reviewRows: JSON) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, reviewRows: $reviewRows) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel', reviewRows: browserRows }, token)).previewUploadedImport.result;
+    const cleanApplied = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $confirmationToken: String!, $reviewRows: JSON) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, confirmationToken: $confirmationToken, reviewRows: $reviewRows) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel', confirmationToken: cleanRevalidated.confirmationToken, reviewRows: browserRows }, token)).applyUploadedImport.result;
     assert(cleanApplied.status === 'applied' && cleanApplied.created === 1, 'Initial clean preview must apply with the browser-expanded review payload');
 
     const workbook = new ExcelJS.Workbook();

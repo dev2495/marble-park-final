@@ -46,8 +46,8 @@ const styles = StyleSheet.create({
   coverHeroBg: { position: 'absolute', top: 60, left: 0, right: 0, height: 460, backgroundColor: colors.line },
   coverHero: { position: 'absolute', top: 60, left: 0, right: 0, height: 460, objectFit: 'cover' },
   coverBrandWordmark: { position: 'absolute', top: 80, left: 28, right: 28, fontSize: 64, fontWeight: 900, letterSpacing: 4, color: '#ffffff', textAlign: 'center', textShadow: '0 2px 8px rgba(0,0,0,0.45)' },
-  coverIdentity: { position: 'absolute', top: 82, left: 28, width: 112, height: 142, backgroundColor: '#000000', padding: 8, alignItems: 'center', justifyContent: 'center' },
-  coverIdentityLogo: { width: 96, height: 126, objectFit: 'contain' },
+  coverIdentity: { position: 'absolute', top: 82, left: 28, width: 124, height: 152, backgroundColor: '#ffffff', borderWidth: 1, borderColor: colors.line, padding: 8, alignItems: 'center', justifyContent: 'center' },
+  coverIdentityLogo: { width: 108, height: 136, objectFit: 'contain' },
   coverQuotationTab: { position: 'absolute', left: '20%', right: '20%', bottom: 195, backgroundColor: colors.charcoal, paddingVertical: 12, paddingHorizontal: 28, borderRadius: 0 },
   coverQuotationText: { fontSize: 26, fontWeight: 900, color: '#ffffff', textAlign: 'center', letterSpacing: 4 },
   coverRibbon: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.charcoal, color: '#ffffff', paddingVertical: 22, paddingHorizontal: 36 },
@@ -71,8 +71,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
   logoBox: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.ink, color: colors.paper, alignItems: 'center', justifyContent: 'center' },
   logoText: { fontSize: 15, fontWeight: 800 },
-  companyLogoBox: { width: 54, height: 54, backgroundColor: '#000000', padding: 4, alignItems: 'center', justifyContent: 'center' },
-  companyLogo: { width: 46, height: 46, objectFit: 'contain' },
+  companyLogoBox: { width: 64, height: 58, backgroundColor: '#ffffff', padding: 1, alignItems: 'center', justifyContent: 'center' },
+  companyLogo: { width: 58, height: 56, objectFit: 'contain' },
   brandWrap: { width: '64%', flexDirection: 'row', gap: 10, alignItems: 'center' },
   brand: { fontSize: 23, fontWeight: 900, letterSpacing: 1.6 },
   subBrand: { marginTop: 3, fontSize: 7.5, color: colors.tan, letterSpacing: 3.4, textTransform: 'uppercase' },
@@ -221,7 +221,7 @@ async function hydrateImages(payload, requestUrl, apiUrl) {
   };
 
   const settings = { ...(payload.settings || {}) };
-  settings.logoUrl = await toDataUri(settings.logoUrl || '/brand/marble-park-logo.jpg');
+  settings.logoUrl = await toDataUri(settings.logoUrl || '/brand/marble-park-logo.png');
   const brands = await Promise.all(asArray(payload.brands).map(async (brand) => ({
     ...brand,
     metadata: { ...safeJson(brand.metadata, {}), logoUrl: await toDataUri(safeJson(brand.metadata, {}).logoUrl) },
@@ -387,7 +387,7 @@ function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
   const e = React.createElement;
   const heroUrl = buildAbsoluteUrl(quoteMeta.coverImage || quote.coverImage || (quote.customer && quote.customer.coverImage), requestUrl);
   const company = (settings && settings.companyName) || quoteMeta.companyName || 'MARBLE PARK';
-  const companyLogo = buildAbsoluteUrl((settings && settings.logoUrl) || '/brand/marble-park-logo.jpg', requestUrl);
+  const companyLogo = buildAbsoluteUrl((settings && settings.logoUrl) || '/brand/marble-park-logo.png', requestUrl);
   const customerName = quote.customer?.name || 'Premium Client';
   const customerMobile = quote.customer?.mobile || quote.customer?.phone || '';
   const architect = quote.customer?.architectName || quoteMeta.architectName || '';
@@ -578,7 +578,7 @@ function PricedDocumentBody(payload, requestUrl) {
   const terms = taxMode === 'non_gst' ? String(rawTerms).split('\n').filter((line) => !/\bGST\b/i.test(line)).join('\n') : rawTerms;
   const bank = quoteMeta.bankDetails || settings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
   const remarks = quoteMeta.remarks || quote.notes || 'Selections can be revised area-wise before final order confirmation.';
-  const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.jpg', requestUrl);
+  const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.png', requestUrl);
   const contactLine = [settings.companyAddress, settings.gstNumber ? `GSTIN ${settings.gstNumber}` : '', settings.supportPhone, settings.supportEmail].filter(Boolean).join(' · ');
 
   return e(Page, { size: 'A4', style: styles.page },

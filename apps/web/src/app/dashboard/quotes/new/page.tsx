@@ -340,7 +340,7 @@ export default function QuoteBuilderPage() {
             <div className="rounded-md border border-[#e4e4e7] bg-white p-4 lg:col-span-2">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="grid h-10 w-10 place-items-center overflow-hidden rounded bg-black p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-white" />}</div>
+                  <div className="grid h-10 w-10 place-items-center overflow-hidden rounded border border-[#e4e4e7] bg-white p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-[#71717a]" />}</div>
                   <div><p className="text-sm font-semibold text-[#18181b]">{documentSettings.companyName || 'Marble Park'}</p><p className="text-xs text-[#71717a]">Global quotation identity</p></div>
                 </div>
                 <span className="text-xs font-semibold text-[#52525b]">{selectedBrandIds.length} brand logo(s) selected</span>

@@ -210,7 +210,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const me = meData?.me || user;
   const company = meData?.documentSettings?.data || {};
   const companyName = company.companyName || 'Marble Park';
-  const companyLogo = company.logoUrl || '/brand/marble-park-logo.jpg';
+  const companyLogo = company.logoUrl || '/brand/marble-park-logo.png';
   const previewingRole = user?.role === 'admin' && roleOverride;
   const effectiveRole = previewingRole ? roleOverride : me?.role || user?.role || 'owner';
   const effectivePermissions = previewingRole ? [] : (me?.effectivePermissions || user?.effectivePermissions || []);

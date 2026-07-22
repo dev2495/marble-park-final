@@ -59,7 +59,7 @@ const UPDATE_STOCK_LOCATION = gql`
 
 const defaults = {
   companyName: 'Marble Park',
-  logoUrl: '/brand/marble-park-logo.jpg',
+  logoUrl: '/brand/marble-park-logo.png',
   companyAddress: 'Near DCB Bank, Char Rasta, Vapi (Guj)-396191, India',
   gstNumber: '24AHPPS9407D1Z3',
   website: '',

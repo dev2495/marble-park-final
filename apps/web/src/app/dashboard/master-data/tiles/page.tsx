@@ -3,13 +3,14 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { Boxes, Camera, Grid3X3, ImageOff, MapPin, PackagePlus, Printer, Search, Store, Upload, X } from 'lucide-react';
+import { Boxes, Camera, ChevronLeft, ChevronRight, Grid3X3, ImageOff, MapPin, PackagePlus, Printer, Search, Store, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 
-const DATA = gql`query TileDesignWorkspace($search: String) {
-  products(search: $search, category: "Tiles", take: 200) { id sku internalCode name category brand finish dimensions salesUom piecesPerPack coveragePerPack media status }
+const DATA = gql`query TileDesignWorkspace($search: String, $skip: Int, $take: Int) {
+  products(search: $search, category: "Tiles", skip: $skip, take: $take) { id sku internalCode name category brand finish dimensions salesUom piecesPerPack coveragePerPack media status }
   displaySamples(status: "all", take: 300)
   stockLocations(status: "active")
   tileDesignStats
@@ -34,15 +35,20 @@ function Metric({ label, value, tone = 'text-[var(--ink)]' }: { label: string; v
 export default function TileMasterPage() {
   const [tab, setTab] = useState<'designs' | 'display' | 'sizes'>('designs');
   const [search, setSearch] = useState('');
+  const [designPage, setDesignPage] = useState(0);
   const [sample, setSample] = useState<any>(emptySample);
   const [size, setSize] = useState<any>(emptySize);
   const [notice, setNotice] = useState('');
-  const { data, loading, error, refetch } = useQuery(DATA, { variables: { search: search || undefined }, fetchPolicy: 'cache-and-network' });
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const designPageSize = 50;
+  const { data, loading, error, refetch } = useQuery(DATA, { variables: { search: debouncedSearch || undefined, skip: designPage * designPageSize, take: designPageSize + 1 }, fetchPolicy: 'cache-and-network' });
   const [createSample, createState] = useMutation(CREATE_SAMPLE);
   const [updateSample, updateState] = useMutation(UPDATE_SAMPLE);
   const [createLabel, labelState] = useMutation(CREATE_LABEL);
   const [saveSize, sizeState] = useMutation(SAVE_TILE_SIZE);
-  const products = data?.products || [];
+  const productResults = data?.products || [];
+  const products = productResults.slice(0, designPageSize);
+  const hasNextDesignPage = productResults.length > designPageSize;
   const samples = useMemo<any[]>(() => data?.displaySamples || [], [data?.displaySamples]);
   const locations = data?.stockLocations || [];
   const sizes = data?.tileSizes || [];
@@ -111,15 +117,15 @@ export default function TileMasterPage() {
 
     {tab === 'designs' ? <section className="mp-panel overflow-hidden">
       <div className="flex flex-col gap-3 border-b border-[var(--line)] p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div><h2 className="font-semibold text-[var(--ink)]">Product Master tile designs</h2><p className="text-xs text-[var(--ink-4)]">Search by showroom code, SKU, design name or brand. Up to 200 matching results load at once.</p></div>
-        <label className="flex h-10 w-full items-center rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3 sm:w-80"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]"/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search internal code or design" className="w-full bg-transparent text-sm outline-none"/></label>
+        <div><h2 className="font-semibold text-[var(--ink)]">Product Master tile designs</h2><p className="text-xs text-[var(--ink-4)]">Search by showroom code, SKU, design name or brand. Results load 50 at a time.</p></div>
+        <label className="flex h-10 w-full items-center rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3 sm:w-80"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]"/><input value={search} onChange={(event) => { setSearch(event.target.value); setDesignPage(0); }} placeholder="Search internal code or design" className="w-full bg-transparent text-sm outline-none"/></label>
       </div>
       <div className="divide-y divide-[var(--line)]">
         {products.map((product: any) => {
           const display: any = sampleByProduct.get(product.id);
           const image = productImage(product);
           return <article key={product.id} className="grid gap-3 p-4 md:grid-cols-[4rem_minmax(0,1.6fr)_minmax(0,1fr)_auto] md:items-center">
-            <div className="grid h-16 w-16 place-items-center overflow-hidden rounded-md bg-[var(--bg-soft)] shadow-[inset_0_0_0_1px_var(--line)]">{image ? <img src={image} alt="" className="h-full w-full object-cover"/> : <ImageOff className="h-5 w-5 text-[var(--ink-5)]"/>}</div>
+            <div className="grid h-16 w-16 place-items-center overflow-hidden rounded-md bg-[var(--bg-soft)] shadow-[inset_0_0_0_1px_var(--line)]">{image ? <img src={image} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover"/> : <ImageOff className="h-5 w-5 text-[var(--ink-5)]"/>}</div>
             <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="rounded bg-[#e8f0ff] px-2 py-1 text-xs font-semibold text-[#2456a6]">{product.internalCode || 'Code missing'}</span>{display ? <span className="rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">On display</span> : null}</div><h3 className="mt-2 truncate font-semibold text-[var(--ink)]">{product.name}</h3><p className="mt-0.5 truncate text-xs text-[var(--ink-4)]">{product.sku} · {product.brand || 'No brand'}</p></div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs"><span className="text-[var(--ink-4)]">Size</span><span className="font-medium text-[var(--ink)]">{product.dimensions || 'Not set'}</span><span className="text-[var(--ink-4)]">Finish</span><span className="font-medium text-[var(--ink)]">{product.finish || 'Not set'}</span><span className="text-[var(--ink-4)]">Pack</span><span className="font-medium text-[var(--ink)]">{product.piecesPerPack || 0} pc / {product.salesUom || 'BOX'}</span></div>
             <Button variant={display ? 'outline' : 'default'} onClick={() => beginDisplay(product)}><Store className="mr-2 h-4 w-4"/>{display ? 'Edit display' : 'Place on display'}</Button>
@@ -127,6 +133,7 @@ export default function TileMasterPage() {
         })}
         {!loading && !products.length ? <div className="grid min-h-56 place-items-center p-6 text-center"><div><Boxes className="mx-auto h-7 w-7 text-[var(--ink-5)]"/><p className="mt-3 font-semibold text-[var(--ink)]">No matching tile designs</p><p className="mt-1 text-sm text-[var(--ink-4)]">Import the supplier sheet or clear the search.</p></div></div> : null}
       </div>
+      <div className="flex items-center justify-between border-t border-[var(--line)] p-4"><p className="text-xs font-semibold text-[var(--ink-4)]">Page {designPage + 1} · {products.length} design{products.length === 1 ? '' : 's'}</p><div className="flex gap-2"><Button type="button" size="icon" variant="outline" aria-label="Previous tile designs" disabled={designPage === 0 || loading} onClick={() => setDesignPage((page) => Math.max(0, page - 1))}><ChevronLeft className="h-4 w-4"/></Button><Button type="button" size="icon" variant="outline" aria-label="Next tile designs" disabled={!hasNextDesignPage || loading} onClick={() => setDesignPage((page) => page + 1)}><ChevronRight className="h-4 w-4"/></Button></div></div>
     </section> : null}
 
     {tab === 'display' ? <section className="grid gap-5 xl:grid-cols-[22rem_1fr]">

@@ -161,6 +161,21 @@ export class UpdateQuoteInput {
 }
 
 @InputType()
+export class UpdateQuotePresentationInput {
+  @Field(() => String, { nullable: true })
+  displayMode?: string;
+
+  @Field(() => String, { nullable: true })
+  quoteMeta?: string;
+
+  @Field(() => String, { nullable: true, description: 'Hero image shown on the PDF cover page (URL or /uploaded path)' })
+  coverImage?: string;
+
+  @Field(() => String, { nullable: true, description: 'JSON array of non-commercial line presentation fields' })
+  linePresentation?: string;
+}
+
+@InputType()
 export class CreateSalesOrderInput {
   @Field(() => String)
   quoteId!: string;
@@ -265,6 +280,18 @@ export class QuotesResolver {
     const quote = await this.quotes.findById(id);
     if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.update(id, input as any);
+  }
+
+  @Mutation(() => QuoteOutput)
+  async updateQuotePresentation(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: UpdateQuotePresentationInput,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const quote = await this.quotes.findById(id);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    return this.quotes.updatePresentation(id, input as any, user.id);
   }
 
   @Mutation(() => QuoteOutput)

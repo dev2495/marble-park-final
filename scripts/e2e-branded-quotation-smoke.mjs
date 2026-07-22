@@ -1,5 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { PrismaClient } from '@prisma/client';
+import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
 
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const WEB = process.env.WEB_URL || 'http://localhost:3000';
@@ -7,6 +9,8 @@ const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const PDF_OUTPUT = resolve(process.env.PDF_OUTPUT || 'output/pdf/marble-park-branded-quotation-sample.pdf');
 const NON_GST_PDF_OUTPUT = resolve(process.env.NON_GST_PDF_OUTPUT || 'output/pdf/marble-park-non-gst-quotation-sample.pdf');
+const prisma = new PrismaClient();
+const cleanupContext = { productIds: [], customerIds: [], quoteIds: [], leadIds: [], brandIds: [] };
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -35,7 +39,7 @@ async function main() {
   assert(token, 'Admin login must return a session token');
   const uploadedImage = (await gql(
     `mutation($filename: String!, $contentBase64: String!, $scope: String) { uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result } }`,
-    { filename: `branded-quote-${suffix}.jpg`, contentBase64: (await readFile(resolve('apps/web/public/brand/marble-park-logo.jpg'))).toString('base64'), scope: 'product-image' },
+    { filename: `branded-quote-${suffix}.png`, contentBase64: (await readFile(resolve('apps/web/public/brand/marble-park-logo.png'))).toString('base64'), scope: 'product-image' },
     token,
   )).uploadStoredAsset.result.publicUrl;
   assert(/^https:\/\//.test(uploadedImage) || /^\/catalogue-images\/manual\//.test(uploadedImage), 'Product image upload must return an approved persistent URL');
@@ -44,7 +48,7 @@ async function main() {
     `mutation($input: UpdateSettingsInput!) { updateAppSettings(input: $input) { data } }`,
     { input: {
       companyName: 'Marble Park',
-      logoUrl: '/brand/marble-park-logo.jpg',
+      logoUrl: '/brand/marble-park-logo.png',
       companyAddress: 'Near DCB Bank, Char Rasta, Vapi (Guj)-396191, India',
       gstNumber: '24AHPPS9407D1Z3',
       website: 'www.marblepark.in',
@@ -58,10 +62,10 @@ async function main() {
     } },
     token,
   )).updateAppSettings.data;
-  assert(settings.logoUrl === '/brand/marble-park-logo.jpg' && settings.gstNumber === '24AHPPS9407D1Z3', 'Company document identity must persist');
+  assert(settings.logoUrl === '/brand/marble-park-logo.png' && settings.gstNumber === '24AHPPS9407D1Z3', 'Company document identity must persist');
 
   const brandSpecs = [
-    { name: `Marble Park Signature ${suffix}`, code: `MPS-${suffix}`, logoUrl: '/brand/marble-park-logo.jpg' },
+    { name: `Marble Park Signature ${suffix}`, code: `MPS-${suffix}`, logoUrl: '/brand/marble-park-logo.png' },
     { name: `Marble Park Studio ${suffix}`, code: `MPL-${suffix}`, logoUrl: '/brand/marble-park-legacy-reference.jpg' },
     { name: `Served Brand Portfolio ${suffix}`, code: `SBP-${suffix}`, logoUrl: '/brand/client-served-brands-reference.png' },
   ];
@@ -74,6 +78,7 @@ async function main() {
     );
     brands.push(result.saveProductBrand.data);
   }
+  cleanupContext.brandIds.push(...brands.map((brand) => brand.id));
   assert(brands.every((brand) => brand.metadata?.logoUrl && brand.metadata?.quoteEnabled === true), 'Each Brand Master record must retain its quote logo');
 
   const createProduct = async (input) => (await gql(
@@ -85,11 +90,13 @@ async function main() {
     createProduct({ sku: `MP-MIXER-${suffix}`, name: 'Tall basin mixer - quotation selection', category: 'Faucets', brand: brands[1].name, finish: 'Brushed Nickel', dimensions: '310 mm', unit: 'PC', sellPrice: 12900, floorPrice: 9900, taxClass: 'GST_18', media: { gallery: [uploadedImage], primaryImage: uploadedImage }, description: 'Customer-facing image can be replaced by the sales team' }),
     createProduct({ sku: `MP-TILE-${suffix}`, internalCode: `SHOW-${suffix}`, name: 'Large-format porcelain tile', category: 'Tiles', brand: brands[2].name, finish: 'Matt', dimensions: '600 x 1200 mm', unit: 'BOX', baseUom: 'PC', purchaseUom: 'BOX', salesUom: 'SQFT', piecesPerPack: 2, coveragePerPack: 15.5, sellPrice: 165, floorPrice: 130, taxClass: 'GST_18', media: { gallery: [{ url: uploadedImage }] }, description: 'Area-priced tile fulfilled as physical boxes' }),
   ]);
+  cleanupContext.productIds.push(basin.id, mixer.id, tile.id);
   const customer = (await gql(
     `mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`,
     { input: { name: `Sample Client ${suffix}`, phone: '9876543210', email: `sample-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Sample residence, Vapi', forceCreate: true } },
     token,
   )).createCustomer;
+  cleanupContext.customerIds.push(customer.id);
 
   const selectedBrandIds = brands.map((brand) => String(brand.id));
   const quoteMeta = {
@@ -102,7 +109,7 @@ async function main() {
     remarks: 'Sample document generated by the branded quotation release gate.',
   };
   const quote = (await gql(
-    `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber lines quoteMeta displayMode customer } }`,
+    `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber leadId lines quoteMeta displayMode customer } }`,
     { input: {
       customerId: customer.id,
       title: 'Premium bathroom selection',
@@ -117,6 +124,8 @@ async function main() {
     } },
     token,
   )).createQuote;
+  cleanupContext.quoteIds.push(quote.id);
+  cleanupContext.leadIds.push(quote.leadId);
   const storedMeta = typeof quote.quoteMeta === 'string' ? JSON.parse(quote.quoteMeta) : quote.quoteMeta;
   assert(selectedBrandIds.every((id) => storedMeta.selectedBrandIds.includes(id)), 'Quote must persist every explicit footer brand selection');
   const tileLine = quote.lines.find((line) => line.rateBasis === 'AREA');
@@ -134,7 +143,7 @@ async function main() {
   await writeFile(PDF_OUTPUT, pdf);
 
   const nonGstQuote = (await gql(
-    `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber lines quoteMeta } }`,
+    `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber leadId lines quoteMeta } }`,
     { input: {
       customerId: customer.id,
       title: 'Non-GST showroom quotation',
@@ -144,6 +153,8 @@ async function main() {
       lines: JSON.stringify([{ productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, taxRate: 0, media: basin.media, area: 'General Selection' }]),
     } }, token,
   )).createQuote;
+  cleanupContext.quoteIds.push(nonGstQuote.id);
+  cleanupContext.leadIds.push(nonGstQuote.leadId);
   assert(nonGstQuote.lines.every((line) => Number(line.taxRate) === 0 && Number(line.taxAmount) === 0), 'Non-GST quote must persist zero tax on every line');
   const nonGstPdfResponse = await fetch(`${WEB}/api/pdf/quote/${nonGstQuote.id}`);
   assert(nonGstPdfResponse.ok, `Non-GST quotation PDF must render (${nonGstPdfResponse.status})`);
@@ -170,4 +181,7 @@ async function main() {
 main().catch((error) => {
   console.error(error.stack || error.message);
   process.exitCode = 1;
+}).finally(async () => {
+  await cleanupE2eRecords(prisma, cleanupContext);
+  await prisma.$disconnect();
 });

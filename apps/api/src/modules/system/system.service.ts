@@ -21,7 +21,7 @@ export class SystemService {
           challanPrefix: 'CH',
           approvalDiscountThreshold: 15,
           companyName: 'Marble Park',
-          logoUrl: '/brand/marble-park-logo.jpg',
+          logoUrl: '/brand/marble-park-logo.png',
           companyAddress: 'Near DCB Bank, Char Rasta, Vapi (Guj)-396191, India',
           gstNumber: '24AHPPS9407D1Z3',
           website: '',
@@ -43,7 +43,7 @@ export class SystemService {
     const settings = await this.getSettings();
     return {
       companyName: settings.companyName,
-      logoUrl: settings.logoUrl,
+      logoUrl: settings.logoUrl === '/brand/marble-park-logo.jpg' ? '/brand/marble-park-logo.png' : settings.logoUrl,
       companyAddress: settings.companyAddress,
       gstNumber: settings.gstNumber,
       website: settings.website,
@@ -67,7 +67,7 @@ export class SystemService {
         challanPrefix: input.challanPrefix ?? current.challanPrefix,
         approvalDiscountThreshold: input.approvalDiscountThreshold ?? current.approvalDiscountThreshold,
         companyName: input.companyName ?? current.companyName,
-        logoUrl: input.logoUrl ?? current.logoUrl,
+        logoUrl: input.logoUrl ?? (current.logoUrl === '/brand/marble-park-logo.jpg' ? '/brand/marble-park-logo.png' : current.logoUrl),
         companyAddress: input.companyAddress ?? current.companyAddress,
         gstNumber: input.gstNumber ?? current.gstNumber,
         website: input.website ?? current.website,

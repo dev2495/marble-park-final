@@ -6,8 +6,8 @@ export const metadata: Metadata = {
   title: 'Marble Park | Premium Bath Solutions',
   description: 'Marble Park - Premium Bath Solutions CRM & Inventory Management',
   icons: {
-    icon: '/brand/marble-park-logo.jpg',
-    shortcut: '/brand/marble-park-logo.jpg',
+    icon: '/brand/marble-park-logo-square.png',
+    shortcut: '/brand/marble-park-logo-square.png',
   },
 };
 

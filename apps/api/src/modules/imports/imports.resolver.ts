@@ -169,9 +169,9 @@ export class ImportsResolver {
     await requirePermission(this.prisma, ctx, 'catalogue.import');
     const filePath = uploadTempPath(uploadId, filename);
     const chunk = decodeBase64Upload(contentBase64, MAX_EXCEL_UPLOAD_BYTES, 'Excel upload chunk');
-    const currentSize = fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
+    const currentSize = fs.existsSync(filePath) ? (await fs.promises.stat(filePath)).size : 0;
     if (currentSize + chunk.length > MAX_EXCEL_UPLOAD_BYTES) throw new BadRequestException('Excel uploads are limited to 25 MB');
-    fs.appendFileSync(filePath, chunk);
+    await fs.promises.appendFile(filePath, chunk);
     return { id: uploadId, result: { uploadedBytes: currentSize + chunk.length } };
   }
 
@@ -183,7 +183,10 @@ export class ImportsResolver {
   ) {
     await requirePermission(this.prisma, ctx, 'catalogue.import');
     const filePath = uploadTempPath(uploadId, filename);
-    fs.rmSync(filePath, { force: true });
+    await Promise.all([
+      fs.promises.rm(filePath, { force: true }),
+      fs.promises.rm(`${filePath}.preview.json`, { force: true }),
+    ]);
     return { id: uploadId, result: { status: 'discarded' } };
   }
 

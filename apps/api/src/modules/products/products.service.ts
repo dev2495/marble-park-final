@@ -59,7 +59,7 @@ export interface UpdateProductInput {
 export class ProductsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(args?: { search?: string; category?: string; take?: number; includeInactive?: boolean }) {
+  async findAll(args?: { search?: string; category?: string; take?: number; skip?: number; includeInactive?: boolean }) {
     const where: any = args?.includeInactive ? {} : { status: 'active' };
     if (args?.search) {
       where.OR = [
@@ -74,8 +74,9 @@ export class ProductsService {
 
     return this.prisma.product.findMany({
       where,
-      orderBy: { name: 'asc' },
-      take: args?.take,
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: Math.min(Math.max(Number(args?.take || 60), 1), 200),
+      skip: Math.max(Number(args?.skip || 0), 0),
     });
   }
 

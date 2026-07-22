@@ -33,7 +33,7 @@ model AppSetting {
   challanPrefix             String
   approvalDiscountThreshold Float
   companyName               String
-  logoUrl                   String   @default("/brand/marble-park-logo.jpg")
+  logoUrl                   String   @default("/brand/marble-park-logo.png")
   companyAddress            String   @default("")
   gstNumber                 String   @default("")
   website                   String   @default("")

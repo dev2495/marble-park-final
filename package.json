@@ -30,6 +30,8 @@
     "smoke:product-create": "node scripts/e2e-product-create-optional-fields-smoke.mjs",
     "smoke:document-vault": "node scripts/e2e-document-vault-smoke.mjs",
     "smoke:client-workflow": "node scripts/e2e-client-workflow-release-gate.mjs",
+    "smoke:import-scale": "node scripts/e2e-product-import-scale-smoke.mjs",
+    "cleanup:e2e": "node scripts/cleanup-client-flow-test-data.mjs",
     "reset:client-data": "node scripts/reset-client-test-data.mjs"
   },
   "devDependencies": {
@@ -37,13 +39,22 @@
     "typescript": "^5.3.3"
   },
   "overrides": {
+    "body-parser": "2.3.0",
+    "sharp": "0.35.3",
     "tmp": "0.2.7",
     "shell-quote": "1.8.4",
     "next": {
       "postcss": "8.5.14"
     },
     "exceljs": {
-      "uuid": "11.1.1"
+      "uuid": "11.1.1",
+      "archiver": {
+        "readdir-glob": {
+          "minimatch": {
+            "brace-expansion": "2.1.2"
+          }
+        }
+      }
     },
     "ws": "8.21.0",
     "subscriptions-transport-ws": {

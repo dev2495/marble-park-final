@@ -36,13 +36,13 @@ export default function SharedDocumentPage({ params }: { params: Promise<{ token
 
   if (!asset && !error) return <main className="flex min-h-screen items-center justify-center bg-[#111113] text-white"><Loader2 className="h-7 w-7 animate-spin text-[#d66a62]" /><span className="ml-3 text-sm font-semibold">Opening shared file…</span></main>;
 
-  if (error) return <main className="flex min-h-screen items-center justify-center bg-[#111113] p-6 text-white"><section className="max-w-md text-center"><img src="/brand/marble-park-logo.jpg" alt="Marble Park" className="mx-auto h-16 w-16 rounded-lg object-contain" /><h1 className="mt-6 font-display text-3xl font-bold">This presentation is no longer available.</h1><p className="mt-3 text-sm leading-6 text-zinc-400">{error}</p><p className="mt-6 text-xs font-semibold uppercase text-zinc-500">Ask the sender for a new Marble Park link</p></section></main>;
+  if (error) return <main className="flex min-h-screen items-center justify-center bg-[#111113] p-6 text-white"><section className="max-w-md text-center"><img src="/brand/marble-park-logo-square.png" alt="Marble Park" className="mx-auto h-16 w-16 rounded-lg bg-white object-contain" /><h1 className="mt-6 font-display text-3xl font-bold">This presentation is no longer available.</h1><p className="mt-3 text-sm leading-6 text-zinc-400">{error}</p><p className="mt-6 text-xs font-semibold uppercase text-zinc-500">Ask the sender for a new Marble Park link</p></section></main>;
 
   const content = vaultEndpoint(asset.contentUrl);
   return (
     <main className="min-h-screen bg-[#111113] text-white">
       <header className="flex min-h-20 items-center justify-between gap-4 border-b border-white/10 px-4 py-3 sm:px-7">
-        <div className="flex min-w-0 items-center gap-3"><img src="/brand/marble-park-logo.jpg" alt="Marble Park" className="h-11 w-11 shrink-0 rounded-md bg-white object-contain" /><div className="min-w-0"><p className="truncate text-sm font-bold">Marble Park</p><p className="truncate text-xs text-zinc-400">Premium Bath Solutions</p></div></div>
+        <div className="flex min-w-0 items-center gap-3"><img src="/brand/marble-park-logo-square.png" alt="Marble Park" className="h-11 w-11 shrink-0 rounded-md bg-white object-contain" /><div className="min-w-0"><p className="truncate text-sm font-bold">Marble Park</p><p className="truncate text-xs text-zinc-400">Premium Bath Solutions</p></div></div>
         {asset.allowDownload ? <a href={vaultEndpoint(asset.downloadUrl)} className="inline-flex h-9 shrink-0 items-center rounded-md bg-white px-3 text-sm font-semibold text-black hover:bg-zinc-200"><Download className="mr-2 h-4 w-4" /><span className="hidden sm:inline">Download</span></a> : <span className="flex items-center gap-2 text-xs font-semibold text-zinc-400"><ShieldCheck className="h-4 w-4" /> Presentation link</span>}
       </header>
 

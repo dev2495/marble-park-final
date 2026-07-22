@@ -22,16 +22,18 @@
         "Saleable lot"
       ],
       "steps": [
-        "Create brand, category and finish records.",
+        "Create brand, category, finish, UOM, tax and tile-size masters first.",
         "Upload the official logo in Brand Master and keep Quote footer enabled for brands that may appear on customer documents.",
-        "Create or bulk-import one Product Master SKU per saleable design.",
-        "For tiles, enter internal showroom code, size, pieces per box, box coverage, purchase UOM and default sales UOM.",
-        "Register displayed samples in Tile Master and print their QR labels.",
-        "Use Opening Stock only for go-live balances; use GRN for every later inward."
+        "Download a fresh Excel template so its dropdowns match live master data.",
+        "Upload the completed workbook, correct rows in the review editor, revalidate and confirm only when every row is clean.",
+        "For tiles, enter a unique internal showroom code, size, pieces per box, box coverage, purchase UOM and default sales UOM.",
+        "Record opening stock or a GRN to create physical lots, then print inward QR labels.",
+        "Register showroom displays separately in Tile Master and print display labels."
       ],
       "checks": [
-        "SKU is immutable after creation.",
-        "A display sample is not saleable stock.",
+        "SKU is immutable and internal/showroom code is unique after creation.",
+        "An imported Product Master SKU starts with zero stock.",
+        "A display sample is identified separately and never increases saleable stock.",
         "Stock exists only after a posted opening session or GRN."
       ],
       "related": [
@@ -310,6 +312,48 @@
         "partial-order",
         "reports-audit",
         "crm-quote"
+      ]
+    },
+    {
+      "id": "file-vault",
+      "title": "Store, present and share files",
+      "duration": "6 min",
+      "href": "/dashboard/documents",
+      "roles": [
+        "Owner",
+        "Sales",
+        "Office",
+        "Inventory",
+        "Dispatch"
+      ],
+      "summary": "Keep catalogues, product imagery, videos and working files in one searchable library with controlled public presentation links.",
+      "flow": [
+        "Upload files",
+        "Categorise",
+        "Preview",
+        "Create expiring link",
+        "Revoke / archive"
+      ],
+      "steps": [
+        "Open Documents and choose Add files.",
+        "Drop up to 20 files, select a category and add useful collection or brand notes.",
+        "Search or filter the library, then select a file to preview it.",
+        "For customer presentation, choose an expiry and whether to show a download button.",
+        "Create and copy the public link; recipients do not need a login.",
+        "Revoke a link after use or archive the file to revoke all active links together.",
+        "Owners can permanently delete an archived file when its storage must be reclaimed."
+      ],
+      "checks": [
+        "PDF, image, browser video and audio formats preview inside the system.",
+        "Office documents download in their native format.",
+        "Archived files stay recoverable and cannot be opened from old public links.",
+        "Permanent deletion is restricted to owners/admins and only works after archive.",
+        "Uploads, edits, shares, revocations, archives and deletions are recorded in System Audit."
+      ],
+      "related": [
+        "payments-documents",
+        "crm-quote",
+        "users-settings"
       ]
     },
     {
