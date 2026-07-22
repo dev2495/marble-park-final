@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, gql } from '@apollo/client';
 import { ArrowRight, Bath, Boxes, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck, Users } from 'lucide-react';
@@ -29,30 +28,35 @@ const LOGIN_MUTATION = gql`
 `;
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const submittingRef = useRef(false);
   const [login] = useMutation(LOGIN_MUTATION);
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (loading) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setError('');
     setLoading(true);
     try {
-      const { data, errors } = await login({ variables: { input: { email, password } } });
+      const { data, errors } = await login({ variables: { input: { email: email.trim(), password } } });
       if (data?.login?.authenticated && data?.login?.user) {
         localStorage.setItem('user', JSON.stringify(data.login.user));
-        router.push('/dashboard');
+        // A document navigation lets Safari commit the HttpOnly Set-Cookie
+        // response before the dashboard's session query starts.
+        window.location.replace('/dashboard');
+        return;
       } else {
         setError(errors?.[0]?.message || 'Login did not establish a session.');
       }
     } catch (err: any) {
       setError(err.message || 'Invalid credentials');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
@@ -132,11 +136,12 @@ export default function LoginPage() {
                 </div>
               ) : null}
 
-              <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-300">Email address</span>
+              <div className="block space-y-1.5">
+                <label htmlFor="login-email" className="text-xs font-semibold text-slate-300">Email address</label>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <input
+                    id="login-email"
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
                     type="email"
@@ -147,28 +152,38 @@ export default function LoginPage() {
                     className="h-11 w-full rounded-lg border border-white/10 bg-white/[0.065] pl-9 pr-3 text-sm font-medium text-white placeholder:text-slate-500 focus:border-[#bd4b44] focus:outline-none focus:ring-2 focus:ring-[#9d2a24]/30"
                   />
                 </div>
-              </label>
+              </div>
 
-              <label className="block space-y-1.5">
-                <span className="text-xs font-semibold text-slate-300">Password</span>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                  <input
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    autoComplete="current-password"
-                    placeholder="Enter your password"
-                    className="h-11 w-full rounded-lg border border-white/10 bg-white/[0.065] pl-9 pr-11 text-sm font-medium text-white placeholder:text-slate-500 focus:border-[#bd4b44] focus:outline-none focus:ring-2 focus:ring-[#9d2a24]/30"
-                  />
-                  <button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white" aria-label="Toggle password visibility">
+              <div className="block space-y-1.5">
+                <label htmlFor="login-password" className="text-xs font-semibold text-slate-300">Password</label>
+                <div className="grid h-11 grid-cols-[minmax(0,1fr)_44px] overflow-hidden rounded-lg border border-white/10 bg-white/[0.065] focus-within:border-[#bd4b44] focus-within:ring-2 focus-within:ring-[#9d2a24]/30">
+                  <div className="relative min-w-0">
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                    <input
+                      id="login-password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      autoComplete="current-password"
+                      placeholder="Enter your password"
+                      className="h-full w-full appearance-none border-0 bg-transparent pl-9 pr-3 text-sm font-medium text-white placeholder:text-slate-500 focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="relative z-10 grid h-full w-11 touch-manipulation place-items-center border-l border-white/10 text-slate-400 hover:bg-white/[0.06] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bd4b44]"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                  >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-              </label>
+              </div>
 
-              <Button type="submit" onClick={handleSubmit} disabled={loading} size="lg" className="h-12 w-full gap-2 rounded-lg bg-[#9d2a24] font-bold text-white shadow-[0_18px_38px_-20px_rgba(157,42,36,0.9)] hover:bg-[#7f211d]">
+              <Button type="submit" disabled={loading} size="lg" className="h-12 w-full gap-2 rounded-lg bg-[#9d2a24] font-bold text-white shadow-[0_18px_38px_-20px_rgba(157,42,36,0.9)] hover:bg-[#7f211d]">
                 {loading ? 'Starting workspace…' : 'Start workspace'} <ArrowRight className="h-4 w-4" />
               </Button>
             </form>
