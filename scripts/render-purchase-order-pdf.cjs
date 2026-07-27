@@ -52,15 +52,10 @@ async function embeddedImage(raw, requestUrl, apiUrl) {
   return null;
 }
 
-async function token(apiUrl) {
-  const response = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: 'mutation($input: LoginInput!) { login(input: $input) { token } }', variables: { input: { email: process.env.QUOTE_PDF_EMAIL || process.env.PDF_SERVICE_EMAIL || 'admin@marblepark.com', password: process.env.QUOTE_PDF_PASSWORD || process.env.PDF_SERVICE_PASSWORD || 'password123' } } }) });
-  const payload = await response.json();
-  if (!payload.data?.login?.token) throw new Error(payload.errors?.[0]?.message || 'PDF service login failed');
-  return payload.data.login.token;
-}
+function token() { const value = String(process.env.PDF_SESSION_TOKEN || '').trim(); if (!value) throw new Error('Login required'); return value; }
 
 async function fetchData(id, apiUrl) {
-  const auth = await token(apiUrl);
+  const auth = token();
   const query = 'query($id: ID!) { purchaseOrder(id: $id) documentSettings { data } }';
   const response = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${auth}` }, body: JSON.stringify({ query, variables: { id } }) });
   const payload = await response.json();

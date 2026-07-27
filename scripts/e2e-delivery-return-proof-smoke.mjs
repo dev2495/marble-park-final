@@ -53,7 +53,7 @@ async function main() {
     `mutation($input: CreateChallanInput!) { createChallan(input: $input) { id challanNumber status } }`,
     { input: { jobId: job.id, pickListId: pick.id, transporter: 'Store vehicle', vehicleNo: 'UAT-01', driverName: 'UAT Driver', driverPhone: '9000000001', packages: 1 } }, token,
   )).createChallan;
-  const slipResponse = await fetch(`${WEB}/api/pdf/dispatch/${challan.id}`);
+  const slipResponse = await fetch(`${WEB}/api/pdf/dispatch/${challan.id}`, { headers: { authorization: `Bearer ${token}` } });
   assert(slipResponse.ok && slipResponse.headers.get('content-type')?.includes('application/pdf'), `Dispatch slip PDF must render (${slipResponse.status})`);
   const slip = Buffer.from(await slipResponse.arrayBuffer());
   assert(slip.subarray(0, 4).toString() === '%PDF' && slip.length > 5_000, 'Dispatch slip must be a non-empty PDF');

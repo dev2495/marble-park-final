@@ -304,31 +304,6 @@ function BrandStrip({ payload, quoteMeta, requestUrl }) {
 }
 
 async function fetchQuote(id, apiUrl) {
-  // Try Prisma first (fastest, fewer hops in production).
-  try {
-    const { PrismaClient } = require('@prisma/client');
-    const prisma = new PrismaClient();
-    try {
-      const [quote, settings, brands] = await Promise.all([
-        prisma.quote.findUnique({
-          where: { id },
-          include: {
-            customer: true,
-            owner: { select: { id: true, name: true, email: true, role: true, phone: true } },
-            lead: true,
-          },
-        }),
-        prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } }),
-        prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], take: 80 }),
-      ]);
-      if (quote) return { quote, settings: settings?.data || settings || {}, brands };
-    } finally {
-      await prisma.$disconnect();
-    }
-  } catch {
-    // Fall back to GraphQL when Prisma isn't reachable from this process.
-  }
-
   const query = `query QuoteForPdf($id: ID!) {
     quote(id: $id) {
       id quoteNumber title projectName validUntil createdAt
@@ -338,21 +313,13 @@ async function fetchQuote(id, apiUrl) {
     documentSettings { data }
     masterProductBrands(status: "active")
   }`;
-  const fetchViaGraphql = async (token) => {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ query, variables: { id } }),
-    });
-    const payload = await response.json();
-    return { response, payload };
-  };
-
-  let { response, payload } = await fetchViaGraphql();
-  if (payload.errors?.some((error) => /login required|auth|unauthorized/i.test(error.message || ''))) {
-    const token = await getPdfServiceToken(apiUrl);
-    ({ response, payload } = await fetchViaGraphql(token));
-  }
+  const token = requiredSessionToken();
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ query, variables: { id } }),
+  });
+  const payload = await response.json();
   if (!response.ok || payload.errors?.length || !payload.data?.quote) {
     throw new Error(payload.errors?.[0]?.message || 'Quote not found');
   }
@@ -363,22 +330,10 @@ async function fetchQuote(id, apiUrl) {
   };
 }
 
-async function getPdfServiceToken(apiUrl) {
-  const email = process.env.QUOTE_PDF_EMAIL || process.env.PDF_SERVICE_EMAIL || 'admin@marblepark.com';
-  const password = process.env.QUOTE_PDF_PASSWORD || process.env.PDF_SERVICE_PASSWORD || 'password123';
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      query: `mutation PdfServiceLogin($input: LoginInput!) { login(input: $input) { token } }`,
-      variables: { input: { email, password } },
-    }),
-  });
-  const payload = await response.json();
-  if (!response.ok || payload.errors?.length || !payload.data?.login?.token) {
-    throw new Error(payload.errors?.[0]?.message || 'PDF service login failed');
-  }
-  return payload.data.login.token;
+function requiredSessionToken() {
+  const token = String(process.env.PDF_SESSION_TOKEN || '').trim();
+  if (!token) throw new Error('Login required');
+  return token;
 }
 
 // ============= Selection layout =============

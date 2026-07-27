@@ -839,6 +839,19 @@ export class QuotesService {
     return orders.map((order) => ({ ...order, customer: customerMap.get(order.customerId), owner: ownerMap.get(order.ownerId) }));
   }
 
+  async salesOrder(id: string) {
+    const order = await this.prisma.salesOrder.findUnique({ where: { id } });
+    if (!order) throw new NotFoundException('Sales order not found');
+    const [customer, owner] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: order.customerId } }),
+      this.prisma.user.findUnique({
+        where: { id: order.ownerId },
+        select: { id: true, name: true, email: true, role: true, phone: true, active: true },
+      }),
+    ]);
+    return { ...order, customer, owner };
+  }
+
   async salesOrderStats(args?: { range?: string }) {
     const createdAt = this.rangeWhere(args?.range);
     const where: any = createdAt ? { createdAt } : {};

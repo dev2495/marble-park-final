@@ -69,8 +69,8 @@ async function main() {
   const quote3 = (await gql(`mutation($intentId: String!, $displayMode: String, $note: String) { generateQuoteFromIntent(intentId: $intentId, displayMode: $displayMode, note: $note) }`, { intentId: intent3.id, displayMode: 'priced', note: 'Final priced order quote' }, office.token)).generateQuoteFromIntent.quote;
   assert(quote3.lines.some((line) => line.area === 'Guest Bath' && line.productId === backorder.id), 'final quote should preserve area-wise backorder line');
 
-  const pdfSelection = await fetch(`${WEB}/api/pdf/quote/${quote2.id}`);
-  const pdfPriced = await fetch(`${WEB}/api/pdf/quote/${quote3.id}`);
+  const pdfSelection = await fetch(`${WEB}/api/pdf/quote/${quote2.id}`, { headers: { authorization: `Bearer ${office.token}` } });
+  const pdfPriced = await fetch(`${WEB}/api/pdf/quote/${quote3.id}`, { headers: { authorization: `Bearer ${office.token}` } });
   assert(pdfSelection.ok && pdfPriced.ok, 'selection and priced quote PDFs should render');
   assert(Buffer.from(await pdfSelection.arrayBuffer()).subarray(0, 4).toString() === '%PDF', 'selection PDF should be a PDF');
   assert(Buffer.from(await pdfPriced.arrayBuffer()).subarray(0, 4).toString() === '%PDF', 'priced PDF should be a PDF');

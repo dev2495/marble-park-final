@@ -37,6 +37,8 @@ async function main() {
   );
   const token = login.login.token;
   assert(token, 'Admin login must return a session token');
+  const unauthenticatedPdf = await fetch(`${WEB}/api/pdf/quote/not-a-real-quote`);
+  assert(unauthenticatedPdf.status === 401, 'PDF routes must reject requests without a user session');
   const uploadedImage = (await gql(
     `mutation($filename: String!, $contentBase64: String!, $scope: String) { uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result } }`,
     { filename: `branded-quote-${suffix}.png`, contentBase64: (await readFile(resolve('apps/web/public/brand/marble-park-logo.png'))).toString('base64'), scope: 'product-image' },
@@ -135,7 +137,7 @@ async function main() {
   assert(documentData.documentSettings.data.gstNumber === settings.gstNumber, 'Authenticated document settings must expose the saved global identity');
   assert(selectedBrandIds.every((id) => documentData.masterProductBrands.some((brand) => String(brand.id) === id && brand.metadata?.logoUrl)), 'Quote-enabled brands must be available to Quote Studio');
 
-  const pdfResponse = await fetch(`${WEB}/api/pdf/quote/${quote.id}`);
+  const pdfResponse = await fetch(`${WEB}/api/pdf/quote/${quote.id}`, { headers: { authorization: `Bearer ${token}` } });
   assert(pdfResponse.ok, `Branded quotation PDF must render (${pdfResponse.status})`);
   const pdf = Buffer.from(await pdfResponse.arrayBuffer());
   assert(pdf.subarray(0, 4).toString() === '%PDF' && pdf.length > 10_000, 'Rendered quotation must be a non-empty PDF');
@@ -156,7 +158,7 @@ async function main() {
   cleanupContext.quoteIds.push(nonGstQuote.id);
   cleanupContext.leadIds.push(nonGstQuote.leadId);
   assert(nonGstQuote.lines.every((line) => Number(line.taxRate) === 0 && Number(line.taxAmount) === 0), 'Non-GST quote must persist zero tax on every line');
-  const nonGstPdfResponse = await fetch(`${WEB}/api/pdf/quote/${nonGstQuote.id}`);
+  const nonGstPdfResponse = await fetch(`${WEB}/api/pdf/quote/${nonGstQuote.id}`, { headers: { authorization: `Bearer ${token}` } });
   assert(nonGstPdfResponse.ok, `Non-GST quotation PDF must render (${nonGstPdfResponse.status})`);
   const nonGstPdf = Buffer.from(await nonGstPdfResponse.arrayBuffer());
   assert(nonGstPdf.subarray(0, 4).toString() === '%PDF' && nonGstPdf.length > 8_000, 'Non-GST quotation must be a non-empty PDF');

@@ -41,7 +41,7 @@ async function main() {
   )).createPurchaseOrder;
   assert(directPo.lines.length === 1 && directPo.lines[0].productId === product.id && Number(directPo.lines[0].orderedQuantity) === 4, 'Direct PO must create an exact Product Master line without a demand row');
   assert(directPo.metadata?.source === 'direct_product_master', 'Direct PO source metadata must be explicit');
-  const directPdf = await fetch(`${WEB}/api/pdf/purchase-order/${directPo.id}`);
+  const directPdf = await fetch(`${WEB}/api/pdf/purchase-order/${directPo.id}`, { headers: { authorization: `Bearer ${token}` } });
   assert(directPdf.ok && directPdf.headers.get('content-type')?.includes('application/pdf'), `Direct PO PDF must render (${directPdf.status})`);
   const directPdfBytes = Buffer.from(await directPdf.arrayBuffer());
   assert(directPdfBytes.subarray(0, 4).toString() === '%PDF' && directPdfBytes.length > 5_000, 'Direct PO PDF must be a non-empty document');
@@ -58,7 +58,7 @@ async function main() {
     token,
   )).createPurchaseOrder;
   assert(po.lines.length === 2 && po.lines.every((line) => line.productId === product.id), 'PO lines must stay linked to Product Master');
-  const demandPdf = await fetch(`${WEB}/api/pdf/purchase-order/${po.id}`);
+  const demandPdf = await fetch(`${WEB}/api/pdf/purchase-order/${po.id}`, { headers: { authorization: `Bearer ${token}` } });
   assert(demandPdf.ok && demandPdf.headers.get('content-type')?.includes('application/pdf'), `Demand PO PDF must render (${demandPdf.status})`);
   const testedOrderIds = demands.map((row) => row.sourceOrderId).filter(Boolean);
 

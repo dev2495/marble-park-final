@@ -369,6 +369,16 @@ export class QuotesResolver {
   }
 
   @Query(() => GraphQLJSON)
+  async salesOrder(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
+    const order = await this.quotes.salesOrder(id);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && user.role !== 'dispatch_ops' && order.ownerId !== user.id) {
+      throw new Error('This sales order is restricted');
+    }
+    return order;
+  }
+
+  @Query(() => GraphQLJSON)
   async salesOrderStats(@Context() ctx: GraphqlRequestContext, @Args('range', { nullable: true }) range?: string) {
     await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
     return this.quotes.salesOrderStats({ range });

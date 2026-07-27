@@ -61,8 +61,6 @@ services:
       PORT: 3000
       NEXT_PUBLIC_API_URL: https://${APP_HOST}/graphql
       QUOTE_PDF_API_URL: http://api:4000/graphql
-      QUOTE_PDF_EMAIL: ${BOOTSTRAP_OWNER_EMAIL}
-      QUOTE_PDF_PASSWORD: ${BOOTSTRAP_OWNER_PASSWORD}
     depends_on:
       api:
         condition: service_healthy

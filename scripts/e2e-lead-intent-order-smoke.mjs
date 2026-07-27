@@ -243,12 +243,12 @@ async function main() {
   assert(reconciliationRow?.status === 'ok', `stock reconciliation should stay clean after partial dispatch, got ${JSON.stringify(reconciliationRow?.issues || [])}`);
 
   if (WEB) {
-    const pdf = await fetch(`${WEB}/api/pdf/quote/${quote.id}`);
+    const pdf = await fetch(`${WEB}/api/pdf/quote/${quote.id}`, { headers: { authorization: `Bearer ${token}` } });
     const bytes = Buffer.from(await pdf.arrayBuffer());
     assert(pdf.ok, `quote PDF route should return 200, got ${pdf.status}`);
     assert(pdf.headers.get('content-type')?.includes('application/pdf'), 'quote PDF should return application/pdf');
     assert(bytes.subarray(0, 4).toString() === '%PDF', 'quote PDF should start with a PDF header');
-    const orderPdf = await fetch(`${WEB}/api/pdf/order/${order.id}`);
+    const orderPdf = await fetch(`${WEB}/api/pdf/order/${order.id}`, { headers: { authorization: `Bearer ${token}` } });
     const orderBytes = Buffer.from(await orderPdf.arrayBuffer());
     assert(orderPdf.ok, `sales order PDF route should return 200, got ${orderPdf.status}`);
     assert(orderPdf.headers.get('content-type')?.includes('application/pdf'), 'sales order PDF should return application/pdf');

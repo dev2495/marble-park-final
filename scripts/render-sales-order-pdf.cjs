@@ -135,29 +135,6 @@ function aggregateChallanQty(challans) {
   return byProduct;
 }
 
-async function fetchOrderViaPrisma(id) {
-  const { PrismaClient } = require('@prisma/client');
-  const prisma = new PrismaClient();
-  try {
-    const order = await prisma.salesOrder.findUnique({ where: { id } });
-    if (!order) throw new Error('Sales order not found');
-    const [quote, customer, owner, settings, reservations, challans] = await Promise.all([
-      prisma.quote.findUnique({ where: { id: order.quoteId } }),
-      prisma.customer.findUnique({ where: { id: order.customerId } }),
-      prisma.user.findUnique({ where: { id: order.ownerId }, select: { id: true, name: true, email: true, phone: true, role: true } }),
-      prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } }),
-      prisma.reservation.findMany({ where: { quoteId: order.quoteId } }),
-      prisma.dispatchChallan.findMany({ where: { quoteId: order.quoteId }, orderBy: { createdAt: 'asc' } }),
-    ]);
-    const lines = normalizeLines(order.lines);
-    const productIds = Array.from(new Set(lines.map((line) => line.productId).filter(Boolean)));
-    const products = productIds.length ? await prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
-    return { order, quote, customer, owner, settings, products, reservations, challans };
-  } finally {
-    await prisma.$disconnect();
-  }
-}
-
 async function graphqlRequest(apiUrl, query, variables, token) {
   const response = await fetch(apiUrl, {
     method: 'POST',
@@ -171,34 +148,25 @@ async function graphqlRequest(apiUrl, query, variables, token) {
   return payload.data;
 }
 
-async function getPdfServiceToken(apiUrl) {
-  const email = process.env.QUOTE_PDF_EMAIL || process.env.PDF_SERVICE_EMAIL || 'admin@marblepark.com';
-  const password = process.env.QUOTE_PDF_PASSWORD || process.env.PDF_SERVICE_PASSWORD || 'password123';
-  const data = await graphqlRequest(
-    apiUrl,
-    `mutation PdfServiceLogin($input: LoginInput!) { login(input: $input) { token } }`,
-    { input: { email, password } },
-  );
-  if (!data?.login?.token) throw new Error('PDF service login failed');
-  return data.login.token;
+function requiredSessionToken() {
+  const token = String(process.env.PDF_SESSION_TOKEN || '').trim();
+  if (!token) throw new Error('Login required');
+  return token;
 }
 
-async function fetchOrderViaGraphql(id, cause) {
-  const apiUrl = process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:4000/graphql';
-  const token = await getPdfServiceToken(apiUrl);
+async function fetchOrder(id, apiUrl) {
+  const token = requiredSessionToken();
   const data = await graphqlRequest(
     apiUrl,
-    `query SalesOrderPdfData {
-      salesOrders(range: "all")
+    `query SalesOrderPdfData($id: ID!) {
+      salesOrder(id: $id)
+      documentSettings { data }
     }`,
-    {},
+    { id },
     token,
   );
-  const order = (data?.salesOrders || []).find((row) => row?.id === id);
-  if (!order) {
-    const suffix = cause?.message ? ` after Prisma fallback failed: ${cause.message}` : '';
-    throw new Error(`Sales order not found${suffix}`);
-  }
+  const order = data?.salesOrder;
+  if (!order) throw new Error('Sales order not found');
 
   let quote = null;
   try {
@@ -227,7 +195,7 @@ async function fetchOrderViaGraphql(id, cause) {
     quote,
     customer: order.customer || null,
     owner: order.owner || null,
-    settings: null,
+    settings: data.documentSettings?.data || null,
     products: [],
     reservations: normalizeLines(order.lines).map((line) => ({
       productId: line.productId,
@@ -235,14 +203,6 @@ async function fetchOrderViaGraphql(id, cause) {
     })),
     challans: [],
   };
-}
-
-async function fetchOrder(id) {
-  try {
-    return await fetchOrderViaPrisma(id);
-  } catch (error) {
-    return fetchOrderViaGraphql(id, error);
-  }
 }
 
 function buildDocument(payload, requestUrl) {
@@ -354,9 +314,10 @@ function buildDocument(payload, requestUrl) {
 }
 
 async function main() {
-  const [, , id, requestUrl] = process.argv;
-  if (!id || !requestUrl) throw new Error('Usage: render-sales-order-pdf.cjs <orderId> <requestUrl>');
-  const payload = await fetchOrder(id);
+  const [, , id, requestUrl, apiUrlArg] = process.argv;
+  if (!id || !requestUrl) throw new Error('Usage: render-sales-order-pdf.cjs <orderId> <requestUrl> <apiUrl>');
+  const apiUrl = apiUrlArg || process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:4000/graphql';
+  const payload = await fetchOrder(id, apiUrl);
   const buffer = await renderToBuffer(buildDocument(payload, requestUrl));
   process.stdout.write(buffer);
 }
