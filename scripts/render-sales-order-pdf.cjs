@@ -19,7 +19,8 @@ const styles = StyleSheet.create({
   rule: { height: 4, borderRadius: 99, backgroundColor: colors.ink, marginBottom: 16 },
   header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
   brandRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
-  logo: { width: 42, height: 42, borderRadius: 13, backgroundColor: colors.ink, color: colors.paper, alignItems: 'center', justifyContent: 'center' },
+  logo: { width: 52, height: 52, objectFit: 'contain' },
+  logoFallback: { width: 42, height: 42, borderRadius: 13, backgroundColor: colors.ink, color: colors.paper, alignItems: 'center', justifyContent: 'center' },
   logoText: { fontSize: 15, fontWeight: 900 },
   brand: { fontSize: 23, fontWeight: 900, letterSpacing: 1.2 },
   subBrand: { marginTop: 3, fontSize: 7, letterSpacing: 3.2, color: colors.tan, textTransform: 'uppercase' },
@@ -84,17 +85,50 @@ function buildAbsoluteUrl(raw, requestUrl) {
   try { return new URL(str, requestUrl).href; } catch { return null; }
 }
 
+function mediaUrl(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(mediaUrl).find(Boolean) || null;
+  if (typeof value === 'object') {
+    return value.url || value.src || value.primaryUrl || value.primaryImage || value.primary || mediaUrl(value.gallery);
+  }
+  return null;
+}
+
 function imageSrc(line, product, requestUrl) {
   const lineMedia = safeJson(line.media, {});
   const productMedia = safeJson(product?.media, {});
+  const snapshot = safeJson(line.metadata, {})?.snapshot || {};
   const raw =
     line.quoteImage ||
     line.customImageUrl ||
-    lineMedia.primary ||
-    (Array.isArray(lineMedia.gallery) ? lineMedia.gallery[0] : null) ||
-    productMedia.primary ||
-    (Array.isArray(productMedia.gallery) ? productMedia.gallery[0] : null);
+    snapshot.quoteImage ||
+    snapshot.customImageUrl ||
+    mediaUrl(lineMedia) ||
+    mediaUrl(snapshot.media) ||
+    mediaUrl(productMedia);
   return buildAbsoluteUrl(raw, requestUrl);
+}
+
+async function embeddedImage(raw, requestUrl, apiUrl) {
+  const url = buildAbsoluteUrl(raw, requestUrl);
+  if (!url || url.startsWith('data:')) return url;
+  const parsed = new URL(url);
+  const candidates = [];
+  if (parsed.pathname.startsWith('/catalogue-images/')) candidates.push(`${new URL(apiUrl).origin}${parsed.pathname}${parsed.search}`);
+  else if (/^\/(?:brand|catalogue-art)\//.test(parsed.pathname)) candidates.push(`http://127.0.0.1:${process.env.PORT || 3000}${parsed.pathname}${parsed.search}`);
+  candidates.push(url);
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(candidate);
+      if (!response.ok) continue;
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) continue;
+      const mime = response.headers.get('content-type')?.split(';')[0] || 'image/png';
+      return `data:${mime};base64,${bytes.toString('base64')}`;
+    } catch {}
+  }
+  return null;
 }
 
 function normalizeLines(lines) {
@@ -207,7 +241,7 @@ async function fetchOrder(id, apiUrl) {
 
 function buildDocument(payload, requestUrl) {
   const e = React.createElement;
-  const { order, quote, customer, owner, settings, products, reservations, challans } = payload;
+  const { order, quote, customer, owner, settings, products, reservations, challans, logoData } = payload;
   const productMap = new Map((products || []).map((product) => [product.id, product]));
   const reservationMap = new Map((reservations || []).map((reservation) => [reservation.productId, reservation]));
   const dispatchedMap = aggregateChallanQty(challans);
@@ -249,7 +283,9 @@ function buildDocument(payload, requestUrl) {
       e(View, { style: styles.rule }),
       e(View, { style: styles.header },
         e(View, { style: styles.brandRow },
-          e(View, { style: styles.logo }, e(Text, { style: styles.logoText }, 'MP')),
+          logoData
+            ? e(Image, { src: logoData, style: styles.logo })
+            : e(View, { style: styles.logoFallback }, e(Text, { style: styles.logoText }, 'MP')),
           e(View, null, e(Text, { style: styles.brand }, companyName), e(Text, { style: styles.subBrand }, 'Retail operations')),
         ),
         e(View, null,
@@ -318,6 +354,7 @@ async function main() {
   if (!id || !requestUrl) throw new Error('Usage: render-sales-order-pdf.cjs <orderId> <requestUrl> <apiUrl>');
   const apiUrl = apiUrlArg || process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:4000/graphql';
   const payload = await fetchOrder(id, apiUrl);
+  payload.logoData = await embeddedImage(payload.settings?.logoUrl || '/brand/marble-park-logo.png', requestUrl, apiUrl);
   const buffer = await renderToBuffer(buildDocument(payload, requestUrl));
   process.stdout.write(buffer);
 }
