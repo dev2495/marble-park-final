@@ -48,6 +48,7 @@ services:
     networks:
       - app
       - data
+      - egress
 
   web:
     build:
@@ -88,6 +89,7 @@ services:
 
 networks:
   edge:
+  egress:
   app:
     internal: true
   data:
