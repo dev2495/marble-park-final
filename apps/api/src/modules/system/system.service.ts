@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 import * as bcrypt from 'bcrypt';
@@ -30,6 +30,8 @@ export class SystemService {
           defaultTerms: '1. Freight and labour are extra and subject to applicable GST.\n2. Payment is 100% advance unless otherwise agreed in writing.\n3. Goods once sold cannot be returned except through an approved return.\n4. Confirmed orders cannot be cancelled without written approval.\n5. Tile spacers must be used as recommended by the manufacturer.\n6. Product images are references and may vary from the supplied product.',
           bankDetails: 'Account name: Marble Park\nBank: IDFC Bank\nAccount no.: 10033526350\nIFSC: IDFB0042441\nBranch: Vapi - 396195, Gujarat',
           documentFooter: 'Thank you for choosing Marble Park. Product availability, shade and batch are confirmed at order stage.',
+          quoteBrandSelectionMode: 'all',
+          quoteBrandIds: [],
           supportPhone: '0260-2424498 · 9427119271 · 7506133166 · 9712508070',
           supportEmail: '',
           updatedAt: new Date(),
@@ -52,6 +54,8 @@ export class SystemService {
       defaultTerms: settings.defaultTerms,
       bankDetails: settings.bankDetails,
       documentFooter: settings.documentFooter,
+      quoteBrandSelectionMode: settings.quoteBrandSelectionMode || 'all',
+      quoteBrandIds: Array.isArray(settings.quoteBrandIds) ? settings.quoteBrandIds : [],
       supportPhone: settings.supportPhone,
       supportEmail: settings.supportEmail,
     };
@@ -59,6 +63,18 @@ export class SystemService {
 
   async updateSettings(input: any, actorUserId: string) {
     const current = await this.getSettings();
+    const quoteBrandSelectionMode = input.quoteBrandSelectionMode === undefined
+      ? current.quoteBrandSelectionMode
+      : String(input.quoteBrandSelectionMode || '').trim().toLowerCase();
+    if (!['all', 'selected', 'none'].includes(quoteBrandSelectionMode)) {
+      throw new BadRequestException('Quote brand default must be all, selected, or none');
+    }
+    const requestedBrandIds: string[] = Array.isArray(input.quoteBrandIds)
+      ? input.quoteBrandIds.map((brandId: unknown) => String(brandId)).filter(Boolean)
+      : [];
+    const quoteBrandIds: string[] = input.quoteBrandIds === undefined
+      ? (Array.isArray(current.quoteBrandIds) ? current.quoteBrandIds.map((brandId) => String(brandId)).filter(Boolean) : [])
+      : Array.from(new Set<string>(requestedBrandIds)).slice(0, 100);
     const settings = await this.prisma.appSetting.update({
       where: { id: current.id },
       data: {
@@ -76,6 +92,8 @@ export class SystemService {
         defaultTerms: input.defaultTerms ?? current.defaultTerms,
         bankDetails: input.bankDetails ?? current.bankDetails,
         documentFooter: input.documentFooter ?? current.documentFooter,
+        quoteBrandSelectionMode,
+        quoteBrandIds,
         supportPhone: input.supportPhone ?? current.supportPhone,
         supportEmail: input.supportEmail ?? current.supportEmail,
         updatedAt: new Date(),

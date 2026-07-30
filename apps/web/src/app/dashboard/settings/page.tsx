@@ -74,6 +74,8 @@ const defaults = {
   supportPhone: '0260-2424498 · 9427119271 · 7506133166 · 9712508070',
   supportEmail: '',
   approvalDiscountThreshold: 15,
+  quoteBrandSelectionMode: 'all',
+  quoteBrandIds: [],
 };
 
 async function fileBase64(file: File) {
@@ -179,6 +181,8 @@ export default function SettingsPage() {
           supportPhone: form.supportPhone || '',
           supportEmail: form.supportEmail || '',
           approvalDiscountThreshold: Number(form.approvalDiscountThreshold || defaults.approvalDiscountThreshold),
+          quoteBrandSelectionMode: form.quoteBrandSelectionMode || 'all',
+          quoteBrandIds: Array.isArray(form.quoteBrandIds) ? form.quoteBrandIds : [],
         },
       },
     });
@@ -224,6 +228,15 @@ export default function SettingsPage() {
     } } });
     setBrandMessage(`${brand.name} quotation presentation saved.`);
     await refetch();
+  }
+
+  async function saveQuoteBrandDefaults() {
+    setBrandMessage('');
+    await save({ variables: { input: {
+      quoteBrandSelectionMode: form.quoteBrandSelectionMode || 'all',
+      quoteBrandIds: Array.isArray(form.quoteBrandIds) ? form.quoteBrandIds : [],
+    } } });
+    setBrandMessage('Quotation footer brand defaults saved. New quotes will inherit this selection.');
   }
 
   async function handleBrandLogoUpload(brand: any, file?: File) {
@@ -378,6 +391,16 @@ export default function SettingsPage() {
           <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--brand-700)]">Quotation presentation</p><h2 className="mt-2 text-2xl font-semibold text-[var(--ink)]">Served brand logos</h2><p className="mt-1 text-sm text-[var(--ink-4)]">Replace customer-facing artwork and decide which brands sales can include in quotation PDFs.</p></div>
           <a href="/dashboard/master-data/brands" className="text-sm font-semibold text-[var(--brand-700)]">Open full Brand Master</a>
         </div>
+        <div className="mt-5 rounded-md border border-[var(--line)] bg-[var(--bg-soft)] p-4">
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
+            <div><p className="text-sm font-semibold text-[var(--ink)]">Default footer selection</p><p className="mt-1 text-xs text-[var(--ink-4)]">Applied to every new quote. Sales can still change the selection inside an individual quote.</p></div>
+            <div className="inline-flex w-full rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 lg:w-auto" role="group" aria-label="Default quote brands">
+              {[['all', 'All brands'], ['selected', 'Selected'], ['none', 'None']].map(([value, label]) => <button key={value} type="button" onClick={() => setForm((current: any) => ({ ...current, quoteBrandSelectionMode: value }))} className={cn('min-h-9 flex-1 rounded px-4 text-xs font-semibold transition lg:flex-none', form.quoteBrandSelectionMode === value ? 'bg-[var(--brand-700)] text-white' : 'text-[var(--ink-3)] hover:bg-[var(--bg-soft)]')}>{label}</button>)}
+            </div>
+          </div>
+          {form.quoteBrandSelectionMode === 'selected' ? <div className="mt-4 flex flex-wrap items-center gap-2"><button type="button" onClick={() => setForm((current: any) => ({ ...current, quoteBrandIds: brands.filter((brand: any) => brand.metadata?.quoteEnabled !== false).map((brand: any) => String(brand.id)) }))} className="rounded border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-2)]">Select all available</button><button type="button" onClick={() => setForm((current: any) => ({ ...current, quoteBrandIds: [] }))} className="rounded border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-2)]">Clear</button><span className="text-xs text-[var(--ink-4)]">{Array.isArray(form.quoteBrandIds) ? form.quoteBrandIds.length : 0} selected</span></div> : null}
+          <div className="mt-4 flex flex-wrap items-center gap-3"><Button type="button" onClick={saveQuoteBrandDefaults} disabled={loading}><Save className="mr-2 h-4 w-4" />Save footer defaults</Button><span className="text-xs text-[var(--ink-4)]">“All brands” automatically includes future active brands.</span></div>
+        </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {brands.map((brand: any) => <article key={brand.id} className="rounded-md border border-[var(--line)] bg-[var(--surface)] p-4">
             <div className="grid h-20 place-items-center rounded border border-[var(--line-soft)] bg-white p-3">{brand.metadata?.logoUrl ? <img src={brand.metadata.logoUrl} alt={`${brand.name} logo`} className="max-h-14 max-w-full object-contain" /> : <ImagePlus className="h-5 w-5 text-[var(--ink-5)]" />}</div>
@@ -386,6 +409,7 @@ export default function SettingsPage() {
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-[var(--line)] px-3 py-2 text-xs font-semibold text-[var(--ink-2)]">{uploadingBrandId === String(brand.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}{brand.metadata?.logoUrl ? 'Replace' : 'Upload'}<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={Boolean(uploadingBrandId)} onChange={(event) => handleBrandLogoUpload(brand, event.target.files?.[0])} /></label>
               <label className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ink-3)]"><input type="checkbox" checked={brand.metadata?.quoteEnabled !== false} onChange={(event) => saveBrandPresentation(brand, { quoteEnabled: event.target.checked })} className="h-4 w-4" />Quotes</label>
             </div>
+            {form.quoteBrandSelectionMode === 'selected' && brand.metadata?.quoteEnabled !== false ? <label className="mt-3 flex items-center gap-2 border-t border-[var(--line-soft)] pt-3 text-xs font-semibold text-[var(--ink-3)]"><input type="checkbox" checked={Array.isArray(form.quoteBrandIds) && form.quoteBrandIds.includes(String(brand.id))} onChange={(event) => setForm((current: any) => ({ ...current, quoteBrandIds: event.target.checked ? Array.from(new Set([...(current.quoteBrandIds || []), String(brand.id)])) : (current.quoteBrandIds || []).filter((id: string) => id !== String(brand.id)) }))} className="h-4 w-4" />Selected by default</label> : null}
           </article>)}
         </div>
         {!brands.length ? <p className="mt-5 rounded-md border border-dashed border-[var(--line)] p-6 text-center text-sm font-semibold text-[var(--ink-4)]">Create brands in Brand Master before assigning quotation logos.</p> : null}

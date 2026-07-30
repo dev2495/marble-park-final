@@ -87,7 +87,7 @@ export default function ProcurementPage() {
   const selectedIds = Object.entries(selectedDemand).filter(([, checked]) => checked).map(([id]) => id);
   const selectedRows = demands.filter((row) => selectedIds.includes(row.id));
   const selectedValue = selectedRows.reduce((sum, row) => sum + Number(row.quantity || 0) * Number(demandCostRows[row.id] || 0), 0);
-  const selectedDemandCostsValid = selectedRows.length > 0 && selectedRows.every((row) => Number(demandCostRows[row.id] || 0) > 0);
+  const selectedDemandCostsValid = selectedRows.length > 0;
 
   useEffect(() => {
     if (!receiveLocationId && defaultLocation?.id) setReceiveLocationId(defaultLocation.id);
@@ -110,7 +110,7 @@ export default function ProcurementPage() {
   };
 
   const addDirectProduct = (product: any) => {
-    setDirectLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, { productId: product.id, sku: product.sku, internalCode: product.internalCode || '', name: product.name, brand: product.brand, unit: product.purchaseUom || product.unit || 'PC', quantity: 1, unitCost: Number(product.costPrice || 0) }]);
+    setDirectLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, { productId: product.id, sku: product.sku, internalCode: product.internalCode || '', name: product.name, brand: product.brand, unit: product.purchaseUom || product.unit || 'PC', quantity: 1, unitCost: Number(product.costPrice || 0) > 0 ? String(product.costPrice) : '' }]);
     setProductSearch('');
   };
   const updateDirectLine = (productId: string, patch: any) => setDirectLines((current) => current.map((line) => line.productId === productId ? { ...line, ...patch } : line));
@@ -131,7 +131,7 @@ export default function ProcurementPage() {
           receivedQuantity,
           damagedQuantity: Number(damagedRows[line.id] || 0),
           supplierBatch: batchRows[line.id] || undefined,
-          unitCost: Number(costRows[line.id] || line.unitCost || 0),
+          unitCost: costRows[line.id] === undefined || costRows[line.id] === '' ? undefined : Number(costRows[line.id]),
           location: receiveLocation ? `${receiveLocation.code} · ${receiveLocation.name}` : 'Default plant',
           locationId: receiveLocation?.id,
         };
@@ -182,8 +182,36 @@ export default function ProcurementPage() {
           <Search className="absolute left-3 top-3.5 h-4 w-4 text-[var(--ink-4)]" /><Input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Search SKU, internal code, brand or product name" className="pl-10" />
           {productSearch.length >= 2 && productSearchData?.globalSearch?.products?.length ? <div className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-md border border-[var(--line)] bg-[var(--surface)] p-2 shadow-xl">{productSearchData.globalSearch.products.map((product: any) => <button key={product.id} type="button" onClick={() => addDirectProduct(product)} className="flex w-full items-center justify-between rounded p-3 text-left hover:bg-[var(--brand-50)]"><span><span className="block text-sm font-bold text-[var(--ink)]">{product.internalCode || product.sku} · {product.name}</span><span className="text-xs font-semibold text-[var(--ink-4)]">{product.sku} · {product.brand}</span></span><Plus className="h-4 w-4" /></button>)}</div> : null}
         </div>
-        {directLines.length ? <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="border-b border-[var(--line)] text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]"><tr><th className="p-3">Product</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3">Unit cost</th><th /></tr></thead><tbody className="divide-y divide-[var(--line)]">{directLines.map((line) => <tr key={line.productId}><td className="p-3"><p className="font-bold text-[var(--ink)]">{line.internalCode || line.sku} · {line.name}</p><p className="text-xs text-[var(--ink-4)]">{line.brand}</p></td><td className="p-3"><Input aria-label={`Quantity for ${line.sku}`} type="number" min={1} step={1} value={line.quantity} onChange={(event) => updateDirectLine(line.productId, { quantity: Number(event.target.value) })} className="w-28" /></td><td className="p-3"><Input value={line.unit} onChange={(event) => updateDirectLine(line.productId, { unit: event.target.value })} className="w-24" /></td><td className="p-3"><Input aria-label={`Unit cost for ${line.sku}`} type="number" min={0} value={line.unitCost} onChange={(event) => updateDirectLine(line.productId, { unitCost: Number(event.target.value) })} className="w-32" /></td><td className="p-3"><button type="button" title="Remove line" onClick={() => setDirectLines((current) => current.filter((row) => row.productId !== line.productId))} className="grid h-9 w-9 place-items-center rounded text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></td></tr>)}</tbody></table></div> : null}
-        <div className="mt-5 grid gap-3 md:grid-cols-[1fr_12rem_auto]"><select value={vendorId} onChange={(event) => { setVendorId(event.target.value); setVendorName(vendors.find((vendor) => vendor.id === event.target.value)?.name || ''); }} className="h-11 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink)]"><option value="">Select vendor from master</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select><Input type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} /><Button onClick={submitDirectPo} disabled={!vendorId || !directLines.length || directLines.some((line) => Number(line.quantity) <= 0 || Number(line.unitCost) <= 0) || creatingPo}><Send className="mr-2 h-4 w-4" />Create direct PO</Button></div>
+        {directLines.length ? (
+          <div className="mt-4 space-y-2 text-sm">
+            <div className="hidden grid-cols-[minmax(0,1fr)_7rem_6rem_9rem_2.5rem] gap-3 border-b border-[var(--line)] px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)] sm:grid">
+              <span>Product</span><span>Quantity</span><span>Unit</span><span>Unit cost (optional)</span><span />
+            </div>
+            {directLines.map((line) => (
+              <div key={line.productId} className="relative grid grid-cols-2 gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 sm:grid-cols-[minmax(0,1fr)_7rem_6rem_9rem_2.5rem] sm:items-end sm:border-x-0 sm:border-t-0 sm:bg-transparent">
+                <div className="col-span-2 min-w-0 pr-10 sm:col-span-1 sm:pr-0">
+                  <p className="break-words font-bold text-[var(--ink)]">{line.internalCode || line.sku} · {line.name}</p>
+                  <p className="text-xs text-[var(--ink-4)]">{line.brand}</p>
+                </div>
+                <label className="min-w-0 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)] sm:sr-only">Quantity</span>
+                  <Input aria-label={`Quantity for ${line.sku}`} type="number" min={1} step={1} value={line.quantity} onChange={(event) => updateDirectLine(line.productId, { quantity: Number(event.target.value) })} className="w-full" />
+                </label>
+                <label className="min-w-0 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)] sm:sr-only">Unit</span>
+                  <Input aria-label={`Unit for ${line.sku}`} value={line.unit} onChange={(event) => updateDirectLine(line.productId, { unit: event.target.value })} className="w-full" />
+                </label>
+                <label className="col-span-2 min-w-0 space-y-1 sm:col-span-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)] sm:sr-only">Unit cost (optional)</span>
+                  <Input aria-label={`Optional unit cost for ${line.sku}`} type="number" min={0} step="0.01" value={line.unitCost} onChange={(event) => updateDirectLine(line.productId, { unitCost: event.target.value })} placeholder="Enter at GRN" className="w-full" />
+                </label>
+                <button type="button" title="Remove line" aria-label={`Remove ${line.sku}`} onClick={() => setDirectLines((current) => current.filter((row) => row.productId !== line.productId))} className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded text-red-700 hover:bg-red-50 sm:static"><Trash2 className="h-4 w-4" /></button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="mt-5 grid gap-3 md:grid-cols-[1fr_12rem_auto]"><select value={vendorId} onChange={(event) => { setVendorId(event.target.value); setVendorName(vendors.find((vendor) => vendor.id === event.target.value)?.name || ''); }} className="h-11 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink)]"><option value="">Select vendor from master</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select><Input type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} /><Button onClick={submitDirectPo} disabled={!vendorId || !directLines.length || directLines.some((line) => Number(line.quantity) <= 0) || creatingPo}><Send className="mr-2 h-4 w-4" />Create direct PO</Button></div>
+        <p className="mt-2 text-xs font-semibold text-[var(--ink-4)]">Blank costs stay pending on the PO. Enter the actual cost at GRN or leave it blank to use the SKU default.</p>
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
@@ -254,7 +282,7 @@ export default function ProcurementPage() {
               <Input type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} />
             </div>
             <textarea value={poNotes} onChange={(event) => setPoNotes(event.target.value)} placeholder="PO note / vendor follow-up detail" className="mt-3 min-h-[72px] w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" />
-            {selectedRows.length ? <div className="mt-3 space-y-2">{selectedRows.map((row) => <label key={row.id} className="grid items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-xs font-bold text-[var(--ink-3)] sm:grid-cols-[1fr_9rem]"><span className="truncate">{row.sku} · {row.name} · {row.quantity} {row.unit || 'PC'}</span><Input aria-label={`Unit cost for ${row.sku}`} type="number" min={0.01} step="0.01" value={demandCostRows[row.id] || ''} onChange={(event) => setDemandCostRows((current) => ({ ...current, [row.id]: event.target.value }))} placeholder="Unit cost" /></label>)}</div> : null}
+            {selectedRows.length ? <div className="mt-3 space-y-2">{selectedRows.map((row) => <label key={row.id} className="grid items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-xs font-bold text-[var(--ink-3)] sm:grid-cols-[1fr_10rem]"><span className="truncate">{row.sku} · {row.name} · {row.quantity} {row.unit || 'PC'}</span><Input aria-label={`Optional unit cost for ${row.sku}`} type="number" min={0} step="0.01" value={demandCostRows[row.id] || ''} onChange={(event) => setDemandCostRows((current) => ({ ...current, [row.id]: event.target.value }))} placeholder="Optional cost" /></label>)}</div> : null}
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">{selectedIds.length} row(s) selected · Estimated {money(selectedValue)}</p>
               <Button onClick={submitPo} disabled={!selectedDemandCostsValid || creatingPo}><Send className="mr-2 h-4 w-4" /> Create vendor PO</Button>
@@ -296,7 +324,7 @@ export default function ProcurementPage() {
                       </div>
                       <div className="grid w-44 grid-cols-2 gap-2"><label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Received<Input type="number" min={0} max={remaining} value={receiveRows[line.id] ?? String(remaining)} onChange={(event) => setReceiveRows((current) => ({ ...current, [line.id]: event.target.value }))} className="mt-1 text-center font-black" /></label><label className="text-[10px] font-bold uppercase text-red-600">Damaged<Input type="number" min={0} max={Number(receiveRows[line.id] ?? remaining)} value={damagedRows[line.id] ?? '0'} onChange={(event) => setDamagedRows((current) => ({ ...current, [line.id]: event.target.value }))} className="mt-1 text-center font-black" /></label></div>
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2"><Input value={batchRows[line.id] || ''} onChange={(event) => setBatchRows((current) => ({ ...current, [line.id]: event.target.value }))} placeholder="Supplier batch / lot"/><Input type="number" min={0} value={costRows[line.id] ?? String(line.unitCost || 0)} onChange={(event) => setCostRows((current) => ({ ...current, [line.id]: event.target.value }))} placeholder="Unit cost"/></div>
+                    <div className="mt-3 grid grid-cols-2 gap-2"><Input value={batchRows[line.id] || ''} onChange={(event) => setBatchRows((current) => ({ ...current, [line.id]: event.target.value }))} placeholder="Supplier batch / lot"/><div><Input aria-label={`Optional GRN cost for ${line.sku}`} type="number" min={0} value={costRows[line.id] ?? ''} onChange={(event) => setCostRows((current) => ({ ...current, [line.id]: event.target.value }))} placeholder="Actual cost (optional)"/><p className="mt-1 text-[10px] font-semibold text-[var(--ink-4)]">Fallback: {Number(line.unitCost || 0) > 0 ? `PO ${money(line.unitCost)}` : Number(line.skuCost || 0) > 0 ? `SKU ${money(line.skuCost)}` : 'not recorded'}</p></div></div>
                   </div>
                 );
               })}
@@ -307,7 +335,7 @@ export default function ProcurementPage() {
             {purchaseOrders.slice(0, 6).map((po: any) => (
               <article key={po.id} className={cn('rounded-r4 border p-4 shadow-sm-soft transition', activePo?.id === po.id ? 'border-[var(--brand-400)] bg-[var(--brand-50)]' : 'border-[var(--line)] bg-[var(--surface)]')}>
                 <a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="block text-left" title={`Open ${po.poNumber} PDF`}><ClipboardList className="h-5 w-5 text-[var(--brand-700)]" /><p className="mt-3 text-sm font-black text-[var(--ink)]">{po.poNumber}</p><p className="mt-1 text-xs font-bold text-[var(--ink-4)]">{po.vendorName}</p><span className={cn('mt-3 inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase ring-1', statusTone(po.status))}>{po.status}</span></a>
-                <div className="mt-4 flex gap-2 border-t border-[var(--line)] pt-3"><a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><ExternalLink className="mr-1.5 h-3.5 w-3.5" />Open PO</a><a href={`/api/pdf/purchase-order/${po.id}`} download className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><Download className="mr-1.5 h-3.5 w-3.5" />PDF</a><button type="button" onClick={() => setActivePoId(po.id)} className="ml-auto text-xs font-bold text-[var(--brand-700)]">Receive</button></div>
+                <div className="mt-4 flex gap-2 border-t border-[var(--line)] pt-3"><a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><ExternalLink className="mr-1.5 h-3.5 w-3.5" />Open PO</a><a href={`/api/pdf/purchase-order/${po.id}?download=1`} className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><Download className="mr-1.5 h-3.5 w-3.5" />PDF</a><button type="button" onClick={() => setActivePoId(po.id)} className="ml-auto text-xs font-bold text-[var(--brand-700)]">Receive</button></div>
               </article>
             ))}
           </div>

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, BadgeCheck, Building2, Check, Download, Image as ImageIcon, ImagePlus, PenLine, Save, Send, Sparkles } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, Building2, Check, Download, Image as ImageIcon, ImagePlus, PenLine, Printer, Save, Send, Share2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
@@ -28,6 +28,7 @@ const START_REVISION_FROM_QUOTE = gql`mutation StartRevisionFromQuote($quoteId: 
 const QUOTE_FULFILLMENT = gql`query QuoteFulfillment($quoteId: ID!) { quoteFulfillment(quoteId: $quoteId) }`;
 const CLOSE_QUOTE_REMAINDER = gql`mutation CloseQuoteRemainder($quoteId: ID!, $reason: String!) { closeQuoteRemainder(quoteId: $quoteId, reason: $reason) { id status } }`;
 const UPLOAD_QUOTE_COVER = gql`mutation UploadQuoteCover($filename: String!, $contentBase64: String!, $scope: String) { uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result } }`;
+const CREATE_QUOTE_SHARE = gql`mutation CreateQuoteShare($quoteId: ID!) { createQuoteShare(quoteId: $quoteId) }`;
 
 async function fileBase64(file: File) {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -93,6 +94,7 @@ export default function QuoteDetailPage() {
   const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
+  const [shareMessage, setShareMessage] = useState('');
   const { data, loading, error, refetch } = useQuery(QUOTE_DETAIL, { variables: { id } });
   const { data: fulfillmentData, refetch: refetchFulfillment } = useQuery(QUOTE_FULFILLMENT, { variables: { quoteId: id }, skip: !id });
   const [updateQuote, { loading: savingQuote, error: updateError }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
@@ -116,6 +118,7 @@ export default function QuoteDetailPage() {
     onCompleted: () => { setCloseReason(''); setOrderMessage('Remaining quote quantities were closed. The existing sales order history is preserved.'); refetch(); refetchFulfillment(); },
   });
   const [uploadCover] = useMutation(UPLOAD_QUOTE_COVER);
+  const [createQuoteShare, { loading: sharing, error: shareError }] = useMutation(CREATE_QUOTE_SHARE);
   const [startRevision, { loading: revising, error: reviseError }] = useMutation(START_REVISION_FROM_QUOTE, {
     onCompleted: (data) => {
       const intent = data?.startQuoteRevision;
@@ -124,7 +127,7 @@ export default function QuoteDetailPage() {
   });
   const quote = data?.quote;
   const documentSettings = data?.documentSettings?.data || {};
-  const brands = useMemo<any[]>(() => (data?.masterProductBrands || []).filter((brand: any) => brand.metadata?.logoUrl && brand.metadata?.quoteEnabled !== false), [data?.masterProductBrands]);
+  const brands = useMemo<any[]>(() => (data?.masterProductBrands || []).filter((brand: any) => brand.metadata?.quoteEnabled !== false), [data?.masterProductBrands]);
   const fulfillment = fulfillmentData?.quoteFulfillment;
   const commercialLocked = Boolean(fulfillment?.orders?.length);
 
@@ -140,11 +143,12 @@ export default function QuoteDetailPage() {
     setDiscountPercent(String(quote.discountPercent || 0));
     setCoverImage(quote.coverImage || meta.coverImage || '');
     setTagline(meta.tagline || documentSettings.documentTagline || '');
-    const lineBrands = new Set((Array.isArray(quote.lines) ? quote.lines : []).map((line: any) => String(line.brand || '').trim().toLowerCase()).filter(Boolean));
+    const mode = String(documentSettings.quoteBrandSelectionMode || 'all');
+    const defaults = new Set((Array.isArray(documentSettings.quoteBrandIds) ? documentSettings.quoteBrandIds : []).map(String));
     setSelectedBrandIds(Array.isArray(meta.selectedBrandIds)
       ? meta.selectedBrandIds.map(String)
-      : brands.filter((brand: any) => lineBrands.has(String(brand.name || '').trim().toLowerCase())).map((brand: any) => String(brand.id)));
-  }, [brands, documentSettings.bankDetails, documentSettings.defaultTerms, documentSettings.documentTagline, quote]);
+      : mode === 'none' ? [] : brands.filter((brand: any) => mode === 'all' || defaults.has(String(brand.id))).map((brand: any) => String(brand.id)));
+  }, [brands, documentSettings.bankDetails, documentSettings.defaultTerms, documentSettings.documentTagline, documentSettings.quoteBrandIds, documentSettings.quoteBrandSelectionMode, quote]);
 
   useEffect(() => {
     const lines = fulfillment?.lines;
@@ -206,6 +210,20 @@ export default function QuoteDetailPage() {
       lines: JSON.stringify(editLines.map((line) => ({ ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18) }))),
     } } });
 
+  async function shareQuote() {
+    setShareMessage('');
+    const result = await createQuoteShare({ variables: { quoteId: quote.id } });
+    const token = result.data?.createQuoteShare?.token;
+    if (!token) return;
+    const url = `${window.location.origin}/share/quotes/${token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareMessage('Customer share link copied. It expires in 30 days and can be revoked.');
+    } catch {
+      setShareMessage(`Share link: ${url}`);
+    }
+  }
+
   if (loading && !quote) return <div role="status" aria-live="polite" className="mp-card rounded-r5 p-10 text-center font-bold text-[var(--ink-4)]">Loading quote...</div>;
   if (error && !quote) return <div className="mp-card rounded-r5 p-6"><QueryErrorBanner error={error} onRetry={() => refetch()} /></div>;
   if (!quote) return <div className="mp-card rounded-r5 p-10 text-center font-bold text-[var(--ink-4)]">Quote not found.</div>;
@@ -233,10 +251,14 @@ export default function QuoteDetailPage() {
             </Button>
           ) : null}
           <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded'} onClick={saveQuote} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Save quote changes'}</Button>
-          <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button>
+          <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button>
+          <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button>
+          <Button size="lg" variant="outline" disabled={sharing} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button>
           {quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
         </div>
       </div>
+      {shareMessage ? <p role="status" className="relative mt-4 rounded-r3 border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{shareMessage}</p> : null}
+      {shareError ? <div className="relative mt-4"><QueryErrorBanner error={shareError} /></div> : null}
       {quote.supersededByQuoteId ? (
         <div className="relative mt-4 flex flex-wrap items-center gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
           <Sparkles className="h-4 w-4" />
@@ -322,7 +344,7 @@ export default function QuoteDetailPage() {
                   <input value={line.area || ''} onChange={(event)=>updateLine(index,{area:event.target.value})} className="h-9 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]" placeholder="Area / room" />
                   <p className="text-lg font-semibold text-[var(--ink)]">{line.name}</p>
                   <p className="text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{line.sku || line.tileCode} · {line.brand || line.category || ''}</p>
-                  <div className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-[var(--brand-700)]"/><input value={line.quoteImage || ''} onChange={(event)=>updateLine(index,{quoteImage:event.target.value})} placeholder="Optional quote image URL" className="h-9 flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold" /></div>
+                  <div className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-[var(--brand-700)]"/><input value={line.quoteImage || ''} onChange={(event)=>updateLine(index,{quoteImage:event.target.value})} placeholder="Optional HTTPS quote image URL" className="h-9 flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold" /></div><p className="text-[10px] text-[var(--ink-5)]">Saved URLs are copied into Marble Park for reliable PDFs.</p>
                 </div>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty</span><input disabled={commercialLocked} type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">List rate</span><input disabled={commercialLocked} type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} onChange={(event)=>updateLine(index,{listPrice:Number(event.target.value),price:Number(event.target.value),sellPrice:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
@@ -340,12 +362,12 @@ export default function QuoteDetailPage() {
         <div className="mp-panel p-5">
           <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--brand-700)]">Quotation footer</p><h2 className="mt-1 text-xl font-semibold text-[var(--ink)]">Served brands</h2></div><span className="rounded-full bg-[var(--brand-50)] px-2.5 py-1 text-xs font-semibold text-[var(--brand-700)]">{selectedBrandIds.length} selected</span></div>
           <p className="mt-2 text-xs leading-5 text-[var(--ink-4)]">Only selected logos are printed in the customer PDF. Brand Master controls the artwork.</p>
-          <div className="mt-4 flex gap-2"><Button type="button" size="sm" variant="outline" disabled={!quotedBrandIds.length} onClick={() => setSelectedBrandIds(quotedBrandIds)}><BadgeCheck className="mr-1.5 h-3.5 w-3.5" />Quoted brands</Button><Button type="button" size="sm" variant="ghost" onClick={() => setSelectedBrandIds([])}>Clear</Button></div>
+          <div className="mt-4 flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setSelectedBrandIds(brands.map((brand: any) => String(brand.id)))}>All brands</Button><Button type="button" size="sm" variant="outline" disabled={!quotedBrandIds.length} onClick={() => setSelectedBrandIds(quotedBrandIds)}><BadgeCheck className="mr-1.5 h-3.5 w-3.5" />Quoted brands</Button><Button type="button" size="sm" variant="ghost" onClick={() => setSelectedBrandIds([])}>Clear</Button></div>
           <div className="mt-4 grid grid-cols-2 gap-2">
             {brands.map((brand: any) => {
               const selected = selectedBrandIds.includes(String(brand.id));
               return <button key={brand.id} type="button" onClick={() => setSelectedBrandIds((current) => selected ? current.filter((id) => id !== String(brand.id)) : [...current, String(brand.id)])} className={`relative grid min-h-20 place-items-center rounded-md border bg-white p-2 transition ${selected ? 'border-[var(--brand-500)] ring-2 ring-[var(--ring)]' : 'border-[var(--line)] hover:border-[var(--line-strong)]'}`}>
-                <img src={brand.metadata.logoUrl} alt={brand.name} className="max-h-10 max-w-full object-contain" />
+                {brand.metadata?.logoUrl ? <img src={brand.metadata.logoUrl} alt={brand.name} className="max-h-10 max-w-full object-contain" /> : <span className="line-clamp-2 text-center text-xs font-semibold text-[var(--ink-3)]">{brand.name}</span>}
                 <span className="mt-1 max-w-full truncate text-[10px] font-semibold text-[var(--ink-4)]">{brand.name}</span>
                 {selected ? <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-600)] text-white"><Check className="h-2.5 w-2.5" /></span> : null}
               </button>;

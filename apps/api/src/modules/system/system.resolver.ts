@@ -26,6 +26,8 @@ class UpdateSettingsInput {
   @Field({ nullable: true }) defaultTerms?: string;
   @Field({ nullable: true }) bankDetails?: string;
   @Field({ nullable: true }) documentFooter?: string;
+  @Field({ nullable: true }) quoteBrandSelectionMode?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) quoteBrandIds?: string[];
   @Field({ nullable: true }) supportPhone?: string;
   @Field({ nullable: true }) supportEmail?: string;
 }

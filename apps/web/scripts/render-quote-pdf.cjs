@@ -120,8 +120,8 @@ const styles = StyleSheet.create({
   brandStripTitle: { fontSize: 7.2, fontWeight: 900, color: colors.tan, letterSpacing: 1.5, textTransform: 'uppercase' },
   brandStripHint: { fontSize: 6.5, color: colors.muted },
   brandLogoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
-  brandLogoTile: { width: 77, height: 32, borderWidth: 1, borderColor: colors.line, backgroundColor: '#ffffff', padding: 4, alignItems: 'center', justifyContent: 'center' },
-  brandLogo: { width: 67, height: 23, objectFit: 'contain' },
+  brandLogoTile: { width: 60, height: 30, borderWidth: 1, borderColor: colors.line, backgroundColor: '#ffffff', padding: 4, alignItems: 'center', justifyContent: 'center' },
+  brandLogo: { width: 52, height: 21, objectFit: 'contain' },
   brandLogoName: { fontSize: 6, fontWeight: 800, color: colors.ink, textAlign: 'center' },
   footer: { position: 'absolute', bottom: 18, left: 28, right: 28, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 7, flexDirection: 'row', justifyContent: 'space-between', color: colors.tan, fontSize: 7.4 },
   pageNumber: { color: colors.tan, fontSize: 7.4 },
@@ -273,14 +273,19 @@ function selectedBrands(payload, quoteMeta) {
   if (quoteMeta.showBrandLogos === false) return [];
   const brands = asArray(payload.brands).filter((brand) => {
     const metadata = safeJson(brand.metadata, {});
-    return brand.status === 'active' && metadata.quoteEnabled !== false && metadata.logoUrl;
+    return brand.status === 'active' && metadata.quoteEnabled !== false;
   });
   if (Array.isArray(quoteMeta.selectedBrandIds)) {
     const ids = new Set(quoteMeta.selectedBrandIds.map(String));
-    return brands.filter((brand) => ids.has(String(brand.id))).slice(0, 18);
+    return brands.filter((brand) => ids.has(String(brand.id)));
   }
-  const names = new Set(asArray(payload.quote?.lines).map((line) => String(line.brand || '').trim().toLowerCase()).filter(Boolean));
-  return brands.filter((brand) => names.has(String(brand.name || '').trim().toLowerCase())).slice(0, 18);
+  const mode = String(payload.settings?.quoteBrandSelectionMode || 'all');
+  if (mode === 'none') return [];
+  if (mode === 'selected') {
+    const defaults = new Set(asArray(payload.settings?.quoteBrandIds).map(String));
+    return brands.filter((brand) => defaults.has(String(brand.id)));
+  }
+  return brands;
 }
 
 function BrandStrip({ payload, quoteMeta, requestUrl }) {
@@ -304,6 +309,19 @@ function BrandStrip({ payload, quoteMeta, requestUrl }) {
 }
 
 async function fetchQuote(id, apiUrl) {
+  const publicToken = String(process.env.PDF_PUBLIC_SHARE_TOKEN || '').trim();
+  if (publicToken) {
+    const query = `query SharedQuoteForPdf($token: String!) { publicQuoteShareDocument(token: $token) }`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query, variables: { token: publicToken } }),
+    });
+    const payload = await response.json();
+    const shared = payload.data?.publicQuoteShareDocument;
+    if (!response.ok || payload.errors?.length || !shared?.quote) throw new Error(payload.errors?.[0]?.message || 'Quote share link not found');
+    return { quote: shared.quote, settings: shared.settings || {}, brands: shared.brands || [] };
+  }
   const query = `query QuoteForPdf($id: ID!) {
     quote(id: $id) {
       id quoteNumber title projectName validUntil createdAt

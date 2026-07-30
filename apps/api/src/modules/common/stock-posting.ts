@@ -29,6 +29,7 @@ export interface StockPostingInput {
   idempotencyKey?: string | null;
   relatedQuoteId?: string | null;
   relatedChallanId?: string | null;
+  unitCost?: number;
   metadata?: Record<string, unknown>;
   requireAvailable?: boolean;
   requireReserved?: boolean;
@@ -82,6 +83,10 @@ export async function applyStockPostingTx(tx: Tx, input: StockPostingInput) {
   if (!productId) throw new BadRequestException('Product Master SKU is required for stock posting');
   const quantity = Math.abs(wholeDelta(input.quantity));
   if (quantity <= 0) throw new BadRequestException('Stock posting quantity must be greater than zero');
+  const unitCost = Number(input.unitCost ?? 0);
+  if (!Number.isFinite(unitCost) || unitCost < 0) {
+    throw new BadRequestException('Stock posting unit cost must be zero or greater');
+  }
 
   if (input.idempotencyKey) {
     const existingPosting = await tx.stockLedgerEntry.findUnique({ where: { idempotencyKey: input.idempotencyKey } }).catch(() => null);
@@ -191,6 +196,7 @@ export async function applyStockPostingTx(tx: Tx, input: StockPostingInput) {
         referenceType: input.referenceType || null,
         referenceId: input.referenceId || null,
         sourceDocumentNo: input.sourceDocumentNo || null,
+        unitCost,
         reason: input.reason,
         createdBy: input.createdBy || 'system',
         metadata: {

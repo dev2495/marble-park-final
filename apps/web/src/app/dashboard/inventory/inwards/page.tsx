@@ -33,6 +33,7 @@ const INVENTORY_BALANCES = gql`
         dimensions
         unit
         sellPrice
+        costPrice
       }
     }
     vendors(status: "active", take: 150)
@@ -66,6 +67,7 @@ type Balance = {
     dimensions?: string;
     unit?: string;
     sellPrice?: number;
+    costPrice?: number;
   } | null;
 };
 
@@ -111,6 +113,7 @@ export default function InventoryInwardsPage() {
   const [locationId, setLocationId] = useState('');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
+  const [unitCost, setUnitCost] = useState('');
   const [message, setMessage] = useState('');
 
   const { data, loading, error, refetch } = useQuery(INVENTORY_BALANCES, {
@@ -126,6 +129,7 @@ export default function InventoryInwardsPage() {
       setLocationId('');
       setReference('');
       setNotes('');
+      setUnitCost('');
       void refetch();
     },
   });
@@ -164,6 +168,7 @@ export default function InventoryInwardsPage() {
             damagedQuantity: 0,
             location: selectedLocation ? `${selectedLocation.code} · ${selectedLocation.name}` : 'Default plant',
             locationId: selectedLocation?.id,
+            unitCost: unitCost === '' ? undefined : Number(unitCost),
           }]),
         },
       },
@@ -327,6 +332,11 @@ export default function InventoryInwardsPage() {
                 <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Supplier challan / bill</span>
                 <Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Vendor challan or bill number" />
               </label>
+              <label className="space-y-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Actual unit cost (optional)</span>
+                <Input type="number" min={0} step="0.01" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder={Number(selectedProduct?.costPrice || 0) > 0 ? `SKU default ${money(selectedProduct?.costPrice)}` : 'Not recorded'} />
+                <span className="block text-xs text-[var(--ink-4)]">Blank uses the Product Master default purchase cost.</span>
+              </label>
               <label className="space-y-2 sm:col-span-2">
                 <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Receive into plant / stock location</span>
                 <select
@@ -365,7 +375,7 @@ export default function InventoryInwardsPage() {
                 <ArrowDownCircle className="mr-2 h-4 w-4" />
                 {saving ? 'Posting...' : 'Post manual GRN'}
               </Button>
-              <Button type="button" variant="outline" onClick={() => { setQuantity(''); setVendorId(''); setVendorName(''); setLocationId(defaultLocation?.id || ''); setReference(''); setNotes(''); setMessage(''); }}>Clear</Button>
+              <Button type="button" variant="outline" onClick={() => { setQuantity(''); setVendorId(''); setVendorName(''); setLocationId(defaultLocation?.id || ''); setReference(''); setNotes(''); setUnitCost(''); setMessage(''); }}>Clear</Button>
             </div>
           </div>
         </div>

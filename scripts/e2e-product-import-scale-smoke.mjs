@@ -33,12 +33,12 @@ async function main() {
   const suffix = Date.now().toString(36).toUpperCase();
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Product Master');
-  sheet.addRow(['SKU *', 'Internal Code *', 'Product Name *', 'Category *', 'Brand *', 'Finish *', 'Material (Optional)', 'Tile Size / Dimensions (Optional)', 'Base UOM (Optional)', 'Purchase UOM (Optional)', 'Sales UOM (Optional)', 'Pieces Per Pack (Optional)', 'Coverage Per Pack (Optional)', 'Sell Price (Optional)', 'Floor Price (Optional)', 'Tax Code *', 'HSN Code (Optional)', 'Allow Loose (Optional)', 'Range / Series (Optional)', 'Image URL (Optional)', 'Product Image (Optional)', 'Description (Optional)']);
+  sheet.addRow(['SKU *', 'Internal Code *', 'Product Name *', 'Category *', 'Brand *', 'Finish *', 'Material (Optional)', 'Tile Size / Dimensions (Optional)', 'Base UOM (Optional)', 'Purchase UOM (Optional)', 'Sales UOM (Optional)', 'Pieces Per Pack (Optional)', 'Coverage Per Pack (Optional)', 'Sell Price (Optional)', 'Floor Price (Optional)', 'Default Purchase Cost (Optional)', 'Tax Code *', 'HSN Code (Optional)', 'Allow Loose (Optional)', 'Range / Series (Optional)', 'Image URL (Optional)', 'Product Image (Optional)', 'Description (Optional)']);
   for (let index = 0; index < ROW_COUNT; index += 1) {
     const serial = String(index + 1).padStart(4, '0');
     const sku = `SCALE-${suffix}-${serial}`;
     createdSkus.push(sku);
-    sheet.addRow([sku, `SC-${suffix}-${serial}`, `Scale verification SKU ${serial}`, options.categories[0], options.brands[0], options.finishes[0], '', '', 'PC', 'PC', 'PC', 1, 0, index + 1, 0, options.taxCodes[0]]);
+    sheet.addRow([sku, `SC-${suffix}-${serial}`, `Scale verification SKU ${serial}`, options.categories[0], options.brands[0], options.finishes[0], '', '', 'PC', 'PC', 'PC', 1, 0, index + 1, 0, '', options.taxCodes[0]]);
   }
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   const filename = `product-import-scale-${suffix}.xlsx`;

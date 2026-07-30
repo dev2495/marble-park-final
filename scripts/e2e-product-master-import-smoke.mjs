@@ -50,7 +50,7 @@ async function main() {
     const readiness = (await gql(`query { productImportReadiness }`, {}, token)).productImportReadiness;
     assert(readiness.ready && readiness.blockers.length === 0, `Import preflight must be ready before template download: ${JSON.stringify(readiness.blockers)}`);
     const template = (await gql(`query { productImportTemplate }`, {}, token)).productImportTemplate;
-    assert(template.contentBase64 && template.headers.includes('Internal Code') && template.headers.includes('Coverage Per Pack') && template.headers.includes('Product Image'), 'Template must expose governed product and embedded-image fields');
+    assert(template.contentBase64 && template.headers.includes('Internal Code') && template.headers.includes('Coverage Per Pack') && template.headers.includes('Default Purchase Cost') && template.headers.includes('Product Image'), 'Template must expose governed product, optional purchase cost and embedded-image fields');
 
     const downloaded = new ExcelJS.Workbook();
     await downloaded.xlsx.load(Buffer.from(template.contentBase64, 'base64'));
@@ -82,7 +82,7 @@ async function main() {
     const cleanSuffix = `${Date.now().toString(36).toUpperCase()}C`;
     const cleanSku = `BULK-CLEAN-${cleanSuffix}`;
     createdSkus.push(cleanSku);
-    cleanSheet.addRow([cleanSku, `BC-${cleanSuffix}`, 'Clean browser confirmation row', categories.find((value) => value !== tileCategory) || categories[0], brands[0], finishes[0], '', '', '', '', '', '', '', '', '', taxCodes[0]]);
+    cleanSheet.addRow([cleanSku, `BC-${cleanSuffix}`, 'Clean browser confirmation row', categories.find((value) => value !== tileCategory) || categories[0], brands[0], finishes[0], '', '', '', '', '', '', '', '', '', '', taxCodes[0]]);
     const cleanFilename = `clean-browser-review-${cleanSuffix}.xlsx`;
     const cleanUploadId = await uploadWorkbook(await cleanBook.xlsx.writeBuffer(), cleanFilename, token);
     const cleanPreview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel' }, token)).previewUploadedImport.result;
@@ -92,7 +92,7 @@ async function main() {
       category: row.category, brand: row.brand, finish: row.finish, material: row.material || '', dimensions: row.dimensions || '',
       baseUom: row.provided?.baseUom ? row.baseUom : '', purchaseUom: row.provided?.purchaseUom ? row.purchaseUom : '', salesUom: row.provided?.salesUom ? row.salesUom : '',
       piecesPerPack: row.provided?.piecesPerPack ? row.piecesPerPack : '', coveragePerPack: row.provided?.coveragePerPack ? row.coveragePerPack : '',
-      sellPrice: row.provided?.sellPrice ? row.sellPrice : '', floorPrice: row.provided?.floorPrice ? row.floorPrice : '', taxClass: row.taxClass,
+      sellPrice: row.provided?.sellPrice ? row.sellPrice : '', floorPrice: row.provided?.floorPrice ? row.floorPrice : '', costPrice: row.provided?.costPrice ? row.costPrice : '', taxClass: row.taxClass,
       hsnCode: row.hsnCode || '', allowLoose: row.provided?.allowLoose ? (row.allowLoose ? 'Yes' : 'No') : '', range: row.range || '', imageUrl: row.imageUrl || '', description: row.description || '',
     }));
     const cleanRevalidated = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $reviewRows: JSON) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, reviewRows: $reviewRows) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel', reviewRows: browserRows }, token)).previewUploadedImport.result;
@@ -105,11 +105,11 @@ async function main() {
     const suffix = Date.now().toString(36).toUpperCase();
     const sku = `BULK-TILE-${suffix}`;
     createdSkus.push(sku);
-    sheet.addRow([sku, `BT-${suffix}`, 'Bulk imported porcelain tile', tileCategory, '', finishes[0] || '', materials[0] || '', '', '', '', '', '', '', '', 115, taxCodes[0], '', '', 'Smoke series', '', '', 'Exact tile design row']);
+    sheet.addRow([sku, `BT-${suffix}`, 'Bulk imported porcelain tile', tileCategory, '', finishes[0] || '', materials[0] || '', '', '', '', '', '', '', '', 115, '', taxCodes[0], '', '', 'Smoke series', '', '', 'Exact tile design row']);
     sheet.getRow(2).height = 48;
     const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nDMAAAAASUVORK5CYII=', 'base64');
     const imageId = workbook.addImage({ buffer: pixel, extension: 'png' });
-    sheet.addImage(imageId, { tl: { col: 20, row: 1 }, ext: { width: 42, height: 42 } });
+    sheet.addImage(imageId, { tl: { col: 21, row: 1 }, ext: { width: 42, height: 42 } });
     const buffer = await workbook.xlsx.writeBuffer();
     const filename = `product-master-${suffix}.xlsx`;
     const uploadId = await uploadWorkbook(buffer, filename, token);
@@ -174,7 +174,7 @@ async function main() {
     const invalidBook = new ExcelJS.Workbook();
     const invalidSheet = invalidBook.addWorksheet('Product Master');
     invalidSheet.addRow(template.headers);
-    invalidSheet.addRow([`BAD-${suffix}`, `BAD-${suffix}`, 'Unknown master row', 'Not A Real Category', '', '', '', '', uoms[0], uoms[0], uoms[0], 1, 0, 100, 90, taxCodes[0], '', 'No']);
+    invalidSheet.addRow([`BAD-${suffix}`, `BAD-${suffix}`, 'Unknown master row', 'Not A Real Category', '', '', '', '', uoms[0], uoms[0], uoms[0], 1, 0, 100, 90, '', taxCodes[0], '', 'No']);
     const invalidFilename = `invalid-product-master-${suffix}.xlsx`;
     const invalidUploadId = await uploadWorkbook(await invalidBook.xlsx.writeBuffer(), invalidFilename, token);
     const invalidPreview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`, { uploadId: invalidUploadId, filename: invalidFilename, kind: 'excel' }, token)).previewUploadedImport.result;

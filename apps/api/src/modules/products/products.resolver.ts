@@ -38,6 +38,9 @@ export class ProductOutput {
   @Field(() => Number, { nullable: true })
   floorPrice?: number;
 
+  @Field(() => Number, { nullable: true })
+  costPrice?: number;
+
   @Field({ nullable: true })
   taxClass?: string;
 
@@ -96,6 +99,9 @@ export class CreateProductInput {
   @Field(() => Number, { nullable: true })
   floorPrice?: number;
 
+  @Field(() => Number, { nullable: true })
+  costPrice?: number;
+
   @Field(() => String, { nullable: true })
   taxClass?: string;
 
@@ -146,6 +152,9 @@ export class UpdateProductInput {
 
   @Field(() => Number, { nullable: true })
   floorPrice?: number;
+
+  @Field(() => Number, { nullable: true })
+  costPrice?: number;
 
   @Field(() => String, { nullable: true })
   taxClass?: string;

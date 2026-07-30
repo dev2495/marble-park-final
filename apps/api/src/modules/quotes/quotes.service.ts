@@ -6,6 +6,8 @@ import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/st
 import { releaseReservedLotsTx, reserveAvailableLotsTx } from '../common/lot-allocation';
 import { commercialTotalsFromLines, priceQuoteLines } from '../common/pricing';
 import { ulid } from 'ulid';
+import { randomBytes } from 'crypto';
+import { StoredImageService } from '../assets/stored-image.service';
 
 export interface CreateQuoteInput {
   leadId: string;
@@ -68,7 +70,11 @@ const quoteInclude = {
 
 @Injectable()
 export class QuotesService {
-  constructor(private prisma: PrismaService, private notifications: NotificationsService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationsService,
+    private storedImages: StoredImageService,
+  ) {}
 
   /**
    * GraphQL-facing list. Returns BARE rows (no relations eagerly joined) so
@@ -121,7 +127,7 @@ export class QuotesService {
     const customerId = data.customerId;
     if (!customerId) throw new BadRequestException('A customer is required');
 
-    const assertedLines = await this.assertQuoteLines(data.lines, 'creating a quote');
+    const assertedLines = await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote'));
     const pricing = priceQuoteLines(assertedLines, data.discountPercent || 0);
     const normalizedLines = pricing.lines;
     const displayMode = this.normalizeDisplayMode(data.displayMode);
@@ -271,9 +277,9 @@ export class QuotesService {
     }
     const updateData: any = { ...data };
     if (data.discountPercent !== undefined || data.lines !== undefined) {
-      const assertedLines = data.lines !== undefined
+      const assertedLines = await this.persistQuoteLineImages(data.lines !== undefined
         ? await this.assertQuoteLines(data.lines, 'updating a quote')
-        : await this.assertQuoteLines(current.lines, 'updating a quote');
+        : await this.assertQuoteLines(current.lines, 'updating a quote'));
       const pricing = priceQuoteLines(assertedLines, data.discountPercent ?? current.discountPercent ?? 0);
       updateData.lines = pricing.lines;
       updateData.discountPercent = pricing.quoteDiscountPercent;
@@ -350,7 +356,7 @@ export class QuotesService {
       if (!Array.isArray(patches) || patches.length > 500) throw new BadRequestException('Quote presentation rows are invalid or exceed 500 items.');
       const byKey = new Map(patches.map((patch: any, index: number) => [String(patch?.lineKey || patch?.id || `index:${index}`), patch]));
       const currentLines = await this.assertQuoteLines(current.lines, 'updating quote presentation');
-      updateData.lines = currentLines.map((line: any, index: number) => {
+      updateData.lines = await this.persistQuoteLineImages(currentLines.map((line: any, index: number) => {
         const key = String(line.lineKey || line.id || `index:${index}`);
         const patch: any = byKey.get(key);
         if (!patch) return line;
@@ -361,7 +367,7 @@ export class QuotesService {
           customImageUrl: String(patch.customImageUrl ?? patch.quoteImage ?? line.customImageUrl ?? '').slice(0, 2048),
           designCode: String(patch.designCode ?? line.designCode ?? '').slice(0, 120),
         };
-      });
+      }));
     }
 
     if (!Object.keys(updateData).length) return current;
@@ -373,6 +379,81 @@ export class QuotesService {
       linePresentationCount: Array.isArray(data.linePresentation) ? data.linePresentation.length : undefined,
     });
     return updated;
+  }
+
+  async createShare(quoteId: string, actorUserId: string, expiresInDays = 30, allowDownload = true) {
+    await this.findById(quoteId);
+    const days = Math.min(Math.max(Math.trunc(Number(expiresInDays || 30)), 1), 365);
+    const now = new Date();
+    const reusable = await (this.prisma as any).quoteShare.findFirst({
+      where: { quoteId, createdBy: actorUserId, allowDownload: Boolean(allowDownload), revokedAt: null, expiresAt: { gt: now } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (reusable) return reusable;
+    return (this.prisma as any).quoteShare.create({
+      data: {
+        id: ulid(),
+        token: randomBytes(32).toString('base64url'),
+        quoteId,
+        createdBy: actorUserId,
+        allowDownload: Boolean(allowDownload),
+        expiresAt: new Date(now.getTime() + days * 24 * 60 * 60 * 1000),
+      },
+    });
+  }
+
+  async quoteShares(quoteId: string) {
+    await this.findById(quoteId);
+    return (this.prisma as any).quoteShare.findMany({ where: { quoteId }, orderBy: { createdAt: 'desc' }, take: 25 });
+  }
+
+  async revokeShare(quoteId: string, shareId: string, actorUserId: string) {
+    const share = await (this.prisma as any).quoteShare.findFirst({ where: { id: shareId, quoteId } });
+    if (!share) throw new NotFoundException('Quote share link not found');
+    if (!share.revokedAt) {
+      await (this.prisma as any).quoteShare.update({ where: { id: share.id }, data: { revokedAt: new Date() } });
+      await this.audit(actorUserId, 'quote.share.revoke', quoteId, 'Revoked quote share link', { shareId });
+    }
+    return { ...share, revokedAt: share.revokedAt || new Date() };
+  }
+
+  async publicQuoteShareDocument(tokenInput: string) {
+    const token = String(tokenInput || '').trim();
+    if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new NotFoundException('Quote share link not found');
+    const now = new Date();
+    const share = await (this.prisma as any).quoteShare.findUnique({ where: { token } });
+    if (!share || share.revokedAt || share.expiresAt <= now) throw new NotFoundException('Quote share link is unavailable or has expired');
+    const quote = await this.prisma.quote.findUnique({ where: { id: share.quoteId }, include: quoteInclude } as any) as any;
+    if (!quote) throw new NotFoundException('Quote share link not found');
+    const [settings, brands] = await Promise.all([
+      this.prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } }),
+      this.prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+    ]);
+    await (this.prisma as any).quoteShare.update({
+      where: { id: share.id },
+      data: { viewCount: { increment: 1 }, lastViewedAt: now },
+    }).catch(() => null);
+    return {
+      quote,
+      settings: settings ? {
+        companyName: settings.companyName,
+        logoUrl: settings.logoUrl,
+        companyAddress: settings.companyAddress,
+        gstNumber: settings.gstNumber,
+        website: settings.website,
+        quotationTitle: settings.quotationTitle,
+        documentTagline: settings.documentTagline,
+        defaultTerms: settings.defaultTerms,
+        bankDetails: settings.bankDetails,
+        documentFooter: settings.documentFooter,
+        supportPhone: settings.supportPhone,
+        supportEmail: settings.supportEmail,
+        quoteBrandSelectionMode: (settings as any).quoteBrandSelectionMode || 'all',
+        quoteBrandIds: Array.isArray((settings as any).quoteBrandIds) ? (settings as any).quoteBrandIds : [],
+      } : {},
+      brands,
+      share: { id: share.id, expiresAt: share.expiresAt, allowDownload: share.allowDownload },
+    };
   }
 
   async updateStatus(id: string, status: string): Promise<any> {
@@ -1226,6 +1307,33 @@ export class QuotesService {
         nonStock: false,
       };
     });
+  }
+
+  private async persistQuoteLineImages(lines: any[]) {
+    const cache = new Map<string, string>();
+    const persisted: any[] = [];
+    for (const line of lines) {
+      const media = line?.media && typeof line.media === 'object' ? line.media : {};
+      const gallery = Array.isArray(media.gallery) ? media.gallery : Array.isArray(media.images) ? media.images : [];
+      const firstGallery = typeof gallery[0] === 'string' ? gallery[0] : gallery[0]?.url;
+      const source = String(line.quoteImage || line.customImageUrl || media.primaryUrl || media.primaryImage || firstGallery || '').trim();
+      if (!source) {
+        persisted.push(line);
+        continue;
+      }
+      let stored = cache.get(source);
+      if (!stored) {
+        try {
+          stored = await this.storedImages.persistRemoteImage(source);
+          cache.set(source, stored);
+        } catch (error: any) {
+          const detail = error?.response?.message || error?.message || 'the image could not be imported';
+          throw new BadRequestException(`${line.sku || line.name || 'Quote line'} image was not saved: ${detail}`);
+        }
+      }
+      persisted.push({ ...line, quoteImage: stored, customImageUrl: stored });
+    }
+    return persisted;
   }
 
   private normalizeDisplayMode(value?: string) {

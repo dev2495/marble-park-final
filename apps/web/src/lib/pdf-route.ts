@@ -15,6 +15,7 @@ type RenderPdfInput = {
   action: string;
   errorMessage: string;
   includeApiUrl?: boolean;
+  publicShareToken?: string;
 };
 
 function rendererPath(scriptName: string) {
@@ -63,6 +64,7 @@ async function executeRenderer(input: RenderPdfInput, sessionToken: string) {
         env: {
           ...process.env,
           PDF_SESSION_TOKEN: sessionToken,
+          PDF_PUBLIC_SHARE_TOKEN: input.publicShareToken || '',
         },
       },
       (error, stdout, stderr) => {
@@ -84,7 +86,7 @@ async function executeRenderer(input: RenderPdfInput, sessionToken: string) {
 export async function servePdf(input: RenderPdfInput) {
   const requestId = randomUUID();
   const sessionToken = requestSessionToken(input.request);
-  if (!sessionToken) {
+  if (!sessionToken && !input.publicShareToken) {
     return NextResponse.json(
       {
         error: 'Sign in again before opening this document.',

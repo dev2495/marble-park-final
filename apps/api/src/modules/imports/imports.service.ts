@@ -27,12 +27,14 @@ type NormalizedProductRow = {
   taxClass: string;
   sellPrice: number;
   floorPrice: number;
+  costPrice: number;
   hasBrand: boolean;
   hasFinish: boolean;
   hasDimensions: boolean;
   hasUnit: boolean;
   hasSellPrice: boolean;
   hasFloorPrice: boolean;
+  hasCostPrice: boolean;
   hasDescription: boolean;
   description: string;
   range: string;
@@ -65,6 +67,7 @@ type ProductImportReviewRow = {
   coveragePerPack?: unknown;
   sellPrice?: unknown;
   floorPrice?: unknown;
+  costPrice?: unknown;
   taxClass?: unknown;
   hsnCode?: unknown;
   allowLoose?: unknown;
@@ -76,7 +79,7 @@ type ProductImportReviewRow = {
 const PRODUCT_IMPORT_HEADERS = [
   'SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Material', 'Tile Size / Dimensions',
   'Base UOM', 'Purchase UOM', 'Sales UOM', 'Pieces Per Pack', 'Coverage Per Pack', 'Sell Price', 'Floor Price',
-  'Tax Code', 'HSN Code', 'Allow Loose', 'Range / Series', 'Image URL', 'Product Image', 'Description',
+  'Default Purchase Cost', 'Tax Code', 'HSN Code', 'Allow Loose', 'Range / Series', 'Image URL', 'Product Image', 'Description',
 ];
 const PRODUCT_IMPORT_DISPLAY_HEADERS = PRODUCT_IMPORT_HEADERS.map((header) =>
   ['SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Tax Code'].includes(header)
@@ -138,15 +141,16 @@ export class ImportsService {
     sheet.getRow(1).height = 32;
     sheet.getRow(1).alignment = { vertical: 'middle', wrapText: true };
     sheet.views = [{ state: 'frozen', ySplit: 1 }];
-    sheet.autoFilter = { from: 'A1', to: 'V1' };
-    const widths = [18, 18, 32, 20, 20, 18, 20, 24, 13, 15, 13, 15, 18, 14, 14, 14, 13, 13, 20, 34, 18, 38];
+    sheet.autoFilter = { from: 'A1', to: 'W1' };
+    const widths = [18, 18, 32, 20, 20, 18, 20, 24, 13, 15, 13, 15, 18, 14, 14, 20, 14, 13, 13, 20, 34, 18, 38];
     sheet.columns.forEach((column: any, index: number) => { column.width = widths[index] || 18; });
     sheet.getColumn(1).numFmt = '@';
     sheet.getColumn(2).numFmt = '@';
     sheet.getColumn(14).numFmt = '[$₹-en-IN]#,##0.00';
     sheet.getColumn(15).numFmt = '[$₹-en-IN]#,##0.00';
-    sheet.getColumn(20).alignment = { wrapText: true };
-    sheet.getColumn(22).alignment = { wrapText: true };
+    sheet.getColumn(16).numFmt = '[$₹-en-IN]#,##0.00';
+    sheet.getColumn(21).alignment = { wrapText: true };
+    sheet.getColumn(23).alignment = { wrapText: true };
     PRODUCT_IMPORT_HEADERS.forEach((header, index) => {
       const required = !PRODUCT_IMPORT_DISPLAY_HEADERS[index].includes('(Optional)');
       const cell = sheet.getCell(1, index + 1);
@@ -205,7 +209,7 @@ export class ImportsService {
       6: { name: 'Finishes', allowBlank: false }, 7: { name: 'Materials', allowBlank: true },
       8: { name: 'TileSizes', allowBlank: true }, 9: { name: 'UOMs', allowBlank: true },
       10: { name: 'UOMs', allowBlank: true }, 11: { name: 'UOMs', allowBlank: true },
-      16: { name: 'TaxCodes', allowBlank: false }, 18: { name: 'YesNo', allowBlank: true },
+      17: { name: 'TaxCodes', allowBlank: false }, 19: { name: 'YesNo', allowBlank: true },
     };
     for (let rowNumber = 2; rowNumber <= MAX_IMPORT_ROWS + 1; rowNumber += 1) {
       Object.entries(validationByColumn).forEach(([column, config]) => {
@@ -215,7 +219,7 @@ export class ImportsService {
         };
       });
       sheet.getCell(rowNumber, 12).dataValidation = { type: 'whole', operator: 'greaterThanOrEqual', formulae: [1], allowBlank: true, showErrorMessage: true, error: 'When entered, pieces per pack must be at least 1.' };
-      for (const column of [13, 14, 15]) sheet.getCell(rowNumber, column).dataValidation = { type: 'decimal', operator: 'greaterThanOrEqual', formulae: [0], allowBlank: true, showErrorMessage: true, error: 'When entered, use zero or a positive number.' };
+      for (const column of [13, 14, 15, 16]) sheet.getCell(rowNumber, column).dataValidation = { type: 'decimal', operator: 'greaterThanOrEqual', formulae: [0], allowBlank: true, showErrorMessage: true, error: 'When entered, use zero or a positive number.' };
     }
 
     const reference = workbook.addWorksheet('Reference details');
@@ -234,7 +238,7 @@ export class ImportsService {
     reference.columns = [{ width: 16 }, { width: 18 }, { width: 34 }, { width: 34 }];
 
     sheet.getCell('A2').note = 'Required. New immutable SKU code. Existing SKU codes are blocked.';
-    sheet.getCell('U2').note = 'Optional. Use Insert > Pictures > Place over cells (not Place in Cell). Keep one JPG, PNG or WebP image with its top-left corner inside this row.';
+    sheet.getCell('V2').note = 'Optional. Use Insert > Pictures > Place over cells (not Place in Cell). Keep one JPG, PNG or WebP image with its top-left corner inside this row.';
     const buffer = await workbook.xlsx.writeBuffer();
     return {
       filename: `marble-park-product-master-live-${new Date().toISOString().slice(0, 10)}.xlsx`,
@@ -384,7 +388,7 @@ export class ImportsService {
     const headerByField: Record<string, string> = {
       sku: 'SKU', internalCode: 'Internal Code', name: 'Product Name', category: 'Category', brand: 'Brand', finish: 'Finish',
       material: 'Material', dimensions: 'Tile Size / Dimensions', baseUom: 'Base UOM', purchaseUom: 'Purchase UOM', salesUom: 'Sales UOM',
-      piecesPerPack: 'Pieces Per Pack', coveragePerPack: 'Coverage Per Pack', sellPrice: 'Sell Price', floorPrice: 'Floor Price',
+      piecesPerPack: 'Pieces Per Pack', coveragePerPack: 'Coverage Per Pack', sellPrice: 'Sell Price', floorPrice: 'Floor Price', costPrice: 'Default Purchase Cost',
       taxClass: 'Tax Code', hsnCode: 'HSN Code', allowLoose: 'Allow Loose', range: 'Range / Series', imageUrl: 'Image URL', description: 'Description',
     };
     for (const review of reviewed) {
@@ -404,7 +408,7 @@ export class ImportsService {
     if (value.length > MAX_IMPORT_ROWS) throw new BadRequestException(`A review can contain at most ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} rows.`);
     const allowed = new Set([
       'sku', 'internalCode', 'name', 'category', 'brand', 'finish', 'material', 'dimensions', 'baseUom', 'purchaseUom', 'salesUom',
-      'piecesPerPack', 'coveragePerPack', 'sellPrice', 'floorPrice', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description',
+      'piecesPerPack', 'coveragePerPack', 'sellPrice', 'floorPrice', 'costPrice', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description',
     ]);
     const identities = new Set<string>();
     const rows = value.map((input: any) => {
@@ -550,6 +554,7 @@ export class ImportsService {
         coveragePerPack: row.normalized.coveragePerPack,
         sellPrice: row.normalized.sellPrice,
         floorPrice: row.normalized.floorPrice,
+        costPrice: row.normalized.costPrice,
         taxClass: row.normalized.taxClass,
         hsnCode: row.normalized.hsnCode,
         allowLoose: row.normalized.allowLoose,
@@ -565,6 +570,7 @@ export class ImportsService {
           coveragePerPack: row.normalized.hasCoveragePerPack,
           sellPrice: row.normalized.hasSellPrice,
           floorPrice: row.normalized.hasFloorPrice,
+          costPrice: row.normalized.hasCostPrice,
           taxClass: row.normalized.hasTaxClass,
           allowLoose: row.normalized.hasAllowLoose,
         },
@@ -656,6 +662,7 @@ export class ImportsService {
     if (!row.hasTaxClass) errors.push('Tax Code is required');
     if (row.hasSellPrice && (!Number.isFinite(row.sellPrice) || row.sellPrice < 0)) errors.push('Sell Price must be zero or greater');
     if (row.hasFloorPrice && (!Number.isFinite(row.floorPrice) || row.floorPrice < 0)) errors.push('Floor/dealer price must be zero or greater');
+    if (row.hasCostPrice && (!Number.isFinite(row.costPrice) || row.costPrice < 0)) errors.push('Default purchase cost must be zero or greater');
     if (row.hasFloorPrice && row.sellPrice > 0 && row.floorPrice > row.sellPrice) errors.push('Floor price cannot exceed sell price');
     if (!Number.isInteger(row.piecesPerPack) || row.piecesPerPack <= 0) errors.push('Pieces per pack must be a positive whole number');
     if (!Number.isFinite(row.coveragePerPack) || row.coveragePerPack < 0) errors.push('Coverage per pack must be zero or greater');
@@ -718,6 +725,7 @@ export class ImportsService {
     };
     const price = pick('MRP', 'Price', 'SELL PRICE', 'Sell Price', 'Selling Price', 'MRP INR', 'MRP(INR)', 'List Price', 'Amount', 'Rate');
     const floorPrice = pick('Floor Price', 'FLOOR PRICE', 'Dealer Price', 'Net Price', 'Special Rate');
+    const costPrice = pick('Default Purchase Cost', 'Purchase Cost', 'Cost Price', 'Landed Cost', 'Unit Cost');
     const category = this.cleanText(pick('Category', 'CATEGORY', 'Product Category', 'Group', 'Type'));
     const brand = this.cleanText(pick('Brand', 'BRAND', 'Make', 'Company'));
     const finish = this.cleanText(pick('Finish', 'FINISH', 'Color', 'Colour', 'Surface', 'Shade'));
@@ -756,12 +764,14 @@ export class ImportsService {
       taxClass: this.normalizeTaxClass(taxClassValue),
       sellPrice: this.money(price),
       floorPrice: this.money(floorPrice),
+      costPrice: this.money(costPrice),
       hasBrand: Boolean(brand),
       hasFinish: Boolean(finish),
       hasDimensions: Boolean(dimensions),
       hasUnit: unit !== undefined,
       hasSellPrice: price !== undefined,
       hasFloorPrice: floorPrice !== undefined,
+      hasCostPrice: costPrice !== undefined,
       hasDescription: Boolean(description),
       description,
       range: this.cleanText(pick('Range / Series', 'Range', 'RANGE', 'Series', 'Collection')) || '',
@@ -815,6 +825,7 @@ export class ImportsService {
         tags: [],
         sellPrice,
         floorPrice: normalized.floorPrice,
+        costPrice: normalized.costPrice,
         taxClass: normalized.taxClass,
         status: 'active',
         media: media || {},
@@ -988,6 +999,7 @@ export class ImportsService {
       tags: [],
       sellPrice: normalized.sellPrice,
       floorPrice: normalized.floorPrice,
+      costPrice: normalized.costPrice,
       taxClass: normalized.taxClass,
       status: 'active',
       media,

@@ -42,6 +42,8 @@ model AppSetting {
   defaultTerms              String   @default("")
   bankDetails               String   @default("")
   documentFooter            String   @default("")
+  quoteBrandSelectionMode   String   @default("all")
+  quoteBrandIds             Json     @default("[]")
   supportPhone              String
   supportEmail              String
   updatedAt                 DateTime
@@ -549,6 +551,7 @@ model Product {
   tags         Json
   sellPrice    Float
   floorPrice   Float
+  costPrice    Float             @default(0)
   taxClass     String
   status       String
   media        Json
@@ -678,6 +681,7 @@ model Quote {
   reservations        Reservation[]
   dispatchJobs        DispatchJob[]
   dispatchChallan     DispatchChallan[]
+  shares              QuoteShare[]
 
   @@index([leadId])
   @@index([customerId])
@@ -689,6 +693,24 @@ model Quote {
   @@index([supersedesQuoteId])
   @@index([supersededByQuoteId])
   @@index([createdAt(sort: Desc)])
+}
+
+model QuoteShare {
+  id            String    @id
+  token         String    @unique
+  quote         Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  quoteId       String
+  createdBy     String
+  allowDownload Boolean   @default(true)
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  viewCount     Int       @default(0)
+  lastViewedAt  DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([quoteId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@index([revokedAt])
 }
 
 model Reservation {

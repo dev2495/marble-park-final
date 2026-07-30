@@ -117,6 +117,7 @@ export async function applyLotStockPostingTx(tx: Tx, input: LotStockPostingInput
     sourceDocumentNo: input.sourceDocumentNo || null,
     relatedQuoteId: input.relatedQuoteId || null,
     relatedChallanId: input.relatedChallanId || null,
+    unitCost: input.unitCost ?? Number(lot.unitCost || 0),
     metadata: { lotId, ...input.metadata },
     requireAvailable: input.requireAvailable,
     requireReserved: input.requireReserved,

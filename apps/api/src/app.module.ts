@@ -25,6 +25,7 @@ import { IntentsModule } from './modules/intents/intents.module';
 import { HealthController } from './health.controller';
 
 import { SearchModule } from './modules/search/search.module';
+import { AssetsModule } from './modules/assets/assets.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { SearchModule } from './modules/search/search.module';
       }),
     }),
     PrismaModule,
+    AssetsModule,
     AuthModule,
     UsersModule,
     ProductsModule,

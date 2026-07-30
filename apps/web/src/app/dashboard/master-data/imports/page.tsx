@@ -218,6 +218,7 @@ function editableRow(row: any) {
       provided.coveragePerPack === false ? "" : (row.coveragePerPack ?? ""),
     sellPrice: provided.sellPrice === false ? "" : (row.sellPrice ?? ""),
     floorPrice: provided.floorPrice === false ? "" : (row.floorPrice ?? ""),
+    costPrice: provided.costPrice === false ? "" : (row.costPrice ?? ""),
     taxClass: provided.taxClass === false ? "" : row.taxClass || "",
     hsnCode: row.hsnCode || "",
     allowLoose:
@@ -1044,6 +1045,22 @@ export default function ImportCenterPage() {
                                   updateRow(
                                     index,
                                     "floorPrice",
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            </Field>
+                            <Field label="Default purchase cost">
+                              <input
+                                className={inputClass}
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={row.costPrice}
+                                onChange={(event) =>
+                                  updateRow(
+                                    index,
+                                    "costPrice",
                                     event.target.value,
                                   )
                                 }

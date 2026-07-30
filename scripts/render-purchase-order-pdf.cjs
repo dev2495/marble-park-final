@@ -67,6 +67,7 @@ function build({ order, settings }, requestUrl) {
   const e = React.createElement;
   const lines = Array.isArray(order.lines) ? order.lines : [];
   const subtotal = lines.reduce((sum, line) => sum + Number(line.orderedQuantity || 0) * Number(line.unitCost || 0), 0);
+  const hasPendingCost = lines.some((line) => Number(line.unitCost || 0) <= 0);
   const logo = absolute(settings.logoUrl, requestUrl);
   return e(Document, null, e(Page, { size: 'A4', style: s.page },
     e(View, { style: s.rule }),
@@ -80,10 +81,10 @@ function build({ order, settings }, requestUrl) {
     ),
     e(View, { style: s.table },
       e(View, { style: [s.tr, s.th] }, e(Text, { style: s.c1 }, '#'), e(Text, { style: s.c2 }, 'SKU / CODE'), e(Text, { style: s.c3 }, 'DESCRIPTION'), e(Text, { style: s.c4 }, 'QTY'), e(Text, { style: s.c5 }, 'UNIT COST'), e(Text, { style: s.c6 }, 'VALUE')),
-      ...lines.map((line, index) => e(View, { key: line.id || index, style: s.tr, wrap: false }, e(Text, { style: s.c1 }, String(index + 1)), e(Text, { style: s.c2 }, line.metadata?.internalCode || line.sku || ''), e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')), e(Text, { style: s.c4 }, `${line.orderedQuantity || 0} ${line.unit || 'PC'}`), e(Text, { style: s.c5 }, money(line.unitCost)), e(Text, { style: s.c6 }, money(Number(line.orderedQuantity || 0) * Number(line.unitCost || 0))))),
+      ...lines.map((line, index) => { const known = Number(line.unitCost || 0) > 0; return e(View, { key: line.id || index, style: s.tr, wrap: false }, e(Text, { style: s.c1 }, String(index + 1)), e(Text, { style: s.c2 }, line.metadata?.internalCode || line.sku || ''), e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')), e(Text, { style: s.c4 }, `${line.orderedQuantity || 0} ${line.unit || 'PC'}`), e(Text, { style: s.c5 }, known ? money(line.unitCost) : 'At GRN'), e(Text, { style: s.c6 }, known ? money(Number(line.orderedQuantity || 0) * Number(line.unitCost || 0)) : 'Pending')); }),
     ),
-    e(View, { style: s.total }, e(Text, null, 'Order value'), e(Text, null, money(subtotal))),
-    e(View, { style: s.notes }, e(Text, { style: s.label }, 'Instructions / terms'), e(Text, { style: s.small }, order.notes || 'Supply against this purchase order only. Quantity and condition are subject to GRN verification.')),
+    e(View, { style: s.total }, e(Text, null, hasPendingCost ? 'Known order value' : 'Order value'), e(Text, null, money(subtotal))),
+    e(View, { style: s.notes }, e(Text, { style: s.label }, 'Instructions / terms'), e(Text, { style: s.small }, [order.notes || 'Supply against this purchase order only. Quantity and condition are subject to GRN verification.', hasPendingCost ? 'Pending line costs will be recorded at GRN; if left blank, Product Master default purchase cost is used.' : ''].filter(Boolean).join('\n'))),
     e(View, { style: s.signatures }, e(Text, { style: s.sign }, 'Supplier acceptance'), e(Text, { style: s.sign }, `For ${settings.companyName || 'Marble Park'}`)),
     e(View, { style: s.footer }, e(Text, null, settings.supportPhone || settings.supportEmail || ''), e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}` })),
   ));

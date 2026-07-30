@@ -28,6 +28,7 @@
     "smoke:rbac-users": "node scripts/e2e-rbac-user-management-smoke.mjs",
     "smoke:readiness": "node scripts/e2e-readiness-import-smoke.mjs",
     "smoke:product-create": "node scripts/e2e-product-create-optional-fields-smoke.mjs",
+    "smoke:quote-procurement": "node scripts/e2e-quote-assets-procurement-defaults-smoke.mjs",
     "smoke:document-vault": "node scripts/e2e-document-vault-smoke.mjs",
     "smoke:client-workflow": "node scripts/e2e-client-workflow-release-gate.mjs",
     "smoke:import-scale": "node scripts/e2e-product-import-scale-smoke.mjs",

@@ -100,6 +100,7 @@ function imageSrc(line, product, requestUrl) {
   const productMedia = safeJson(product?.media, {});
   const snapshot = safeJson(line.metadata, {})?.snapshot || {};
   const raw =
+    line._pdfImage ||
     line.quoteImage ||
     line.customImageUrl ||
     snapshot.quoteImage ||
@@ -355,6 +356,11 @@ async function main() {
   const apiUrl = apiUrlArg || process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:4000/graphql';
   const payload = await fetchOrder(id, apiUrl);
   payload.logoData = await embeddedImage(payload.settings?.logoUrl || '/brand/marble-park-logo.png', requestUrl, apiUrl);
+  const hydratedLines = await Promise.all(normalizeLines(payload.order.lines).map(async (line) => ({
+    ...line,
+    _pdfImage: await embeddedImage(imageSrc(line, null, requestUrl), requestUrl, apiUrl),
+  })));
+  payload.order = { ...payload.order, lines: hydratedLines };
   const buffer = await renderToBuffer(buildDocument(payload, requestUrl));
   process.stdout.write(buffer);
 }

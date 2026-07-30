@@ -294,6 +294,44 @@ export class QuotesResolver {
     return this.quotes.updatePresentation(id, input as any, user.id);
   }
 
+  @Mutation(() => GraphQLJSON)
+  async createQuoteShare(
+    @Args('quoteId', { type: () => ID }) quoteId: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('expiresInDays', { nullable: true }) expiresInDays?: number,
+    @Args('allowDownload', { nullable: true }) allowDownload?: boolean,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const quote = await this.quotes.findById(quoteId);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    return this.quotes.createShare(quoteId, user.id, expiresInDays, allowDownload ?? true);
+  }
+
+  @Query(() => [GraphQLJSON])
+  async quoteShares(@Args('quoteId', { type: () => ID }) quoteId: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const quote = await this.quotes.findById(quoteId);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    return this.quotes.quoteShares(quoteId);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async revokeQuoteShare(
+    @Args('quoteId', { type: () => ID }) quoteId: string,
+    @Args('shareId', { type: () => ID }) shareId: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const quote = await this.quotes.findById(quoteId);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    return this.quotes.revokeShare(quoteId, shareId, user.id);
+  }
+
+  @Query(() => GraphQLJSON)
+  async publicQuoteShareDocument(@Args('token') token: string) {
+    return this.quotes.publicQuoteShareDocument(token);
+  }
+
   @Mutation(() => QuoteOutput)
   async updateQuoteStatus(
     @Args('id', { type: () => ID }) id: string,

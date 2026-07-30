@@ -13,6 +13,7 @@ export interface CreateProductInput {
   unit?: string;
   sellPrice?: number;
   floorPrice?: number;
+  costPrice?: number;
   taxClass?: string;
   description?: string;
   status?: string;
@@ -38,6 +39,7 @@ export interface UpdateProductInput {
   unit?: string;
   sellPrice?: number;
   floorPrice?: number;
+  costPrice?: number;
   taxClass?: string;
   description?: string;
   status?: string;
@@ -99,11 +101,13 @@ export class ProductsService {
     const status = String(data.status || 'active').trim().toLowerCase();
     const sellPrice = Number(data.sellPrice || 0);
     const floorPrice = Number(data.floorPrice || 0);
+    const costPrice = Number(data.costPrice || 0);
     if (!sku) throw new BadRequestException('SKU is required');
     if (!name) throw new BadRequestException('Product name is required');
     if (!category) throw new BadRequestException('Category is required');
     if (!Number.isFinite(sellPrice) || sellPrice < 0) throw new BadRequestException('Sell price must be zero or greater');
     if (!Number.isFinite(floorPrice) || floorPrice < 0) throw new BadRequestException('Floor price must be zero or greater');
+    if (!Number.isFinite(costPrice) || costPrice < 0) throw new BadRequestException('Default purchase cost must be zero or greater');
     if (sellPrice > 0 && floorPrice > sellPrice) throw new BadRequestException('Floor price cannot exceed the sell price');
     if (!['active', 'inactive', 'archived'].includes(status)) {
       throw new BadRequestException('Product status must be active, inactive, or archived');
@@ -139,6 +143,7 @@ export class ProductsService {
           tags: [],
           sellPrice,
           floorPrice,
+          costPrice,
           taxClass: data.taxClass || 'GST_18',
           status,
           media: this.normalizeMedia(data.media),
@@ -182,7 +187,7 @@ export class ProductsService {
           entityType: 'Product',
           entityId: product.id,
           summary: `Created product ${product.sku}`,
-          metadata: { sku: product.sku, name: product.name, sellPrice: product.sellPrice, floorPrice: product.floorPrice },
+          metadata: { sku: product.sku, name: product.name, sellPrice: product.sellPrice, floorPrice: product.floorPrice, costPrice: product.costPrice },
         },
       });
       return product;
@@ -208,6 +213,7 @@ export class ProductsService {
     }
     if (data.sellPrice !== undefined) update.sellPrice = this.numberAtLeastZero(data.sellPrice, 'Sell price');
     if (data.floorPrice !== undefined) update.floorPrice = this.numberAtLeastZero(data.floorPrice, 'Floor price');
+    if (data.costPrice !== undefined) update.costPrice = this.numberAtLeastZero(data.costPrice, 'Default purchase cost');
     const effectiveSellPrice = update.sellPrice ?? Number(current.sellPrice || 0);
     const effectiveFloorPrice = update.floorPrice ?? Number(current.floorPrice || 0);
     if (effectiveSellPrice > 0 && effectiveFloorPrice > effectiveSellPrice) {
@@ -532,6 +538,7 @@ export class ProductsService {
       unit: product.unit,
       sellPrice: product.sellPrice,
       floorPrice: product.floorPrice,
+      costPrice: product.costPrice,
       taxClass: product.taxClass,
       status: product.status,
       media: product.media,

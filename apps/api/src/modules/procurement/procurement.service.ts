@@ -113,7 +113,7 @@ export class ProcurementService {
       const unitCost = demandCostById.has(demand.id)
         ? Number(demandCostById.get(demand.id))
         : Number((demand.metadata || {})?.unitCost || 0);
-      if (!Number.isFinite(unitCost) || unitCost <= 0) throw new BadRequestException(`${demand.sku} requires a positive unit cost before creating the supplier PO`);
+      if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${demand.sku} unit cost must be zero or greater`);
       return { demand, unitCost };
     });
 
@@ -126,7 +126,7 @@ export class ProcurementService {
       if (!product) throw new BadRequestException(`Direct PO line ${index + 1} is not an active Product Master SKU`);
       const orderedQuantity = this.whole(line.quantity ?? line.orderedQuantity, `${product.sku} quantity`);
       const unitCost = Number(line.unitCost || 0);
-      if (!Number.isFinite(unitCost) || unitCost <= 0) throw new BadRequestException(`${product.sku} requires a positive unit cost before creating the supplier PO`);
+      if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${product.sku} unit cost must be zero or greater`);
       return { product, orderedQuantity, unitCost, unit: String(line.unit || product.purchaseUom || product.unit || 'PC'), note: String(line.note || '').trim() };
     });
 
@@ -183,6 +183,7 @@ export class ProcurementService {
               sourceQuoteId: demand.sourceQuoteId,
               customerId: demand.customerId,
               ownerId: demand.ownerId,
+              costStatus: unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn',
             },
             updatedAt: new Date(),
           },
@@ -255,7 +256,7 @@ export class ProcurementService {
             orderedQuantity: row.orderedQuantity,
             unitCost: row.unitCost,
             status: 'ordered',
-            metadata: { source: 'direct_product_master', internalCode: product.internalCode || null, note: row.note || null },
+            metadata: { source: 'direct_product_master', internalCode: product.internalCode || null, note: row.note || null, costStatus: row.unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn' },
             updatedAt: new Date(),
           },
         });
@@ -324,6 +325,9 @@ export class ProcurementService {
     if (!po) throw new NotFoundException('Purchase order not found');
     if (po.status === 'cancelled' || po.status === 'closed') throw new BadRequestException('This purchase order is closed or cancelled');
     const poLines = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId: po.id } });
+    const productIds = Array.from(new Set(poLines.map((line: any) => line.productId).filter(Boolean))) as string[];
+    const products = productIds.length ? await this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
+    const productMap = new Map(products.map((product: any) => [product.id, product]));
     const lineInputs = this.normalizeLines(input.lines);
     const selected = lineInputs.length
       ? lineInputs
@@ -374,6 +378,8 @@ export class ProcurementService {
         if (received > remaining) {
           throw new BadRequestException(`${line.sku} receipt ${received} exceeds remaining PO quantity ${remaining}`);
         }
+        const product = line.productId ? productMap.get(line.productId) as any : null;
+        const receiptCost = this.resolveReceiptCost(row.unitCost, line.unitCost, product?.costPrice);
 
         const receiptLine = await tx.goodsReceiptLine.create({
           data: {
@@ -388,8 +394,15 @@ export class ProcurementService {
             acceptedQuantity: accepted,
             damagedQuantity: damaged,
             location: row.location || receiptLocation.name,
-            unitCost: Number(row.unitCost || line.unitCost || 0),
-            metadata: { purchaseDemandId: line.purchaseDemandId, note: row.note || '', locationId: receiptLocation.id },
+            unitCost: receiptCost.unitCost,
+            metadata: {
+              purchaseDemandId: line.purchaseDemandId,
+              note: row.note || '',
+              locationId: receiptLocation.id,
+              costSource: receiptCost.source,
+              poUnitCost: Number(line.unitCost || 0),
+              skuDefaultCost: Number(product?.costPrice || 0),
+            },
           },
         });
 
@@ -400,8 +413,8 @@ export class ProcurementService {
               id: ulid(), lotNumber: `${grnNumber}-${String(lineIndex + 1).padStart(3, '0')}`,
               productId: line.productId, sourceType: 'grn', sourceId: note.id, sourceLineId: receiptLine.id,
               supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
-              receivedAt: note.receivedDate, unitCost: Number(row.unitCost || line.unitCost || 0), status: 'active',
-              attributes: row.attributes || {}, metadata: { purchaseOrderId: po.id, purchaseOrderLineId: line.id },
+              receivedAt: note.receivedDate, unitCost: receiptCost.unitCost, status: 'active',
+              attributes: row.attributes || {}, metadata: { purchaseOrderId: po.id, purchaseOrderLineId: line.id, costSource: receiptCost.source },
               createdBy: actorUserId, updatedAt: new Date(),
             },
           });
@@ -439,7 +452,8 @@ export class ProcurementService {
             lotId: lot.id,
             receivedQuantity: received,
             damagedQuantity: damaged,
-            unitCost: Number(row.unitCost || line.unitCost || 0),
+            unitCost: receiptCost.unitCost,
+            costSource: receiptCost.source,
             reason: `GRN ${grnNumber} against ${po.poNumber}`,
             actorUserId,
             locationId: receiptLocation.id,
@@ -513,6 +527,7 @@ export class ProcurementService {
         const damaged = Math.max(0, Math.trunc(Number(row.damagedQuantity || 0)));
         if (damaged > received) throw new BadRequestException(`${product.sku} damaged quantity cannot exceed received quantity`);
         const accepted = received - damaged;
+        const receiptCost = this.resolveReceiptCost(row.unitCost, undefined, product.costPrice);
 
         const receiptLine = await tx.goodsReceiptLine.create({
           data: {
@@ -526,8 +541,8 @@ export class ProcurementService {
             acceptedQuantity: accepted,
             damagedQuantity: damaged,
             location: row.location || receiptLocation.name,
-            unitCost: Number(row.unitCost || 0),
-            metadata: { manualReason: input.reason || '', locationId: receiptLocation.id },
+            unitCost: receiptCost.unitCost,
+            metadata: { manualReason: input.reason || '', locationId: receiptLocation.id, costSource: receiptCost.source, skuDefaultCost: Number(product.costPrice || 0) },
           },
         });
 
@@ -536,8 +551,8 @@ export class ProcurementService {
             id: ulid(), lotNumber: `${grnNumber}-${String(lineIndex + 1).padStart(3, '0')}`,
             productId: product.id, sourceType: 'manual_grn', sourceId: note.id, sourceLineId: receiptLine.id,
             supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
-            receivedAt: note.receivedDate, unitCost: Number(row.unitCost || 0), status: 'active',
-            attributes: row.attributes || {}, metadata: { manualReason: input.reason || '' },
+            receivedAt: note.receivedDate, unitCost: receiptCost.unitCost, status: 'active',
+            attributes: row.attributes || {}, metadata: { manualReason: input.reason || '', costSource: receiptCost.source },
             createdBy: actorUserId, updatedAt: new Date(),
           },
         });
@@ -549,7 +564,8 @@ export class ProcurementService {
             lotId: lot.id,
             receivedQuantity: received,
             damagedQuantity: damaged,
-            unitCost: Number(row.unitCost || 0),
+            unitCost: receiptCost.unitCost,
+            costSource: receiptCost.source,
             reason: `Manual GRN ${grnNumber} from ${vendorName}`,
             actorUserId,
             locationId: receiptLocation.id,
@@ -687,9 +703,22 @@ export class ProcurementService {
     const orderIds = orders.map((order) => order.id);
     const lines = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId: { in: orderIds } }, orderBy: { createdAt: 'asc' } });
     const demandIds = Array.from(new Set(lines.map((line: any) => line.purchaseDemandId).filter(Boolean)));
-    const demands = demandIds.length ? await (this.prisma as any).purchaseDemand.findMany({ where: { id: { in: demandIds } } }) : [];
-    const demandMap = new Map(demands.map((demand: any) => [demand.id, demand]));
-    const linesByPo = this.groupBy(lines.map((line: any) => ({ ...line, demand: line.purchaseDemandId ? demandMap.get(line.purchaseDemandId) || null : null })), 'purchaseOrderId');
+    const productIds = Array.from(new Set(lines.map((line: any) => line.productId).filter(Boolean))) as string[];
+    const [demands, products] = await Promise.all([
+      demandIds.length ? (this.prisma as any).purchaseDemand.findMany({ where: { id: { in: demandIds } } }) : [],
+      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, costPrice: true } }) : [],
+    ]);
+    const demandMap = new Map(demands.map((demand: any) => [demand.id, demand] as const));
+    const productMap = new Map(products.map((product: any) => [product.id, product] as const));
+    const linesByPo = this.groupBy(lines.map((line: any) => {
+      const skuCost = Number((productMap.get(line.productId) as any)?.costPrice || 0);
+      return {
+        ...line,
+        skuCost,
+        effectiveUnitCost: Number(line.unitCost || 0) > 0 ? Number(line.unitCost) : skuCost,
+        demand: line.purchaseDemandId ? demandMap.get(line.purchaseDemandId) || null : null,
+      };
+    }), 'purchaseOrderId');
     return orders.map((order) => ({ ...order, lines: linesByPo.get(order.id) || [] }));
   }
 
@@ -791,7 +820,7 @@ export class ProcurementService {
 
   private async addReceivedStockTx(
     tx: any,
-    args: { productId: string; lotId: string; receivedQuantity: number; damagedQuantity: number; unitCost?: number; reason: string; actorUserId: string; locationId?: string; referenceId?: string; sourceDocumentNo?: string },
+    args: { productId: string; lotId: string; receivedQuantity: number; damagedQuantity: number; unitCost?: number; costSource?: string; reason: string; actorUserId: string; locationId?: string; referenceId?: string; sourceDocumentNo?: string },
   ) {
     await applyLotStockPostingTx(tx, {
       productId: args.productId,
@@ -808,7 +837,7 @@ export class ProcurementService {
       sourceDocumentNo: args.sourceDocumentNo || null,
       createdBy: args.actorUserId,
       unitCost: Number(args.unitCost || 0),
-      metadata: { source: 'procurement_service', acceptedQuantity: args.receivedQuantity - args.damagedQuantity },
+      metadata: { source: 'procurement_service', costSource: args.costSource || 'unspecified', acceptedQuantity: args.receivedQuantity - args.damagedQuantity },
     });
     if (args.receivedQuantity > args.damagedQuantity) await this.autoReserveBackordersTx(tx, args.productId, args.actorUserId);
   }
@@ -930,6 +959,21 @@ export class ProcurementService {
     const number = Math.trunc(Number(value || 0));
     if (!Number.isFinite(number) || number <= 0) throw new BadRequestException(`${label} must be a positive whole number`);
     return number;
+  }
+
+  private resolveReceiptCost(grnValue: any, poValue?: any, skuValue?: any) {
+    const candidates = [
+      { value: grnValue, source: 'grn_entered' },
+      { value: poValue, source: 'purchase_order' },
+      { value: skuValue, source: 'sku_default' },
+    ];
+    for (const candidate of candidates) {
+      if (candidate.value === undefined || candidate.value === null || candidate.value === '') continue;
+      const value = Number(candidate.value);
+      if (!Number.isFinite(value) || value < 0) throw new BadRequestException('Unit cost must be zero or greater');
+      if (value > 0) return { unitCost: value, source: candidate.source };
+    }
+    return { unitCost: 0, source: 'not_recorded' };
   }
 
   private limit(value: any, fallback: number) {
