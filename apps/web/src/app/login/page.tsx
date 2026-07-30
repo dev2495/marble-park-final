@@ -119,6 +119,13 @@ export default function LoginPage() {
         <section className="relative flex min-h-screen items-center justify-center bg-[#161616] p-5 lg:p-10">
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(155deg,rgba(157,42,36,0.13),transparent_42%)]" />
           <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.055] p-7 shadow-[0_30px_80px_-46px_rgba(0,0,0,0.9)] backdrop-blur-xl sm:p-9">
+            <Link href="/" className="mb-7 flex w-max items-center gap-3 lg:hidden">
+              <CompanyLogo className="h-11 w-11" imageClassName="p-0.5" />
+              <div>
+                <div className="text-lg font-bold text-white">Marble Park</div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#d7aaa6]">Retail OS</div>
+              </div>
+            </Link>
             <div className="mb-7 flex items-start justify-between gap-4">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Secure sign in</p>
