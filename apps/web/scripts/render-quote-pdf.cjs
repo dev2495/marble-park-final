@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
   subBrand: { marginTop: 3, fontSize: 7.5, color: colors.tan, letterSpacing: 3.4, textTransform: 'uppercase' },
   companyMeta: { marginTop: 2, maxWidth: 245, fontSize: 6.8, color: colors.muted, lineHeight: 1.3 },
   quoteIdentity: { width: '33%', alignItems: 'flex-end' },
-  quoteTitle: { maxWidth: 176, fontSize: 15, lineHeight: 1.1, fontWeight: 900, textAlign: 'right', letterSpacing: 0.8 },
+  quoteTitle: { maxWidth: 182, fontSize: 12.5, lineHeight: 1.15, fontWeight: 900, textAlign: 'right', letterSpacing: 0.4 },
   quoteDate: { marginTop: 3, fontSize: 8.5, color: colors.muted, textAlign: 'right' },
   panels: { flexDirection: 'row', gap: 12, marginTop: 7, marginBottom: 8 },
   panel: { flex: 1, minHeight: 65, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9 },
