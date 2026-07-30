@@ -29,11 +29,15 @@
     "smoke:readiness": "node scripts/e2e-readiness-import-smoke.mjs",
     "smoke:product-create": "node scripts/e2e-product-create-optional-fields-smoke.mjs",
     "smoke:quote-procurement": "node scripts/e2e-quote-assets-procurement-defaults-smoke.mjs",
+    "smoke:excel-runtime": "node scripts/verify-excel-runtime.mjs",
     "smoke:document-vault": "node scripts/e2e-document-vault-smoke.mjs",
     "smoke:client-workflow": "node scripts/e2e-client-workflow-release-gate.mjs",
     "smoke:import-scale": "node scripts/e2e-product-import-scale-smoke.mjs",
     "cleanup:e2e": "node scripts/cleanup-client-flow-test-data.mjs",
     "reset:client-data": "node scripts/reset-client-test-data.mjs"
+  },
+  "dependencies": {
+    "minimatch": "file:vendor/minimatch-compat"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
@@ -45,18 +49,13 @@
     "tmp": "0.2.7",
     "shell-quote": "1.8.4",
     "next": {
-      "postcss": "8.5.14"
+      "postcss": "8.5.19"
     },
     "exceljs": {
       "uuid": "11.1.1",
-      "archiver": {
-        "readdir-glob": {
-          "minimatch": {
-            "brace-expansion": "2.1.2"
-          }
-        }
-      }
+      "unzipper": "0.12.5"
     },
+    "minimatch": "$minimatch",
     "ws": "8.21.0",
     "subscriptions-transport-ws": {
       "ws": "7.5.11"

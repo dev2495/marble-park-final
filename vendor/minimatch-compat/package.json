@@ -1,0 +1,14 @@
+{
+  "name": "minimatch",
+  "version": "10.2.6",
+  "private": true,
+  "description": "CommonJS callable adapter for patched minimatch consumers",
+  "main": "index.cjs",
+  "exports": "./index.cjs",
+  "engines": {
+    "node": "18 || 20 || >=22"
+  },
+  "dependencies": {
+    "minimatch-core": "npm:minimatch@10.2.6"
+  }
+}

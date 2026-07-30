@@ -9,6 +9,7 @@ RUN apt-get update \
 COPY package*.json ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
+COPY vendor/minimatch-compat ./vendor/minimatch-compat
 RUN npm ci --legacy-peer-deps --workspace=apps/api --include-workspace-root
 
 COPY apps/api ./apps/api

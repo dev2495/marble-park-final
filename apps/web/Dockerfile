@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
+COPY vendor/minimatch-compat ./vendor/minimatch-compat
 RUN npm ci --legacy-peer-deps --workspace=apps/web --include-workspace-root
 
 COPY apps/web ./apps/web
