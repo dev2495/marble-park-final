@@ -108,6 +108,13 @@ export class SystemService {
       throw new Error('Invalid reset confirmation');
     }
 
+    await (this.prisma as any).customerAllocation.deleteMany().catch(() => null);
+    await (this.prisma as any).salesInvoiceLine.deleteMany().catch(() => null);
+    await (this.prisma as any).customerLedgerEntry.deleteMany().catch(() => null);
+    await (this.prisma as any).customerPayment.deleteMany().catch(() => null);
+    await (this.prisma as any).collectionTask.deleteMany().catch(() => null);
+    await (this.prisma as any).salesInvoice.deleteMany().catch(() => null);
+    await (this.prisma as any).customerCreditProfile.deleteMany().catch(() => null);
     await (this.prisma as any).returnLine.deleteMany().catch(() => null);
     await (this.prisma as any).returnOrder.deleteMany().catch(() => null);
     await (this.prisma as any).deliveryProof.deleteMany().catch(() => null);

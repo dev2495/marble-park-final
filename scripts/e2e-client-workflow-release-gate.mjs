@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
 
-const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
@@ -129,13 +129,13 @@ async function main() {
     prisma.salesOrder.findMany({ where: { quoteId: quote.id }, orderBy: { createdAt: 'asc' } }),
     prisma.reservation.findMany({ where: { quoteId: quote.id } }),
     prisma.dispatchJob.findMany({ where: { quoteId: quote.id } }),
-    prisma.paymentReceipt.findMany({ where: { salesOrderId: firstOrder.id } }),
+    prisma.customerPayment.findMany({ where: { salesOrderId: firstOrder.id } }),
     prisma.purchaseDemand.findMany({ where: { sourceQuoteId: quote.id } }),
   ]);
   assert(orders.length === 2 && new Set(orders.map((order) => order.id)).size === 2, 'Database must retain two independent SalesOrder rows for one quote');
   assert(dispatchJobs.length === 2 && new Set(dispatchJobs.map((job) => job.salesOrderId)).size === 2, 'Each partial order must own one dispatch job');
   assert(reservations.length === 2 && new Set(reservations.map((row) => row.salesOrderId)).size === 2 && reservations.every((row) => row.salesOrderId), 'Reservations must be order-scoped, not quote-scoped');
-  assert(receipts.length === 1 && Number(receipts[0].amount) === 1000, 'Payment receipt must belong to the correct partial order');
+  assert(receipts.length === 1 && Number(receipts[0].amount) === 1000 && Number(receipts[0].unappliedAmount) === 1000, 'Order advance must become one unapplied customer receipt for the correct partial order');
   assert(demands.length === 2 && new Set(demands.map((demand) => demand.sourceOrderId)).size === 2, 'Backorder procurement demand must remain isolated per partial order');
 
   const remainderQuote = (await gql(

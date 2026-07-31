@@ -13,6 +13,37 @@ export async function cleanupE2eRecords(prisma, context = {}) {
     ? (await prisma.salesOrder.findMany({ where: { quoteId: { in: quoteIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
     : [];
 
+  const invoiceIds = orderIds.length
+    ? (await prisma.salesInvoice.findMany({ where: { salesOrderId: { in: orderIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
+    : [];
+  const paymentIds = customerIds.length
+    ? (await prisma.customerPayment.findMany({ where: { customerId: { in: customerIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
+    : [];
+  const grnIds = productIds.length
+    ? (await prisma.inventoryLot.findMany({ where: { productId: { in: productIds }, sourceType: 'manual_grn' }, select: { sourceId: true } }).catch(() => [])).map((row) => row.sourceId).filter(Boolean)
+    : [];
+  const lotIds = productIds.length
+    ? (await prisma.inventoryLot.findMany({ where: { productId: { in: productIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
+    : [];
+  const pickListIds = orderIds.length
+    ? (await prisma.pickList.findMany({ where: { salesOrderId: { in: orderIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
+    : [];
+  const challanIds = quoteIds.length
+    ? (await prisma.dispatchChallan.findMany({ where: { quoteId: { in: quoteIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
+    : [];
+  await safeDelete(prisma, 'customerAllocation', invoiceIds.length || paymentIds.length ? { OR: [invoiceIds.length ? { salesInvoiceId: { in: invoiceIds } } : undefined, paymentIds.length ? { sourceType: 'CustomerPayment', sourceId: { in: paymentIds } } : undefined].filter(Boolean) } : null);
+  await safeDelete(prisma, 'salesInvoiceLine', invoiceIds.length ? { salesInvoiceId: { in: invoiceIds } } : null);
+  await safeDelete(prisma, 'customerLedgerEntry', customerIds.length ? { customerId: { in: customerIds } } : null);
+  await safeDelete(prisma, 'collectionTask', customerIds.length ? { customerId: { in: customerIds } } : null);
+  await safeDelete(prisma, 'customerPayment', paymentIds.length ? { id: { in: paymentIds } } : null);
+  await safeDelete(prisma, 'salesInvoice', invoiceIds.length ? { id: { in: invoiceIds } } : null);
+  await safeDelete(prisma, 'customerCreditProfile', customerIds.length ? { customerId: { in: customerIds } } : null);
+  await safeDelete(prisma, 'deliveryProof', challanIds.length ? { challanId: { in: challanIds } } : null);
+  await safeDelete(prisma, 'shipment', challanIds.length ? { challanId: { in: challanIds } } : null);
+  await safeDelete(prisma, 'dispatchPackage', challanIds.length ? { challanId: { in: challanIds } } : null);
+  await safeDelete(prisma, 'dispatchLine', challanIds.length ? { challanId: { in: challanIds } } : null);
+  await safeDelete(prisma, 'pickLine', pickListIds.length ? { pickListId: { in: pickListIds } } : null);
+  await safeDelete(prisma, 'pickList', pickListIds.length ? { id: { in: pickListIds } } : null);
   await safeDelete(prisma, 'dispatchChallan', quoteIds.length ? { quoteId: { in: quoteIds } } : null);
   await safeDelete(prisma, 'documentJob', { OR: [quoteIds.length ? { entityId: { in: quoteIds } } : undefined, orderIds.length ? { entityId: { in: orderIds } } : undefined].filter(Boolean) });
   await safeDelete(prisma, 'paymentReceipt', orderIds.length ? { salesOrderId: { in: orderIds } } : null);
@@ -30,7 +61,12 @@ export async function cleanupE2eRecords(prisma, context = {}) {
   await safeDelete(prisma, 'lead', leadIds.length ? { id: { in: leadIds } } : null);
   await safeDelete(prisma, 'notification', { OR: [...quoteIds, ...orderIds, ...productIds, ...customerIds].map((id) => ({ entityId: id })) });
   await safeDelete(prisma, 'auditEvent', { entityId: { in: [...quoteIds, ...orderIds, ...productIds, ...customerIds, ...brandIds] } });
+  await safeDelete(prisma, 'inventoryLotLedgerEntry', lotIds.length ? { lotId: { in: lotIds } } : null);
+  await safeDelete(prisma, 'stockLedgerEntry', productIds.length ? { productId: { in: productIds } } : null);
   await safeDelete(prisma, 'inventoryBalance', productIds.length ? { productId: { in: productIds } } : null);
+  await safeDelete(prisma, 'inventoryLot', lotIds.length ? { id: { in: lotIds } } : null);
+  await safeDelete(prisma, 'goodsReceiptLine', grnIds.length ? { goodsReceiptNoteId: { in: grnIds } } : null);
+  await safeDelete(prisma, 'goodsReceiptNote', grnIds.length ? { id: { in: grnIds } } : null);
   await safeDelete(prisma, 'productAlias', productIds.length ? { productId: { in: productIds } } : null);
   await safeDelete(prisma, 'product', productIds.length ? { id: { in: productIds } } : null);
   await safeDelete(prisma, 'customer', customerIds.length ? { id: { in: customerIds } } : null);

@@ -5,10 +5,11 @@ import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx } from '../common/stock-posting';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReceivablesService } from '../receivables/receivables.service';
 
 @Injectable()
 export class OperationsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private receivables: ReceivablesService) {}
 
   async documentJobs(args?: { entityType?: string; entityId?: string; status?: string; take?: number }) {
     const where: any = {};
@@ -50,10 +51,12 @@ export class OperationsService {
     const from = args?.from ? new Date(`${args.from}T00:00:00.000Z`) : new Date(to.getTime() - 29 * 86400000);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) throw new BadRequestException('Report date range is invalid');
     const dateRange = { gte: from, lte: to };
-    const [orders, payments, creditNotes, lotBalances, demands, purchaseOrders, grnLines, challans, returns, closes] = await Promise.all([
+    const [orders, invoices, payments, creditNotes, ledgerBalances, lotBalances, demands, purchaseOrders, grnLines, challans, returns, closes] = await Promise.all([
       this.prisma.salesOrder.findMany({ where: { createdAt: dateRange }, orderBy: { createdAt: 'asc' } }),
-      (this.prisma as any).paymentReceipt.findMany({ where: { receivedAt: dateRange, status: 'posted' }, orderBy: { receivedAt: 'asc' } }),
+      (this.prisma as any).salesInvoice.findMany({ where: { issueDate: dateRange, status: { not: 'void' } }, orderBy: { issueDate: 'asc' } }),
+      (this.prisma as any).customerPayment.findMany({ where: { receivedAt: dateRange, status: 'posted' }, orderBy: { receivedAt: 'asc' } }),
       (this.prisma as any).creditNote.findMany({ where: { issuedAt: dateRange, status: 'issued' }, orderBy: { issuedAt: 'asc' } }),
+      (this.prisma as any).customerLedgerEntry.groupBy({ by: ['customerId'], _sum: { debit: true, credit: true } }),
       (this.prisma as any).inventoryLotBalance.findMany({ include: { lot: { include: { product: true } } } }),
       (this.prisma as any).purchaseDemand.findMany({ where: { status: { in: ['open', 'ordered', 'partial_received'] } } }),
       (this.prisma as any).purchaseOrder.findMany({ where: { status: { in: ['draft', 'ordered', 'partial_received'] } }, orderBy: { createdAt: 'desc' }, take: 20 }),
@@ -62,7 +65,9 @@ export class OperationsService {
       (this.prisma as any).returnOrder.findMany({ where: { createdAt: dateRange } }),
       (this.prisma as any).inventoryPeriodClose.findMany({ where: { status: 'closed' }, orderBy: { effectiveAt: 'desc' }, take: 12 }),
     ]);
-    const sales = orders.reduce((sum: number, row: any) => sum + Number(row.totalAmount || 0), 0);
+    // Sales and collections are now recognised from posted financial
+    // documents, not the date a commercial order happened to be created.
+    const sales = invoices.reduce((sum: number, row: any) => sum + Number(row.totalAmount || 0), 0);
     const collections = payments.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
     const credits = creditNotes.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
     const inventory = lotBalances.reduce((acc: any, row: any) => {
@@ -84,12 +89,16 @@ export class OperationsService {
       if (!daily.has(key)) daily.set(key, { date: key, sales: 0, collections: 0, credits: 0, orders: 0 });
       return daily.get(key);
     };
-    orders.forEach((row: any) => { const item = bucket(row.createdAt); item.sales += Number(row.totalAmount || 0); item.orders += 1; });
+    invoices.forEach((row: any) => { const item = bucket(row.issueDate); item.sales += Number(row.totalAmount || 0); item.orders += 1; });
     payments.forEach((row: any) => { bucket(row.receivedAt).collections += Number(row.amount || 0); });
     creditNotes.forEach((row: any) => { bucket(row.issuedAt).credits += Number(row.amount || 0); });
     return {
       generatedAt: new Date().toISOString(), range: { from: from.toISOString(), to: to.toISOString() },
-      finance: { sales, collections, creditNotes: credits, netSales: sales - credits, outstanding: Math.max(0, sales - collections - credits), orderCount: orders.length },
+      finance: {
+        sales, collections, creditNotes: credits, netSales: sales - credits,
+        outstanding: Math.max(0, (ledgerBalances as any[]).reduce((sum, row) => sum + Number(row._sum?.debit || 0) - Number(row._sum?.credit || 0), 0)),
+        orderCount: orders.length, invoiceCount: invoices.length,
+      },
       inventory: { quantity: inventory.quantity, reserved: inventory.reserved, available: inventory.quantity - inventory.reserved - inventory.damaged, damaged: inventory.damaged, value: inventory.value },
       procurement: {
         backorderQuantity: demands.reduce((sum: number, row: any) => sum + Math.max(0, Number(row.quantity || 0) - Number(row.receivedQuantity || 0)), 0),
@@ -936,7 +945,7 @@ export class OperationsService {
             where: { creditNoteNumber: { startsWith: prefixForYear } }, select: { creditNoteNumber: true },
           })).map((row: any) => row.creditNoteNumber),
         });
-        await tx.creditNote.create({
+        const creditNote = await tx.creditNote.create({
           data: {
             id: ulid(), creditNoteNumber, returnOrderId: order.id,
             salesOrderId: input.salesOrderId || null, customerId: input.customerId || null,
@@ -945,6 +954,7 @@ export class OperationsService {
             metadata: { returnNumber, maximumRefundAmount }, updatedAt: new Date(),
           },
         });
+        await this.receivables.issueCreditNoteForReturnTx(tx, creditNote, actorUserId);
       }
       await tx.auditEvent.create({
         data: {

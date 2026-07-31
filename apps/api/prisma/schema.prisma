@@ -957,6 +957,175 @@ model PaymentReceipt {
   @@index([receivedAt(sort: Desc)])
 }
 
+// Receivables is deliberately separate from the legacy order-time receipt
+// record above. An order is a commercial commitment; an invoice represents
+// dispatchable value, a payment represents money received, and allocations
+// show exactly how money/credits were applied to invoices.
+model CustomerCreditProfile {
+  id                   String   @id
+  customerId           String   @unique
+  creditLimit          Float    @default(0)
+  defaultPaymentTerms  String   @default("")
+  creditHold           Boolean  @default(false)
+  holdReason           String   @default("")
+  collectionOwnerId    String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime
+
+  @@index([creditHold])
+  @@index([collectionOwnerId])
+}
+
+model SalesInvoice {
+  id               String   @id
+  invoiceNumber    String   @unique
+  idempotencyKey   String?  @unique
+  salesOrderId     String
+  quoteId          String?
+  customerId       String
+  status           String   @default("posted")
+  issueDate        DateTime @default(now())
+  dueDate          DateTime?
+  taxableValue     Float    @default(0)
+  taxAmount        Float    @default(0)
+  totalAmount      Float    @default(0)
+  openAmount       Float    @default(0)
+  paymentTerms     String   @default("")
+  notes            String   @default("")
+  createdBy        String
+  postedAt         DateTime?
+  voidedAt         DateTime?
+  voidedBy         String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime
+  metadata         Json     @default("{}")
+  lines            SalesInvoiceLine[]
+  allocations      CustomerAllocation[]
+
+  @@index([salesOrderId])
+  @@index([customerId, status])
+  @@index([dueDate])
+  @@index([issueDate(sort: Desc)])
+}
+
+model SalesInvoiceLine {
+  id                String   @id
+  salesInvoice      SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
+  salesInvoiceId    String
+  dispatchLineId    String   @unique
+  salesOrderLineId  String?
+  productId         String?
+  sku               String
+  name              String
+  brand             String   @default("")
+  finish            String?
+  unit              String   @default("PC")
+  quantity          Int
+  unitPrice         Float    @default(0)
+  taxRate           Float    @default(0)
+  taxableValue      Float    @default(0)
+  taxAmount         Float    @default(0)
+  grossLineTotal    Float    @default(0)
+  createdAt         DateTime @default(now())
+  metadata          Json     @default("{}")
+
+  @@index([salesInvoiceId])
+  @@index([salesOrderLineId])
+  @@index([productId])
+}
+
+model CustomerPayment {
+  id                String   @id
+  receiptNumber     String   @unique
+  idempotencyKey    String?  @unique
+  legacyReceiptId   String?  @unique
+  customerId        String
+  salesOrderId      String?
+  paymentMode       String
+  moneyAccount      String   @default("undeposited")
+  amount            Float
+  unappliedAmount   Float    @default(0)
+  status            String   @default("posted")
+  receivedAt        DateTime @default(now())
+  valueDate         DateTime?
+  reference         String?
+  notes             String   @default("")
+  attachmentUrls    Json     @default("[]")
+  createdBy         String
+  postedAt          DateTime?
+  voidedAt          DateTime?
+  voidedBy          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime
+  metadata          Json     @default("{}")
+
+  @@index([customerId, status])
+  @@index([salesOrderId])
+  @@index([paymentMode])
+  @@index([receivedAt(sort: Desc)])
+}
+
+model CustomerAllocation {
+  id              String   @id
+  customerId      String
+  salesInvoice    SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
+  salesInvoiceId  String
+  sourceType      String
+  sourceId        String
+  amount          Float
+  status          String   @default("posted")
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
+  metadata        Json     @default("{}")
+
+  @@unique([sourceType, sourceId, salesInvoiceId])
+  @@index([customerId, status])
+  @@index([salesInvoiceId, status])
+  @@index([sourceType, sourceId, status])
+}
+
+model CustomerLedgerEntry {
+  id              String   @id
+  entryNumber     String   @unique
+  customerId      String
+  sourceType      String
+  sourceId        String
+  sourceKey       String   @unique
+  effectiveAt     DateTime @default(now())
+  debit           Float    @default(0)
+  credit          Float    @default(0)
+  narration       String   @default("")
+  createdBy       String
+  createdAt       DateTime @default(now())
+  metadata        Json     @default("{}")
+
+  @@index([customerId, effectiveAt(sort: Desc)])
+  @@index([sourceType, sourceId])
+}
+
+model CollectionTask {
+  id              String   @id
+  customerId      String
+  salesInvoiceId  String?
+  ownerId         String?
+  status          String   @default("open")
+  priority        String   @default("normal")
+  dueAt           DateTime?
+  completedAt     DateTime?
+  note            String   @default("")
+  outcome         String   @default("")
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime
+  metadata        Json     @default("{}")
+
+  @@index([customerId, status])
+  @@index([salesInvoiceId])
+  @@index([ownerId, status])
+  @@index([dueAt])
+}
+
 model SequenceCounter {
   scope     String   @id
   value     Int      @default(0)

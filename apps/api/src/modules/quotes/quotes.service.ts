@@ -8,6 +8,7 @@ import { commercialTotalsFromLines, priceQuoteLines } from '../common/pricing';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
 import { StoredImageService } from '../assets/stored-image.service';
+import { ReceivablesService } from '../receivables/receivables.service';
 
 export interface CreateQuoteInput {
   leadId: string;
@@ -74,6 +75,7 @@ export class QuotesService {
     private prisma: PrismaService,
     private notifications: NotificationsService,
     private storedImages: StoredImageService,
+    private receivables: ReceivablesService,
   ) {}
 
   /**
@@ -574,6 +576,23 @@ export class QuotesService {
           if (!Number.isFinite(advanceAmount) || advanceAmount < 0 || advanceAmount > totalAmount) {
             throw new BadRequestException('Advance amount must be between zero and the selected order total.');
           }
+          if (paymentMode === 'credit') {
+            const profile = await tx.customerCreditProfile.findUnique({ where: { customerId: latestQuote.customerId } });
+            if (profile?.creditHold) {
+              throw new BadRequestException(profile.holdReason || 'This customer is on credit hold. Release the hold before creating a credit sales order.');
+            }
+            const creditLimit = Number(profile?.creditLimit || 0);
+            if (creditLimit > 0) {
+              const ledger = await tx.customerLedgerEntry.aggregate({
+                where: { customerId: latestQuote.customerId },
+                _sum: { debit: true, credit: true },
+              });
+              const currentExposure = Math.max(0, Number(ledger._sum.debit || 0) - Number(ledger._sum.credit || 0));
+              if (currentExposure + totalAmount > creditLimit + 0.01) {
+                throw new BadRequestException(`Credit limit exceeded. Current exposure is ₹${currentExposure.toFixed(2)} against a limit of ₹${creditLimit.toFixed(2)}.`);
+              }
+            }
+          }
           const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= totalAmount ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
           const salesOrderId = ulid();
           const orderNumber = await nextDocumentNumber(tx as any, 'sales_order', 'SO', new Date(), {
@@ -646,30 +665,19 @@ export class QuotesService {
           });
           await this.ensureSalesOrderDocumentsTx(tx, latestQuote, salesOrder, actorUserId);
 
-          if (advanceAmount > 0 || paymentMode === 'credit') {
-            await tx.paymentReceipt.create({
-              data: {
-                id: ulid(),
-                receiptNumber: await nextDocumentNumber(tx as any, 'payment_receipt', 'RCPT', new Date(), {
-                  existingNumbers: async (prefixForYear) => (await tx.paymentReceipt.findMany({
-                    where: { receiptNumber: { startsWith: prefixForYear } },
-                    select: { receiptNumber: true },
-                  })).map((row: any) => row.receiptNumber),
-                }),
-                salesOrderId: salesOrder.id,
-                customerId: salesOrder.customerId,
-                paymentMode,
-                amount: paymentMode === 'credit' ? 0 : advanceAmount,
-                status: paymentMode === 'credit' ? 'credit_due' : 'posted',
-                receivedAt: new Date(),
-                dueDate: paymentMode === 'credit' ? new Date(Date.now() + 86400000 * 30) : null,
-                reference: '',
-                notes: paymentMode === 'credit' ? 'Credit order opened; collection due date tracked here.' : 'Advance received during sales order conversion.',
-                createdBy: actorUserId,
-                updatedAt: new Date(),
-                metadata: { orderNumber, paymentStatus, pricing: commercial.totals },
-              },
-            });
+          // An advance is real money, so it enters the customer ledger as an
+          // unapplied receipt. A credit order creates no zero-value receipt;
+          // it becomes receivable only when dispatched value is invoiced.
+          if (advanceAmount > 0) {
+            await this.receivables.recordCustomerPaymentTx(tx, {
+              customerId: salesOrder.customerId,
+              salesOrderId: salesOrder.id,
+              paymentMode: 'cash',
+              amount: advanceAmount,
+              notes: `Advance received during ${orderNumber} conversion.`,
+              autoAllocate: false,
+              idempotencyKey: `sales-order-advance:${salesOrder.id}`,
+            }, actorUserId);
           }
 
           const refreshedLines = await tx.quoteLine.findMany({ where: { quoteId: latestQuote.id } });

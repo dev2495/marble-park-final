@@ -19,7 +19,7 @@ export default function ReportsPage() {
   const { data, loading, error, refetch } = useQuery(REPORT, { variables: { from, to }, fetchPolicy: 'network-only' });
   const report = data?.managementReport;
   const tiles = report ? [
-    { label: 'Net sales', value: money(report.finance.netSales), note: `${report.finance.orderCount} orders`, icon: IndianRupee },
+    { label: 'Net sales', value: money(report.finance.netSales), note: `${report.finance.invoiceCount ?? 0} dispatched invoices`, icon: IndianRupee },
     { label: 'Collections', value: money(report.finance.collections), note: `${money(report.finance.outstanding)} outstanding`, icon: BarChart3 },
     { label: 'Stock value', value: money(report.inventory.value), note: `${number(report.inventory.available)} available`, icon: Boxes },
     { label: 'Open demand', value: number(report.procurement.backorderQuantity), note: `${report.procurement.openPurchaseOrders} open POs`, icon: ClipboardList },
