@@ -3,7 +3,7 @@
 Date: 2026-08-04
 Target: https://65-1-24-110.sslip.io
 Branch: `codex/production-ready-client-flows`
-Deployed application release: `5e1babe`
+Deployed application release: `2f70ef9`
 
 ## Release scope
 
@@ -28,8 +28,9 @@ This release implements and verifies the production workflow work identified in 
 | `7ad5f07` | Quote MRP contract, shared pricing rules, downstream snapshots, and operations control towers |
 | `a213b5b` | Backup retention fix for root-owned operator backup directories |
 | `5e1babe` | Dependency lockfile hardening for `fast-uri` and `shell-quote` |
+| `2f70ef9` | Basis-aware MRP provenance, structured pricing gates, responsive quote workbench, and paginated Orders/Dispatch/Inventory control towers |
 
-The three commits were pushed to `origin/codex/production-ready-client-flows`. The AWS deployment was rebuilt from `5e1babe`; the report-only documentation commit that follows this record does not change the runtime image.
+The application release was pushed to `origin/codex/production-ready-client-flows`. The AWS deployment was rebuilt from `2f70ef9`; documentation-only commits after this record do not change the runtime image.
 
 ## Verification evidence
 
@@ -41,6 +42,9 @@ The three commits were pushed to `origin/codex/production-ready-client-flows`. T
 | `npm run build:api` | Passed |
 | `npm run build:web` | Passed; all 48 Next routes generated |
 | `npm run smoke:release-contract` | Passed; MRP block, quote, order, pending-inward state |
+| `npm run smoke:pricing-matrix` | Passed; GST 0/5/12/18/28, invalid MRP, PC/BOX/AREA, structured errors |
+| `npm run smoke:inventory-location` | Passed; selected-location API totals matched PostgreSQL lot balances |
+| `npm run smoke:control-tower-scale` | Passed; 10,000 Sales Order lines and 500 lots, query plans measured and data rolled back |
 | `npm run smoke:production-hardening` | Passed; SKU, GRN, cycle count, quote, order, challan, return, readiness score 96 |
 | `npm run smoke:tile-area` | Passed; area, piece, box, and partial-order pricing |
 | `npm run smoke:branded` | Passed; product/brand images and GST/non-GST PDFs |
@@ -63,9 +67,12 @@ The scale smoke creates isolated test records and verifies the response path. It
 - `/readyz`: passed with API status `ready`.
 - `/api/health`: passed with web status `ok`.
 - Docker Compose: API, web, PostgreSQL, and Caddy containers healthy/up.
-- Prisma deployment: 23 migrations found, no pending migrations.
+- Prisma deployment: 24 migrations found, no pending migrations.
 - MRP columns exist in both `QuoteLine` and `SalesOrderLine`.
-- Live release-contract smoke passed with quote `QT/2026/0030`, order `SO/2026/0027`, and dispatch status `pending_inward`.
+- Live release-contract smoke passed with quote `QT/2026/0032`, order `SO/2026/0028`, and dispatch status `pending_inward`.
+- Live mobile Orders verification passed at 390 x 844 with no horizontal overflow and zero Chromium console errors or warnings.
+- SHA256 checks for the pricing engine, inventory read model, Orders UI, Quote UI, and migration matched between commit `2f70ef9` and `/opt/marble-park`.
+- The pre-deploy backup `20260804T112810Z` passed checksums and restored to an isolated verification database with 81 public tables.
 - Production owner seed completed for `dvrshthakkar@gmail.com`; no password is recorded in this report.
 - The pre-deploy database/assets backup was created and restore-verified. Restore validation found 81 public tables and matching SHA256 checksums.
 - Live login was checked in a fresh browser session. The client logo rendered, the root request returned 200, and no browser console errors were observed.
