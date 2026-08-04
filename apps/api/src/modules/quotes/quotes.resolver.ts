@@ -276,7 +276,7 @@ export class QuotesResolver {
     const quoteInput = { ...input };
     const canAssignOwner = ['admin', 'owner', 'sales_manager', 'office_staff'].includes(sessionUser.role);
     quoteInput.ownerId = canAssignOwner && input.ownerId ? input.ownerId : sessionUser.id;
-    return this.quotes.create(quoteInput as any);
+    return this.quotes.create(quoteInput as any, sessionUser.id);
   }
 
   @Mutation(() => QuoteOutput)
@@ -288,7 +288,7 @@ export class QuotesResolver {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
     const quote = await this.quotes.findById(id);
     if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
-    return this.quotes.update(id, input as any);
+    return this.quotes.update(id, input as any, user.id);
   }
 
   @Mutation(() => QuoteOutput)
@@ -438,6 +438,12 @@ export class QuotesResolver {
     @Args('fulfillmentStatus', { nullable: true }) fulfillmentStatus?: string,
     @Args('paymentMode', { nullable: true }) paymentMode?: string,
     @Args('range', { nullable: true }) range?: string,
+    @Args('brand', { nullable: true }) brand?: string,
+    @Args('category', { nullable: true }) category?: string,
+    @Args('locationId', { nullable: true }) locationId?: string,
+    @Args('promisedRisk', { nullable: true }) promisedRisk?: string,
+    @Args('completeness', { nullable: true }) completeness?: string,
+    @Args('sort', { nullable: true }) sort?: string,
     @Args('cursor', { nullable: true }) cursor?: string,
     @Args('take', { type: () => Number, nullable: true }) take?: number,
   ) {
@@ -447,6 +453,12 @@ export class QuotesResolver {
       fulfillmentStatus,
       paymentMode,
       range,
+      brand,
+      category,
+      locationId,
+      promisedRisk,
+      completeness,
+      sort,
       cursor,
       take,
       ownerId: isPrivileged(user) || user.role === 'office_staff' || user.role === 'dispatch_ops' ? undefined : user.id,

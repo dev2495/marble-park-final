@@ -18,6 +18,23 @@ export type QuotePricingOptions = {
   mrpTolerance?: number;
 };
 
+export type PricingIssue = {
+  code: 'QUOTE_MRP_REQUIRED' | 'QUOTE_MRP_INVALID' | 'QUOTE_MRP_EXCEEDED' | 'QUOTE_MRP_BASIS_STALE';
+  field: string;
+  lineKey: string;
+  message: string;
+  remediation: string;
+  maximumPreTaxNetRate?: number;
+};
+
+function structuredPricingError(issue: PricingIssue): never {
+  throw new BadRequestException({
+    statusCode: 400,
+    error: 'Bad Request',
+    ...issue,
+  });
+}
+
 function money(value: unknown) {
   const amount = Number(value || 0);
   if (!Number.isFinite(amount)) throw new BadRequestException('Commercial values must be valid numbers');
@@ -38,7 +55,7 @@ function hasRate(value: any) {
 }
 
 function rateBasis(line: any) {
-  const explicit = String(line?.mrpRateBasis || line?.rateBasis || '').trim().toUpperCase();
+  const explicit = String(line?.rateBasis || '').trim().toUpperCase();
   if (['PACK', 'PIECE', 'AREA'].includes(explicit)) return explicit;
   const uom = String(line?.pricingUom || line?.salesUom || line?.unit || 'PC').trim().toUpperCase();
   return ['SQFT', 'SQM', 'M2'].includes(uom) ? 'AREA' : uom === 'PC' ? 'PIECE' : 'PACK';
@@ -50,31 +67,45 @@ function pricingUom(line: any, basis: string) {
   return String(line?.inventoryUom || line?.purchaseUom || line?.unit || 'PACK').trim().toUpperCase();
 }
 
-function mrpSnapshot(line: any, unitRate: number, quoteDiscountPercent: number, taxRate: number, options: QuotePricingOptions) {
+function mrpSnapshot(line: any, lineIndex: number, unitRate: number, quoteDiscountPercent: number, taxRate: number, options: QuotePricingOptions) {
   const raw = line?.mrp;
   const hasMrp = raw !== undefined && raw !== null && raw !== '';
-  const mrp = hasMrp ? money(raw) : null;
+  const numericMrp = hasMrp ? Number(raw) : null;
+  const mrp = numericMrp !== null && Number.isFinite(numericMrp) ? money(numericMrp) : null;
   const basis = rateBasis(line);
+  const mrpRateBasis = String(line?.mrpRateBasis || basis).trim().toUpperCase();
   const uom = pricingUom(line, basis);
   const finalUnitPayable = money(unitRate * (1 - quoteDiscountPercent / 100) * (1 + taxRate / 100));
   const tolerance = Math.max(0, Number(options.mrpTolerance ?? 0.5));
-  const missing = mrp === null || !Number.isFinite(mrp) || mrp <= 0;
-  const valid = !missing && finalUnitPayable <= Number(mrp) + tolerance;
-  if (options.requireMrp && missing) {
-    throw new BadRequestException(`MRP is required for ${line?.sku || line?.name || 'every quote line'} (enter a positive ${uom} value)`);
-  }
-  if (options.requireMrp && !valid) {
-    throw new BadRequestException(`${line?.sku || line?.name || 'Quote line'} exceeds MRP: payable ${finalUnitPayable.toFixed(2)} per ${uom}, MRP ${Number(mrp).toFixed(2)} per ${uom}`);
-  }
+  const lineKey = String(line?.lineKey || line?.id || line?.sku || `line-${lineIndex + 1}`);
+  const field = `lines[${lineIndex}].mrp`;
+  const missing = !hasMrp;
+  const invalid = hasMrp && (mrp === null || mrp <= 0);
+  const staleBasis = !missing && !invalid && mrpRateBasis !== basis;
+  const exceeded = !missing && !invalid && !staleBasis && finalUnitPayable > Number(mrp) + tolerance;
+  const maximumPreTaxNetRate = mrp === null ? undefined : money(Number(mrp) / (1 + taxRate / 100) / Math.max(0.000001, 1 - quoteDiscountPercent / 100));
+  const issue: PricingIssue | null = missing
+    ? { code: 'QUOTE_MRP_REQUIRED', field, lineKey, message: `Enter MRP / ${uom} for ${line?.sku || line?.name || `line ${lineIndex + 1}`} before confirming this quote.`, remediation: `Open line ${lineIndex + 1} and enter the tax-inclusive MRP for one ${uom}.` }
+    : invalid
+      ? { code: 'QUOTE_MRP_INVALID', field, lineKey, message: `MRP / ${uom} for ${line?.sku || line?.name || `line ${lineIndex + 1}`} must be a finite number greater than zero.`, remediation: `Replace the MRP on line ${lineIndex + 1} with the tax-inclusive package or price-list value.` }
+      : staleBasis
+        ? { code: 'QUOTE_MRP_BASIS_STALE', field, lineKey, message: `MRP for ${line?.sku || line?.name || `line ${lineIndex + 1}`} was confirmed for ${mrpRateBasis}, not ${basis}.`, remediation: `Review the converted suggestion and confirm a new MRP / ${uom} on line ${lineIndex + 1}.` }
+        : exceeded
+          ? { code: 'QUOTE_MRP_EXCEEDED', field, lineKey, message: `${line?.sku || line?.name || 'Quote line'} payable ${finalUnitPayable.toFixed(2)} per ${uom} exceeds MRP ${Number(mrp).toFixed(2)}.`, remediation: `Reduce the pre-tax negotiated rate to ${Number(maximumPreTaxNetRate).toFixed(2)} or less, or verify the correct MRP.`, maximumPreTaxNetRate }
+          : null;
+  if (options.requireMrp && issue) structuredPricingError(issue);
   return {
     mrp,
-    mrpRateBasis: basis,
+    mrpRateBasis,
     mrpSource: String(line?.mrpSource || 'quote_entry'),
     mrpUom: uom,
     finalUnitPayable,
     mrpVariance: mrp === null ? null : money(Number(mrp) - finalUnitPayable),
     mrpMissing: missing,
-    mrpValid: valid,
+    mrpValid: !issue,
+    pricingCompletenessCode: issue?.code || 'READY',
+    pricingRemediation: issue?.remediation || null,
+    pricingIssue: issue,
   };
 }
 
@@ -91,7 +122,7 @@ export function finalUnitRate(line: any) {
 }
 
 function commercialQuantity(line: any, inventoryQuantity: number) {
-  const basis = String(line.rateBasis || 'PACK').trim().toUpperCase();
+  const basis = rateBasis(line);
   if (!['PACK', 'PIECE', 'AREA'].includes(basis)) throw new BadRequestException('Rate basis must be PACK, PIECE, or AREA');
   const piecesPerPack = Math.max(1, Math.trunc(Number(line.piecesPerPack || line.pcsPerBox || 1)));
   const coveragePerPack = Number(line.coveragePerPack || 0);
@@ -116,7 +147,7 @@ export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0,
   };
   let requiresApproval = false;
 
-  const pricedLines = (Array.isArray(lines) ? lines : []).map((line) => {
+  const pricedLines = (Array.isArray(lines) ? lines : []).map((line, lineIndex) => {
     const quantity = Math.trunc(Number(line.qty ?? line.quantity ?? 0));
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new BadRequestException('Each commercial line needs a positive whole-number quantity');
@@ -124,7 +155,7 @@ export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0,
     const { basis, piecesPerPack, coveragePerPack, pricingQuantity } = commercialQuantity(line, quantity);
     const { listPrice, discountPercent, unitRate } = finalUnitRate(line);
     const taxRate = percent(line.taxRate, DEFAULT_TAX_RATE, 'Tax rate');
-    const mrp = mrpSnapshot(line, unitRate, normalizedQuoteDiscount, taxRate, options);
+    const mrp = mrpSnapshot(line, lineIndex, unitRate, normalizedQuoteDiscount, taxRate, options);
     const listAmount = money(pricingQuantity * listPrice);
     const lineSubtotal = money(pricingQuantity * unitRate);
     const lineDiscountAmount = money(Math.max(0, listAmount - lineSubtotal));
@@ -175,7 +206,13 @@ export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0,
     };
   });
 
-  return { lines: pricedLines, totals, requiresApproval, quoteDiscountPercent: normalizedQuoteDiscount };
+  return {
+    lines: pricedLines,
+    totals,
+    requiresApproval,
+    quoteDiscountPercent: normalizedQuoteDiscount,
+    pricingErrors: pricedLines.map((line: any) => line.pricingIssue).filter(Boolean),
+  };
 }
 
 export function commercialTotalsFromLines(lines: any[]) {

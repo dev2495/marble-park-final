@@ -84,6 +84,7 @@ model Customer {
   quotes           Quote[]
   dispatchJobs     DispatchJob[]
   dispatchChallans DispatchChallan[]
+  salesOrders      SalesOrder[]
 
   @@index([name])
   @@index([mobile])
@@ -184,6 +185,9 @@ model InventoryBalance {
   /// the product is flagged for purchase planning.
   reorderPoint      Int?
   updatedAt         DateTime
+
+  @@index([available, updatedAt(sort: Desc)])
+  @@index([reserved, updatedAt(sort: Desc)])
 }
 
 model InventoryInwardBatch {
@@ -552,6 +556,11 @@ model Product {
   sellPrice    Float
   floorPrice   Float
   costPrice    Float             @default(0)
+  mrp          Float?
+  mrpRateBasis String?
+  mrpVerifiedAt DateTime?
+  mrpVerifiedById String?
+  mrpSource    String?
   taxClass     String
   status       String
   media        Json
@@ -603,6 +612,8 @@ model Product {
   @@index([finishId])
   @@index([materialId])
   @@index([tileSizeId])
+  @@index([mrp])
+  @@index([mrpRateBasis])
 }
 
 model ProductAlias {
@@ -768,6 +779,9 @@ model SalesOrder {
   documents     Json     @default("{}")
   createdAt     DateTime @default(now())
   updatedAt     DateTime
+  customer      Customer @relation(fields: [customerId], references: [id])
+  owner         User     @relation(fields: [ownerId], references: [id])
+  lineItems     SalesOrderLine[]
 
   dispatchJob   DispatchJob? @relation("SalesOrderDispatchJob")
   dispatchChallans DispatchChallan[] @relation("SalesOrderChallans")
@@ -778,6 +792,7 @@ model SalesOrder {
   @@index([customerId])
   @@index([ownerId])
   @@index([paymentMode])
+  @@index([promisedDate, status])
   @@index([createdAt(sort: Desc)])
 }
 
@@ -802,6 +817,8 @@ model QuoteLine {
   mrp           Float?
   mrpRateBasis  String?
   mrpSource     String?    @default("quote_entry")
+  mrpConfirmedAt DateTime?
+  mrpConfirmedById String?
   unitPrice     Float    @default(0)
   discountPercent Float   @default(0)
   taxRate       Float      @default(18)
@@ -819,6 +836,9 @@ model QuoteLine {
   @@index([quoteId])
   @@index([productId])
   @@index([status])
+  @@index([status, createdAt(sort: Desc), id])
+  @@index([mrp])
+  @@index([mrpConfirmedById])
   @@index([createdAt(sort: Desc)])
 }
 
@@ -848,6 +868,8 @@ model SalesOrderLine {
   mrp                 Float?
   mrpRateBasis        String?
   mrpSource           String?  @default("quote_entry")
+  mrpConfirmedAt      DateTime?
+  mrpConfirmedById    String?
   unitPrice           Float    @default(0)
   discountPercent     Float    @default(0)
   taxRate             Float    @default(18)
@@ -860,6 +882,7 @@ model SalesOrderLine {
   metadata            Json     @default("{}")
   createdAt           DateTime @default(now())
   updatedAt           DateTime
+  order               SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
   lotReservations     LotReservation[]
   pickLines           PickLine[]
   returnLines         ReturnLine[]
@@ -869,6 +892,7 @@ model SalesOrderLine {
   @@index([quoteId])
   @@index([productId])
   @@index([status])
+  @@index([mrp])
   @@index([createdAt(sort: Desc)])
 }
 
@@ -1244,6 +1268,7 @@ model InventoryLot {
 
   @@unique([sourceType, sourceId, sourceLineId])
   @@index([productId, status])
+  @@index([productId, receivedAt, id])
   @@index([supplierBatch])
   @@index([receivedAt(sort: Desc)])
   @@index([qualityStatus])
@@ -1936,6 +1961,7 @@ model User {
   activities        Activity[]
   followUps         FollowUpTask[]
   dispatchJobs      DispatchJob[]
+  salesOrders       SalesOrder[]
 }
 
 model Vendor {

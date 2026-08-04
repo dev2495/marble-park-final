@@ -24,6 +24,7 @@ export interface CreateQuoteInput {
   quoteMeta?: any;
   intentId?: string | null;
   supersedesQuoteId?: string | null;
+  saveAsDraft?: boolean;
 }
 
 export interface UpdateQuoteInput {
@@ -36,6 +37,7 @@ export interface UpdateQuoteInput {
   displayMode?: string;
   quoteMeta?: any;
   coverImage?: string;
+  saveAsDraft?: boolean;
 }
 
 export interface UpdateQuotePresentationInput {
@@ -56,7 +58,7 @@ export interface CreateSalesOrderInput {
   paymentTerms?: string;
 }
 
-const QUOTE_STATUSES = ['draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'partially_ordered', 'confirmed', 'won', 'closed', 'lost', 'expired', 'superseded'];
+const QUOTE_STATUSES = ['incomplete_pricing', 'draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'partially_ordered', 'confirmed', 'won', 'closed', 'lost', 'expired', 'superseded'];
 
 // Eager-include retained ONLY for endpoints that legitimately need the embedded
 // objects in a single round-trip (e.g. internal services that don't go through
@@ -119,7 +121,7 @@ export class QuotesService {
     return quote;
   }
 
-  async create(data: CreateQuoteInput): Promise<any> {
+  async create(data: CreateQuoteInput, actorUserId?: string): Promise<any> {
     const ownerId = data.ownerId || (await this.prisma.user.findFirst({
       where: { active: true, role: { in: ['sales', 'owner', 'admin'] } as any },
       orderBy: { createdAt: 'asc' },
@@ -132,7 +134,8 @@ export class QuotesService {
     const saveAsDraft = Boolean((data as any).saveAsDraft);
     const assertedLines = await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote'));
     const pricing = priceQuoteLines(assertedLines, data.discountPercent || 0, { requireMrp: !saveAsDraft });
-    const normalizedLines = pricing.lines;
+    const normalizedLines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || ownerId));
+    const incompletePricing = pricing.pricingErrors.length > 0;
     const displayMode = this.normalizeDisplayMode(data.displayMode);
     const quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, normalizedLines);
     const availabilityIssues = await this.getAvailabilityIssues(normalizedLines);
@@ -190,8 +193,8 @@ export class QuotesService {
               leadId,
               lines: normalizedLines,
               quoteNumber,
-              status: pricing.requiresApproval ? 'pending_approval' : 'draft',
-              approvalStatus: pricing.requiresApproval ? 'pending' : 'approved',
+              status: incompletePricing ? 'incomplete_pricing' : pricing.requiresApproval ? 'pending_approval' : 'draft',
+              approvalStatus: incompletePricing ? 'incomplete' : pricing.requiresApproval ? 'pending' : 'approved',
               discountPercent: pricing.quoteDiscountPercent,
               displayMode,
               projectName: data.projectName || '',
@@ -212,7 +215,7 @@ export class QuotesService {
                 discountPercent: pricing.quoteDiscountPercent,
                 total: pricing.totals.grandTotal,
                 requiresPriceApproval: pricing.requiresApproval,
-                pricingReadiness: pricing.lines.filter((line: any) => line.mrpMissing || !line.mrpValid).map((line: any) => ({ lineKey: line.lineKey, sku: line.sku, code: line.mrpMissing ? 'QUOTE_MRP_REQUIRED' : 'QUOTE_MRP_EXCEEDED' })),
+                pricingReadiness: pricing.pricingErrors,
                 displayMode,
                 ...(pricing.requiresApproval ? {} : { autoApprovedAt: new Date().toISOString() }),
               },
@@ -245,8 +248,7 @@ export class QuotesService {
       }
     }
     if (!created) throw new BadRequestException(lastError?.message || 'Could not allocate quote number');
-    await this.audit(created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId });
-    const incompletePricing = normalizedLines.some((line: any) => line.mrpMissing || !line.mrpValid);
+    await this.audit(actorUserId || created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId, incompletePricing });
     await this.notifications.createMany([
       {
         title: 'Quote ready',
@@ -272,7 +274,7 @@ export class QuotesService {
     return created;
   }
 
-  async update(id: string, data: UpdateQuoteInput): Promise<any> {
+  async update(id: string, data: UpdateQuoteInput, actorUserId?: string): Promise<any> {
     const current = await this.findById(id);
     if (data.discountPercent !== undefined || data.lines !== undefined) {
       const existingOrders = await this.prisma.salesOrder.count({ where: { quoteId: id } });
@@ -288,11 +290,12 @@ export class QuotesService {
         ? await this.assertQuoteLines(data.lines, 'updating a quote')
         : await this.assertQuoteLines(current.lines, 'updating a quote'));
       const pricing = priceQuoteLines(assertedLines, data.discountPercent ?? current.discountPercent ?? 0, { requireMrp: !saveAsDraft });
-      updateData.lines = pricing.lines;
+      const incompletePricing = pricing.pricingErrors.length > 0;
+      updateData.lines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || current.ownerId));
       updateData.discountPercent = pricing.quoteDiscountPercent;
       updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta ?? current.quoteMeta, pricing.lines);
-      updateData.approvalStatus = pricing.requiresApproval ? 'pending' : 'approved';
-      updateData.status = pricing.requiresApproval ? 'pending_approval' : 'draft';
+      updateData.approvalStatus = incompletePricing ? 'incomplete' : pricing.requiresApproval ? 'pending' : 'approved';
+      updateData.status = incompletePricing ? 'incomplete_pricing' : pricing.requiresApproval ? 'pending_approval' : 'draft';
       updateData.approval = {
         requestedAt: new Date().toISOString(),
         reason: pricing.requiresApproval ? 'below_floor_rate_requires_owner_approval' : 'quote_changed_no_owner_reapproval_required',
@@ -301,7 +304,7 @@ export class QuotesService {
         discountPercent: pricing.quoteDiscountPercent,
         total: pricing.totals.grandTotal,
         requiresPriceApproval: pricing.requiresApproval,
-        pricingReadiness: pricing.lines.filter((line: any) => line.mrpMissing || !line.mrpValid).map((line: any) => ({ lineKey: line.lineKey, sku: line.sku, code: line.mrpMissing ? 'QUOTE_MRP_REQUIRED' : 'QUOTE_MRP_EXCEEDED' })),
+        pricingReadiness: pricing.pricingErrors,
         ...(pricing.requiresApproval ? {} : { autoApprovedAt: new Date().toISOString() }),
       };
     }
@@ -319,7 +322,7 @@ export class QuotesService {
         await this.syncQuoteLinesTx(tx, updated, this.normalizeLines(updateData.lines));
       }, { timeout: 10000 });
     }
-    await this.audit(updated.ownerId, 'quote.update', id, `Updated ${updated.quoteNumber}`, updateData);
+    await this.audit(actorUserId || updated.ownerId, 'quote.update', id, `Updated ${updated.quoteNumber}`, updateData);
     await this.notifications.createMany([
       {
         title: 'Quote updated',
@@ -551,6 +554,7 @@ export class QuotesService {
 
   async createSalesOrderFromQuote(input: CreateSalesOrderInput, actorUserId: string) {
     const quote = await this.findByIdWithRelations(input.quoteId);
+    this.ensureCommercialReady(quote, 'converting this quote to a sales order');
     if (quote.approvalStatus === 'pending') {
       throw new BadRequestException('Owner approval is required because this quote contains a below-floor rate.');
     }
@@ -758,6 +762,8 @@ export class QuotesService {
           mrp: line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp),
           mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
           mrpSource: line.mrpSource || 'quote_entry',
+          mrpConfirmedAt: line.mrpConfirmedAt ? new Date(line.mrpConfirmedAt) : null,
+          mrpConfirmedById: line.mrpConfirmedById || null,
           unitPrice,
           discountPercent,
           taxRate,
@@ -788,6 +794,8 @@ export class QuotesService {
           mrp: line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp),
           mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
           mrpSource: line.mrpSource || 'quote_entry',
+          mrpConfirmedAt: line.mrpConfirmedAt ? new Date(line.mrpConfirmedAt) : null,
+          mrpConfirmedById: line.mrpConfirmedById || null,
           unitPrice,
           discountPercent,
           taxRate,
@@ -802,6 +810,20 @@ export class QuotesService {
         },
       });
     }
+  }
+
+  private withMrpConfirmation(lines: any[], actorUserId: string | null) {
+    const confirmedAt = actorUserId ? new Date().toISOString() : null;
+    return this.normalizeLines(lines).map((line: any) => {
+      if (!actorUserId || !line.mrpValid) {
+        return { ...line, mrpConfirmedAt: null, mrpConfirmedById: null };
+      }
+      return {
+        ...line,
+        mrpConfirmedAt: confirmedAt,
+        mrpConfirmedById: actorUserId,
+      };
+    });
   }
 
   private async syncSalesOrderLinesTx(tx: any, args: { quote: any; salesOrder: any; lines: any[] }) {
@@ -920,6 +942,8 @@ export class QuotesService {
         mrp: quoteLine.mrp === null || quoteLine.mrp === undefined ? undefined : Number(quoteLine.mrp),
         mrpRateBasis: quoteLine.mrpRateBasis || snapshot.mrpRateBasis || snapshot.rateBasis,
         mrpSource: quoteLine.mrpSource || snapshot.mrpSource || 'quote_entry',
+        mrpConfirmedAt: quoteLine.mrpConfirmedAt || snapshot.mrpConfirmedAt || null,
+        mrpConfirmedById: quoteLine.mrpConfirmedById || snapshot.mrpConfirmedById || null,
         specialRate: Number(quoteLine.unitPrice ?? 0),
         discountPercent: Number(quoteLine.discountPercent || 0),
         taxRate: Number(quoteLine.taxRate ?? 18),
@@ -963,6 +987,12 @@ export class QuotesService {
     cursor?: string;
     take?: number;
     ownerId?: string;
+    brand?: string;
+    category?: string;
+    locationId?: string;
+    promisedRisk?: string;
+    completeness?: string;
+    sort?: string;
   }) {
     const limit = Math.max(1, Math.min(100, Math.trunc(Number(args?.take || 25))));
     const search = String(args?.search || '').trim();
@@ -973,41 +1003,43 @@ export class QuotesService {
     if (createdAt) where.createdAt = createdAt;
 
     if (search) {
-      const [customers, products] = await Promise.all([
-        this.prisma.customer.findMany({
-          where: {
-            OR: [
-              { name: { contains: search, mode: 'insensitive' } },
-              { email: { contains: search, mode: 'insensitive' } },
-              { mobile: { contains: search, mode: 'insensitive' } },
-              { gstNo: { contains: search, mode: 'insensitive' } },
-            ],
-          } as any,
-          select: { id: true },
-          take: 250,
-        } as any),
-        this.prisma.product.findMany({
-          where: {
-            OR: [
-              { sku: { contains: search, mode: 'insensitive' } },
-              { internalCode: { contains: search, mode: 'insensitive' } },
-              { name: { contains: search, mode: 'insensitive' } },
-              { brand: { contains: search, mode: 'insensitive' } },
-            ],
-          } as any,
-          select: { id: true },
-          take: 250,
-        } as any),
-      ]);
-      const customerIds = customers.map((customer: any) => customer.id);
-      const productIds = products.map((product: any) => product.id);
       where.OR = [
         { id: { contains: search, mode: 'insensitive' } },
         { orderNumber: { contains: search, mode: 'insensitive' } },
         { quoteId: { contains: search, mode: 'insensitive' } },
-        ...(customerIds.length ? [{ customerId: { in: customerIds } }] : []),
-        ...(productIds.length ? [{ id: { in: (await this.prisma.salesOrderLine.findMany({ where: { productId: { in: productIds } }, select: { salesOrderId: true }, distinct: ['salesOrderId'], take: 5000 } as any)).map((line: any) => line.salesOrderId) } }] : []),
+        { customer: { is: { OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { mobile: { contains: search, mode: 'insensitive' } },
+          { gstNo: { contains: search, mode: 'insensitive' } },
+        ] } } },
+        { lineItems: { some: { OR: [
+          { sku: { contains: search, mode: 'insensitive' } },
+          { name: { contains: search, mode: 'insensitive' } },
+          { brand: { contains: search, mode: 'insensitive' } },
+        ] } } },
       ];
+    }
+
+    const lineFilters: any[] = [];
+    if (args?.brand) lineFilters.push({ brand: args.brand });
+    if (args?.category) lineFilters.push({ category: args.category });
+    if (args?.locationId) lineFilters.push({ lotReservations: { some: { locationId: args.locationId } } });
+    if (args?.completeness === 'missing_mrp') lineFilters.push({ OR: [{ mrp: null }, { mrpConfirmedAt: null }] });
+    if (args?.completeness === 'missing_list') lineFilters.push({ listPrice: { lte: 0 } });
+    if (args?.completeness === 'unpriced') lineFilters.push({ OR: [{ mrp: null }, { mrpConfirmedAt: null }, { listPrice: { lte: 0 } }] });
+    if (lineFilters.length) where.AND = [...(where.AND || []), { lineItems: { some: { AND: lineFilters } } }];
+
+    const now = new Date();
+    const weekFromNow = new Date(now.getTime() + 7 * 86400000);
+    if (args?.promisedRisk === 'overdue') {
+      where.promisedDate = { lt: now };
+      where.status = { notIn: ['delivered', 'cancelled'] };
+    } else if (args?.promisedRisk === 'due_7') {
+      where.promisedDate = { gte: now, lte: weekFromNow };
+      where.status = { notIn: ['delivered', 'cancelled'] };
+    } else if (args?.promisedRisk === 'missing') {
+      where.promisedDate = null;
     }
 
     const requestedStatus = String(args?.fulfillmentStatus || '').trim().toLowerCase();
@@ -1021,21 +1053,19 @@ export class QuotesService {
         left_to_dispatch: ['open', 'ready', 'partial_ready', 'pending_inward', 'partial_dispatched'],
       };
       const lineStatuses = statusMap[requestedStatus] || [requestedStatus];
-      const matchingLines = await this.prisma.salesOrderLine.findMany({
-        where: { status: { in: lineStatuses } },
-        select: { salesOrderId: true },
-        distinct: ['salesOrderId'],
-        take: 10000,
-      } as any);
-      const matchingOrderIds = matchingLines.map((line: any) => line.salesOrderId);
-      if (!matchingOrderIds.length) return this.emptySalesOrderControlTower();
-      where.id = { in: matchingOrderIds };
+      where.AND = [...(where.AND || []), { lineItems: { some: { status: { in: lineStatuses } } } }];
     }
 
     const cursor = String(args?.cursor || '').trim();
+    const sortMap: Record<string, any[]> = {
+      oldest: [{ createdAt: 'asc' }, { id: 'asc' }],
+      promise: [{ promisedDate: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
+      value_desc: [{ totalAmount: 'desc' }, { id: 'desc' }],
+      newest: [{ createdAt: 'desc' }, { id: 'desc' }],
+    };
     const query: any = {
       where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: sortMap[String(args?.sort || 'newest')] || sortMap.newest,
       take: limit + 1,
       select: {
         id: true,
@@ -1130,6 +1160,9 @@ export class QuotesService {
           listPrice: Number(line.listPrice || 0),
           mrp: line.mrp === null || line.mrp === undefined ? null : Number(line.mrp),
           mrpRateBasis: line.mrpRateBasis || null,
+          mrpSource: line.mrpSource || null,
+          mrpConfirmedAt: line.mrpConfirmedAt || null,
+          mrpConfirmedById: line.mrpConfirmedById || null,
           unitPrice: Number(line.unitPrice || 0),
           grossLineTotal: Number(line.grossLineTotal || line.lineTotal || 0),
           status: line.status,
@@ -1141,67 +1174,50 @@ export class QuotesService {
       };
     });
 
-    // KPI totals must not hydrate every matching line. Grouping once by order
-    // keeps the response bounded to one row per order even with a large order
-    // book, while the page above still returns full detail only for one page.
-    const matchingOrders = await this.prisma.salesOrder.findMany({
-      where,
-      select: { id: true, status: true, totalAmount: true, advanceAmount: true },
-    } as any);
-    const matchingOrderIds = (matchingOrders as any[]).map((order) => order.id);
-    const groupedLines = matchingOrderIds.length
-      ? await this.prisma.salesOrderLine.groupBy({
-          by: ['salesOrderId'],
-          where: { salesOrderId: { in: matchingOrderIds } },
-          _sum: {
-            orderedQuantity: true,
-            reservedQuantity: true,
-            allocatedQuantity: true,
-            backorderedQuantity: true,
-            dispatchedQuantity: true,
-            deliveredQuantity: true,
-          },
-        } as any)
-      : [];
-    const metricsForOrder = new Map((groupedLines as any[]).map((row) => [row.salesOrderId, {
-      ordered: Number(row._sum?.orderedQuantity || 0),
-      reserved: Number(row._sum?.reservedQuantity || 0),
-      allocated: Number(row._sum?.allocatedQuantity || 0),
-      backordered: Number(row._sum?.backorderedQuantity || 0),
-      dispatched: Number(row._sum?.dispatchedQuantity || 0),
-      delivered: Number(row._sum?.deliveredQuantity || 0),
-    }]));
-    const zeroMetrics = { ordered: 0, reserved: 0, allocated: 0, backordered: 0, dispatched: 0, delivered: 0 };
-    const summaryMetrics = (groupedLines as any[]).reduce((sum, row) => ({
-      ordered: sum.ordered + Number(row._sum?.orderedQuantity || 0),
-      reserved: sum.reserved + Number(row._sum?.reservedQuantity || 0),
-      allocated: sum.allocated + Number(row._sum?.allocatedQuantity || 0),
-      backordered: sum.backordered + Number(row._sum?.backorderedQuantity || 0),
-      dispatched: sum.dispatched + Number(row._sum?.dispatchedQuantity || 0),
-      delivered: sum.delivered + Number(row._sum?.deliveredQuantity || 0),
-    }), { ...zeroMetrics });
-    const statusCounts = (matchingOrders as any[]).reduce((counts: any, order: any) => {
-      const status = this.deriveControlTowerStatus(order.status, metricsForOrder.get(order.id) || zeroMetrics);
-      counts[status] = Number(counts[status] || 0) + 1;
-      return counts;
-    }, {});
-    const totalAmount = (matchingOrders as any[]).reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-    const advanceAmount = (matchingOrders as any[]).reduce((sum, order) => sum + Number(order.advanceAmount || 0), 0);
+    // KPI totals are database aggregates over the exact filtered population;
+    // only the visible page is hydrated with customer, line and document data.
+    const lineScope: any = { order: { is: where } };
+    const statusScope = (statuses: string[]) => ({ AND: [where, { lineItems: { some: { status: { in: statuses } } } }] });
+    const [orderAggregate, lineAggregate, overdueOrders, dueSoonOrders, missingPromiseOrders, unpricedOrders, pendingOrders, readyOrders, partialOrders, dispatchedOrders, deliveredOrders] = await Promise.all([
+      this.prisma.salesOrder.aggregate({ where, _count: true, _sum: { totalAmount: true, advanceAmount: true } } as any),
+      this.prisma.salesOrderLine.aggregate({ where: lineScope, _sum: { orderedQuantity: true, reservedQuantity: true, allocatedQuantity: true, backorderedQuantity: true, dispatchedQuantity: true, deliveredQuantity: true } } as any),
+      this.prisma.salesOrder.count({ where: { AND: [where, { promisedDate: { lt: now } }, { status: { notIn: ['delivered', 'cancelled'] } }] } } as any),
+      this.prisma.salesOrder.count({ where: { AND: [where, { promisedDate: { gte: now, lte: weekFromNow } }, { status: { notIn: ['delivered', 'cancelled'] } }] } } as any),
+      this.prisma.salesOrder.count({ where: { AND: [where, { promisedDate: null }] } } as any),
+      this.prisma.salesOrder.count({
+        where: {
+          AND: [where, { lineItems: { some: { OR: [{ mrp: null }, { mrpConfirmedAt: null }, { listPrice: { lte: 0 } }] } } }],
+        },
+      } as any),
+      this.prisma.salesOrder.count({ where: statusScope(['pending_inward']) } as any),
+      this.prisma.salesOrder.count({ where: statusScope(['ready', 'partial_ready']) } as any),
+      this.prisma.salesOrder.count({ where: statusScope(['partial_dispatched']) } as any),
+      this.prisma.salesOrder.count({ where: statusScope(['dispatched']) } as any),
+      this.prisma.salesOrder.count({ where: statusScope(['delivered']) } as any),
+    ]);
+    const summaryMetrics = (lineAggregate as any)?._sum || {};
+    const totalOrders = Number((orderAggregate as any)?._count || 0);
+    const totalAmount = Number((orderAggregate as any)?._sum?.totalAmount || 0);
+    const advanceAmount = Number((orderAggregate as any)?._sum?.advanceAmount || 0);
     return {
       items,
       nextCursor: hasNextPage ? page[page.length - 1].id : null,
-      total: matchingOrders.length,
+      total: totalOrders,
       summary: {
-        orders: matchingOrders.length,
+        orders: totalOrders,
         totalValue: totalAmount,
         advanceValue: advanceAmount,
         balanceValue: Math.max(0, totalAmount - advanceAmount),
-        reservedQty: summaryMetrics.reserved,
-        readyToPickQty: Math.max(0, Math.min(summaryMetrics.ordered - summaryMetrics.dispatched, summaryMetrics.reserved + summaryMetrics.allocated)),
-        leftToDispatchQty: Math.max(0, summaryMetrics.ordered - summaryMetrics.dispatched),
-        pendingInwardQty: summaryMetrics.backordered,
-        deliveredQty: summaryMetrics.delivered,
-        statusCounts,
+        reservedQty: Number(summaryMetrics.reservedQuantity || 0),
+        readyToPickQty: Math.max(0, Math.min(Number(summaryMetrics.orderedQuantity || 0) - Number(summaryMetrics.dispatchedQuantity || 0), Number(summaryMetrics.reservedQuantity || 0) + Number(summaryMetrics.allocatedQuantity || 0))),
+        leftToDispatchQty: Math.max(0, Number(summaryMetrics.orderedQuantity || 0) - Number(summaryMetrics.dispatchedQuantity || 0)),
+        pendingInwardQty: Number(summaryMetrics.backorderedQuantity || 0),
+        deliveredQty: Number(summaryMetrics.deliveredQuantity || 0),
+        overdueOrders,
+        dueSoonOrders,
+        missingPromiseOrders,
+        unpricedOrders,
+        statusCounts: { pending_inward: pendingOrders, ready_to_pick: readyOrders, partial_dispatch: partialOrders, dispatched: dispatchedOrders, delivered: deliveredOrders },
       },
     };
   }
@@ -1214,6 +1230,7 @@ export class QuotesService {
       summary: {
         orders: 0, totalValue: 0, advanceValue: 0, balanceValue: 0,
         reservedQty: 0, readyToPickQty: 0, leftToDispatchQty: 0, pendingInwardQty: 0, deliveredQty: 0,
+        overdueOrders: 0, dueSoonOrders: 0, missingPromiseOrders: 0, unpricedOrders: 0,
         statusCounts: {},
       },
     };
@@ -1292,6 +1309,9 @@ export class QuotesService {
           listPrice: Number(line.listPrice || 0),
           mrp: line.mrp === null || line.mrp === undefined ? null : Number(line.mrp),
           mrpRateBasis: line.mrpRateBasis || null,
+          mrpSource: line.mrpSource || null,
+          mrpConfirmedAt: line.mrpConfirmedAt || null,
+          mrpConfirmedById: line.mrpConfirmedById || null,
           unitRate: Number(line.unitPrice || 0),
           grossLineTotal: Number(line.grossLineTotal || line.lineTotal || 0),
         };
@@ -1678,7 +1698,23 @@ export class QuotesService {
   }
 
   private ensureCommercialReady(quote: any, action: string) {
-    const pricing = priceQuoteLines(this.normalizeLines(quote?.lines), quote?.discountPercent || 0, { requireMrp: true });
+    const lines = this.normalizeLines(quote?.lines);
+    const pricing = priceQuoteLines(lines, quote?.discountPercent || 0, { requireMrp: true });
+    const contractStartedAt = Date.UTC(2026, 7, 4);
+    const isLegacy = !quote?.createdAt || new Date(quote.createdAt).getTime() < contractStartedAt;
+    if (!isLegacy) {
+      const missingIndex = lines.findIndex((line: any) => !line.mrpConfirmedAt || !line.mrpConfirmedById);
+      if (missingIndex >= 0) {
+        const line = lines[missingIndex];
+        throw new BadRequestException({
+          message: `Cannot ${action}: confirm MRP for ${line.sku || line.name || `line ${missingIndex + 1}`}.`,
+          code: 'QUOTE_MRP_CONFIRMATION_REQUIRED',
+          field: 'mrp',
+          lineKey: line.lineKey || line.quoteLineId || String(missingIndex),
+          remediation: 'Open the quote, verify MRP per selected UOM, then Validate changes.',
+        });
+      }
+    }
     if (quote?.approvalStatus === 'pending' && !/approv/i.test(action)) {
       throw new BadRequestException(`Cannot ${action}: owner approval is still required for a below-floor rate.`);
     }

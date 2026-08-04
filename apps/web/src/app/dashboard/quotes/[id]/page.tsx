@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, BadgeCheck, Building2, Check, Download, Image as ImageIcon, ImagePlus, PenLine, Printer, Save, Send, Share2, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, BadgeCheck, BadgeIndianRupee, Building2, Check, Download, Image as ImageIcon, ImagePlus, PenLine, Printer, Save, Send, Share2, ShieldCheck, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
@@ -200,6 +200,11 @@ export default function QuoteDetailPage() {
   const showPrices = displayMode !== 'selection';
   const grouped = groupLines(editLines);
   const mrpIssues = useMemo(() => editLines.map((line) => ({ line, rate: lineRate(line, taxMode, Number(discountPercent || 0)) })).filter(({ rate }) => rate.mrpMissing || !rate.mrpValid), [editLines, taxMode, discountPercent]);
+  const grossMrp = editLines.reduce((sum, line) => { const rate = lineRate(line, taxMode, Number(discountPercent || 0)); return sum + (rate.mrp && rate.mrp > 0 ? rate.pricingQuantity * rate.mrp : 0); }, 0);
+  const listValue = editLines.reduce((sum, line) => { const rate = lineRate(line, taxMode, Number(discountPercent || 0)); return sum + rate.pricingQuantity * Math.max(0, rate.price); }, 0);
+  const missingListCount = editLines.filter((line) => Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0) <= 0).length;
+  const belowFloorCount = editLines.filter((line) => Number(line.floorPrice || 0) > 0 && lineRate(line, taxMode, Number(discountPercent || 0)).specialRate < Number(line.floorPrice || 0)).length;
+  const pricingReady = editLines.length > 0 && mrpIssues.length === 0;
   const quotedBrandIds = brands.filter((brand: any) => editLines.some((line: any) => String(line.brand || '').trim().toLowerCase() === String(brand.name || '').trim().toLowerCase())).map((brand: any) => String(brand.id));
 
   const updateLine = (index: number, patch: any) => setEditLines((current) => current.map((line, idx) => idx === index ? { ...line, ...patch } : line));
@@ -215,12 +220,20 @@ export default function QuoteDetailPage() {
       designCode: line.designCode || '',
     }))),
   });
-  const saveQuote = () => {
-    if (!commercialLocked && mrpIssues.length) {
+  const focusQuoteLine = (line: any) => {
+    if (!line) return;
+    const index = editLines.indexOf(line);
+    const target = document.getElementById(`quote-edit-line-${index}`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => target?.querySelector<HTMLElement>('[data-pricing-error="true"]')?.focus(), 350);
+  };
+  const saveQuote = (saveAsDraft = false) => {
+    if (!commercialLocked && !saveAsDraft && mrpIssues.length) {
       const issue = mrpIssues[0];
       setValidationMessage(issue.rate.mrpMissing
         ? `MRP is required for ${issue.line.sku || issue.line.name}, entered per ${issue.rate.mrpUom}.`
         : `${issue.line.sku || issue.line.name} exceeds MRP: payable ${money(issue.rate.finalUnitPayable)} per ${issue.rate.mrpUom}, MRP ${money(issue.rate.mrp || 0)}.`);
+      focusQuoteLine(issue.line);
       return;
     }
     setValidationMessage('');
@@ -229,6 +242,7 @@ export default function QuoteDetailPage() {
       ...presentationInput(),
       linePresentation: undefined,
       discountPercent: Number(discountPercent || 0),
+      saveAsDraft,
       lines: JSON.stringify(editLines.map((line) => ({ ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18) }))),
     } } });
   };
@@ -256,7 +270,7 @@ export default function QuoteDetailPage() {
   if (error && !quote) return <div className="mp-card rounded-r5 p-6"><QueryErrorBanner error={error} onRetry={() => refetch()} /></div>;
   if (!quote) return <div className="mp-card rounded-r5 p-10 text-center font-bold text-[var(--ink-4)]">Quote not found.</div>;
 
-  return <div className="space-y-6 pb-10">
+  return <div className="space-y-6 pb-24 xl:pb-10">
     {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
     {validationMessage ? <div role="alert" className="rounded-r4 border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">{validationMessage}</div> : null}
     {updateError ? <QueryErrorBanner error={updateError} /> : null}
@@ -286,9 +300,10 @@ export default function QuoteDetailPage() {
               <PenLine className="mr-2 h-5 w-5" /> {revising ? 'Starting...' : 'Revise quote'}
             </Button>
           ) : null}
-          <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded'} onClick={saveQuote} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Save quote changes'}</Button>
-          <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button>
-          <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button>
+          {!commercialLocked ? <Button disabled={savingQuote || quote.status === 'superseded'} onClick={() => saveQuote(true)} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" />Save draft</Button> : null}
+          <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded' || (!commercialLocked && !pricingReady)} onClick={() => saveQuote(false)} size="lg" variant="outline"><ShieldCheck className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Validate changes'}</Button>
+          {pricingReady || commercialLocked ? <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button> : <Button size="lg" disabled><Download className="mr-2 h-5 w-5"/>PDF waiting</Button>}
+          {pricingReady || commercialLocked ? <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button> : null}
           <Button size="lg" variant="outline" disabled={sharing || Boolean(mrpIssues.length)} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button>
           {quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending || Boolean(mrpIssues.length)} onClick={() => { if (!mrpIssues.length) sendQuote({ variables: { id: quote.id } }); }} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
         </div>
@@ -368,13 +383,27 @@ export default function QuoteDetailPage() {
           </div>
         </div>
 
+        <section aria-label="Quote pricing metrics" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+          {[
+            [BadgeIndianRupee, 'Lines / items', `${editLines.length} / ${editLines.reduce((sum, line) => sum + Number(line.qty || line.quantity || 0), 0)}`, null],
+            [BadgeIndianRupee, 'Gross MRP', money(grossMrp), mrpIssues.length ? () => focusQuoteLine(mrpIssues[0].line) : null],
+            [BadgeIndianRupee, 'List value', money(listValue), missingListCount ? () => focusQuoteLine(editLines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0)) : null],
+            [BadgeIndianRupee, 'Offered', money(subtotal - quoteDiscount), null],
+            [BadgeIndianRupee, 'Saving from MRP', money(Math.max(0, grossMrp - total)), null],
+            [BadgeIndianRupee, 'GST', money(tax), null],
+            [AlertTriangle, 'Exceptions', `${mrpIssues.length + missingListCount + belowFloorCount}`, () => focusQuoteLine(mrpIssues[0]?.line || editLines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0))],
+            [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : 'Draft only', null],
+          ].map(([Icon, label, value, action]: any) => <button key={label} type="button" onClick={action || undefined} className={`rounded-lg border p-3 text-left ${action ? 'border-amber-200 bg-amber-50' : 'border-[var(--line)] bg-[var(--surface)]'} ${label === 'Readiness' && pricingReady ? 'border-emerald-200 bg-emerald-50' : ''}`}><Icon className="h-4 w-4 text-[var(--brand-700)]"/><p className="mt-2 truncate text-base font-black text-[var(--ink)]">{value}</p><p className="mt-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--ink-4)]">{label}</p></button>)}
+        </section>
+
         {grouped.map((group) => <div key={group.area} className="overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] shadow-md-soft">
           <div className="border-b border-[var(--line)] bg-[var(--ink)] px-5 py-4 text-xs font-medium uppercase tracking-widest text-[var(--surface)]">{group.area} · {group.rows.length} item(s)</div>
           <div className="divide-y divide-[var(--line)]">
             {group.rows.map((line: any) => {
               const index = editLines.indexOf(line);
               const rate = lineRate(line, taxMode, Number(discountPercent || 0));
-              return <article key={`${line.sku}-${index}`} className="grid gap-4 p-5 xl:grid-cols-[8rem_1fr_7rem_7rem_7rem_7rem_7rem] xl:items-center">
+              const listMissing = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0) <= 0;
+              return <article id={`quote-edit-line-${index}`} key={`${line.sku}-${index}`} className="scroll-mt-24 grid gap-4 p-5 xl:grid-cols-[8rem_1fr_7rem_7rem_7rem_7rem_7rem] xl:items-center">
                 <ProductImageFrame src={productImage(line)} alt={line.name} className="h-28 w-32 rounded-[1.35rem]" imageClassName="p-2" />
                 <div className="space-y-2">
                   <input value={line.area || ''} onChange={(event)=>updateLine(index,{area:event.target.value})} className="h-9 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]" placeholder="Area / room" />
@@ -383,8 +412,8 @@ export default function QuoteDetailPage() {
                   <div className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-[var(--brand-700)]"/><input value={line.quoteImage || ''} onChange={(event)=>updateLine(index,{quoteImage:event.target.value})} placeholder="Optional HTTPS quote image URL" className="h-9 flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold" /></div><p className="text-[10px] text-[var(--ink-5)]">Saved URLs are copied into Marble Park for reliable PDFs.</p>
                 </div>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty</span><input disabled={commercialLocked} type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">List rate</span><input disabled type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} className="h-10 w-full cursor-not-allowed rounded-xl border border-[var(--line)] bg-[var(--muted)] px-3 text-sm font-black opacity-75" /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Product Master</span></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">MRP / {rate.mrpUom}</span><input disabled={commercialLocked} aria-label={`MRP per ${rate.mrpUom} for ${line.name}`} type="number" min={0.01} step="0.01" value={line.mrp ?? ''} onChange={(event)=>updateLine(index,{mrp:event.target.value,mrpRateBasis:String(line.rateBasis || 'PACK').toUpperCase(),mrpSource:line.mrpSource || 'quote_entry'})} className={`h-10 w-full rounded-xl border px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55 ${rate.mrpMissing || !rate.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`} /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Tax-inclusive</span></label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">List rate</span>{listMissing ? <span className="block rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs font-black text-amber-900">List Rate missing<Link href={`/dashboard/master-data/products?product=${line.productId}`} className="mt-1 block text-[10px] underline">Open Product Master</Link></span> : <><input disabled type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} className="h-10 w-full cursor-not-allowed rounded-xl border border-[var(--line)] bg-[var(--muted)] px-3 text-sm font-black opacity-75"/><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Product Master</span></>}</label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">MRP / {rate.mrpUom}</span><input data-pricing-error={rate.mrpMissing || !rate.mrpValid ? 'true' : undefined} disabled={commercialLocked} aria-label={`MRP per ${rate.mrpUom} for ${line.name}`} type="number" min={0.01} step="0.01" value={line.mrp ?? ''} onChange={(event)=>updateLine(index,{mrp:event.target.value,mrpRateBasis:String(line.rateBasis || 'PACK').toUpperCase(),mrpSource:'MANUAL'})} className={`h-10 w-full rounded-xl border px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55 ${rate.mrpMissing || !rate.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`} /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Tax-inclusive</span></label>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Disc %</span><input disabled={commercialLocked} type="number" value={line.discountPercent || line.discount || 0} onChange={(event)=>updateLine(index,{discountPercent:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
                 <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Negotiated / total</p><input disabled={commercialLocked} aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate ?? line.specialPrice ?? ''} placeholder={String(rate.specialRate)} onChange={(event)=>updateLine(index,{specialRate:event.target.value})} className="mt-1 h-10 w-full rounded-xl border border-[var(--brand-400)] bg-[var(--brand-50)] px-2 text-right text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" />{showPrices && <p className="mt-1 text-xl font-black text-[var(--success)]">{money(rate.amount)}</p>}</div>
               </article>;
@@ -417,5 +446,6 @@ export default function QuoteDetailPage() {
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert selected quantity</h2><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">Choose only the quantities being confirmed now. The remaining balance stays on this quote for the next order or an explicit close-out.</p><div className="mt-4 space-y-2">{(fulfillment?.lines || []).map((line: any) => <label key={line.id} className="grid grid-cols-[1fr_5.5rem] items-center gap-3 rounded-lg border border-[var(--line)] p-3"><span className="min-w-0"><span className="block truncate text-sm font-bold text-[var(--ink)]">{line.sku} · {line.name}</span><span className="text-xs font-semibold text-[var(--ink-4)]">Ordered {line.ordered} of {line.quantity} · remaining {line.remaining}</span></span><input aria-label={`Order quantity for ${line.sku}`} type="number" min={0} max={line.remaining} value={orderQuantities[line.id] ?? ''} onChange={(event) => setOrderQuantities((current) => ({ ...current, [line.id]: event.target.value }))} disabled={!line.remaining} className="h-10 rounded-lg border border-[var(--brand-400)] bg-[var(--brand-50)] px-2 text-right text-sm font-black" /></label>)}{fulfillment && !fulfillment.lines?.length ? <p className="text-sm font-semibold text-[var(--ink-4)]">No remaining quote lines.</p> : null}</div><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Advance / full paid</span><input type="number" min={0} value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>}<label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Payment terms</span><input value={paymentTerms} onChange={(e)=>setPaymentTerms(e.target.value)} placeholder={paymentMode === 'credit' ? 'Net 30' : 'Cash on order'} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Promised dispatch date</span><input type="date" value={promisedDate} onChange={(e)=>setPromisedDate(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>{orderMessage && <div className="mt-3 rounded-2xl bg-[var(--brand-50)] p-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[var(--brand-600)] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder || quote.status === 'superseded' || !(fulfillment?.lines || []).some((line: any) => Number(orderQuantities[line.id] || 0) > 0)} onClick={()=>{ const key = orderKey || (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`); setOrderKey(key); createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),paymentTerms:paymentTerms || undefined,promisedDate:promisedDate || undefined,idempotencyKey:key,lines:JSON.stringify((fulfillment?.lines || []).map((line: any) => ({ quoteLineId: line.id, quantity: Number(orderQuantities[line.id] || 0) })).filter((line: any) => line.quantity > 0)),notes:'Created from quote detail'}}}); }}>{creatingOrder ? 'Creating...' : 'Create selected sales order'}</Button>{(fulfillment?.orders || []).length ? <div className="mt-5 border-t border-[var(--line)] pt-4"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Orders from this quote</p>{fulfillment.orders.map((order: any) => <div key={order.id} className="mt-2 flex justify-between gap-3 text-sm font-bold"><span>{order.orderNumber} · {order.status}</span><span>{money(order.totalAmount)}</span></div>)}</div> : null}<div className="mt-5 border-t border-[var(--line)] pt-4"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Close unused remainder</p><input value={closeReason} onChange={(event) => setCloseReason(event.target.value)} placeholder="Reason required to close remaining quantity" className="mt-2 h-10 w-full rounded-lg border border-[var(--line)] px-3 text-sm font-semibold" /><Button variant="outline" className="mt-2 w-full" disabled={closingRemainder || !closeReason.trim() || !(fulfillment?.lines || []).some((line: any) => Number(line.remaining || 0) > 0)} onClick={() => closeRemainder({ variables: { quoteId: quote.id, reason: closeReason } })}>{closingRemainder ? 'Closing...' : 'Close remaining quantity'}</Button></div></div>
       </aside>
     </section>
+    {!commercialLocked ? <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--surface)]/95 p-3 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur xl:hidden"><div className="mx-auto grid max-w-xl grid-cols-[1fr_auto_1fr] gap-2"><Button variant="outline" disabled={savingQuote} onClick={() => saveQuote(true)}><Save className="mr-2 h-4 w-4"/>Draft</Button><button type="button" onClick={() => focusQuoteLine(mrpIssues[0]?.line)} className={`rounded-md px-2 text-xs font-black ${pricingReady ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{pricingReady ? 'Ready' : `${mrpIssues.length} errors`}</button><Button disabled={savingQuote || !pricingReady} onClick={() => saveQuote(false)}><ShieldCheck className="mr-2 h-4 w-4"/>Validate</Button></div></div> : null}
   </div>;
 }

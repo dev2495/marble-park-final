@@ -74,6 +74,14 @@ async function main() {
   }
   assert(/MRP|required|commercial/i.test(mrpError), `A new quote without MRP must be blocked, received: ${mrpError}`);
 
+  const draft = (await gql(
+    `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id status approvalStatus lines } }`,
+    { input: { customerId: customer.id, title: `Incomplete draft ${suffix}`, lines: lineWithoutMrp, saveAsDraft: true } },
+    token,
+  )).createQuote;
+  cleanupContext.quoteIds.push(draft.id);
+  assert(draft.status === 'incomplete_pricing' && draft.approvalStatus === 'incomplete', 'Save Draft must preserve an incomplete quote without enabling commercial actions');
+
   const quote = (await gql(
     `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber lines status approvalStatus } }`,
     { input: { customerId: customer.id, title: `Release contract quote ${suffix}`, lines: JSON.stringify([{ productId: product.id, sku: product.sku, name: product.name, category: product.category, brand: product.brand, finish: product.finish, unit: 'PC', qty: 1, price: 10000, mrp: 12000, mrpRateBasis: 'PIECE', taxRate: 18 }]) } },
@@ -83,6 +91,7 @@ async function main() {
   const fulfillment = (await gql(`query($quoteId: ID!) { quoteFulfillment(quoteId: $quoteId) }`, { quoteId: quote.id }, token)).quoteFulfillment;
   const quoteLine = fulfillment.lines?.[0] || (Array.isArray(quote.lines) ? quote.lines[0] : null);
   assert(Number(quoteLine?.mrp) === 12000 && quoteLine?.mrpRateBasis === 'PIECE', 'Quote must persist the MRP snapshot and basis');
+  assert(quoteLine?.mrpConfirmedAt && quoteLine?.mrpConfirmedById, 'Validated quote must persist who confirmed MRP and when');
 
   const order = (await gql(
     `mutation($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`,
@@ -114,7 +123,7 @@ async function main() {
   await expectPdf(`/api/pdf/quote/${quote.id}`, token, 'Quote PDF');
   await expectPdf(`/api/pdf/order/${order.id}`, token, 'Sales-order PDF');
 
-  console.log(JSON.stringify({ ok: true, blockedWithoutMrp: true, quoteNumber: quote.quoteNumber, orderNumber: order.orderNumber, dispatchStatus: registerLine.status }, null, 2));
+  console.log(JSON.stringify({ ok: true, blockedWithoutMrp: true, incompleteDraft: true, mrpProvenance: true, quoteNumber: quote.quoteNumber, orderNumber: order.orderNumber, dispatchStatus: registerLine.status }, null, 2));
 }
 
 main().catch((error) => {

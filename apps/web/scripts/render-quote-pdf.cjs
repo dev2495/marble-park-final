@@ -265,7 +265,9 @@ function rateFor(line) {
     : taxableValue + taxAmount;
   const mrp = line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp);
   const mrpUom = basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
-  return { qty, basis, pricingQuantity, pricingUom, price, discount, unitRate, lineSubtotal, quoteDiscountPercent, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, mrpUom };
+  const grossMrp = mrp !== null && Number.isFinite(mrp) && mrp > 0 ? mrp * pricingQuantity : null;
+  const savingFromMrp = grossMrp === null ? null : Math.max(0, grossMrp - amount);
+  return { qty, basis, pricingQuantity, pricingUom, price, discount, unitRate, lineSubtotal, quoteDiscountPercent, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, mrpUom, grossMrp, savingFromMrp };
 }
 
 function isLegacyQuoteBeforeMrpContract(quote) {
@@ -574,7 +576,7 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode }) {
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}\n${rate.qty} ${line.inventoryUom || line.unit || line.uom || 'BOX'} stock`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, money(rate.price)) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, `${money(rate.unitRate)}${rate.discount ? `\n${rate.discount}% off` : ''}`) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, `${money(rate.unitRate)}${rate.discount ? `\n${rate.discount}% off` : ''}${rate.savingFromMrp !== null ? `\nSave ${money(rate.savingFromMrp)}` : ''}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.amount)) : null,
       );
     }),
@@ -596,6 +598,7 @@ function PricedDocumentBody(payload, requestUrl) {
   const taxable = pricedLines.reduce((sum, rate) => sum + rate.taxableValue, 0);
   const tax = taxMode === 'non_gst' ? 0 : pricedLines.reduce((sum, rate) => sum + rate.taxAmount, 0);
   const total = pricedLines.reduce((sum, rate) => sum + rate.amount, 0);
+  const savingFromMrp = pricedLines.reduce((sum, rate) => sum + Number(rate.savingFromMrp || 0), 0);
   const rawTerms = quoteMeta.terms || settings.defaultTerms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
   const terms = taxMode === 'non_gst' ? String(rawTerms).split('\n').filter((line) => !/\bGST\b/i.test(line)).join('\n') : rawTerms;
   const bank = quoteMeta.bankDetails || settings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
@@ -649,6 +652,7 @@ function PricedDocumentBody(payload, requestUrl) {
         e(Text, { style: styles.text }, remarks),
       ),
       e(View, { style: styles.totalsBox },
+        savingFromMrp > 0 ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Saving from MRP'), e(Text, { style: [styles.totalValue, { color: '#087f5b' }] }, money(savingFromMrp))) : null,
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal))),
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, `Discount ${Number(quote.discountPercent || 0)}%`), e(Text, { style: styles.totalValue }, money(discountAmount))),
         taxMode === 'gst' ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'GST'), e(Text, { style: styles.totalValue }, money(tax))) : null,

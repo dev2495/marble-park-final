@@ -141,12 +141,16 @@ export class DispatchResolver {
   async reservedDispatchLines(
     @Args('search', { type: () => String, nullable: true }) search: string | undefined,
     @Args('status', { type: () => String, nullable: true }) status: string | undefined,
+    @Args('brand', { type: () => String, nullable: true }) brand: string | undefined,
+    @Args('category', { type: () => String, nullable: true }) category: string | undefined,
+    @Args('locationId', { type: () => String, nullable: true }) locationId: string | undefined,
+    @Args('sort', { type: () => String, nullable: true }) sort: string | undefined,
     @Args('cursor', { type: () => String, nullable: true }) cursor: string | undefined,
     @Args('take', { type: () => Number, nullable: true }) take: number | undefined,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireSession(this.prisma, ctx);
-    return this.dispatch.reservedDispatchLines({ search, status, cursor, take });
+    await requirePermission(this.prisma, ctx, 'dispatch.manage', ['admin', 'owner', 'sales_manager', 'dispatch_ops', 'inventory_manager', 'office_staff']);
+    return this.dispatch.reservedDispatchLines({ search, status, brand, category, locationId, sort, cursor, take });
   }
 
   @Query(() => DispatchOutput)

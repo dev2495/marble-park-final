@@ -43,6 +43,23 @@ import { AssetsModule } from './modules/assets/assets.module';
         // Loaders are constructed fresh for each request so cached rows never
         // leak between users/sessions.
         context: ({ req, res }: any) => ({ req, res, requestId: req.requestId, loaders: buildLoaders(prisma) }),
+        formatError: (formattedError: any, error: any) => {
+          const original = error?.originalError;
+          const response = typeof original?.getResponse === 'function'
+            ? original.getResponse()
+            : formattedError?.extensions?.originalError;
+          if (!response || typeof response !== 'object') return formattedError;
+          const diagnosticKeys = ['code', 'field', 'lineKey', 'remediation', 'maximumPreTaxNetRate'];
+          const diagnostics = diagnosticKeys.reduce((result: any, key) => {
+            if (response[key] !== undefined) result[key] = response[key];
+            return result;
+          }, {});
+          return {
+            ...formattedError,
+            message: typeof response.message === 'string' ? response.message : formattedError.message,
+            extensions: { ...(formattedError.extensions || {}), ...diagnostics },
+          };
+        },
         plugins: [{
           async requestDidStart() {
             return {

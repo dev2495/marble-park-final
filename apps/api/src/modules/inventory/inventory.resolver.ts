@@ -112,11 +112,14 @@ export class InventoryResolver {
     @Args('category', { nullable: true }) category?: string,
     @Args('brand', { nullable: true }) brand?: string,
     @Args('stockState', { nullable: true }) stockState?: string,
+    @Args('locationId', { nullable: true }) locationId?: string,
+    @Args('lotState', { nullable: true }) lotState?: string,
+    @Args('sort', { nullable: true }) sort?: string,
     @Args('cursor', { nullable: true }) cursor?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
-    return this.inventory.controlTower({ search, category, brand, stockState, cursor, take });
+    return this.inventory.controlTower({ search, category, brand, stockState, locationId, lotState, sort, cursor, take });
   }
 
   /**

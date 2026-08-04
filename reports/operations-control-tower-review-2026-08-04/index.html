@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Marble Park Operations Control Tower - Review & Mockups</title>
+  <link rel="icon" href="assets/marble-park-logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Franklin:wght@600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f4f2;
+      --surface: #ffffff;
+      --surface-2: #f8f8f7;
+      --ink: #18181b;
+      --muted: #68686f;
+      --faint: #929299;
+      --line: #dededb;
+      --line-strong: #c5c5c0;
+      --brand: #9d2a24;
+      --brand-dark: #721e1a;
+      --brand-soft: #fbefed;
+      --green: #087a55;
+      --green-soft: #eaf8f1;
+      --amber: #a85c00;
+      --amber-soft: #fff6e6;
+      --red: #b42318;
+      --red-soft: #fff0ee;
+      --blue: #245bb5;
+      --blue-soft: #edf4ff;
+      --shadow: 0 10px 32px rgba(24, 24, 27, .07);
+      --rail: 72px;
+    }
+
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #121212;
+      --surface: #1a1a1c;
+      --surface-2: #222225;
+      --ink: #f6f6f3;
+      --muted: #b7b7b1;
+      --faint: #85857f;
+      --line: #343438;
+      --line-strong: #4b4b50;
+      --brand: #d66a62;
+      --brand-dark: #ef8f87;
+      --brand-soft: #351817;
+      --green: #58d2a2;
+      --green-soft: #153429;
+      --amber: #f2b45b;
+      --amber-soft: #362714;
+      --red: #f08b83;
+      --red-soft: #381918;
+      --blue: #8db8ff;
+      --blue-soft: #172b4b;
+      --shadow: 0 16px 38px rgba(0, 0, 0, .28);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "DM Sans", system-ui, sans-serif;
+      letter-spacing: 0;
+    }
+    button, input, select { font: inherit; letter-spacing: 0; }
+    button { cursor: pointer; }
+    a { color: inherit; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+
+    .shell { min-height: 100vh; }
+    .rail {
+      position: fixed; inset: 0 auto 0 0; z-index: 30; width: var(--rail);
+      display: flex; flex-direction: column; align-items: center;
+      border-right: 1px solid var(--line); background: var(--surface);
+    }
+    .brand-mark {
+      display: grid; width: 100%; height: 72px; place-items: center;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand-mark img { width: 42px; height: 52px; object-fit: contain; }
+    .rail-nav { display: flex; flex: 1; flex-direction: column; gap: 7px; padding-top: 18px; }
+    .rail-btn {
+      position: relative; display: grid; width: 42px; height: 42px; place-items: center;
+      border: 0; border-radius: 7px; background: transparent; color: var(--faint);
+    }
+    .rail-btn:hover, .rail-btn.active { background: var(--brand-soft); color: var(--brand); }
+    .rail-btn.active::before {
+      content: ""; position: absolute; left: -15px; width: 3px; height: 24px;
+      border-radius: 2px; background: var(--brand);
+    }
+    .rail-btn span {
+      position: absolute; left: 50px; display: none; white-space: nowrap;
+      border: 1px solid var(--line); border-radius: 5px; background: var(--ink);
+      color: var(--surface); padding: 6px 9px; font-size: 11px; box-shadow: var(--shadow);
+    }
+    .rail-btn:hover span { display: block; }
+    .rail-footer { padding: 14px 0 18px; }
+    .avatar { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: var(--brand-soft); color: var(--brand); font-weight: 700; }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 20; height: 72px; margin-left: var(--rail);
+      display: flex; align-items: center; gap: 18px; border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 94%, transparent); padding: 0 28px; backdrop-filter: blur(16px);
+    }
+    .top-title { min-width: 230px; font-family: "Libre Franklin", sans-serif; font-size: 17px; font-weight: 700; }
+    .global-search {
+      display: flex; flex: 1; max-width: 560px; align-items: center; gap: 9px;
+      height: 40px; border: 1px solid var(--line); border-radius: 7px;
+      background: var(--surface-2); padding: 0 12px; color: var(--faint);
+    }
+    .global-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); }
+    .top-actions { margin-left: auto; display: flex; gap: 8px; }
+    .icon-btn {
+      display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--line);
+      border-radius: 7px; background: var(--surface); color: var(--muted);
+    }
+    .icon-btn:hover { border-color: var(--line-strong); color: var(--ink); }
+
+    .workspace { margin-left: var(--rail); padding: 26px 28px 56px; }
+    .content { width: min(1560px, 100%); margin: 0 auto; }
+    .view { display: none; }
+    .view.active { display: block; animation: reveal .2s ease-out; }
+    @keyframes reveal { from { opacity: .5; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 2px 0 22px; }
+    .eyebrow { margin: 0 0 6px; color: var(--brand); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    h1, h2, h3 { margin: 0; font-family: "Libre Franklin", sans-serif; }
+    h1 { font-size: clamp(27px, 3vw, 38px); line-height: 1.12; }
+    h2 { font-size: 18px; }
+    h3 { font-size: 14px; }
+    .page-copy { max-width: 780px; margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .head-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .btn {
+      display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 8px;
+      border: 1px solid var(--line); border-radius: 7px; background: var(--surface);
+      color: var(--ink); padding: 0 13px; font-size: 12px; font-weight: 700;
+    }
+    .btn:hover { border-color: var(--line-strong); background: var(--surface-2); }
+    .btn.primary { border-color: var(--brand); background: var(--brand); color: #fff; }
+    .btn.primary:hover { background: var(--brand-dark); }
+    .btn.subtle { background: var(--surface-2); }
+    .btn.small { min-height: 32px; padding: 0 10px; font-size: 11px; }
+
+    .snapshot-note {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: var(--muted); font-size: 11px;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+
+    .command-band {
+      display: grid; grid-template-columns: 1.05fr 1.3fr 1.45fr; overflow: hidden;
+      border: 1px solid var(--line); border-radius: 7px; background: var(--surface);
+      box-shadow: var(--shadow); margin-bottom: 14px;
+    }
+    .metric-group { min-width: 0; border-right: 1px solid var(--line); padding: 13px 14px 14px; }
+    .metric-group:last-child { border-right: 0; }
+    .group-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+    .group-title i { color: var(--faint); }
+    .mini-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 9px; }
+    .mini-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .mini-kpi {
+      min-width: 0; border: 0; border-radius: 5px; background: transparent; color: var(--ink);
+      padding: 7px 6px; text-align: left;
+    }
+    button.mini-kpi:hover, button.mini-kpi.active { background: var(--brand-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 48%, transparent); }
+    .mini-kpi b { display: block; overflow: hidden; font-family: "Libre Franklin", sans-serif; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
+    .mini-kpi span { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .mini-kpi.good b { color: var(--green); }
+    .mini-kpi.warn b { color: var(--amber); }
+    .mini-kpi.bad b { color: var(--red); }
+    .mini-kpi.info b { color: var(--blue); }
+
+    .stage-flow { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 9px; }
+    .stage-node { position: relative; padding: 7px 8px; }
+    .stage-node::after { content: ""; position: absolute; left: 65%; right: -35%; top: 17px; height: 2px; background: var(--line); }
+    .stage-node:last-child::after { display: none; }
+    .stage-node b { position: relative; z-index: 1; display: grid; width: 28px; height: 28px; place-items: center; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--surface); font-size: 11px; }
+    .stage-node.done b { border-color: var(--green); color: var(--green); }
+    .stage-node.active b { border-color: var(--brand); background: var(--brand); color: #fff; }
+    .stage-node span { display: block; margin-top: 5px; color: var(--muted); font-size: 8px; font-weight: 700; text-transform: uppercase; }
+
+    .quote-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: start; }
+    .quote-workspace { display: grid; gap: 12px; }
+    .quote-setup {
+      display: grid; grid-template-columns: 1.35fr repeat(3, .8fr); gap: 10px;
+      border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 12px; box-shadow: var(--shadow);
+    }
+    .quote-setup label, .pricing-field { min-width: 0; }
+    .field-label { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+    .field-label .required { color: var(--red); }
+    .field-control {
+      width: 100%; height: 38px; margin-top: 6px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--surface-2); color: var(--ink); padding: 0 10px; font-size: 12px; font-weight: 600; outline: 0;
+    }
+    .field-control:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+    .field-control[readonly] { color: var(--muted); cursor: not-allowed; }
+    .field-control.invalid { border-color: var(--red); background: var(--red-soft); }
+    .field-help { display: block; margin-top: 4px; color: var(--faint); font-size: 9px; line-height: 1.4; }
+    .field-error { display: block; margin-top: 4px; color: var(--red); font-size: 9px; font-weight: 700; line-height: 1.35; }
+    .field-error[hidden] { display: none; }
+
+    .quote-section { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); box-shadow: var(--shadow); }
+    .quote-area-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); background: var(--ink); color: var(--surface); padding: 12px 14px; }
+    .quote-area-head h2 { color: inherit; font-size: 13px; }
+    .quote-area-head span { color: color-mix(in srgb, var(--surface) 72%, transparent); font-size: 10px; }
+    .quote-line { display: grid; grid-template-columns: 74px minmax(210px, 1.25fr) repeat(6, minmax(84px, .68fr)); gap: 10px; align-items: start; border-top: 1px solid var(--line); padding: 14px; }
+    .quote-line:first-of-type { border-top: 0; }
+    .quote-product-image { width: 68px; height: 68px; object-fit: contain; border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 5px; }
+    .quote-product h3 { font-size: 13px; line-height: 1.35; }
+    .quote-product p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
+    .source-pill { display: inline-flex; align-items: center; gap: 4px; margin-top: 7px; border-radius: 4px; background: var(--blue-soft); color: var(--blue); padding: 4px 6px; font-size: 8px; font-weight: 700; }
+    .pricing-field.net .field-control { border-color: color-mix(in srgb, var(--green) 45%, var(--line)); color: var(--green); font-weight: 700; }
+    .pricing-field.mrp .field-control { border-color: color-mix(in srgb, var(--brand) 50%, var(--line)); }
+    .quote-product-image, .quote-product, .line-total { align-self: center; }
+    .line-total { text-align: right; }
+    .line-total b { display: block; font-family: "Libre Franklin", sans-serif; font-size: 17px; }
+    .line-total span { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; }
+
+    .pricing-aside { position: sticky; top: 84px; display: grid; gap: 10px; }
+    .aside-panel { border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 14px; box-shadow: var(--shadow); }
+    .aside-panel h2 { font-size: 15px; }
+    .price-definition { display: grid; grid-template-columns: 68px 1fr; gap: 9px; border-top: 1px solid var(--line); padding: 10px 0; }
+    .price-definition:first-of-type { margin-top: 9px; }
+    .price-definition b { color: var(--brand); font-size: 10px; }
+    .price-definition p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .total-list { display: grid; gap: 8px; margin-top: 12px; }
+    .total-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px; }
+    .total-row b { color: var(--ink); }
+    .total-row.grand { border-top: 1px solid var(--line); padding-top: 10px; color: var(--ink); font-size: 14px; font-weight: 700; }
+    .total-row.grand b { font-family: "Libre Franklin", sans-serif; font-size: 21px; }
+    .validation-list { display: grid; gap: 8px; margin-top: 10px; }
+    .validation-row { display: grid; grid-template-columns: 18px 1fr; gap: 7px; align-items: start; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .validation-icon { display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: var(--green-soft); color: var(--green); font-size: 9px; font-weight: 700; }
+    .validation-icon.fail { background: var(--red-soft); color: var(--red); }
+    .quote-footer-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .quote-footer-actions .primary { grid-column: 1 / -1; }
+    .btn[disabled] { cursor: not-allowed; opacity: .48; }
+
+    .kpi-grid { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .kpi {
+      min-width: 0; text-align: left; border: 1px solid var(--line); border-radius: 7px;
+      background: var(--surface); padding: 14px 15px; box-shadow: 0 3px 10px rgba(24,24,27,.025);
+    }
+    button.kpi:hover, button.kpi.active { border-color: var(--brand); box-shadow: inset 0 0 0 1px var(--brand); }
+    .kpi-label { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+    .kpi-value { margin-top: 10px; font-family: "Libre Franklin", sans-serif; font-size: 24px; font-weight: 700; }
+    .kpi-detail { margin-top: 4px; color: var(--faint); font-size: 11px; }
+    .tone-green .kpi-value { color: var(--green); }
+    .tone-amber .kpi-value { color: var(--amber); }
+    .tone-red .kpi-value { color: var(--red); }
+    .tone-blue .kpi-value { color: var(--blue); }
+
+    .filter-dock {
+      position: sticky; top: 82px; z-index: 12; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 10px;
+      box-shadow: var(--shadow); margin-bottom: 14px;
+    }
+    .field {
+      display: flex; min-width: 190px; flex: 1.4; align-items: center; gap: 8px; height: 36px;
+      border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); padding: 0 10px; color: var(--faint);
+    }
+    .field input { min-width: 80px; width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; }
+    select.chip-select {
+      height: 36px; max-width: 180px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--surface); color: var(--ink); padding: 0 26px 0 10px; font-size: 11px; font-weight: 600;
+    }
+    .filter-sep { width: 1px; height: 26px; background: var(--line); }
+    .active-filter { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
+
+    .data-panel { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); box-shadow: var(--shadow); }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 13px 15px; }
+    .panel-copy { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+    .result-count { color: var(--muted); font-size: 11px; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; min-width: 1050px; border-collapse: collapse; }
+    th {
+      background: var(--surface-2); color: var(--muted); padding: 10px 12px; text-align: left;
+      font-size: 9px; font-weight: 700; text-transform: uppercase; white-space: nowrap;
+    }
+    td { border-top: 1px solid var(--line); padding: 12px; vertical-align: middle; font-size: 12px; }
+    tbody tr { transition: background .15s ease; }
+    tbody tr:hover { background: color-mix(in srgb, var(--brand-soft) 42%, var(--surface)); }
+    tbody tr.filtered-out { display: none; }
+    .row-button { border: 0; background: transparent; color: var(--ink); padding: 0; text-align: left; font-weight: 700; }
+    .row-button:hover { color: var(--brand); text-decoration: underline; }
+    .sub { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 500; }
+    .money { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .qty { font-variant-numeric: tabular-nums; font-weight: 700; }
+    .tag {
+      display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px;
+      background: var(--surface-2); color: var(--muted); padding: 4px 8px; font-size: 9px; font-weight: 700; white-space: nowrap;
+    }
+    .tag.green { border-color: #b8e8d5; background: var(--green-soft); color: var(--green); }
+    .tag.amber { border-color: #f0d19e; background: var(--amber-soft); color: var(--amber); }
+    .tag.red { border-color: #efc0bc; background: var(--red-soft); color: var(--red); }
+    .tag.blue { border-color: #bed4f6; background: var(--blue-soft); color: var(--blue); }
+
+    .progress { min-width: 190px; }
+    .progress-labels { display: flex; justify-content: space-between; margin-bottom: 6px; color: var(--muted); font-size: 9px; }
+    .track { display: flex; height: 8px; overflow: hidden; border-radius: 4px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+    .seg { min-width: 0; }
+    .seg.delivered { background: #0f8c62; }
+    .seg.ready { background: #4da884; }
+    .seg.pending { background: #e9a23b; }
+    .seg.open { background: #dbd9d4; }
+    .track-key { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; color: var(--faint); font-size: 9px; }
+    .track-key span::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 2px; background: currentColor; }
+
+    .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .action-btn {
+      height: 31px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink);
+      padding: 0 9px; font-size: 10px; font-weight: 700; white-space: nowrap;
+    }
+    .action-btn.primary { border-color: var(--brand); background: var(--brand); color: #fff; }
+
+    .pager { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); padding: 11px 14px; color: var(--muted); font-size: 10px; }
+    .pager-controls { display: flex; gap: 6px; }
+
+    .split { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; }
+    .insight-list { display: grid; gap: 8px; }
+    .insight {
+      display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 11px;
+      border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 13px;
+    }
+    .severity { width: 5px; height: 100%; min-height: 42px; border-radius: 3px; background: var(--amber); }
+    .severity.red { background: var(--red); }
+    .severity.green { background: var(--green); }
+    .insight p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .evidence {
+      overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--surface);
+    }
+    .evidence img { display: block; width: 100%; max-height: 340px; object-fit: contain; background: #fff; }
+    .evidence figcaption { border-top: 1px solid var(--line); padding: 11px 13px; color: var(--muted); font-size: 10px; }
+
+    .product { display: flex; min-width: 255px; align-items: center; gap: 10px; }
+    .product-image { width: 44px; height: 44px; object-fit: contain; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+    .product-name { font-weight: 700; }
+    .stock-stack { display: grid; grid-template-columns: repeat(3, minmax(48px, 1fr)); gap: 5px; min-width: 205px; }
+    .stock-cell { border-left: 1px solid var(--line); padding-left: 7px; }
+    .stock-cell:first-child { border-left: 0; padding-left: 0; }
+    .stock-cell span { display: block; color: var(--faint); font-size: 8px; text-transform: uppercase; }
+    .stock-cell b { display: block; margin-top: 3px; font-size: 13px; }
+    .warning-cell { color: var(--red); font-weight: 700; }
+
+    .empty-prereq {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      border: 1px solid #f0d19e; border-radius: 7px; background: var(--amber-soft); padding: 13px 14px; margin-top: 14px;
+    }
+    .empty-prereq p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+
+    .drawer-backdrop { position: fixed; inset: 0; z-index: 50; display: none; background: rgba(18,18,18,.28); }
+    .drawer-backdrop.open { display: block; }
+    .drawer {
+      position: absolute; inset: 0 0 0 auto; width: min(620px, 94vw); overflow-y: auto;
+      border-left: 1px solid var(--line); background: var(--surface); box-shadow: -20px 0 50px rgba(0,0,0,.16);
+      padding: 22px;
+    }
+    .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+    .drawer-section { padding: 17px 0; border-bottom: 1px solid var(--line); }
+    .drawer-section:last-child { border: 0; }
+    .drawer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+    .metric { border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); padding: 10px; }
+    .metric span { display: block; color: var(--faint); font-size: 8px; font-weight: 700; text-transform: uppercase; }
+    .metric b { display: block; margin-top: 5px; font-size: 15px; }
+    .timeline { display: grid; gap: 0; margin-top: 10px; }
+    .timeline-row { position: relative; display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; padding-bottom: 14px; font-size: 11px; }
+    .timeline-row::before { content: ""; position: absolute; left: 6px; top: 13px; bottom: 0; width: 1px; background: var(--line); }
+    .timeline-row:last-child::before { display: none; }
+    .timeline-node { z-index: 1; width: 13px; height: 13px; border: 3px solid var(--surface); border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .timeline-node.wait { background: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+
+    .audit-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+    .audit-stat { border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 15px; }
+    .audit-stat b { display: block; font-family: "Libre Franklin", sans-serif; font-size: 25px; }
+    .audit-stat span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+    .rate-proof { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); margin-bottom: 14px; }
+    .rate-proof table { min-width: 780px; }
+    .rate-proof td, .rate-proof th { padding: 10px 12px; }
+    .finding-section { margin-top: 16px; }
+    .finding-section h2 { margin-bottom: 10px; }
+
+    .plan-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .phase { border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 15px; }
+    .phase-no { color: var(--brand); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+    .phase h3 { margin-top: 7px; font-size: 15px; }
+    .phase ul { margin: 10px 0 0; padding-left: 17px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+
+    .mobile-summary { display: none; }
+
+    @media (max-width: 1250px) {
+      .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+      .audit-grid, .plan-grid { grid-template-columns: repeat(2, 1fr); }
+      .split { grid-template-columns: 1fr; }
+      .command-band { grid-template-columns: 1fr 1fr; }
+      .metric-group:nth-child(2) { border-right: 0; }
+      .metric-group:last-child { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+      .quote-layout { grid-template-columns: 1fr; }
+      .pricing-aside { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .pricing-aside .aside-panel:first-child { grid-column: 1 / -1; }
+    }
+    @media (max-width: 760px) {
+      :root { --rail: 0px; }
+      .rail { inset: auto 0 0; width: 100%; height: 62px; flex-direction: row; border: 0; border-top: 1px solid var(--line); }
+      .brand-mark, .rail-footer { display: none; }
+      .rail-nav { width: 100%; flex-direction: row; align-items: center; justify-content: space-around; gap: 2px; padding: 0 8px; }
+      .rail-btn { width: 48px; height: 44px; }
+      .rail-btn.active::before { left: auto; top: -9px; width: 24px; height: 3px; }
+      .rail-btn span { display: none !important; }
+      .topbar { height: 60px; margin-left: 0; padding: 0 14px; }
+      .top-title { min-width: 0; font-size: 15px; }
+      .global-search { display: none; }
+      .workspace { margin-left: 0; padding: 18px 12px 86px; }
+      .page-head { align-items: flex-start; flex-direction: column; }
+      .head-actions { justify-content: flex-start; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .kpi { padding: 12px; }
+      .kpi-value { font-size: 20px; }
+      .filter-dock { top: 68px; flex-wrap: nowrap; overflow-x: auto; }
+      .field { min-width: 220px; }
+      select.chip-select { min-width: 140px; }
+      .audit-grid, .plan-grid { grid-template-columns: 1fr; }
+      .command-band { grid-template-columns: 1fr; }
+      .metric-group, .metric-group:nth-child(2), .metric-group:last-child { grid-column: auto; border-right: 0; border-top: 1px solid var(--line); }
+      .metric-group:first-child { border-top: 0; }
+      .mini-grid, .mini-grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .stage-flow { grid-template-columns: repeat(5, minmax(58px, 1fr)); overflow-x: auto; }
+      .quote-setup { grid-template-columns: 1fr 1fr; }
+      .quote-setup label:first-child { grid-column: 1 / -1; }
+      .quote-line { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+      .quote-product-image { width: 54px; height: 54px; }
+      .quote-line .pricing-field, .quote-line .line-total { grid-column: auto; }
+      .quote-line .line-total { grid-column: 1 / -1; }
+      .pricing-aside { grid-template-columns: 1fr; }
+      .pricing-aside .aside-panel:first-child { grid-column: auto; }
+      .mobile-summary { display: block; }
+      .desktop-only { display: none; }
+      .drawer { padding: 17px; }
+      .drawer-grid { grid-template-columns: repeat(2, 1fr); }
+      .empty-prereq { align-items: flex-start; flex-direction: column; }
+      #orders-table { min-width: 0; }
+      #orders-table thead { display: none; }
+      #orders-table tbody { display: block; }
+      #orders-table tr {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px;
+        padding: 14px 13px; border-top: 1px solid var(--line);
+      }
+      #orders-table td { border: 0; padding: 0; min-width: 0; }
+      #orders-table td:nth-child(3)::before,
+      #orders-table td:nth-child(4)::before,
+      #orders-table td:nth-child(5)::before,
+      #orders-table td:nth-child(6)::before,
+      #orders-table td:nth-child(7)::before {
+        display: block; margin-bottom: 4px; color: var(--faint); font-size: 8px; font-weight: 700; text-transform: uppercase;
+      }
+      #orders-table td:nth-child(3)::before { content: "Promise"; }
+      #orders-table td:nth-child(4)::before { content: "Payment"; }
+      #orders-table td:nth-child(5)::before { content: "Order value"; }
+      #orders-table td:nth-child(6)::before { content: "Fulfilment"; }
+      #orders-table td:nth-child(7)::before { content: "Exception"; }
+      #orders-table td:nth-child(6), #orders-table td:nth-child(7), #orders-table td:nth-child(8) { grid-column: 1 / -1; }
+      #orders-table .progress { min-width: 0; }
+      #orders-table .row-actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" id="app">
+    <aside class="rail" aria-label="Mockup navigation">
+      <div class="brand-mark"><img src="assets/marble-park-logo.png" alt="Marble Park" /></div>
+      <nav class="rail-nav">
+        <button class="rail-btn" data-route="audit" aria-label="Review"><i data-lucide="clipboard-check"></i><span>Audit & findings</span></button>
+        <button class="rail-btn" data-route="quote" aria-label="Quote pricing"><i data-lucide="badge-indian-rupee"></i><span>Quote Pricing Workbench</span></button>
+        <button class="rail-btn active" data-route="orders" aria-label="Sales orders"><i data-lucide="receipt-text"></i><span>Sales Order Control Tower</span></button>
+        <button class="rail-btn" data-route="reserved" aria-label="Reserved and dispatch"><i data-lucide="package-check"></i><span>Reserved & Dispatch</span></button>
+        <button class="rail-btn" data-route="inventory" aria-label="Inventory"><i data-lucide="boxes"></i><span>Inventory Command Center</span></button>
+        <button class="rail-btn" data-route="plan" aria-label="Implementation plan"><i data-lucide="list-checks"></i><span>Implementation plan</span></button>
+      </nav>
+      <div class="rail-footer"><div class="avatar">D</div></div>
+    </aside>
+
+    <header class="topbar">
+      <div class="top-title" id="top-title">Sales Order Control Tower</div>
+      <label class="global-search"><i data-lucide="search" size="17"></i><span class="sr-only">Global search</span><input placeholder="Search SKU, customer, order, quote..." /></label>
+      <div class="top-actions">
+        <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme"><i data-lucide="sun-moon" size="17"></i></button>
+        <button class="icon-btn" aria-label="Help"><i data-lucide="circle-help" size="17"></i></button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <div class="content">
+        <section class="view" data-view="audit">
+          <header class="page-head">
+            <div><p class="eyebrow">Read-only stack review · AWS snapshot</p><h1>Operations UX and data audit</h1><p class="page-copy">The backend has most lifecycle records required for partial order, reservation, procurement, pick, dispatch, delivery and return. The gaps are price/cost completeness, unified read models, scalable filtering and visible exception ownership.</p></div>
+            <div class="head-actions"><a class="btn" href="REPORT.md">Open detailed report</a><button class="btn primary" data-jump="plan">Implementation plan</button></div>
+          </header>
+
+          <div class="snapshot-note"><span class="dot"></span>Read-only production aggregate captured 4 August 2026 · mockup values combine live totals and representative rows</div>
+          <div class="audit-grid">
+            <div class="audit-stat"><b>645</b><span>of 715 active SKUs have zero selling price</span></div>
+            <div class="audit-stat"><b>1,853</b><span>units on hand · 11 reserved</span></div>
+            <div class="audit-stat"><b>11</b><span>units ready and 11 pending inward</span></div>
+            <div class="audit-stat"><b>₹0</b><span>current cost valuation from lot costs</span></div>
+          </div>
+
+          <div class="rate-proof">
+            <div class="panel-head"><div><h2>List-rate diagnosis</h2><p class="panel-copy">The quote UI is displaying persisted values; Product Master pricing is missing.</p></div><span class="tag red">DATA COMPLETENESS</span></div>
+            <div class="table-scroll"><table><thead><tr><th>SKU</th><th>Product sell price</th><th>Floor price</th><th>Quote list price</th><th>Negotiated rate</th><th>Result</th></tr></thead><tbody>
+              <tr><td class="money">KUS-WHT-35953BIUFSMPM</td><td>₹0</td><td>₹0</td><td>₹0</td><td class="money">₹3,234</td><td><span class="tag red">List price missing</span></td></tr>
+              <tr><td class="money">ALD-CHR-083R</td><td>₹0</td><td>₹0</td><td>₹0</td><td class="money">₹2,230</td><td><span class="tag red">Discount not grounded</span></td></tr>
+              <tr><td class="money">HSH-CHR-1657</td><td>₹0</td><td>₹0</td><td>₹0</td><td class="money">₹3,245</td><td><span class="tag red">Margin unavailable</span></td></tr>
+            </tbody></table></div>
+          </div>
+
+          <div class="split">
+            <div>
+              <div class="finding-section"><h2>Priority findings</h2><div class="insight-list">
+                <article class="insight"><span class="severity red"></span><div><h3>P0 · Price and cost foundations are incomplete</h3><p>Quote list-rate, discount meaning, floor-price approval and inventory valuation cannot be trusted until price and cost sources are explicit and complete.</p></div><span class="tag red">RELEASE GATE</span></article>
+                <article class="insight"><span class="severity red"></span><div><h3>P0 · Sales Orders hides fulfilment truth</h3><p>The current register exposes date/payment filters and documents but not promised-date risk, reserved quantity, pending inward, pick state or remaining dispatch balance.</p></div><span class="tag red">OPERATIONS</span></article>
+                <article class="insight"><span class="severity"></span><div><h3>P1 · Inventory valuation is mislabeled</h3><p>Available quantity multiplied by sell price is retail value, not accounting stock value. Cost and retail measures require separate labels and completeness percentages.</p></div><span class="tag amber">FINANCE</span></article>
+                <article class="insight"><span class="severity"></span><div><h3>P1 · High-volume selectors will slow users down</h3><p>Native selects cannot scale across thousands of tile designs and lots. Search, server pagination, location filtering and virtualized results are required.</p></div><span class="tag amber">SCALE</span></article>
+                <article class="insight"><span class="severity green"></span><div><h3>Strength · lifecycle records already exist</h3><p>Order-line quantities, lot reservations, picks, dispatch lines, delivery, returns and purchase demand form a solid foundation for the proposed read models.</p></div><span class="tag green">PRESERVE</span></article>
+              </div></div>
+            </div>
+            <figure class="evidence"><img src="evidence/quote-list-rate-zero.png" alt="Current quote editor showing zero list rates and negotiated totals"/><figcaption>Current quote editor: product images and negotiated totals exist, but list rates are zero because Product Master selling prices are zero.</figcaption></figure>
+          </div>
+        </section>
+
+        <section class="view" data-view="quote">
+          <header class="page-head">
+            <div><p class="eyebrow">Commercial pricing · quote revision v1</p><h1>Quote Pricing Workbench</h1><p class="page-copy">MRP is captured on every line, List Rate comes from Product Master, and the actual Net Rate remains transparent through discount, GST and final payable value.</p></div>
+            <div class="head-actions"><button class="btn"><i data-lucide="save" size="15"></i>Save draft</button><button class="btn"><i data-lucide="eye" size="15"></i>PDF preview</button><button class="btn primary" id="confirm-quote" disabled><i data-lucide="send" size="15"></i>Confirm & generate PDF</button></div>
+          </header>
+
+          <div class="command-band" aria-label="Quote pricing metrics">
+            <section class="metric-group"><div class="group-title"><span>Quote position</span><i data-lucide="receipt-indian-rupee" size="13"></i></div><div class="mini-grid">
+              <div class="mini-kpi"><b>2</b><span>Product lines</span></div><div class="mini-kpi"><b>6</b><span>Total pieces</span></div><div class="mini-kpi info"><b>₹95,200</b><span>List value</span></div>
+            </div></section>
+            <section class="metric-group"><div class="group-title"><span>Customer offer</span><i data-lucide="badge-percent" size="13"></i></div><div class="mini-grid four">
+              <div class="mini-kpi good"><b>₹84,432</b><span>Net before GST</span></div><div class="mini-kpi"><b>₹15,198</b><span>GST</span></div><div class="mini-kpi good"><b>₹99,630</b><span>Payable</span></div><div class="mini-kpi"><b>11.3%</b><span>List discount</span></div>
+            </div></section>
+            <section class="metric-group"><div class="group-title"><span>Pricing controls</span><i data-lucide="shield-check" size="13"></i></div><div class="mini-grid four">
+              <div class="mini-kpi warn"><b id="quote-completeness">1/2</b><span>MRP captured</span></div><div class="mini-kpi bad"><b id="quote-missing">1</b><span>Required missing</span></div><div class="mini-kpi bad"><b>2</b><span>Zero master prices</span></div><div class="mini-kpi good"><b>18%</b><span>GST treatment</span></div>
+            </div></section>
+          </div>
+
+          <div class="quote-layout">
+            <div class="quote-workspace">
+              <section class="quote-setup">
+                <label><span class="field-label">Customer / project</span><select class="field-control"><option>Amita Residence · Master bathroom</option><option>Pranjal Project · General selection</option></select></label>
+                <label><span class="field-label">Tax treatment</span><select class="field-control"><option>GST quotation</option><option>Without GST</option></select></label>
+                <label><span class="field-label">Rate basis</span><select class="field-control"><option>Per PC</option><option>Per box</option><option>Per sq. ft.</option></select></label>
+                <label><span class="field-label">PDF presentation</span><select class="field-control"><option>MRP + offer rate</option><option>Offer rate only</option><option>Selection only</option></select></label>
+              </section>
+
+              <section class="quote-section">
+                <header class="quote-area-head"><div><h2>MASTER BATHROOM</h2><span>2 items · prices shown per PC</span></div><span id="quote-status">1 required MRP missing</span></header>
+                <article class="quote-line">
+                  <img class="quote-product-image" src="assets/product-sink.png" alt="Wall hung WC"/>
+                  <div class="quote-product"><h3>Rimless Blind Installation Wall Hung WC</h3><p>KUS-WHT-35953BIUFSMPM · JAQUAR · WHITE</p><span class="source-pill"><i data-lucide="database" size="11"></i>Product Master linked</span></div>
+                  <label class="pricing-field"><span class="field-label">Qty</span><input class="field-control" type="number" value="2" min="1"/></label>
+                  <label class="pricing-field mrp"><span class="field-label">MRP <span class="required">*</span><button class="icon-btn" style="width:18px;height:18px;border:0" title="Maximum Retail Price printed or declared by the manufacturer; inclusive of taxes."><i data-lucide="circle-help" size="12"></i></button></span><input class="field-control mrp-input" type="number" value="38500" min="0.01"/><span class="field-help">Manual snapshot · tax inclusive</span><span class="field-error" hidden>MRP is required</span></label>
+                  <label class="pricing-field"><span class="field-label">List rate <button class="icon-btn" style="width:18px;height:18px;border:0" title="Marble Park standard rate from Product Master sellPrice; copied into this quote version."><i data-lucide="circle-help" size="12"></i></button></span><input class="field-control" type="number" value="31200" readonly/><span class="field-help">From Product Master · pre-GST</span></label>
+                  <label class="pricing-field"><span class="field-label">Discount %</span><input class="field-control" type="number" value="12" min="0" max="100"/></label>
+                  <label class="pricing-field net"><span class="field-label">Net rate</span><input class="field-control" type="number" value="27456"/><span class="field-help">Actual rate before GST</span></label>
+                  <div class="line-total"><span class="field-label" style="justify-content:flex-end">Line payable</span><b>₹64,796</b><span>₹54,912 + ₹9,884 GST</span></div>
+                </article>
+                <article class="quote-line">
+                  <img class="quote-product-image" src="assets/product-faucet.png" alt="Concealed stop"/>
+                  <div class="quote-product"><h3>Regular Body of Concealed Stop</h3><p>ALD-CHR-083R · JAQUAR · CHROME</p><span class="source-pill"><i data-lucide="database" size="11"></i>Product Master linked</span></div>
+                  <label class="pricing-field"><span class="field-label">Qty</span><input class="field-control" type="number" value="4" min="1"/></label>
+                  <label class="pricing-field mrp"><span class="field-label">MRP <span class="required">*</span><button class="icon-btn" style="width:18px;height:18px;border:0" title="Enter the current manufacturer/package MRP. This value is mandatory before confirmation."><i data-lucide="circle-help" size="12"></i></button></span><input class="field-control invalid mrp-input" type="number" placeholder="Required" min="0.01"/><span class="field-help">Read from package / current catalogue</span><span class="field-error">Enter MRP to continue</span></label>
+                  <label class="pricing-field"><span class="field-label">List rate</span><input class="field-control" type="number" value="8200" readonly/><span class="field-help">From Product Master · pre-GST</span></label>
+                  <label class="pricing-field"><span class="field-label">Discount %</span><input class="field-control" type="number" value="10" min="0" max="100"/></label>
+                  <label class="pricing-field net"><span class="field-label">Net rate</span><input class="field-control" type="number" value="7380"/><span class="field-help">Actual rate before GST</span></label>
+                  <div class="line-total"><span class="field-label" style="justify-content:flex-end">Line payable</span><b>₹34,834</b><span>₹29,520 + ₹5,314 GST</span></div>
+                </article>
+                <div class="pager"><span>MRP is required on every line; List Rate is centrally controlled and snapshotted with the revision.</span><div class="pager-controls"><button class="action-btn">Add product</button><button class="action-btn">Add custom tile</button></div></div>
+              </section>
+            </div>
+
+            <aside class="pricing-aside">
+              <section class="aside-panel"><h2>Price language</h2>
+                <div class="price-definition"><b>MRP</b><p>Maximum retail price from the package or manufacturer. Stored tax-inclusive and required per quote line.</p></div>
+                <div class="price-definition"><b>List Rate</b><p>Marble Park’s standard pre-discount, pre-GST selling rate from Product Master <code>sellPrice</code>.</p></div>
+                <div class="price-definition"><b>Net Rate</b><p>The actual unit rate offered after discount or negotiated override, before GST.</p></div>
+                <div class="price-definition"><b>Payable</b><p>Net Rate × quantity plus GST for a GST quotation; this is compared with tax-inclusive MRP.</p></div>
+              </section>
+              <section class="aside-panel"><h2>Pricing validation</h2><div class="validation-list">
+                <div class="validation-row"><span class="validation-icon">✓</span><span>All products and quantities are valid.</span></div>
+                <div class="validation-row"><span class="validation-icon fail">!</span><span>MRP missing on ALD-CHR-083R. Confirmation and PDF generation remain blocked.</span></div>
+                <div class="validation-row"><span class="validation-icon fail">!</span><span>Both Product Master list prices are shown as sample values here; production currently contains zero values and requires completion.</span></div>
+                <div class="validation-row"><span class="validation-icon">✓</span><span>Net rates are below the captured tax-inclusive MRP after GST.</span></div>
+              </div></section>
+              <section class="aside-panel"><h2>Totals</h2><div class="total-list"><div class="total-row"><span>Standard list value</span><b>₹95,200</b></div><div class="total-row"><span>Discount / negotiation</span><b>− ₹10,768</b></div><div class="total-row"><span>Taxable value</span><b>₹84,432</b></div><div class="total-row"><span>GST 18%</span><b>₹15,198</b></div><div class="total-row grand"><span>Customer payable</span><b>₹99,630</b></div></div></section>
+              <div class="quote-footer-actions"><button class="btn">Save draft</button><button class="btn">Validate</button><button class="btn primary" disabled id="aside-confirm">Complete required MRP to confirm</button></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view active" data-view="orders">
+          <header class="page-head">
+            <div><p class="eyebrow">Order promise · stock · payment</p><h1>Sales Order Control Tower</h1><p class="page-copy">One operational register for customer promise, commercial balance and downstream fulfilment. KPI tiles and saved views filter the same server-side order dataset.</p></div>
+            <div class="head-actions"><button class="btn"><i data-lucide="bookmark" size="15"></i>Saved views</button><button class="btn"><i data-lucide="download" size="15"></i>Export</button><button class="btn primary"><i data-lucide="plus" size="15"></i>New sales order</button></div>
+          </header>
+          <div class="snapshot-note"><span class="dot"></span>6 live open orders · ₹1,28,966.70 total · sample row labels are illustrative</div>
+
+          <div class="command-band" aria-label="Sales order operational metrics">
+            <section class="metric-group"><div class="group-title"><span>Commercial position</span><i data-lucide="indian-rupee" size="13"></i></div><div class="mini-grid">
+              <button class="mini-kpi active" data-order-filter="all"><b>6</b><span>Open orders</span></button>
+              <div class="mini-kpi"><b>₹1.29L</b><span>Active value</span></div>
+              <div class="mini-kpi warn"><b>₹1.02L</b><span>Customer balance</span></div>
+            </div></section>
+            <section class="metric-group"><div class="group-title"><span>Fulfilment position</span><i data-lucide="package-check" size="13"></i></div><div class="mini-grid four">
+              <div class="mini-kpi"><b>26</b><span>Ordered units</span></div>
+              <button class="mini-kpi good" data-order-filter="ready"><b>11</b><span>Dispatchable</span></button>
+              <button class="mini-kpi info" data-order-filter="reserved"><b>11</b><span>Reserved</span></button>
+              <div class="mini-kpi good"><b>4</b><span>Delivered</span></div>
+            </div></section>
+            <section class="metric-group"><div class="group-title"><span>Exceptions requiring action</span><i data-lucide="triangle-alert" size="13"></i></div><div class="mini-grid four">
+              <button class="mini-kpi warn" data-order-filter="pending"><b>11</b><span>Pending inward</span></button>
+              <button class="mini-kpi bad" data-order-filter="risk"><b>2</b><span>Promise risk</span></button>
+              <button class="mini-kpi bad" data-order-filter="unpriced"><b>9</b><span>Unpriced lines</span></button>
+              <div class="mini-kpi warn"><b>1</b><span>Payment hold</span></div>
+            </div></section>
+          </div>
+
+          <div class="filter-dock">
+            <label class="field"><i data-lucide="search" size="15"></i><input id="order-search" placeholder="Order, customer, quote or SKU" /></label>
+            <select class="chip-select" id="order-status"><option value="all">All fulfilment</option><option value="ready">Ready now</option><option value="pending">Pending inward</option><option value="risk">At risk</option><option value="delivered">Part delivered</option></select>
+            <select class="chip-select"><option>All payment states</option><option>Advance received</option><option>Pending cash</option><option>Credit hold</option></select>
+            <select class="chip-select"><option>All sales owners</option><option>Pranjal Jain</option><option>Devarsh</option></select>
+            <select class="chip-select"><option>All promise dates</option><option>Overdue</option><option>Today</option><option>Next 7 days</option><option>No promised date</option></select>
+            <div class="filter-sep"></div>
+            <button class="btn small"><i data-lucide="sliders-horizontal" size="14"></i>More filters</button>
+            <button class="btn small"><i data-lucide="columns-3" size="14"></i>Columns</button>
+          </div>
+
+          <section class="data-panel">
+            <div class="panel-head"><div><h2>Open order promise</h2><p class="panel-copy">Click an order to inspect line quantities, source documents and next actions.</p></div><span class="result-count" id="order-count">6 orders · sorted by exception, then promise date</span></div>
+            <div class="table-scroll"><table id="orders-table">
+              <thead><tr><th>Order / quote</th><th>Customer / owner</th><th>Promise</th><th>Payment</th><th>Order value</th><th>Quantity track</th><th>Exception</th><th></th></tr></thead>
+              <tbody>
+                <tr data-order-row data-status="ready unpriced" data-search="so 2026 0025 amita pranjal jaquar">
+                  <td><button class="row-button open-drawer" data-order="SO/2026/0025">SO/2026/0025</button><span class="sub">QT/2026/0018 · 5 lines</span></td>
+                  <td><b>Amita Residence</b><span class="sub">Pranjal Jain · Vapi</span></td><td><b>06 Aug</b><span class="sub">2 days</span></td>
+                  <td><span class="tag green">ADVANCE ₹15,000</span><span class="sub">Balance ₹4,216</span></td><td class="money">₹19,216</td>
+                  <td><div class="progress"><div class="progress-labels"><span>5 ordered</span><span>3 ready · 2 delivered</span></div><div class="track"><span class="seg delivered" style="width:40%"></span><span class="seg ready" style="width:60%"></span></div><div class="track-key"><span style="color:#0f8c62">2 delivered</span><span style="color:#4da884">3 ready</span></div></div></td>
+                  <td><span class="tag red">3 list prices missing</span></td><td><div class="row-actions"><button class="action-btn primary open-drawer" data-order="SO/2026/0025">Create pick</button><button class="action-btn">More</button></div></td>
+                </tr>
+                <tr data-order-row data-status="pending risk unpriced" data-search="so 2026 0024 pranjal jay ceramic tiles">
+                  <td><button class="row-button open-drawer" data-order="SO/2026/0024">SO/2026/0024</button><span class="sub">QT/2026/0017 · 3 lines</span></td>
+                  <td><b>Pranjal Project</b><span class="sub">Pranjal Jain · Daman</span></td><td><b class="warning-cell">04 Aug</b><span class="sub">Due today</span></td>
+                  <td><span class="tag green">ADVANCE ₹10,000</span><span class="sub">Balance ₹4,178</span></td><td class="money">₹14,178</td>
+                  <td><div class="progress"><div class="progress-labels"><span>3 ordered</span><span>1 ready · 2 shortage</span></div><div class="track"><span class="seg ready" style="width:33%"></span><span class="seg pending" style="width:67%"></span></div><div class="track-key"><span style="color:#4da884">1 ready</span><span style="color:#e9a23b">2 pending</span></div></div></td>
+                  <td><span class="tag red">Promise at risk</span><span class="sub">PO ETA missing</span></td><td><div class="row-actions"><button class="action-btn primary">Open demand</button><button class="action-btn">More</button></div></td>
+                </tr>
+                <tr data-order-row data-status="ready reserved" data-search="so 2026 0023 shah villa grohe">
+                  <td><button class="row-button open-drawer" data-order="SO/2026/0023">SO/2026/0023</button><span class="sub">QT/2026/0016 · 4 lines</span></td>
+                  <td><b>Shah Villa</b><span class="sub">Devarsh · Vapi</span></td><td><b>08 Aug</b><span class="sub">4 days</span></td>
+                  <td><span class="tag amber">PENDING CASH</span><span class="sub">₹28,900 due</span></td><td class="money">₹28,900</td>
+                  <td><div class="progress"><div class="progress-labels"><span>6 ordered</span><span>6 reserved</span></div><div class="track"><span class="seg ready" style="width:100%"></span></div><div class="track-key"><span style="color:#4da884">6 ready</span></div></div></td>
+                  <td><span class="tag amber">Payment before dispatch</span></td><td><div class="row-actions"><button class="action-btn primary">Collect</button><button class="action-btn">More</button></div></td>
+                </tr>
+                <tr data-order-row data-status="pending unpriced" data-search="so 2026 0022 desai bungalow jaquar">
+                  <td><button class="row-button open-drawer" data-order="SO/2026/0022">SO/2026/0022</button><span class="sub">QT/2026/0015 · 6 lines</span></td>
+                  <td><b>Desai Bungalow</b><span class="sub">Pranjal Jain · Silvassa</span></td><td><b>11 Aug</b><span class="sub">7 days</span></td>
+                  <td><span class="tag amber">PENDING CASH</span><span class="sub">₹61,549 due</span></td><td class="money">₹61,549</td>
+                  <td><div class="progress"><div class="progress-labels"><span>8 ordered</span><span>4 ready · 4 pending</span></div><div class="track"><span class="seg ready" style="width:50%"></span><span class="seg pending" style="width:50%"></span></div><div class="track-key"><span style="color:#4da884">4 ready</span><span style="color:#e9a23b">4 pending</span></div></div></td>
+                  <td><span class="tag amber">PO ordered</span><span class="sub">ETA 09 Aug</span></td><td><div class="row-actions"><button class="action-btn primary">Partial pick</button><button class="action-btn">More</button></div></td>
+                </tr>
+                <tr data-order-row data-status="pending risk" data-search="so 2026 0021 walk in aquant">
+                  <td><button class="row-button open-drawer" data-order="SO/2026/0021">SO/2026/0021</button><span class="sub">QT/2026/0014 · 4 lines</span></td>
+                  <td><b>Walk-in Customer</b><span class="sub">Devarsh · Showroom</span></td><td><b class="warning-cell">Overdue</b><span class="sub">3 days late</span></td>
+                  <td><span class="tag green">ADVANCE ₹2,000</span><span class="sub">Balance ₹3,873</span></td><td class="money">₹5,873</td>
+                  <td><div class="progress"><div class="progress-labels"><span>3 ordered</span><span>3 shortage</span></div><div class="track"><span class="seg pending" style="width:100%"></span></div><div class="track-key"><span style="color:#e9a23b">3 pending</span></div></div></td>
+                  <td><span class="tag red">No vendor selected</span></td><td><div class="row-actions"><button class="action-btn primary">Assign vendor</button><button class="action-btn">More</button></div></td>
+                </tr>
+                <tr data-order-row data-status="delivered" data-search="so 2026 0020 patel office grohe delivered">
+                  <td><button class="row-button open-drawer" data-order="SO/2026/0020">SO/2026/0020</button><span class="sub">QT/2026/0013 · 4 lines</span></td>
+                  <td><b>Patel Office</b><span class="sub">Pranjal Jain · Vapi</span></td><td><b>Delivered</b><span class="sub">02 Aug</span></td>
+                  <td><span class="tag green">ADVANCE SETTLED</span><span class="sub">No dispatch hold</span></td><td class="money">₹19,250</td>
+                  <td><div class="progress"><div class="progress-labels"><span>4 ordered</span><span>4 delivered</span></div><div class="track"><span class="seg delivered" style="width:100%"></span></div><div class="track-key"><span style="color:#0f8c62">4 delivered</span></div></div></td>
+                  <td><span class="tag green">Fulfilled</span></td><td><div class="row-actions"><button class="action-btn">Documents</button><button class="action-btn">Return</button></div></td>
+                </tr>
+              </tbody>
+            </table></div>
+            <div class="pager"><span>Showing 1-6 of 6 orders · server cursor pagination in implementation</span><div class="pager-controls"><button class="action-btn" disabled>Previous</button><button class="action-btn" disabled>Next</button></div></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="reserved">
+          <header class="page-head">
+            <div><p class="eyebrow">Warehouse line register</p><h1>Reserved & Dispatch Balance</h1><p class="page-copy">A lot- and location-aware queue for every item still owed. Group by order, customer, SKU, location or promise date without losing the source Sales Order line.</p></div>
+            <div class="head-actions"><button class="btn"><i data-lucide="scan-line" size="15"></i>Scan label</button><button class="btn"><i data-lucide="printer" size="15"></i>Print pick list</button><button class="btn primary"><i data-lucide="package-check" size="15"></i>Create dispatch</button></div>
+          </header>
+
+          <div class="command-band" aria-label="Dispatch lifecycle metrics">
+            <section class="metric-group"><div class="group-title"><span>Forward quantity flow</span><i data-lucide="workflow" size="13"></i></div><div class="stage-flow">
+              <div class="stage-node done"><b>26</b><span>Ordered</span></div><div class="stage-node active"><b>11</b><span>Reserved</span></div><div class="stage-node"><b>0</b><span>Picked</span></div><div class="stage-node done"><b>4</b><span>Sent</span></div><div class="stage-node done"><b>4</b><span>Delivered</span></div>
+            </div></section>
+            <section class="metric-group"><div class="group-title"><span>Warehouse readiness</span><i data-lucide="warehouse" size="13"></i></div><div class="mini-grid four">
+              <div class="mini-kpi good"><b>11</b><span>Dispatchable</span></div><div class="mini-kpi info"><b>5</b><span>Ready lines</span></div><div class="mini-kpi"><b>0</b><span>Active picks</span></div><div class="mini-kpi"><b>0</b><span>Packed units</span></div>
+            </div></section>
+            <section class="metric-group"><div class="group-title"><span>Exceptions and service</span><i data-lucide="siren" size="13"></i></div><div class="mini-grid four">
+              <div class="mini-kpi warn"><b>11</b><span>Pending inward</span></div><div class="mini-kpi bad"><b>2</b><span>Promise risk</span></div><div class="mini-kpi warn"><b>1</b><span>Aged reserve</span></div><div class="mini-kpi"><b>0</b><span>QC hold</span></div>
+            </div></section>
+          </div>
+
+          <div class="filter-dock">
+            <label class="field"><i data-lucide="search" size="15"></i><input placeholder="Order, customer, SKU, lot or internal code" /></label>
+            <select class="chip-select"><option>Group by order</option><option>Group by customer</option><option>Group by SKU</option><option>Group by location</option><option>Group by promise date</option></select>
+            <select class="chip-select"><option>All line states</option><option>Reserved</option><option>Pick started</option><option>Packed</option><option>Pending inward</option><option>At risk</option></select>
+            <select class="chip-select"><option>All locations</option><option>MAIN · Showroom store</option></select>
+            <select class="chip-select"><option>FIFO suggestion</option><option>Oldest reservation</option><option>Promise date</option><option>Largest dispatch</option></select>
+            <button class="btn small"><i data-lucide="sliders-horizontal" size="14"></i>More filters</button>
+          </div>
+
+          <section class="data-panel">
+            <div class="panel-head"><div><h2>Items left to dispatch</h2><p class="panel-copy">Canonical quantities from Sales Order, reservation, lot, pick and dispatch records.</p></div><span class="result-count">16 open quantities across 9 lines</span></div>
+            <div class="table-scroll"><table>
+              <thead><tr><th>Order / customer</th><th>Item / location</th><th>Ordered</th><th>Reserved</th><th>Picked</th><th>Dispatched</th><th>Balance</th><th>Promise / state</th><th></th></tr></thead>
+              <tbody>
+                <tr><td><button class="row-button open-drawer" data-order="SO/2026/0025">SO/2026/0025</button><span class="sub">Amita Residence</span></td><td><div class="product"><img class="product-image" src="assets/product-faucet.png" alt="Faucet"/><div><span class="product-name">ALD-CHR-083R</span><span class="sub">Lot OS/2026/0002-005 · MAIN-A03</span></div></div></td><td class="qty">2 PC</td><td class="qty" style="color:var(--blue)">2</td><td class="qty">0</td><td class="qty">0</td><td class="qty">2</td><td><span class="tag green">READY</span><span class="sub">06 Aug</span></td><td><button class="action-btn primary">Create pick</button></td></tr>
+                <tr><td><button class="row-button open-drawer" data-order="SO/2026/0023">SO/2026/0023</button><span class="sub">Shah Villa</span></td><td><div class="product"><img class="product-image" src="assets/product-sink.png" alt="Sink"/><div><span class="product-name">GRT-THM-3SC</span><span class="sub">Lot OS/2026/0010-003 · MAIN-B01</span></div></div></td><td class="qty">4 PC</td><td class="qty" style="color:var(--blue)">4</td><td class="qty">0</td><td class="qty">0</td><td class="qty">4</td><td><span class="tag amber">PAYMENT HOLD</span><span class="sub">08 Aug</span></td><td><button class="action-btn">Open payment</button></td></tr>
+                <tr><td><button class="row-button open-drawer" data-order="SO/2026/0024">SO/2026/0024</button><span class="sub">Pranjal Project</span></td><td><div class="product"><img class="product-image" src="assets/product-faucet.png" alt="Shower"/><div><span class="product-name">OHS-CHR-1613</span><span class="sub">Purchase demand PD/2026/0019</span></div></div></td><td class="qty">2 PC</td><td class="qty">0</td><td class="qty">0</td><td class="qty">0</td><td class="qty warning-cell">2</td><td><span class="tag red">PENDING INWARD</span><span class="sub">ETA missing</span></td><td><button class="action-btn primary">Open demand</button></td></tr>
+                <tr><td><button class="row-button open-drawer" data-order="SO/2026/0022">SO/2026/0022</button><span class="sub">Desai Bungalow</span></td><td><div class="product"><img class="product-image" src="assets/product-sink.png" alt="Basin"/><div><span class="product-name">BAS-WHT-2400</span><span class="sub">PO/2026/0012 · ETA 09 Aug</span></div></div></td><td class="qty">4 PC</td><td class="qty">0</td><td class="qty">0</td><td class="qty">0</td><td class="qty warning-cell">4</td><td><span class="tag amber">PO ORDERED</span><span class="sub">11 Aug promise</span></td><td><button class="action-btn">Track PO</button></td></tr>
+                <tr><td><button class="row-button open-drawer" data-order="SO/2026/0022">SO/2026/0022</button><span class="sub">Desai Bungalow</span></td><td><div class="product"><img class="product-image" src="assets/product-faucet.png" alt="Health faucet"/><div><span class="product-name">FLV-CHR-1093N</span><span class="sub">Lot OS/2026/0002-010 · MAIN-A07</span></div></div></td><td class="qty">4 PC</td><td class="qty" style="color:var(--blue)">4</td><td class="qty">0</td><td class="qty">0</td><td class="qty">4</td><td><span class="tag green">READY</span><span class="sub">11 Aug</span></td><td><button class="action-btn primary">Partial pick</button></td></tr>
+              </tbody>
+            </table></div>
+            <div class="pager"><span>Each balance opens the exact reservation, lot, purchase demand, pick and dispatch trail</span><div class="pager-controls"><button class="action-btn">Release selected</button><button class="action-btn primary">Create pick for 10</button></div></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="inventory">
+          <header class="page-head">
+            <div><p class="eyebrow">Product · location · lot · movement</p><h1>Inventory Command Center</h1><p class="page-copy">Product-level stock for scanning and comparison, expandable to the exact lot, location, source document, allocation, inbound supply and ledger history.</p></div>
+            <div class="head-actions"><button class="btn"><i data-lucide="scan-line" size="15"></i>Scan</button><button class="btn"><i data-lucide="file-down" size="15"></i>Export</button><button class="btn primary"><i data-lucide="package-plus" size="15"></i>Post inward</button></div>
+          </header>
+          <div class="snapshot-note"><span class="dot"></span>Live aggregate: 1,853 on hand · 1,842 available · 11 reserved · 186 lots · one location</div>
+
+          <div class="command-band" aria-label="Inventory operational metrics">
+            <section class="metric-group"><div class="group-title"><span>Physical stock</span><i data-lucide="boxes" size="13"></i></div><div class="mini-grid four">
+              <div class="mini-kpi"><b>1,853</b><span>On hand</span></div><div class="mini-kpi good"><b>1,842</b><span>Available</span></div><div class="mini-kpi info"><b>11</b><span>Reserved</span></div><div class="mini-kpi"><b>0</b><span>Hold / damage</span></div>
+            </div></section>
+            <section class="metric-group"><div class="group-title"><span>Supply and service</span><i data-lucide="truck" size="13"></i></div><div class="mini-grid four">
+              <div class="mini-kpi warn"><b>11</b><span>Inbound shortage</span></div><div class="mini-kpi warn"><b>4</b><span>Demand lines</span></div><div class="mini-kpi"><b>186</b><span>Active lots</span></div><div class="mini-kpi bad"><b>626</b><span>Low-stock signals</span></div>
+            </div></section>
+            <section class="metric-group"><div class="group-title"><span>Value and data quality</span><i data-lucide="circle-dollar-sign" size="13"></i></div><div class="mini-grid four">
+              <div class="mini-kpi bad"><b>₹0</b><span>Cost value</span></div><div class="mini-kpi info"><b>₹4.22L</b><span>Retail value</span></div><div class="mini-kpi bad"><b>164</b><span>Zero sell price</span></div><div class="mini-kpi bad"><b>166</b><span>Zero cost</span></div>
+            </div></section>
+          </div>
+
+          <div class="filter-dock">
+            <label class="field"><i data-lucide="search" size="15"></i><input id="inventory-search" placeholder="SKU, internal code, name, lot or brand" /></label>
+            <select class="chip-select" id="inventory-state"><option value="all">All stock states</option><option value="reserved">Reserved</option><option value="low">Low stock</option><option value="zero-price">Missing price</option><option value="inbound">Inbound</option></select>
+            <select class="chip-select"><option>All categories</option><option>Faucets</option><option>Sanitaryware</option><option>Tiles</option><option>Sinks</option></select>
+            <select class="chip-select"><option>All brands</option><option>Jaquar</option><option>Grohe</option><option>Aquant</option></select>
+            <select class="chip-select"><option>All locations</option><option>MAIN · Showroom store</option></select>
+            <button class="btn small"><i data-lucide="sliders-horizontal" size="14"></i>More filters</button>
+            <button class="btn small"><i data-lucide="bookmark" size="14"></i>Save view</button>
+          </div>
+
+          <section class="data-panel">
+            <div class="panel-head"><div><h2>Product and lot position</h2><p class="panel-copy">Cost and retail value are separated. Missing sources remain visible rather than silently defaulting to zero.</p></div><span class="result-count" id="inventory-count">721 products · 186 active lots</span></div>
+            <div class="table-scroll"><table id="inventory-table">
+              <thead><tr><th>Product</th><th>Master data</th><th>On hand / reserved / available</th><th>Inbound</th><th>Cost / retail</th><th>Last activity</th><th>Stock state</th><th></th></tr></thead>
+              <tbody>
+                <tr data-inventory-row data-status="reserved zero-price" data-search="ald chr 083r jaquar regular concealed stop faucet chrome"><td><div class="product"><img class="product-image" src="assets/product-faucet.png" alt="Concealed stop"/><div><button class="row-button open-inventory">ALD-CHR-083R</button><span class="sub">Regular Body of Concealed Stop</span></div></div></td><td><b>Faucets · Jaquar</b><span class="sub">Chrome · PC · 1 lot</span></td><td><div class="stock-stack"><div class="stock-cell"><span>On hand</span><b>18</b></div><div class="stock-cell"><span>Reserved</span><b style="color:var(--blue)">2</b></div><div class="stock-cell"><span>Available</span><b>16</b></div></div></td><td><b>0</b><span class="sub">No open PO</span></td><td><span class="warning-cell">Cost missing</span><span class="sub warning-cell">Sell price missing</span></td><td><b>31 Jul</b><span class="sub">Opening stock</span></td><td><span class="tag red">PRICE + COST</span></td><td><button class="action-btn open-inventory">Open</button></td></tr>
+                <tr data-inventory-row data-status="reserved" data-search="grt thm 3sc grohe rough in shower"><td><div class="product"><img class="product-image" src="assets/product-sink.png" alt="Rough-in unit"/><div><button class="row-button open-inventory">GRT-THM-3SC</button><span class="sub">Aqua Tiles THM Rough-In</span></div></div></td><td><b>Showers · Grohe</b><span class="sub">Chrome · PC · 2 lots</span></td><td><div class="stock-stack"><div class="stock-cell"><span>On hand</span><b>7</b></div><div class="stock-cell"><span>Reserved</span><b style="color:var(--blue)">4</b></div><div class="stock-cell"><span>Available</span><b>3</b></div></div></td><td><b>0</b><span class="sub">No open PO</span></td><td><b>Cost missing</b><span class="sub">Retail ₹92,180</span></td><td><b>02 Aug</b><span class="sub">Reservation</span></td><td><span class="tag blue">RESERVED</span></td><td><button class="action-btn open-inventory">Open</button></td></tr>
+                <tr data-inventory-row data-status="inbound zero-price" data-search="ohs chr 1613 jaquar overhead shower inbound"><td><div class="product"><img class="product-image" src="assets/product-faucet.png" alt="Overhead shower"/><div><button class="row-button open-inventory">OHS-CHR-1613</button><span class="sub">Maze 200mm Overhead Shower</span></div></div></td><td><b>Showers · Jaquar</b><span class="sub">Chrome · PC · 0 lots</span></td><td><div class="stock-stack"><div class="stock-cell"><span>On hand</span><b>0</b></div><div class="stock-cell"><span>Reserved</span><b>0</b></div><div class="stock-cell"><span>Available</span><b>0</b></div></div></td><td><b style="color:var(--amber)">2</b><span class="sub">ETA missing</span></td><td><span class="warning-cell">Cost missing</span><span class="sub warning-cell">Sell price missing</span></td><td><b>03 Aug</b><span class="sub">Demand created</span></td><td><span class="tag amber">INBOUND NEEDED</span></td><td><button class="action-btn open-inventory">Open</button></td></tr>
+                <tr data-inventory-row data-status="low" data-search="bas wht 2400 sanitaryware basin aquant"><td><div class="product"><img class="product-image" src="assets/product-sink.png" alt="Basin"/><div><button class="row-button open-inventory">BAS-WHT-2400</button><span class="sub">Countertop Basin 600mm</span></div></div></td><td><b>Sanitaryware · Aquant</b><span class="sub">White · PC · 1 lot</span></td><td><div class="stock-stack"><div class="stock-cell"><span>On hand</span><b>3</b></div><div class="stock-cell"><span>Reserved</span><b>0</b></div><div class="stock-cell"><span>Available</span><b>3</b></div></div></td><td><b style="color:var(--amber)">4</b><span class="sub">ETA 09 Aug</span></td><td><b>Cost ₹3,100</b><span class="sub">Retail ₹5,600</span></td><td><b>01 Aug</b><span class="sub">PO ordered</span></td><td><span class="tag amber">BELOW REORDER</span></td><td><button class="action-btn open-inventory">Open</button></td></tr>
+              </tbody>
+            </table></div>
+            <div class="pager"><span>Product summary expands to location and lot; all filters and sorting are server-side</span><div class="pager-controls"><button class="action-btn" disabled>Previous</button><button class="action-btn">Next</button></div></div>
+          </section>
+
+          <aside class="empty-prereq"><div><h3>Display labels have no source records</h3><p>The current Display selector is empty because production has zero DisplaySample records. Explain the prerequisite and create display samples from Product Master, instead of leaving a blank dropdown.</p></div><button class="btn primary">Create display sample</button></aside>
+        </section>
+
+        <section class="view" data-view="plan">
+          <header class="page-head">
+            <div><p class="eyebrow">Implementation sequence</p><h1>Lock pricing truth, then rebuild the work surfaces</h1><p class="page-copy">MRP, List Rate, negotiated rate, tax and fulfilment quantities must each have one source and one snapshot rule before the UI becomes the production control surface.</p></div>
+            <div class="head-actions"><a class="btn" href="IMPLEMENTATION-PLAN.md">Detailed plan</a><a class="btn" href="REPORT.md">Audit report</a><button class="btn primary" data-jump="quote">Review pricing mockup</button></div>
+          </header>
+          <div class="plan-grid">
+            <article class="phase"><div class="phase-no">Phase 0 · Decisions</div><h3>Approve pricing and migration rules</h3><ul><li>MRP basis by PC, box and area UOM</li><li>MRP mandatory on every new quote line</li><li>List Rate sourced from Product Master sell price</li><li>Legacy quote and revision policy</li></ul></article>
+            <article class="phase"><div class="phase-no">Phase 1 · Data contract</div><h3>Persist commercial snapshots</h3><ul><li>Quote-line MRP and source metadata</li><li>List, net, tax and gross snapshots</li><li>Sales Order line carry-forward</li><li>Migration without invented MRP values</li></ul></article>
+            <article class="phase"><div class="phase-no">Phase 2 · Quote workflow</div><h3>Make pricing complete before confirmation</h3><ul><li>Mandatory inline MRP capture</li><li>Gross-payable versus MRP validation</li><li>Draft allowed; confirm, PDF and send gated</li><li>MRP, savings and tax-correct PDFs</li></ul></article>
+            <article class="phase"><div class="phase-no">Phase 3 · Read models</div><h3>Canonical operational queries</h3><ul><li>Sales Order control-tower query</li><li>Reserved/dispatch line query</li><li>Inventory product-to-lot query</li><li>Cursor pagination, filters and authorization</li></ul></article>
+            <article class="phase"><div class="phase-no">Phase 4 · Work surfaces</div><h3>Polish for sales and warehouse action</h3><ul><li>Grouped commercial and fulfilment KPIs</li><li>Saved views and exception queues</li><li>Line drawers with next valid actions</li><li>Tablet and mobile operating states</li></ul></article>
+            <article class="phase"><div class="phase-no">Phase 5 · Release gate</div><h3>Reconcile before deployment</h3><ul><li>GST, non-GST and UOM pricing fixtures</li><li>Order-to-ledger quantity proof</li><li>3,000 designs and 10,000 lines</li><li>PDF plus desktop, tablet and mobile QA</li></ul></article>
+          </div>
+
+          <div class="finding-section"><h2>Canonical quantity rule</h2><div class="insight"><span class="severity green"></span><div><h3>One equation, every page</h3><p><b>Ordered = open + reserved + dispatched + delivered + cancelled</b>, with backordered as the unavailable part of open/reservation demand and returned tracked as a reverse movement. The API must return these values; frontends must not derive competing totals.</p></div><span class="tag green">INVARIANT</span></div></div>
+          <div class="finding-section"><h2>Release acceptance</h2><div class="insight-list">
+            <article class="insight"><span class="severity green"></span><div><h3>Traceability</h3><p>Every visible quantity links to the exact Sales Order line, reservation, lot/location, demand/PO, pick, challan, delivery or return record.</p></div><span class="tag green">REQUIRED</span></article>
+            <article class="insight"><span class="severity green"></span><div><h3>Performance</h3><p>All high-volume lists use bounded server queries, stable cursor pagination, database filters and measured query plans.</p></div><span class="tag green">REQUIRED</span></article>
+            <article class="insight"><span class="severity green"></span><div><h3>Commercial clarity</h3><p>MRP is captured explicitly; missing list price, floor price or cost is visible and filterable; discount and valuation never silently use a zero baseline.</p></div><span class="tag green">REQUIRED</span></article>
+            <article class="insight"><span class="severity green"></span><div><h3>Responsive workflow</h3><p>Sales can act on tablet and warehouse users can scan, pick and dispatch on mobile without horizontal page overflow.</p></div><span class="tag green">REQUIRED</span></article>
+          </div></div>
+        </section>
+      </div>
+    </main>
+
+    <div class="drawer-backdrop" id="order-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+      <aside class="drawer">
+        <div class="drawer-head"><div><p class="eyebrow">Order detail · linked lifecycle</p><h2 id="drawer-title">SO/2026/0025</h2><p class="page-copy" id="drawer-subtitle">Amita Residence · selected operational detail</p></div><button class="icon-btn close-drawer" aria-label="Close"><i data-lucide="x" size="18"></i></button></div>
+        <div class="drawer-section"><div class="drawer-grid"><div class="metric"><span>Order value</span><b>₹19,216</b></div><div class="metric"><span>Paid</span><b style="color:var(--green)">₹15,000</b></div><div class="metric"><span>Balance</span><b>₹4,216</b></div><div class="metric"><span>Ordered</span><b>5</b></div><div class="metric"><span>Ready</span><b style="color:var(--green)">3</b></div><div class="metric"><span>Delivered</span><b>2</b></div></div></div>
+        <div class="drawer-section"><h3>Next action</h3><div class="empty-prereq"><div><b>Pick 3 reserved items</b><p>Stock is allocated at MAIN. Create a pick list, scan each lot and dispatch without changing the delivered balance.</p></div><button class="btn primary">Create pick list</button></div></div>
+        <div class="drawer-section"><h3>Line position</h3><p class="panel-copy">Representative linked-record layout for the selected order; implementation loads its exact lines.</p><div class="timeline">
+          <div class="timeline-row"><span class="timeline-node"></span><div><b>ALD-CHR-083R · 2 PC</b><span class="sub">Reserved at MAIN-A03 · lot OS/2026/0002-005</span></div><span class="tag green">READY</span></div>
+          <div class="timeline-row"><span class="timeline-node"></span><div><b>GRT-THM-3SC · 1 PC</b><span class="sub">Reserved at MAIN-B01 · lot OS/2026/0010-003</span></div><span class="tag green">READY</span></div>
+          <div class="timeline-row"><span class="timeline-node"></span><div><b>FLV-CHR-1093N · 2 PC</b><span class="sub">Delivered on DC/2026/0008</span></div><span class="tag blue">DELIVERED</span></div>
+        </div></div>
+        <div class="drawer-section"><h3>Document and activity trail</h3><div class="timeline">
+          <div class="timeline-row"><span class="timeline-node"></span><div><b>Advance receipt posted</b><span class="sub">₹15,000 · cash · receipt RC/2026/0021</span></div><time>03 Aug</time></div>
+          <div class="timeline-row"><span class="timeline-node"></span><div><b>Partial dispatch delivered</b><span class="sub">DC/2026/0008 · 2 units</span></div><time>02 Aug</time></div>
+          <div class="timeline-row"><span class="timeline-node wait"></span><div><b>Remaining reservation ready</b><span class="sub">3 units waiting for pick</span></div><time>Now</time></div>
+        </div></div>
+        <div class="drawer-section"><div class="head-actions" style="justify-content:flex-start"><button class="btn">Quote PDF</button><button class="btn">Order PDF</button><button class="btn">Receipts</button><button class="btn">Challans</button><button class="btn">Customer ledger</button></div></div>
+      </aside>
+    </div>
+
+    <div class="drawer-backdrop" id="inventory-drawer" role="dialog" aria-modal="true" aria-labelledby="inventory-drawer-title">
+      <aside class="drawer">
+        <div class="drawer-head"><div><p class="eyebrow">Product · lot · ledger</p><h2 id="inventory-drawer-title">ALD-CHR-083R</h2><p class="page-copy">Regular Body of Concealed Stop · Jaquar · Chrome</p></div><button class="icon-btn close-inventory" aria-label="Close"><i data-lucide="x" size="18"></i></button></div>
+        <div class="drawer-section"><div class="drawer-grid"><div class="metric"><span>On hand</span><b>18 PC</b></div><div class="metric"><span>Reserved</span><b style="color:var(--blue)">2 PC</b></div><div class="metric"><span>Available</span><b style="color:var(--green)">16 PC</b></div><div class="metric"><span>Lot cost</span><b style="color:var(--red)">Missing</b></div><div class="metric"><span>Sell price</span><b style="color:var(--red)">Missing</b></div><div class="metric"><span>Inbound</span><b>0 PC</b></div></div></div>
+        <div class="drawer-section"><h3>Lot and location</h3><div class="insight" style="margin-top:10px"><span class="severity green"></span><div><b>OS/2026/0002-005 · MAIN-A03</b><p>Opening stock source · quality available · received 31 Jul · 18 on hand / 2 reserved / 16 available</p></div><button class="action-btn">Labels</button></div></div>
+        <div class="drawer-section"><h3>Allocations</h3><div class="timeline"><div class="timeline-row"><span class="timeline-node wait"></span><div><b>SO/2026/0025 · Amita Residence</b><span class="sub">2 PC reserved · pick not started</span></div><button class="action-btn">Open</button></div></div></div>
+        <div class="drawer-section"><h3>Lifecycle</h3><div class="timeline">
+          <div class="timeline-row"><span class="timeline-node"></span><div><b>Opening stock posted</b><span class="sub">20 PC at MAIN · approved session OS/2026/0002</span></div><time>31 Jul</time></div>
+          <div class="timeline-row"><span class="timeline-node"></span><div><b>Reservation created</b><span class="sub">2 PC for SO/2026/0025</span></div><time>03 Aug</time></div>
+          <div class="timeline-row"><span class="timeline-node wait"></span><div><b>Commercial master incomplete</b><span class="sub">Sell price, floor price and cost require review</span></div><button class="action-btn primary">Fix prices</button></div>
+        </div></div>
+        <div class="drawer-section"><div class="head-actions" style="justify-content:flex-start"><button class="btn">Open ledger</button><button class="btn">Transfer</button><button class="btn">Count stock</button><button class="btn">Request adjustment</button></div></div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    const app = document.getElementById('app');
+    const titles = { audit: 'Operations Review', quote: 'Quote Pricing Workbench', orders: 'Sales Order Control Tower', reserved: 'Reserved & Dispatch', inventory: 'Inventory Command Center', plan: 'Implementation Plan' };
+
+    function route(name) {
+      document.querySelectorAll('.view').forEach(view => view.classList.toggle('active', view.dataset.view === name));
+      document.querySelectorAll('.rail-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.route === name));
+      document.getElementById('top-title').textContent = titles[name] || 'Marble Park';
+      history.replaceState(null, '', `#${name}`);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    document.querySelectorAll('[data-route]').forEach(btn => btn.addEventListener('click', () => route(btn.dataset.route)));
+    document.querySelectorAll('[data-jump]').forEach(btn => btn.addEventListener('click', () => route(btn.dataset.jump)));
+    const initial = location.hash.slice(1);
+    if (titles[initial]) route(initial);
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      app.dataset.theme = app.dataset.theme === 'dark' ? '' : 'dark';
+    });
+
+    const orderRows = [...document.querySelectorAll('[data-order-row]')];
+    const orderSearch = document.getElementById('order-search');
+    const orderStatus = document.getElementById('order-status');
+    let kpiFilter = 'all';
+    function filterOrders() {
+      const search = orderSearch.value.toLowerCase().trim();
+      const selectFilter = orderStatus.value;
+      let visible = 0;
+      orderRows.forEach(row => {
+        const status = row.dataset.status || '';
+        const matchSearch = !search || (row.dataset.search || '').includes(search);
+        const matchSelect = selectFilter === 'all' || status.includes(selectFilter);
+        const matchKpi = kpiFilter === 'all' || status.includes(kpiFilter);
+        const show = matchSearch && matchSelect && matchKpi;
+        row.classList.toggle('filtered-out', !show);
+        if (show) visible += 1;
+      });
+      document.getElementById('order-count').textContent = `${visible} order${visible === 1 ? '' : 's'} · sorted by exception, then promise date`;
+    }
+    orderSearch.addEventListener('input', filterOrders);
+    orderStatus.addEventListener('change', filterOrders);
+    document.querySelectorAll('[data-order-filter]').forEach(btn => btn.addEventListener('click', () => {
+      kpiFilter = btn.dataset.orderFilter;
+      document.querySelectorAll('[data-order-filter]').forEach(item => item.classList.toggle('active', item === btn));
+      filterOrders();
+    }));
+
+    const inventoryRows = [...document.querySelectorAll('[data-inventory-row]')];
+    const inventorySearch = document.getElementById('inventory-search');
+    const inventoryState = document.getElementById('inventory-state');
+    function filterInventory() {
+      const search = inventorySearch.value.toLowerCase().trim();
+      const state = inventoryState.value;
+      let visible = 0;
+      inventoryRows.forEach(row => {
+        const show = (!search || (row.dataset.search || '').includes(search)) && (state === 'all' || (row.dataset.status || '').includes(state));
+        row.classList.toggle('filtered-out', !show);
+        if (show) visible += 1;
+      });
+      document.getElementById('inventory-count').textContent = `${visible} sample rows shown · production query uses cursor pagination`;
+    }
+    inventorySearch.addEventListener('input', filterInventory);
+    inventoryState.addEventListener('change', filterInventory);
+
+    const mrpInputs = [...document.querySelectorAll('.mrp-input')];
+    const confirmQuote = document.getElementById('confirm-quote');
+    const asideConfirm = document.getElementById('aside-confirm');
+    function validateMrp() {
+      let valid = 0;
+      mrpInputs.forEach(input => {
+        const ok = Number(input.value) > 0;
+        input.classList.toggle('invalid', !ok);
+        const error = input.parentElement.querySelector('.field-error');
+        if (error) error.hidden = ok;
+        if (ok) valid += 1;
+      });
+      const missing = mrpInputs.length - valid;
+      document.getElementById('quote-completeness').textContent = `${valid}/${mrpInputs.length}`;
+      document.getElementById('quote-missing').textContent = String(missing);
+      document.getElementById('quote-status').textContent = missing ? `${missing} required MRP missing` : 'Pricing requirements complete';
+      confirmQuote.disabled = missing > 0;
+      asideConfirm.disabled = missing > 0;
+      asideConfirm.textContent = missing ? 'Complete required MRP to confirm' : 'Confirm commercial pricing';
+    }
+    mrpInputs.forEach(input => input.addEventListener('input', validateMrp));
+    validateMrp();
+
+    const orderDrawer = document.getElementById('order-drawer');
+    const orderTitle = document.getElementById('drawer-title');
+    const orderSubtitle = document.getElementById('drawer-subtitle');
+    document.querySelectorAll('.open-drawer').forEach(btn => btn.addEventListener('click', () => {
+      if (btn.dataset.order) orderTitle.textContent = btn.dataset.order;
+      const row = btn.closest('tr');
+      const customer = row?.querySelector('td:nth-child(2) b')?.textContent;
+      orderSubtitle.textContent = `${customer || 'Selected customer'} · selected operational detail`;
+      orderDrawer.classList.add('open');
+    }));
+    document.querySelectorAll('.close-drawer').forEach(btn => btn.addEventListener('click', () => orderDrawer.classList.remove('open')));
+    orderDrawer.addEventListener('click', event => { if (event.target === orderDrawer) orderDrawer.classList.remove('open'); });
+
+    const inventoryDrawer = document.getElementById('inventory-drawer');
+    document.querySelectorAll('.open-inventory').forEach(btn => btn.addEventListener('click', () => inventoryDrawer.classList.add('open')));
+    document.querySelectorAll('.close-inventory').forEach(btn => btn.addEventListener('click', () => inventoryDrawer.classList.remove('open')));
+    inventoryDrawer.addEventListener('click', event => { if (event.target === inventoryDrawer) inventoryDrawer.classList.remove('open'); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { orderDrawer.classList.remove('open'); inventoryDrawer.classList.remove('open'); } });
+
+    if (window.lucide) window.lucide.createIcons();
+  </script>
+</body>
+</html>

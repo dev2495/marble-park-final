@@ -14,6 +14,9 @@ export interface CreateProductInput {
   sellPrice?: number;
   floorPrice?: number;
   costPrice?: number;
+  mrp?: number;
+  mrpRateBasis?: string;
+  mrpSource?: string;
   taxClass?: string;
   description?: string;
   status?: string;
@@ -40,6 +43,9 @@ export interface UpdateProductInput {
   sellPrice?: number;
   floorPrice?: number;
   costPrice?: number;
+  mrp?: number;
+  mrpRateBasis?: string;
+  mrpSource?: string;
   taxClass?: string;
   description?: string;
   status?: string;
@@ -102,12 +108,16 @@ export class ProductsService {
     const sellPrice = Number(data.sellPrice || 0);
     const floorPrice = Number(data.floorPrice || 0);
     const costPrice = Number(data.costPrice || 0);
+    const mrp = data.mrp === undefined || data.mrp === null ? null : Number(data.mrp);
+    const mrpRateBasis = mrp === null ? null : this.normalizeMrpBasis(data.mrpRateBasis || this.basisForUom(data.salesUom || data.unit));
+    const mrpSource = mrp === null ? null : this.normalizeMrpSource(data.mrpSource || 'MANUAL');
     if (!sku) throw new BadRequestException('SKU is required');
     if (!name) throw new BadRequestException('Product name is required');
     if (!category) throw new BadRequestException('Category is required');
     if (!Number.isFinite(sellPrice) || sellPrice < 0) throw new BadRequestException('Sell price must be zero or greater');
     if (!Number.isFinite(floorPrice) || floorPrice < 0) throw new BadRequestException('Floor price must be zero or greater');
     if (!Number.isFinite(costPrice) || costPrice < 0) throw new BadRequestException('Default purchase cost must be zero or greater');
+    if (mrp !== null && (!Number.isFinite(mrp) || mrp <= 0)) throw new BadRequestException('Verified MRP must be greater than zero');
     if (sellPrice > 0 && floorPrice > sellPrice) throw new BadRequestException('Floor price cannot exceed the sell price');
     if (!['active', 'inactive', 'archived'].includes(status)) {
       throw new BadRequestException('Product status must be active, inactive, or archived');
@@ -144,6 +154,11 @@ export class ProductsService {
           sellPrice,
           floorPrice,
           costPrice,
+          mrp,
+          mrpRateBasis,
+          mrpSource,
+          mrpVerifiedAt: mrp === null ? null : new Date(),
+          mrpVerifiedById: mrp === null ? null : actorUserId || 'system',
           taxClass: data.taxClass || 'GST_18',
           status,
           media: this.normalizeMedia(data.media),
@@ -187,7 +202,7 @@ export class ProductsService {
           entityType: 'Product',
           entityId: product.id,
           summary: `Created product ${product.sku}`,
-          metadata: { sku: product.sku, name: product.name, sellPrice: product.sellPrice, floorPrice: product.floorPrice, costPrice: product.costPrice },
+          metadata: { sku: product.sku, name: product.name, sellPrice: product.sellPrice, floorPrice: product.floorPrice, costPrice: product.costPrice, mrp: product.mrp, mrpRateBasis: product.mrpRateBasis },
         },
       });
       return product;
@@ -214,6 +229,29 @@ export class ProductsService {
     if (data.sellPrice !== undefined) update.sellPrice = this.numberAtLeastZero(data.sellPrice, 'Sell price');
     if (data.floorPrice !== undefined) update.floorPrice = this.numberAtLeastZero(data.floorPrice, 'Floor price');
     if (data.costPrice !== undefined) update.costPrice = this.numberAtLeastZero(data.costPrice, 'Default purchase cost');
+    if (data.mrp !== undefined) {
+      if (data.mrp === null || data.mrp === ('' as any)) {
+        update.mrp = null;
+        update.mrpRateBasis = null;
+        update.mrpSource = null;
+        update.mrpVerifiedAt = null;
+        update.mrpVerifiedById = null;
+      } else {
+        const mrp = Number(data.mrp);
+        if (!Number.isFinite(mrp) || mrp <= 0) throw new BadRequestException('Verified MRP must be greater than zero');
+        update.mrp = mrp;
+        update.mrpRateBasis = this.normalizeMrpBasis(data.mrpRateBasis || current.mrpRateBasis || this.basisForUom(data.salesUom || current.salesUom));
+        update.mrpSource = this.normalizeMrpSource(data.mrpSource || current.mrpSource || 'MANUAL');
+        update.mrpVerifiedAt = new Date();
+        update.mrpVerifiedById = actorUserId || 'system';
+      }
+    } else if (data.mrpRateBasis !== undefined || data.mrpSource !== undefined) {
+      if (current.mrp === null || current.mrp === undefined) throw new BadRequestException('Enter verified MRP before changing its basis or source');
+      if (data.mrpRateBasis !== undefined) update.mrpRateBasis = this.normalizeMrpBasis(data.mrpRateBasis);
+      if (data.mrpSource !== undefined) update.mrpSource = this.normalizeMrpSource(data.mrpSource);
+      update.mrpVerifiedAt = new Date();
+      update.mrpVerifiedById = actorUserId || 'system';
+    }
     const effectiveSellPrice = update.sellPrice ?? Number(current.sellPrice || 0);
     const effectiveFloorPrice = update.floorPrice ?? Number(current.floorPrice || 0);
     if (effectiveSellPrice > 0 && effectiveFloorPrice > effectiveSellPrice) {
@@ -539,6 +577,11 @@ export class ProductsService {
       sellPrice: product.sellPrice,
       floorPrice: product.floorPrice,
       costPrice: product.costPrice,
+      mrp: product.mrp,
+      mrpRateBasis: product.mrpRateBasis,
+      mrpSource: product.mrpSource,
+      mrpVerifiedAt: product.mrpVerifiedAt,
+      mrpVerifiedById: product.mrpVerifiedById,
       taxClass: product.taxClass,
       status: product.status,
       media: product.media,
@@ -585,6 +628,29 @@ export class ProductsService {
 
   private normalizeSku(sku: string) {
     return String(sku || '').trim().replace(/\s+/g, '').toUpperCase();
+  }
+
+  private basisForUom(value: unknown) {
+    const uom = String(value || 'PC').trim().toUpperCase();
+    if (['SQFT', 'SQM', 'M2'].includes(uom)) return 'AREA';
+    if (uom === 'PC') return 'PIECE';
+    return 'PACK';
+  }
+
+  private normalizeMrpBasis(value: unknown) {
+    const basis = String(value || '').trim().toUpperCase();
+    if (!['PACK', 'PIECE', 'AREA'].includes(basis)) {
+      throw new BadRequestException('MRP basis must be PACK, PIECE, or AREA');
+    }
+    return basis;
+  }
+
+  private normalizeMrpSource(value: unknown) {
+    const source = String(value || '').trim().toUpperCase();
+    if (!['PACKAGE', 'BRAND_LIST', 'MANUAL'].includes(source)) {
+      throw new BadRequestException('MRP source must be PACKAGE, BRAND_LIST, or MANUAL');
+    }
+    return source;
   }
 
   private normalizeInternalCode(value: string) {

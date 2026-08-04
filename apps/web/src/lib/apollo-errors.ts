@@ -8,6 +8,9 @@ export type ApolloDiagnostic = {
   requestId?: string;
   operation?: string;
   path?: string;
+  field?: string;
+  lineKey?: string;
+  remediation?: string;
 };
 
 function graphErrors(error: any) {
@@ -25,13 +28,16 @@ export function describeApolloError(error: any, operation?: string): ApolloDiagn
     const message = errors.map((item: any) => item.message).filter(Boolean).join(' | ');
     const requestId = errors.find((item: any) => item.extensions?.requestId)?.extensions?.requestId;
     const path = primary.path?.join?.('.') || undefined;
+    const field = primary.extensions?.field;
+    const lineKey = primary.extensions?.lineKey;
+    const remediation = primary.extensions?.remediation;
     if (codes.includes('UNAUTHENTICATED')) return { title: 'Session expired', message, hint: 'Sign in again, then retry your last action.', code, requestId, operation, path };
     if (codes.includes('FORBIDDEN')) return { title: 'Permission required', message, hint: 'Ask an owner to grant the required role or permission.', code, requestId, operation, path };
     if (/commercial lines are frozen|order exists.*quote revision/i.test(message)) {
-      return { title: 'Commercial terms are locked', message, hint: 'Use Revise quote to change quantity, rate, discount or tax. Document layout and images can still be saved here.', code, requestId, operation, path };
+      return { title: 'Commercial terms are locked', message, hint: 'Use Revise quote to change quantity, rate, discount or tax. Document layout and images can still be saved here.', code, requestId, operation, path, field, lineKey, remediation };
     }
     if (codes.some((item: string) => ['BAD_USER_INPUT', 'BAD_REQUEST'].includes(item)) || /required|invalid|unknown|duplicate|cannot|must|exceed|changed|revalidate/i.test(message)) {
-      return { title: 'Check the entered information', message, hint: 'Correct the stated fields and submit again. No confirmed data was changed.', code, requestId, operation, path };
+      return { title: 'Check the entered information', message, hint: remediation || 'Correct the stated fields and submit again. No confirmed data was changed.', code, requestId, operation, path, field, lineKey, remediation };
     }
     return { title: 'The request could not be completed', message, hint: 'Retry once. If it repeats, give the reference below to the system owner.', code, requestId, operation, path };
   }

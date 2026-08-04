@@ -41,6 +41,12 @@ export class ProductOutput {
   @Field(() => Number, { nullable: true })
   costPrice?: number;
 
+  @Field(() => Number, { nullable: true }) mrp?: number;
+  @Field({ nullable: true }) mrpRateBasis?: string;
+  @Field(() => GraphQLISODateTime, { nullable: true }) mrpVerifiedAt?: Date;
+  @Field({ nullable: true }) mrpVerifiedById?: string;
+  @Field({ nullable: true }) mrpSource?: string;
+
   @Field({ nullable: true })
   taxClass?: string;
 
@@ -102,6 +108,10 @@ export class CreateProductInput {
   @Field(() => Number, { nullable: true })
   costPrice?: number;
 
+  @Field(() => Number, { nullable: true }) mrp?: number;
+  @Field({ nullable: true }) mrpRateBasis?: string;
+  @Field({ nullable: true }) mrpSource?: string;
+
   @Field(() => String, { nullable: true })
   taxClass?: string;
 
@@ -155,6 +165,10 @@ export class UpdateProductInput {
 
   @Field(() => Number, { nullable: true })
   costPrice?: number;
+
+  @Field(() => Number, { nullable: true }) mrp?: number;
+  @Field({ nullable: true }) mrpRateBasis?: string;
+  @Field({ nullable: true }) mrpSource?: string;
 
   @Field(() => String, { nullable: true })
   taxClass?: string;

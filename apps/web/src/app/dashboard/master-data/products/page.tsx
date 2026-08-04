@@ -16,13 +16,13 @@ const MASTER_DATA = gql`
 const GET_PRODUCTS = gql`
   query ProductRegister($search: String, $take: Int, $skip: Int, $includeInactive: Boolean) {
     products(search: $search, take: $take, skip: $skip, includeInactive: $includeInactive) {
-      id sku internalCode name category brand finish dimensions unit sellPrice floorPrice costPrice taxClass status description media updatedAt
+      id sku internalCode name category brand finish dimensions unit sellPrice floorPrice costPrice mrp mrpRateBasis mrpVerifiedAt mrpVerifiedById mrpSource taxClass status description media updatedAt
       categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
     }
   }
 `;
 const CREATE_PRODUCT = gql`mutation CreateProduct($input: CreateProductInput!) { createProduct(input: $input) {
-  id sku internalCode name category brand finish dimensions unit sellPrice floorPrice costPrice taxClass status description media updatedAt
+  id sku internalCode name category brand finish dimensions unit sellPrice floorPrice costPrice mrp mrpRateBasis mrpVerifiedAt mrpVerifiedById mrpSource taxClass status description media updatedAt
   categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
 } }`;
 const UPDATE_PRODUCT = gql`mutation UpdateProduct($id: ID!, $input: UpdateProductInput!) { updateProduct(id: $id, input: $input) { id sku updatedAt status } }`;
@@ -36,7 +36,7 @@ const UPLOAD_ASSET = gql`
 const emptyProduct = {
   sku: '', internalCode: '', name: '', category: '', brand: '', finish: '', dimensions: '', unit: 'PC',
   materialId: '', tileSizeId: '', baseUom: 'PC', purchaseUom: 'PC', salesUom: 'PC', piecesPerPack: '1', coveragePerPack: '', hsnCode: '', allowLoose: false,
-  sellPrice: '', floorPrice: '', costPrice: '', taxClass: 'GST_18', description: '', status: 'active',
+  sellPrice: '', floorPrice: '', costPrice: '', mrp: '', mrpRateBasis: 'PIECE', mrpSource: 'MANUAL', mrpVerifiedAt: '', taxClass: 'GST_18', description: '', status: 'active',
   updatedAt: '', images: [] as string[],
 };
 
@@ -115,6 +115,7 @@ export default function ProductMasterPage() {
     setForm({
       sku: product.sku || '', internalCode: product.internalCode || product.sku || '', name: product.name || '', category: product.category || '', brand: product.brand || '', finish: product.finish || '',
       dimensions: product.dimensions || '', unit: product.unit || 'PC', sellPrice: String(product.sellPrice ?? ''), floorPrice: String(product.floorPrice ?? ''), costPrice: String(product.costPrice ?? ''),
+      mrp: product.mrp === null || product.mrp === undefined ? '' : String(product.mrp), mrpRateBasis: product.mrpRateBasis || 'PIECE', mrpSource: product.mrpSource || 'MANUAL', mrpVerifiedAt: product.mrpVerifiedAt || '',
       taxClass: product.taxClass || 'GST_18', description: product.description || '', status: product.status || 'active', updatedAt: product.updatedAt || '',
       materialId: product.materialId || '', tileSizeId: product.tileSizeId || '', baseUom: product.baseUom || 'PC', purchaseUom: product.purchaseUom || 'PC',
       salesUom: product.salesUom || 'PC', piecesPerPack: String(product.piecesPerPack || 1), coveragePerPack: String(product.coveragePerPack || ''),
@@ -173,6 +174,13 @@ export default function ProductMasterPage() {
     if (form.sellPrice !== '' || isEditing) shared.sellPrice = Number(form.sellPrice || 0);
     if (form.floorPrice !== '' || isEditing) shared.floorPrice = Number(form.floorPrice || 0);
     if (form.costPrice !== '' || isEditing) shared.costPrice = Number(form.costPrice || 0);
+    if (form.mrp !== '') {
+      shared.mrp = Number(form.mrp);
+      shared.mrpRateBasis = form.mrpRateBasis;
+      shared.mrpSource = form.mrpSource;
+    } else if (isEditing) {
+      shared.mrp = null;
+    }
     if (isTile) {
       Object.assign(shared, {
         tileSizeId: form.tileSizeId || (isEditing ? null : undefined),
@@ -310,6 +318,12 @@ export default function ProductMasterPage() {
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">HSN code <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input value={form.hsnCode} onChange={(event) => setForm({ ...form, hsnCode: event.target.value })} /></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Sell price <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input type="number" min={0} value={form.sellPrice} onChange={(event) => setForm({ ...form, sellPrice: event.target.value })} /></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Floor price <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input type="number" min={0} value={form.floorPrice} onChange={(event) => setForm({ ...form, floorPrice: event.target.value })} /></label>
+          <div className="grid gap-3 border-y border-[#fee2e2] bg-[#fffafa] px-1 py-4 md:col-span-2 md:grid-cols-3">
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Verified default MRP <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input type="number" min={0.01} step="0.01" value={form.mrp} onChange={(event) => setForm({ ...form, mrp: event.target.value })} placeholder="Tax-inclusive" /></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP basis</span><select value={form.mrpRateBasis} onChange={(event) => setForm({ ...form, mrpRateBasis: event.target.value })} disabled={!form.mrp} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="PACK">Box / pack</option><option value="PIECE">Piece</option><option value="AREA">Area</option></select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP evidence</span><select value={form.mrpSource} onChange={(event) => setForm({ ...form, mrpSource: event.target.value })} disabled={!form.mrp} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
+            <p className="text-[11px] leading-5 text-[#71717a] md:col-span-3">This value only suggests MRP when the quotation basis matches. The quote creator still confirms the tax-inclusive MRP on each commercial line.{form.mrpVerifiedAt ? ` Last verified ${new Date(form.mrpVerifiedAt).toLocaleString('en-IN')}.` : ''}</p>
+          </div>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Default purchase cost <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input type="number" min={0} value={form.costPrice} onChange={(event) => setForm({ ...form, costPrice: event.target.value })} /><span className="block text-[11px] text-[#71717a]">Used only when PO and GRN costs are blank.</span></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Status</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archived</option></select></label>
           <label className="space-y-2 md:col-span-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Description</span><textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className="min-h-20 w-full rounded-lg border border-input bg-background p-3 text-sm" /></label>

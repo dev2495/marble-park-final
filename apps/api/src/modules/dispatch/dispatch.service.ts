@@ -248,6 +248,10 @@ export class DispatchService {
   async reservedDispatchLines(args?: {
     search?: string;
     status?: string;
+    brand?: string;
+    category?: string;
+    locationId?: string;
+    sort?: string;
     cursor?: string;
     take?: number;
   }) {
@@ -256,41 +260,30 @@ export class DispatchService {
     const lineWhere: any = {};
 
     if (search) {
-      const [products, customers] = await Promise.all([
-        this.prisma.product.findMany({
-          where: { OR: [
-            { sku: { contains: search, mode: 'insensitive' } },
-            { name: { contains: search, mode: 'insensitive' } },
-            { brand: { contains: search, mode: 'insensitive' } },
-          ] },
-          select: { id: true },
-          take: 200,
-        }),
-        this.prisma.customer.findMany({
-          where: { OR: [
-            { name: { contains: search, mode: 'insensitive' } },
-            { mobile: { contains: search, mode: 'insensitive' } },
-            { email: { contains: search, mode: 'insensitive' } },
-          ] },
-          select: { id: true },
-          take: 200,
-        }),
-      ]);
-      const orders = await this.prisma.salesOrder.findMany({
-        where: { OR: [
-          { orderNumber: { contains: search, mode: 'insensitive' } },
-          { quoteId: { contains: search, mode: 'insensitive' } },
-          ...(customers.length ? [{ customerId: { in: customers.map((row) => row.id) } }] : []),
-        ] },
-        select: { id: true },
-        take: 200,
-      });
       lineWhere.OR = [
         { sku: { contains: search, mode: 'insensitive' } },
         { name: { contains: search, mode: 'insensitive' } },
         { brand: { contains: search, mode: 'insensitive' } },
-        ...(products.length ? [{ productId: { in: products.map((row) => row.id) } }] : []),
-        ...(orders.length ? [{ salesOrderId: { in: orders.map((row) => row.id) } }] : []),
+        { order: { is: { OR: [
+          { orderNumber: { contains: search, mode: 'insensitive' } },
+          { quoteId: { contains: search, mode: 'insensitive' } },
+          { customer: { is: { OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { mobile: { contains: search, mode: 'insensitive' } },
+            { email: { contains: search, mode: 'insensitive' } },
+          ] } } },
+        ] } } },
+      ];
+    }
+    if (args?.brand) lineWhere.brand = args.brand;
+    if (args?.category) lineWhere.category = args.category;
+    if (args?.locationId) {
+      lineWhere.AND = [
+        ...(lineWhere.AND || []),
+        { OR: [
+          { lotReservations: { some: { locationId: args.locationId, status: 'reserved' } } },
+          { pickLines: { some: { locationId: args.locationId, status: { notIn: ['cancelled', 'dispatched'] } } } },
+        ] },
       ];
     }
 
@@ -302,9 +295,15 @@ export class DispatchService {
     else if (status === 'delivered') lineWhere.status = 'delivered';
     else if (status === 'needs_reservation') lineWhere.reservedQuantity = 0;
 
+    const sortMap: Record<string, any[]> = {
+      oldest: [{ createdAt: 'asc' }, { id: 'asc' }],
+      quantity_desc: [{ orderedQuantity: 'desc' }, { id: 'desc' }],
+      inward_first: [{ backorderedQuantity: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }],
+      newest: [{ createdAt: 'desc' }, { id: 'desc' }],
+    };
     const query: any = {
       where: lineWhere,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: sortMap[String(args?.sort || 'newest')] || sortMap.newest,
       take: limit + 1,
     };
     const cursor = String(args?.cursor || '').trim();
@@ -401,6 +400,7 @@ export class DispatchService {
         readyToPick,
         status,
         nextAction: status === 'pending_inward' ? 'Receive or convert PO' : status === 'ready_to_pick' ? 'Create or continue pick' : status === 'partial_dispatch' ? 'Dispatch remaining balance' : status === 'needs_reservation' ? 'Reserve stock' : status === 'dispatched' ? 'Confirm delivery' : status,
+        nextActionHref: status === 'pending_inward' ? '/dashboard/pending-inward' : status === 'dispatched' ? '/dashboard/dispatch' : '/dashboard/dispatch',
         order: order ? { id: order.id, orderNumber: order.orderNumber, status: order.status, paymentMode: order.paymentMode, paymentStatus: order.paymentStatus, totalAmount: order.totalAmount } : null,
         customer: order ? customerMap.get(order.customerId) || null : null,
         product: productMap.get(line.productId) || null,

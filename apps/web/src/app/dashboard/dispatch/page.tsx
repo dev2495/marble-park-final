@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { gql, useMutation, useQuery } from "@apollo/client";
 import {
   Camera,
+  Bookmark,
   Check,
+  ChevronDown,
   ClipboardList,
   Download,
   ExternalLink,
@@ -24,11 +26,13 @@ import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
 
 const DATA = gql`
-  query DispatchWorkbench($search: String, $status: String, $cursor: String, $take: Float) {
+  query DispatchWorkbench($search: String, $status: String, $brand: String, $category: String, $locationId: String, $sort: String, $cursor: String, $take: Float) {
     dispatchQueue
     pickLists(take: 120)
     stockLocations(status: "active")
-    reservedDispatchLines(search: $search, status: $status, cursor: $cursor, take: $take)
+    productCategories
+    productBrands
+    reservedDispatchLines(search: $search, status: $status, brand: $brand, category: $category, locationId: $locationId, sort: $sort, cursor: $cursor, take: $take)
   }
 `;
 const CREATE_PICK = gql`
@@ -81,6 +85,11 @@ const stages = [
 export default function DispatchPage() {
   const [registerSearch, setRegisterSearch] = useState("");
   const [registerStatus, setRegisterStatus] = useState("");
+  const [registerBrand, setRegisterBrand] = useState("");
+  const [registerCategory, setRegisterCategory] = useState("");
+  const [registerLocation, setRegisterLocation] = useState("");
+  const [registerSort, setRegisterSort] = useState("inward_first");
+  const [expandedLine, setExpandedLine] = useState<Record<string, boolean>>({});
   const [registerCursor, setRegisterCursor] = useState("");
   const deferredRegisterSearch = useDeferredValue(registerSearch);
   const [locationByJob, setLocationByJob] = useState<Record<string, string>>(
@@ -100,6 +109,10 @@ export default function DispatchPage() {
     variables: {
       search: deferredRegisterSearch || undefined,
       status: registerStatus || undefined,
+      brand: registerBrand || undefined,
+      category: registerCategory || undefined,
+      locationId: registerLocation || undefined,
+      sort: registerSort,
       cursor: registerCursor || undefined,
       take: 24,
     },
@@ -142,6 +155,8 @@ export default function DispatchPage() {
   const locations = (data?.stockLocations || []).filter(
     (row: any) => row.code !== "IN-TRANSIT",
   );
+  const registerBrands: string[] = [...(data?.productBrands || [])].filter(Boolean).sort();
+  const registerCategories: string[] = [...(data?.productCategories || [])].filter(Boolean).sort();
   const defaultLocation =
     locations.find((row: any) => row.defaultStockScope)?.id ||
     locations[0]?.id ||
@@ -161,6 +176,16 @@ export default function DispatchPage() {
     challanState.loading ||
     updateState.loading ||
     deliveryState.loading;
+  useEffect(() => {
+    const saved = localStorage.getItem('mp.dispatch.view'); if (!saved) return;
+    try { const view = JSON.parse(saved); setRegisterStatus(view.status || ''); setRegisterBrand(view.brand || ''); setRegisterCategory(view.category || ''); setRegisterLocation(view.locationId || ''); setRegisterSort(view.sort || 'inward_first'); } catch { localStorage.removeItem('mp.dispatch.view'); }
+  }, []);
+  const saveRegisterView = () => localStorage.setItem('mp.dispatch.view', JSON.stringify({ status: registerStatus, brand: registerBrand, category: registerCategory, locationId: registerLocation, sort: registerSort }));
+  const exportRegister = () => {
+    const quote = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const csv = [['Order','Customer','SKU','Item','State','Ordered','Reserved','Backordered','Dispatched','Left'], ...reservedRows.map((row: any) => [row.order?.orderNumber,row.customer?.name,row.sku,row.name,row.status,row.orderedQuantity,row.reservedQuantity,row.backorderedQuantity,row.dispatchedQuantity,row.leftToDispatch])].map((line) => line.map(quote).join(',')).join('\n');
+    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); link.download = 'marble-park-dispatch-view.csv'; link.click(); URL.revokeObjectURL(link.href);
+  };
   const uploadProof = async (file?: File) => {
     if (!file) return;
     setUploadingProof(true);
@@ -268,7 +293,7 @@ export default function DispatchPage() {
             <span className="rounded-xl bg-blue-50 px-3 py-2 text-blue-800">Left {reservedRegister.summary?.leftToDispatch || 0}</span>
           </div>
         </div>
-        <div className="flex flex-col gap-3 border-b border-[var(--line)] bg-[var(--muted)] p-4 md:flex-row">
+        <div className="grid gap-2 border-b border-[var(--line)] bg-[var(--muted)] p-4 sm:grid-cols-2 xl:grid-cols-7">
           <label className="relative min-w-0 flex-1">
             <span className="sr-only">Search reserved dispatch lines</span>
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-5)]" />
@@ -286,24 +311,15 @@ export default function DispatchPage() {
               <option value="delivered">Delivered</option>
             </select>
           </div>
+          <select value={registerBrand} onChange={(event) => { setRegisterBrand(event.target.value); setRegisterCursor(''); }} aria-label="Filter dispatch by brand" className="h-10 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold"><option value="">All brands</option>{registerBrands.map((value) => <option key={value}>{value}</option>)}</select>
+          <select value={registerCategory} onChange={(event) => { setRegisterCategory(event.target.value); setRegisterCursor(''); }} aria-label="Filter dispatch by category" className="h-10 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold"><option value="">All categories</option>{registerCategories.map((value) => <option key={value}>{value}</option>)}</select>
+          <select value={registerLocation} onChange={(event) => { setRegisterLocation(event.target.value); setRegisterCursor(''); }} aria-label="Filter dispatch by location" className="h-10 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold"><option value="">All locations</option>{locations.map((row: any) => <option key={row.id} value={row.id}>{row.name || row.code}</option>)}</select>
+          <select value={registerSort} onChange={(event) => { setRegisterSort(event.target.value); setRegisterCursor(''); }} aria-label="Sort dispatch lines" className="h-10 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold"><option value="inward_first">Exceptions first</option><option value="oldest">Oldest first</option><option value="newest">Newest first</option><option value="quantity_desc">Quantity high-low</option></select>
+          <button type="button" onClick={saveRegisterView} className="inline-flex h-10 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--surface)] text-xs font-black uppercase"><Bookmark className="mr-2 h-4 w-4" />Save view</button>
+          <button type="button" onClick={exportRegister} className="inline-flex h-10 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--surface)] text-xs font-black uppercase"><Download className="mr-2 h-4 w-4" />CSV</button>
         </div>
-        <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full min-w-[980px] text-left">
-            <thead className="bg-[var(--surface)] text-[10px] font-black uppercase tracking-[0.16em] text-[var(--ink-4)]"><tr><th className="px-5 py-3">Order / customer</th><th className="px-5 py-3">Item</th><th className="px-5 py-3 text-center">Ordered</th><th className="px-5 py-3 text-center">Reserved</th><th className="px-5 py-3 text-center">Left</th><th className="px-5 py-3">Next action</th><th className="px-5 py-3 text-right">Open</th></tr></thead>
-            <tbody className="divide-y divide-[var(--line)]">
-              {reservedRows.length ? reservedRows.map((row: any) => (
-                <tr key={row.id} className="text-sm">
-                  <td className="px-5 py-4"><p className="font-black text-[var(--ink)]">{row.order?.orderNumber || row.salesOrderId}</p><p className="text-xs font-semibold text-[var(--ink-4)]">{row.customer?.name || 'Customer'}{row.customer?.city ? ` · ${row.customer.city}` : ''}</p></td>
-                  <td className="px-5 py-4"><p className="max-w-[320px] truncate font-bold text-[var(--ink)]">{row.name}</p><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">{row.sku} · {row.brand || 'Unbranded'}</p></td>
-                  <td className="px-5 py-4 text-center font-black text-[var(--ink)]">{row.orderedQuantity} {row.unit}</td>
-                  <td className="px-5 py-4 text-center font-black text-blue-700">{row.reservedQuantity}</td>
-                  <td className="px-5 py-4 text-center"><span className="rounded-full bg-amber-50 px-2.5 py-1 font-black text-amber-900">{row.leftToDispatch}</span></td>
-                  <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${row.status === 'ready_to_pick' ? 'bg-emerald-50 text-emerald-800' : row.status === 'pending_inward' ? 'bg-amber-50 text-amber-900' : 'bg-[var(--muted)] text-[var(--ink-3)]'}`}>{String(row.nextAction || row.status).replaceAll('_', ' ')}</span></td>
-                  <td className="px-5 py-4 text-right"><Button asChild size="sm" variant="outline"><Link href={`/dashboard/orders?order=${encodeURIComponent(row.salesOrderId)}`}><ExternalLink className="mr-2 h-3.5 w-3.5" /> Order</Link></Button></td>
-                </tr>
-              )) : <tr><td colSpan={7} className="px-5 py-12 text-center text-sm font-semibold text-[var(--ink-4)]">No reserved or outstanding lines match this view.</td></tr>}
-            </tbody>
-          </table>
+        <div className="divide-y divide-[var(--line)]">
+          {reservedRows.length ? reservedRows.map((row: any) => <article key={row.id} className="p-4 lg:p-5"><div className="grid gap-4 lg:grid-cols-[1fr_1.3fr_1fr_1.2fr_auto] lg:items-center"><div><p className="font-black text-[var(--ink)]">{row.order?.orderNumber || row.salesOrderId}</p><p className="text-xs font-semibold text-[var(--ink-4)]">{row.customer?.name || 'Customer'}{row.customer?.city ? ` · ${row.customer.city}` : ''}</p></div><div><p className="truncate font-bold text-[var(--ink)]">{row.name}</p><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">{row.sku} · {row.brand || 'Unbranded'}</p></div><div className="grid grid-cols-3 gap-2 text-center"><div><p className="font-black">{row.orderedQuantity}</p><p className="text-[9px] font-black uppercase text-[var(--ink-5)]">Ordered</p></div><div><p className="font-black text-blue-700">{row.reservedQuantity}</p><p className="text-[9px] font-black uppercase text-[var(--ink-5)]">Reserved</p></div><div><p className="font-black text-amber-800">{row.leftToDispatch}</p><p className="text-[9px] font-black uppercase text-[var(--ink-5)]">Left</p></div></div><div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${row.status === 'ready_to_pick' ? 'bg-emerald-50 text-emerald-800' : row.status === 'pending_inward' ? 'bg-amber-50 text-amber-900' : 'bg-[var(--muted)] text-[var(--ink-3)]'}`}>{String(row.nextAction || row.status).replaceAll('_', ' ')}</span></div><div className="flex gap-2"><Button asChild size="sm"><Link href={row.nextActionHref || '/dashboard/dispatch'}><ExternalLink className="mr-2 h-3.5 w-3.5" />Act</Link></Button><button type="button" aria-expanded={Boolean(expandedLine[row.id])} onClick={() => setExpandedLine((current) => ({ ...current, [row.id]: !current[row.id] }))} className="rounded-lg border border-[var(--line)] px-2"><ChevronDown className={`h-4 w-4 ${expandedLine[row.id] ? 'rotate-180' : ''}`} /></button></div></div>{expandedLine[row.id] ? <div className="mt-4 grid gap-3 border-t border-[var(--line)] pt-4 md:grid-cols-3"><div><p className="text-[10px] font-black uppercase text-[var(--ink-5)]">Lot reservations</p>{(row.lotAllocations || []).map((lot: any) => <p key={lot.id} className="mt-1 text-xs font-bold">{lot.lot?.lotNumber || lot.lotId} · {lot.location?.name || lot.locationId} · {lot.quantity}</p>)}</div><div><p className="text-[10px] font-black uppercase text-[var(--ink-5)]">Open picks</p><p className="mt-1 text-xs font-bold">{(row.openPickLines || []).length} active pick line(s)</p></div><div><p className="text-[10px] font-black uppercase text-[var(--ink-5)]">Dispatch history</p><p className="mt-1 text-xs font-bold">{(row.dispatchLines || []).length} dispatch line(s) · {row.dispatchedQuantity} sent</p></div></div> : null}</article>) : <div className="px-5 py-12 text-center text-sm font-semibold text-[var(--ink-4)]">No reserved or outstanding lines match this view.</div>}
         </div>
         {reservedRegister.nextCursor ? <div className="border-t border-[var(--line)] p-3 text-center"><button type="button" onClick={() => setRegisterCursor(reservedRegister.nextCursor)} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]">Load more lines</button></div> : null}
       </section>

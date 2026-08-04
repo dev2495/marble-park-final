@@ -408,6 +408,8 @@ export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
         mrp: line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp),
         mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
         mrpSource: line.mrpSource || 'quote_entry',
+        mrpConfirmedAt: line.mrpConfirmedAt ? new Date(line.mrpConfirmedAt) : quoteLine?.mrpConfirmedAt || null,
+        mrpConfirmedById: line.mrpConfirmedById || quoteLine?.mrpConfirmedById || null,
         lineTotal: grossLineTotal,
         status,
         isTileSpecial: isTileSelectionLine(line) && !productId,
