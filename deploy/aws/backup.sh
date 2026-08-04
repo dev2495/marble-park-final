@@ -31,7 +31,10 @@ sudo chown "$(id -u):$(id -g)" "${backup_dir}/assets.tar.gz"
 sha256sum "${backup_dir}/database.dump" "${backup_dir}/assets.tar.gz" \
   > "${backup_dir}/SHA256SUMS"
 
-find "${DATA_ROOT}/backups" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} +
+# The systemd timer runs as root, while operators commonly run this script as
+# ubuntu. Use the same privileged boundary for retention so either path can
+# prune backups created by the other without failing after the backup itself.
+sudo find "${DATA_ROOT}/backups" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} +
 
 if [[ -n "${BACKUP_S3_URI:-}" ]]; then
   aws s3 cp "$backup_dir" "${BACKUP_S3_URI%/}/${timestamp}/" \
