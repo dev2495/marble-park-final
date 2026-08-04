@@ -799,6 +799,9 @@ model QuoteLine {
   cancelledQuantity Int    @default(0)
   closedQuantity Int       @default(0)
   listPrice     Float      @default(0)
+  mrp           Float?
+  mrpRateBasis  String?
+  mrpSource     String?    @default("quote_entry")
   unitPrice     Float    @default(0)
   discountPercent Float   @default(0)
   taxRate       Float      @default(18)
@@ -842,6 +845,9 @@ model SalesOrderLine {
   deliveredQuantity   Int      @default(0)
   returnedQuantity    Int      @default(0)
   listPrice           Float    @default(0)
+  mrp                 Float?
+  mrpRateBasis        String?
+  mrpSource           String?  @default("quote_entry")
   unitPrice           Float    @default(0)
   discountPercent     Float    @default(0)
   taxRate             Float    @default(18)

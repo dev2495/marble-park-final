@@ -119,9 +119,9 @@ async function main() {
       displayMode: 'priced',
       quoteMeta: JSON.stringify(quoteMeta),
       lines: JSON.stringify([
-        { productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, discountPercent: 8, taxRate: 18, media: { primaryUrl: uploadedImage }, area: 'Master Bathroom', notes: 'Wall-hung basin with concealed fixing kit' },
-        { productId: mixer.id, sku: mixer.sku, name: mixer.name, category: mixer.category, brand: mixer.brand, finish: mixer.finish, qty: 1, unit: 'PC', price: mixer.sellPrice, listPrice: mixer.sellPrice, specialRate: 11500, taxRate: 18, media: { primaryImage: uploadedImage }, area: 'Master Bathroom', notes: 'Customer-facing image can be replaced by the sales team' },
-        { productId: tile.id, sku: tile.sku, tileCode: tile.internalCode, tileSize: tile.dimensions, name: tile.name, category: tile.category, brand: tile.brand, finish: tile.finish, requestedArea: 92, wastagePercent: 8, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'SQFT', rateBasis: 'AREA', coveragePerPack: tile.coveragePerPack, piecesPerPack: tile.piecesPerPack, price: tile.sellPrice, listPrice: tile.sellPrice, taxRate: 18, media: tile.media, area: 'Master Bathroom', notes: 'Billed by covered area; fulfilled as full boxes' },
+        { productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, mrp: Number(basin.sellPrice || 0) * 1.2, mrpRateBasis: 'PIECE', discountPercent: 8, taxRate: 18, media: { primaryUrl: uploadedImage }, area: 'Master Bathroom', notes: 'Wall-hung basin with concealed fixing kit' },
+        { productId: mixer.id, sku: mixer.sku, name: mixer.name, category: mixer.category, brand: mixer.brand, finish: mixer.finish, qty: 1, unit: 'PC', price: mixer.sellPrice, listPrice: mixer.sellPrice, mrp: 14000, mrpRateBasis: 'PIECE', specialRate: 11500, taxRate: 18, media: { primaryImage: uploadedImage }, area: 'Master Bathroom', notes: 'Customer-facing image can be replaced by the sales team' },
+        { productId: tile.id, sku: tile.sku, tileCode: tile.internalCode, tileSize: tile.dimensions, name: tile.name, category: tile.category, brand: tile.brand, finish: tile.finish, requestedArea: 92, wastagePercent: 8, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'SQFT', rateBasis: 'AREA', coveragePerPack: tile.coveragePerPack, piecesPerPack: tile.piecesPerPack, price: tile.sellPrice, listPrice: tile.sellPrice, mrp: Number(tile.sellPrice || 0) * 1.2, mrpRateBasis: 'AREA', taxRate: 18, media: tile.media, area: 'Master Bathroom', notes: 'Billed by covered area; fulfilled as full boxes' },
       ]),
     } },
     token,
@@ -152,7 +152,7 @@ async function main() {
       projectName: 'Sample non-GST option',
       displayMode: 'priced',
       quoteMeta: JSON.stringify({ ...quoteMeta, taxMode: 'non_gst', remarks: 'Customer requested a quotation without GST.' }),
-      lines: JSON.stringify([{ productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, taxRate: 0, media: basin.media, area: 'General Selection' }]),
+      lines: JSON.stringify([{ productId: basin.id, sku: basin.sku, name: basin.name, category: basin.category, brand: basin.brand, finish: basin.finish, qty: 1, unit: 'PC', price: basin.sellPrice, listPrice: basin.sellPrice, mrp: Number(basin.sellPrice || 0) * 1.2, mrpRateBasis: 'PIECE', taxRate: 0, media: basin.media, area: 'General Selection' }]),
     } }, token,
   )).createQuote;
   cleanupContext.quoteIds.push(nonGstQuote.id);

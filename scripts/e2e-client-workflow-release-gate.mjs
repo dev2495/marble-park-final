@@ -60,7 +60,7 @@ async function main() {
     customerId: customer.id,
     title: `Direct customer quote ${suffix}`,
     projectName: 'Release gate direct quote',
-    lines: JSON.stringify([{ productId: product.id, sku: product.sku, name: updated.name, category: 'Faucets', brand: 'Release Gate', unit: 'PC', qty: quantity, price: 12500, listPrice: 12500, specialRate: 10000, discountPercent: 0, taxRate: 18, area: 'Master Bathroom' }]),
+    lines: JSON.stringify([{ productId: product.id, sku: product.sku, name: updated.name, category: 'Faucets', brand: 'Release Gate', unit: 'PC', qty: quantity, price: 12500, listPrice: 12500, mrp: 13000, mrpRateBasis: 'PIECE', specialRate: 10000, discountPercent: 0, taxRate: 18, area: 'Master Bathroom' }]),
   });
   const quote = (await gql(
     `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber leadId lines approvalStatus status } }`,

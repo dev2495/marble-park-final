@@ -71,7 +71,7 @@ async function main() {
 
   const quote = (await gql(
     `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber leadId lines } }`,
-    { input: { customerId: customer.id, title: `Accounts release gate ${suffix}`, lines: JSON.stringify([{ productId: product.id, sku: product.sku, name: product.name, category: 'Faucets', brand: 'Release Gate', finish: 'Chrome', unit: 'PC', qty: 3, price: 10000, listPrice: 10000, specialRate: 10000, taxRate: 18, area: 'Master bathroom' }]) } }, token,
+    { input: { customerId: customer.id, title: `Accounts release gate ${suffix}`, lines: JSON.stringify([{ productId: product.id, sku: product.sku, name: product.name, category: 'Faucets', brand: 'Release Gate', finish: 'Chrome', unit: 'PC', qty: 3, price: 10000, listPrice: 10000, mrp: 12000, mrpRateBasis: 'PIECE', specialRate: 10000, taxRate: 18, area: 'Master bathroom' }]) } }, token,
   )).data.createQuote;
   cleanupContext.quoteIds.push(quote.id);
   if (quote.leadId) cleanupContext.leadIds.push(quote.leadId);

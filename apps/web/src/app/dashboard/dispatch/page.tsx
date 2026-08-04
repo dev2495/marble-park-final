@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { gql, useMutation, useQuery } from "@apollo/client";
 import {
   Camera,
@@ -12,6 +12,8 @@ import {
   Package,
   PackageCheck,
   PackageSearch,
+  Search,
+  SlidersHorizontal,
   Send,
   Truck,
   UserCheck,
@@ -22,10 +24,11 @@ import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
 
 const DATA = gql`
-  query DispatchWorkbench {
+  query DispatchWorkbench($search: String, $status: String, $cursor: String, $take: Float) {
     dispatchQueue
     pickLists(take: 120)
     stockLocations(status: "active")
+    reservedDispatchLines(search: $search, status: $status, cursor: $cursor, take: $take)
   }
 `;
 const CREATE_PICK = gql`
@@ -76,6 +79,10 @@ const stages = [
 ];
 
 export default function DispatchPage() {
+  const [registerSearch, setRegisterSearch] = useState("");
+  const [registerStatus, setRegisterStatus] = useState("");
+  const [registerCursor, setRegisterCursor] = useState("");
+  const deferredRegisterSearch = useDeferredValue(registerSearch);
   const [locationByJob, setLocationByJob] = useState<Record<string, string>>(
     {},
   );
@@ -90,6 +97,12 @@ export default function DispatchPage() {
   });
   const [uploadingProof, setUploadingProof] = useState(false);
   const { data, error, refetch } = useQuery(DATA, {
+    variables: {
+      search: deferredRegisterSearch || undefined,
+      status: registerStatus || undefined,
+      cursor: registerCursor || undefined,
+      take: 24,
+    },
     pollInterval: 120000,
     skipPollAttempt: () => typeof document !== "undefined" && document.hidden,
     fetchPolicy: "cache-and-network",
@@ -124,6 +137,8 @@ export default function DispatchPage() {
     [data?.dispatchQueue],
   );
   const picks = data?.pickLists || [];
+  const reservedRegister = data?.reservedDispatchLines || { items: [], summary: {}, total: 0 };
+  const reservedRows = reservedRegister.items || [];
   const locations = (data?.stockLocations || []).filter(
     (row: any) => row.code !== "IN-TRANSIT",
   );
@@ -240,6 +255,58 @@ export default function DispatchPage() {
           </Button>
         </div>
       </header>
+      <section className="mp-panel overflow-hidden">
+        <div className="flex flex-col justify-between gap-4 border-b border-[var(--line)] p-5 xl:flex-row xl:items-end">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--brand-700)]">Reserved dispatch register</p>
+            <h2 className="mt-1 text-2xl font-bold text-[var(--ink)]">What is ready, blocked or still owed</h2>
+            <p className="mt-1 max-w-3xl text-sm font-semibold leading-6 text-[var(--ink-4)]">This register is line-level and paginated. It reconciles each sales-order line to its reservation, inward demand, pick and dispatch quantities.</p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">
+            <span className="rounded-xl bg-emerald-50 px-3 py-2 text-emerald-800">Ready {reservedRegister.summary?.readyToPick || 0}</span>
+            <span className="rounded-xl bg-amber-50 px-3 py-2 text-amber-900">Inward {reservedRegister.summary?.pendingInward || 0}</span>
+            <span className="rounded-xl bg-blue-50 px-3 py-2 text-blue-800">Left {reservedRegister.summary?.leftToDispatch || 0}</span>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3 border-b border-[var(--line)] bg-[var(--muted)] p-4 md:flex-row">
+          <label className="relative min-w-0 flex-1">
+            <span className="sr-only">Search reserved dispatch lines</span>
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-5)]" />
+            <Input value={registerSearch} onChange={(event) => { setRegisterSearch(event.target.value); setRegisterCursor(""); }} placeholder="Search order, customer, SKU or brand" className="h-10 rounded-xl bg-[var(--surface)] pl-10" />
+          </label>
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="h-4 w-4 text-[var(--ink-5)]" />
+            <select value={registerStatus} onChange={(event) => { setRegisterStatus(event.target.value); setRegisterCursor(""); }} aria-label="Filter reserved dispatch status" className="h-10 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink)]">
+              <option value="">All line states</option>
+              <option value="ready_to_pick">Ready to pick</option>
+              <option value="pending_inward">Pending inward</option>
+              <option value="partial_dispatch">Partially dispatched</option>
+              <option value="needs_reservation">Needs reservation</option>
+              <option value="dispatched">Dispatched</option>
+              <option value="delivered">Delivered</option>
+            </select>
+          </div>
+        </div>
+        <div className="overflow-x-auto custom-scrollbar">
+          <table className="w-full min-w-[980px] text-left">
+            <thead className="bg-[var(--surface)] text-[10px] font-black uppercase tracking-[0.16em] text-[var(--ink-4)]"><tr><th className="px-5 py-3">Order / customer</th><th className="px-5 py-3">Item</th><th className="px-5 py-3 text-center">Ordered</th><th className="px-5 py-3 text-center">Reserved</th><th className="px-5 py-3 text-center">Left</th><th className="px-5 py-3">Next action</th><th className="px-5 py-3 text-right">Open</th></tr></thead>
+            <tbody className="divide-y divide-[var(--line)]">
+              {reservedRows.length ? reservedRows.map((row: any) => (
+                <tr key={row.id} className="text-sm">
+                  <td className="px-5 py-4"><p className="font-black text-[var(--ink)]">{row.order?.orderNumber || row.salesOrderId}</p><p className="text-xs font-semibold text-[var(--ink-4)]">{row.customer?.name || 'Customer'}{row.customer?.city ? ` · ${row.customer.city}` : ''}</p></td>
+                  <td className="px-5 py-4"><p className="max-w-[320px] truncate font-bold text-[var(--ink)]">{row.name}</p><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">{row.sku} · {row.brand || 'Unbranded'}</p></td>
+                  <td className="px-5 py-4 text-center font-black text-[var(--ink)]">{row.orderedQuantity} {row.unit}</td>
+                  <td className="px-5 py-4 text-center font-black text-blue-700">{row.reservedQuantity}</td>
+                  <td className="px-5 py-4 text-center"><span className="rounded-full bg-amber-50 px-2.5 py-1 font-black text-amber-900">{row.leftToDispatch}</span></td>
+                  <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${row.status === 'ready_to_pick' ? 'bg-emerald-50 text-emerald-800' : row.status === 'pending_inward' ? 'bg-amber-50 text-amber-900' : 'bg-[var(--muted)] text-[var(--ink-3)]'}`}>{String(row.nextAction || row.status).replaceAll('_', ' ')}</span></td>
+                  <td className="px-5 py-4 text-right"><Button asChild size="sm" variant="outline"><Link href={`/dashboard/orders?order=${encodeURIComponent(row.salesOrderId)}`}><ExternalLink className="mr-2 h-3.5 w-3.5" /> Order</Link></Button></td>
+                </tr>
+              )) : <tr><td colSpan={7} className="px-5 py-12 text-center text-sm font-semibold text-[var(--ink-4)]">No reserved or outstanding lines match this view.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        {reservedRegister.nextCursor ? <div className="border-t border-[var(--line)] p-3 text-center"><button type="button" onClick={() => setRegisterCursor(reservedRegister.nextCursor)} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]">Load more lines</button></div> : null}
+      </section>
       <div className="grid gap-4 xl:grid-cols-2">
         {activeJobs.map((job: any) => {
           const pick = pickFor(job);

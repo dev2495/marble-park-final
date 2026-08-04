@@ -48,17 +48,29 @@ function productImage(line: any) {
   const gallery = Array.isArray(media.gallery) ? media.gallery : [];
   return media.primaryUrl || media.primary || media.primaryImage || (typeof gallery[0] === 'string' ? gallery[0] : gallery[0]?.url) || '/catalogue-art/faucet.svg';
 }
-function lineRate(line: any) {
+function mrpUom(line: any) {
+  const basis = String(line.rateBasis || '').toUpperCase();
+  if (basis === 'AREA') return String(line.pricingUom || line.salesUom || 'SQFT').toUpperCase();
+  if (basis === 'PIECE') return 'PC';
+  return String(line.inventoryUom || line.purchaseUom || line.unit || line.uom || 'BOX').toUpperCase();
+}
+function lineRate(line: any, taxMode: 'gst' | 'non_gst' = 'gst', quoteDiscountPercent = 0) {
   const qty = Number(line.qty || line.quantity || 0);
   const basis = String(line.rateBasis || 'PACK').toUpperCase();
   const pricingQuantity = Number(line.pricingQuantity || (basis === 'AREA'
     ? qty * Number(line.coveragePerPack || 0)
     : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
-  const price = Number(line.price || line.sellPrice || 0);
+  const price = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
   const discount = Number(line.discountPercent || line.discount || 0);
   const specialRate = Number(line.specialRate || line.specialPrice || 0);
   const unitRate = specialRate > 0 ? specialRate : price * (1 - discount / 100);
-  return { qty, pricingQuantity, price, discount, specialRate: unitRate, amount: pricingQuantity * unitRate };
+  const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
+  const amount = pricingQuantity * unitRate;
+  const finalUnitPayable = Math.max(0, unitRate) * (1 - Number(quoteDiscountPercent || 0) / 100) * (1 + taxRate / 100);
+  const rawMrp = line.mrp === '' || line.mrp === null || line.mrp === undefined ? null : Number(line.mrp);
+  const mrpMissing = rawMrp === null || !Number.isFinite(rawMrp) || rawMrp <= 0;
+  const mrpValid = !mrpMissing && finalUnitPayable <= Number(rawMrp) + 0.5;
+  return { qty, pricingQuantity, price, discount, specialRate: unitRate, amount, taxRate, mrp: rawMrp, mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(line) };
 }
 function groupLines(lines: any[]) {
   const groups = new Map<string, any[]>();
@@ -95,6 +107,7 @@ export default function QuoteDetailPage() {
   const [uploadingCover, setUploadingCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
   const [shareMessage, setShareMessage] = useState('');
+  const [validationMessage, setValidationMessage] = useState('');
   const { data, loading, error, refetch } = useQuery(QUOTE_DETAIL, { variables: { id } });
   const { data: fulfillmentData, refetch: refetchFulfillment } = useQuery(QUOTE_FULFILLMENT, { variables: { quoteId: id }, skip: !id });
   const [updateQuote, { loading: savingQuote, error: updateError }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
@@ -179,13 +192,14 @@ export default function QuoteDetailPage() {
     }
   }
 
-  const subtotal = useMemo(() => editLines.reduce((sum, line) => sum + lineRate(line).amount, 0), [editLines]);
+  const subtotal = useMemo(() => editLines.reduce((sum, line) => sum + lineRate(line, taxMode, Number(discountPercent || 0)).amount, 0), [editLines, taxMode, discountPercent]);
   const quoteDiscount = subtotal * (Number(discountPercent || 0) / 100);
   const discountFactor = Math.max(0, 1 - Number(discountPercent || 0) / 100);
-  const tax = taxMode === 'non_gst' ? 0 : editLines.reduce((sum, line) => sum + lineRate(line).amount * discountFactor * Math.max(0, Number(line.taxRate ?? 18)) / 100, 0);
+  const tax = taxMode === 'non_gst' ? 0 : editLines.reduce((sum, line) => sum + lineRate(line, taxMode, Number(discountPercent || 0)).amount * discountFactor * Math.max(0, Number(line.taxRate ?? 18)) / 100, 0);
   const total = subtotal - quoteDiscount + tax;
   const showPrices = displayMode !== 'selection';
   const grouped = groupLines(editLines);
+  const mrpIssues = useMemo(() => editLines.map((line) => ({ line, rate: lineRate(line, taxMode, Number(discountPercent || 0)) })).filter(({ rate }) => rate.mrpMissing || !rate.mrpValid), [editLines, taxMode, discountPercent]);
   const quotedBrandIds = brands.filter((brand: any) => editLines.some((line: any) => String(line.brand || '').trim().toLowerCase() === String(brand.name || '').trim().toLowerCase())).map((brand: any) => String(brand.id));
 
   const updateLine = (index: number, patch: any) => setEditLines((current) => current.map((line, idx) => idx === index ? { ...line, ...patch } : line));
@@ -201,17 +215,31 @@ export default function QuoteDetailPage() {
       designCode: line.designCode || '',
     }))),
   });
-  const saveQuote = () => commercialLocked
-    ? updatePresentation({ variables: { id: quote.id, input: presentationInput() } })
-    : updateQuote({ variables: { id: quote.id, input: {
+  const saveQuote = () => {
+    if (!commercialLocked && mrpIssues.length) {
+      const issue = mrpIssues[0];
+      setValidationMessage(issue.rate.mrpMissing
+        ? `MRP is required for ${issue.line.sku || issue.line.name}, entered per ${issue.rate.mrpUom}.`
+        : `${issue.line.sku || issue.line.name} exceeds MRP: payable ${money(issue.rate.finalUnitPayable)} per ${issue.rate.mrpUom}, MRP ${money(issue.rate.mrp || 0)}.`);
+      return;
+    }
+    setValidationMessage('');
+    if (commercialLocked) return updatePresentation({ variables: { id: quote.id, input: presentationInput() } });
+    return updateQuote({ variables: { id: quote.id, input: {
       ...presentationInput(),
       linePresentation: undefined,
       discountPercent: Number(discountPercent || 0),
       lines: JSON.stringify(editLines.map((line) => ({ ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18) }))),
     } } });
+  };
 
   async function shareQuote() {
     setShareMessage('');
+    if (mrpIssues.length) {
+      const issue = mrpIssues[0];
+      setValidationMessage(issue.rate.mrpMissing ? `Add MRP for ${issue.line.sku || issue.line.name} before sharing.` : `${issue.line.sku || issue.line.name} exceeds its MRP.`);
+      return;
+    }
     const result = await createQuoteShare({ variables: { quoteId: quote.id } });
     const token = result.data?.createQuoteShare?.token;
     if (!token) return;
@@ -230,6 +258,14 @@ export default function QuoteDetailPage() {
 
   return <div className="space-y-6 pb-10">
     {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+    {validationMessage ? <div role="alert" className="rounded-r4 border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">{validationMessage}</div> : null}
+    {updateError ? <QueryErrorBanner error={updateError} /> : null}
+    {presentationError ? <QueryErrorBanner error={presentationError} /> : null}
+    {sendError ? <QueryErrorBanner error={sendError} /> : null}
+    {createOrderError ? <QueryErrorBanner error={createOrderError} /> : null}
+    {closeRemainderError ? <QueryErrorBanner error={closeRemainderError} /> : null}
+    {reviseError ? <QueryErrorBanner error={reviseError} /> : null}
+    {!commercialLocked && mrpIssues.length ? <section className="flex flex-col gap-2 rounded-r4 border border-red-200 bg-red-50 p-4 text-sm text-red-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">Commercial actions are waiting for MRP.</p><p className="mt-1 text-xs font-semibold">{mrpIssues.length} line{mrpIssues.length === 1 ? '' : 's'} need a positive tax-inclusive MRP in the selected billing unit.</p></div><span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black uppercase tracking-wider">{mrpIssues.length} issue{mrpIssues.length === 1 ? '' : 's'}</span></section> : null}
     {commercialLocked ? <section className="flex flex-col gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">Commercial terms are locked after sales-order conversion.</p><p className="mt-1 text-xs leading-5 text-amber-800">You can still save cover, room labels, product images, terms and brand logos. Revise the quote to change quantity, rates, discount or GST.</p></div><Button size="sm" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}><PenLine className="mr-2 h-4 w-4" />Revise commercial terms</Button></section> : null}
     <section className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-6 shadow-md-soft">
       <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
@@ -253,8 +289,8 @@ export default function QuoteDetailPage() {
           <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded'} onClick={saveQuote} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Save quote changes'}</Button>
           <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button>
           <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button>
-          <Button size="lg" variant="outline" disabled={sharing} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button>
-          {quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending} onClick={() => sendQuote({ variables: { id: quote.id } })} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
+          <Button size="lg" variant="outline" disabled={sharing || Boolean(mrpIssues.length)} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button>
+          {quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending || Boolean(mrpIssues.length)} onClick={() => { if (!mrpIssues.length) sendQuote({ variables: { id: quote.id } }); }} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
         </div>
       </div>
       {shareMessage ? <p role="status" className="relative mt-4 rounded-r3 border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{shareMessage}</p> : null}
@@ -337,8 +373,8 @@ export default function QuoteDetailPage() {
           <div className="divide-y divide-[var(--line)]">
             {group.rows.map((line: any) => {
               const index = editLines.indexOf(line);
-              const rate = lineRate(line);
-              return <article key={`${line.sku}-${index}`} className="grid gap-4 p-5 xl:grid-cols-[8rem_1fr_7rem_7rem_7rem_7rem] xl:items-center">
+              const rate = lineRate(line, taxMode, Number(discountPercent || 0));
+              return <article key={`${line.sku}-${index}`} className="grid gap-4 p-5 xl:grid-cols-[8rem_1fr_7rem_7rem_7rem_7rem_7rem] xl:items-center">
                 <ProductImageFrame src={productImage(line)} alt={line.name} className="h-28 w-32 rounded-[1.35rem]" imageClassName="p-2" />
                 <div className="space-y-2">
                   <input value={line.area || ''} onChange={(event)=>updateLine(index,{area:event.target.value})} className="h-9 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]" placeholder="Area / room" />
@@ -347,7 +383,8 @@ export default function QuoteDetailPage() {
                   <div className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-[var(--brand-700)]"/><input value={line.quoteImage || ''} onChange={(event)=>updateLine(index,{quoteImage:event.target.value})} placeholder="Optional HTTPS quote image URL" className="h-9 flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold" /></div><p className="text-[10px] text-[var(--ink-5)]">Saved URLs are copied into Marble Park for reliable PDFs.</p>
                 </div>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty</span><input disabled={commercialLocked} type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">List rate</span><input disabled={commercialLocked} type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} onChange={(event)=>updateLine(index,{listPrice:Number(event.target.value),price:Number(event.target.value),sellPrice:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">List rate</span><input disabled type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} className="h-10 w-full cursor-not-allowed rounded-xl border border-[var(--line)] bg-[var(--muted)] px-3 text-sm font-black opacity-75" /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Product Master</span></label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">MRP / {rate.mrpUom}</span><input disabled={commercialLocked} aria-label={`MRP per ${rate.mrpUom} for ${line.name}`} type="number" min={0.01} step="0.01" value={line.mrp ?? ''} onChange={(event)=>updateLine(index,{mrp:event.target.value,mrpRateBasis:String(line.rateBasis || 'PACK').toUpperCase(),mrpSource:line.mrpSource || 'quote_entry'})} className={`h-10 w-full rounded-xl border px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55 ${rate.mrpMissing || !rate.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`} /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Tax-inclusive</span></label>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Disc %</span><input disabled={commercialLocked} type="number" value={line.discountPercent || line.discount || 0} onChange={(event)=>updateLine(index,{discountPercent:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
                 <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Negotiated / total</p><input disabled={commercialLocked} aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate ?? line.specialPrice ?? ''} placeholder={String(rate.specialRate)} onChange={(event)=>updateLine(index,{specialRate:event.target.value})} className="mt-1 h-10 w-full rounded-xl border border-[var(--brand-400)] bg-[var(--brand-50)] px-2 text-right text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" />{showPrices && <p className="mt-1 text-xl font-black text-[var(--success)]">{money(rate.amount)}</p>}</div>
               </article>;

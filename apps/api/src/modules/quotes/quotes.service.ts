@@ -129,8 +129,9 @@ export class QuotesService {
     const customerId = data.customerId;
     if (!customerId) throw new BadRequestException('A customer is required');
 
+    const saveAsDraft = Boolean((data as any).saveAsDraft);
     const assertedLines = await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote'));
-    const pricing = priceQuoteLines(assertedLines, data.discountPercent || 0);
+    const pricing = priceQuoteLines(assertedLines, data.discountPercent || 0, { requireMrp: !saveAsDraft });
     const normalizedLines = pricing.lines;
     const displayMode = this.normalizeDisplayMode(data.displayMode);
     const quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, normalizedLines);
@@ -179,7 +180,7 @@ export class QuotesService {
             await this.releaseReservationsTx(tx, supersedesId, 'Quote superseded by revision');
           }
 
-          const { intentId, supersedesQuoteId: _supersedesQuoteId, ...quoteData } = data as any;
+          const { intentId, supersedesQuoteId: _supersedesQuoteId, saveAsDraft: _saveAsDraft, ...quoteData } = data as any;
           const quote = await tx.quote.create({
             data: {
               id: ulid(),
@@ -211,6 +212,7 @@ export class QuotesService {
                 discountPercent: pricing.quoteDiscountPercent,
                 total: pricing.totals.grandTotal,
                 requiresPriceApproval: pricing.requiresApproval,
+                pricingReadiness: pricing.lines.filter((line: any) => line.mrpMissing || !line.mrpValid).map((line: any) => ({ lineKey: line.lineKey, sku: line.sku, code: line.mrpMissing ? 'QUOTE_MRP_REQUIRED' : 'QUOTE_MRP_EXCEEDED' })),
                 displayMode,
                 ...(pricing.requiresApproval ? {} : { autoApprovedAt: new Date().toISOString() }),
               },
@@ -244,26 +246,27 @@ export class QuotesService {
     }
     if (!created) throw new BadRequestException(lastError?.message || 'Could not allocate quote number');
     await this.audit(created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId });
+    const incompletePricing = normalizedLines.some((line: any) => line.mrpMissing || !line.mrpValid);
     await this.notifications.createMany([
       {
         title: 'Quote ready',
-        message: `${created.quoteNumber} is ready to share or confirm for ${created.customer?.name || 'customer'}.`,
+        message: incompletePricing ? `${created.quoteNumber} is saved as a draft. Add MRP to every line before sharing or confirming.` : `${created.quoteNumber} is ready to share or confirm for ${created.customer?.name || 'customer'}.`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: created.id,
         href: `/dashboard/quotes/${created.id}`,
         targetUserId: created.ownerId,
-        metadata: { quoteNumber: created.quoteNumber, displayMode, pdfUrl: `/api/pdf/quote/${created.id}` },
+        metadata: { quoteNumber: created.quoteNumber, displayMode, incompletePricing, pdfUrl: `/api/pdf/quote/${created.id}` },
       },
       {
         title: 'Quote ready',
-        message: `${created.quoteNumber} is visible to admin/owner without approval blocking.`,
+        message: incompletePricing ? `${created.quoteNumber} needs MRP completion before commercial actions.` : `${created.quoteNumber} is visible to admin/owner without approval blocking.`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: created.id,
         href: `/dashboard/quotes/${created.id}`,
         targetRole: 'admin',
-        metadata: { quoteNumber: created.quoteNumber, displayMode, pdfUrl: `/api/pdf/quote/${created.id}` },
+        metadata: { quoteNumber: created.quoteNumber, displayMode, incompletePricing, pdfUrl: `/api/pdf/quote/${created.id}` },
       },
     ]);
     return created;
@@ -277,12 +280,14 @@ export class QuotesService {
         throw new BadRequestException('Commercial lines are frozen once an order exists. Create a quote revision for a new commercial agreement.');
       }
     }
+    const saveAsDraft = Boolean((data as any).saveAsDraft);
     const updateData: any = { ...data };
+    delete updateData.saveAsDraft;
     if (data.discountPercent !== undefined || data.lines !== undefined) {
       const assertedLines = await this.persistQuoteLineImages(data.lines !== undefined
         ? await this.assertQuoteLines(data.lines, 'updating a quote')
         : await this.assertQuoteLines(current.lines, 'updating a quote'));
-      const pricing = priceQuoteLines(assertedLines, data.discountPercent ?? current.discountPercent ?? 0);
+      const pricing = priceQuoteLines(assertedLines, data.discountPercent ?? current.discountPercent ?? 0, { requireMrp: !saveAsDraft });
       updateData.lines = pricing.lines;
       updateData.discountPercent = pricing.quoteDiscountPercent;
       updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta ?? current.quoteMeta, pricing.lines);
@@ -296,6 +301,7 @@ export class QuotesService {
         discountPercent: pricing.quoteDiscountPercent,
         total: pricing.totals.grandTotal,
         requiresPriceApproval: pricing.requiresApproval,
+        pricingReadiness: pricing.lines.filter((line: any) => line.mrpMissing || !line.mrpValid).map((line: any) => ({ lineKey: line.lineKey, sku: line.sku, code: line.mrpMissing ? 'QUOTE_MRP_REQUIRED' : 'QUOTE_MRP_EXCEEDED' })),
         ...(pricing.requiresApproval ? {} : { autoApprovedAt: new Date().toISOString() }),
       };
     }
@@ -384,7 +390,8 @@ export class QuotesService {
   }
 
   async createShare(quoteId: string, actorUserId: string, expiresInDays = 30, allowDownload = true) {
-    await this.findById(quoteId);
+    const quote = await this.findById(quoteId);
+    this.ensureCommercialReady(quote, 'sharing this quote');
     const days = Math.min(Math.max(Math.trunc(Number(expiresInDays || 30)), 1), 365);
     const now = new Date();
     const reusable = await (this.prisma as any).quoteShare.findFirst({
@@ -427,6 +434,7 @@ export class QuotesService {
     if (!share || share.revokedAt || share.expiresAt <= now) throw new NotFoundException('Quote share link is unavailable or has expired');
     const quote = await this.prisma.quote.findUnique({ where: { id: share.quoteId }, include: quoteInclude } as any) as any;
     if (!quote) throw new NotFoundException('Quote share link not found');
+    this.ensureCommercialReady(quote, 'opening this quote share');
     const [settings, brands] = await Promise.all([
       this.prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } }),
       this.prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
@@ -463,7 +471,8 @@ export class QuotesService {
       throw new BadRequestException(`Invalid status: ${status}`);
     }
 
-    await this.findById(id);
+    const current = await this.findById(id);
+    if (['sent', 'approved', 'confirmed', 'won'].includes(status)) this.ensureCommercialReady(current, `marking the quote ${status}`);
 
     const updateData: any = { status };
     if (status === 'sent') {
@@ -501,6 +510,7 @@ export class QuotesService {
 
   async sendQuote(id: string): Promise<any> {
     const quote = await this.findById(id);
+    this.ensureCommercialReady(quote, 'sending this quote');
     const sent = await this.prisma.quote.update({
       where: { id },
       data: { status: 'sent', approvalStatus: quote.approvalStatus === 'pending' ? 'approved' : quote.approvalStatus, sentAt: new Date() },
@@ -522,6 +532,7 @@ export class QuotesService {
 
   async confirmQuote(id: string) {
     const quote = await this.findByIdWithRelations(id);
+    this.ensureCommercialReady(quote, 'confirming this quote');
     const existingOrder = await this.prisma.salesOrder.findFirst({ where: { quoteId: id } }).catch(() => null);
     if (!existingOrder) {
       throw new BadRequestException('Final confirmation must create a Sales Order with payment details. Use createSalesOrderFromQuote instead.');
@@ -564,13 +575,13 @@ export class QuotesService {
           let quoteLines = await tx.quoteLine.findMany({ where: { quoteId: quote.id }, orderBy: { lineNo: 'asc' } });
           if (!quoteLines.length) {
             const historicalLines = await this.assertQuoteLines(latestQuote.lines, 'creating a sales order');
-            const priced = priceQuoteLines(historicalLines, latestQuote.discountPercent || 0);
+            const priced = priceQuoteLines(historicalLines, latestQuote.discountPercent || 0, { requireMrp: true });
             await this.syncQuoteLinesTx(tx, latestQuote, priced.lines);
             quoteLines = await tx.quoteLine.findMany({ where: { quoteId: quote.id }, orderBy: { lineNo: 'asc' } });
           }
 
           const selected = this.selectOrderLines(latestQuote, quoteLines as any[], requestedSelections);
-          const commercial = priceQuoteLines(selected.lines, latestQuote.discountPercent || 0);
+          const commercial = priceQuoteLines(selected.lines, latestQuote.discountPercent || 0, { requireMrp: true });
           const totalAmount = commercial.totals.grandTotal;
           const advanceAmount = paymentMode === 'cash' ? Number(input.advanceAmount || 0) : 0;
           if (!Number.isFinite(advanceAmount) || advanceAmount < 0 || advanceAmount > totalAmount) {
@@ -744,6 +755,9 @@ export class QuotesService {
           unit: String(line.unit || line.uom || 'PC').toUpperCase(),
           quantity,
           listPrice,
+          mrp: line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp),
+          mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
+          mrpSource: line.mrpSource || 'quote_entry',
           unitPrice,
           discountPercent,
           taxRate,
@@ -771,6 +785,9 @@ export class QuotesService {
           unit: String(line.unit || line.uom || 'PC').toUpperCase(),
           quantity,
           listPrice,
+          mrp: line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp),
+          mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
+          mrpSource: line.mrpSource || 'quote_entry',
           unitPrice,
           discountPercent,
           taxRate,
@@ -900,6 +917,9 @@ export class QuotesService {
         price: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
         sellPrice: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
         listPrice: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
+        mrp: quoteLine.mrp === null || quoteLine.mrp === undefined ? undefined : Number(quoteLine.mrp),
+        mrpRateBasis: quoteLine.mrpRateBasis || snapshot.mrpRateBasis || snapshot.rateBasis,
+        mrpSource: quoteLine.mrpSource || snapshot.mrpSource || 'quote_entry',
         specialRate: Number(quoteLine.unitPrice ?? 0),
         discountPercent: Number(quoteLine.discountPercent || 0),
         taxRate: Number(quoteLine.taxRate ?? 18),
@@ -926,6 +946,289 @@ export class QuotesService {
     const customerMap = new Map(customers.map((customer) => [customer.id, customer]));
     const ownerMap = new Map(owners.map((owner) => [owner.id, owner]));
     return orders.map((order) => ({ ...order, customer: customerMap.get(order.customerId), owner: ownerMap.get(order.ownerId) }));
+  }
+
+  /**
+   * Operational order read model. The old `salesOrders` query intentionally
+   * remains for dashboard compatibility, while this endpoint is the scalable
+   * source for the order/dispatch control tower: bounded pages, server-side
+   * search, derived fulfilment quantities, and KPI totals from persisted
+   * SalesOrderLine quantities.
+   */
+  async salesOrderControlTower(args?: {
+    search?: string;
+    fulfillmentStatus?: string;
+    paymentMode?: string;
+    range?: string;
+    cursor?: string;
+    take?: number;
+    ownerId?: string;
+  }) {
+    const limit = Math.max(1, Math.min(100, Math.trunc(Number(args?.take || 25))));
+    const search = String(args?.search || '').trim();
+    const where: any = {};
+    if (args?.paymentMode) where.paymentMode = String(args.paymentMode).toLowerCase();
+    if (args?.ownerId) where.ownerId = args.ownerId;
+    const createdAt = this.rangeWhere(args?.range);
+    if (createdAt) where.createdAt = createdAt;
+
+    if (search) {
+      const [customers, products] = await Promise.all([
+        this.prisma.customer.findMany({
+          where: {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' } },
+              { email: { contains: search, mode: 'insensitive' } },
+              { mobile: { contains: search, mode: 'insensitive' } },
+              { gstNo: { contains: search, mode: 'insensitive' } },
+            ],
+          } as any,
+          select: { id: true },
+          take: 250,
+        } as any),
+        this.prisma.product.findMany({
+          where: {
+            OR: [
+              { sku: { contains: search, mode: 'insensitive' } },
+              { internalCode: { contains: search, mode: 'insensitive' } },
+              { name: { contains: search, mode: 'insensitive' } },
+              { brand: { contains: search, mode: 'insensitive' } },
+            ],
+          } as any,
+          select: { id: true },
+          take: 250,
+        } as any),
+      ]);
+      const customerIds = customers.map((customer: any) => customer.id);
+      const productIds = products.map((product: any) => product.id);
+      where.OR = [
+        { id: { contains: search, mode: 'insensitive' } },
+        { orderNumber: { contains: search, mode: 'insensitive' } },
+        { quoteId: { contains: search, mode: 'insensitive' } },
+        ...(customerIds.length ? [{ customerId: { in: customerIds } }] : []),
+        ...(productIds.length ? [{ id: { in: (await this.prisma.salesOrderLine.findMany({ where: { productId: { in: productIds } }, select: { salesOrderId: true }, distinct: ['salesOrderId'], take: 5000 } as any)).map((line: any) => line.salesOrderId) } }] : []),
+      ];
+    }
+
+    const requestedStatus = String(args?.fulfillmentStatus || '').trim().toLowerCase();
+    if (requestedStatus && requestedStatus !== 'all') {
+      const statusMap: Record<string, string[]> = {
+        pending_inward: ['pending_inward'],
+        ready_to_pick: ['ready', 'partial_ready'],
+        partial_dispatch: ['partial_dispatched'],
+        dispatched: ['dispatched'],
+        delivered: ['delivered'],
+        left_to_dispatch: ['open', 'ready', 'partial_ready', 'pending_inward', 'partial_dispatched'],
+      };
+      const lineStatuses = statusMap[requestedStatus] || [requestedStatus];
+      const matchingLines = await this.prisma.salesOrderLine.findMany({
+        where: { status: { in: lineStatuses } },
+        select: { salesOrderId: true },
+        distinct: ['salesOrderId'],
+        take: 10000,
+      } as any);
+      const matchingOrderIds = matchingLines.map((line: any) => line.salesOrderId);
+      if (!matchingOrderIds.length) return this.emptySalesOrderControlTower();
+      where.id = { in: matchingOrderIds };
+    }
+
+    const cursor = String(args?.cursor || '').trim();
+    const query: any = {
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      select: {
+        id: true,
+        orderNumber: true,
+        quoteId: true,
+        leadId: true,
+        customerId: true,
+        ownerId: true,
+        status: true,
+        paymentMode: true,
+        paymentStatus: true,
+        paymentTerms: true,
+        promisedDate: true,
+        advanceAmount: true,
+        totalAmount: true,
+        lines: true,
+        documents: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    };
+    if (cursor) {
+      query.cursor = { id: cursor };
+      query.skip = 1;
+    }
+    const orders = await this.prisma.salesOrder.findMany(query) as any[];
+    const hasNextPage = orders.length > limit;
+    const page = hasNextPage ? orders.slice(0, limit) : orders;
+    if (!page.length) {
+      return this.emptySalesOrderControlTower();
+    }
+
+    const orderIds = page.map((order) => order.id);
+    const quoteIds = Array.from(new Set(page.map((order) => order.quoteId).filter(Boolean)));
+    const customerIds = Array.from(new Set(page.map((order) => order.customerId).filter(Boolean)));
+    const ownerIds = Array.from(new Set(page.map((order) => order.ownerId).filter(Boolean)));
+    const [lines, quotes, customers, owners, jobs, challans] = await Promise.all([
+      this.prisma.salesOrderLine.findMany({ where: { salesOrderId: { in: orderIds } }, orderBy: [{ salesOrderId: 'asc' }, { lineNo: 'asc' }] } as any),
+      quoteIds.length ? this.prisma.quote.findMany({ where: { id: { in: quoteIds } }, select: { id: true, quoteNumber: true } } as any) : [],
+      customerIds.length ? this.prisma.customer.findMany({ where: { id: { in: customerIds } } } as any) : [],
+      ownerIds.length ? this.prisma.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true, email: true, role: true, phone: true, active: true } } as any) : [],
+      this.prisma.dispatchJob.findMany({ where: { salesOrderId: { in: orderIds } }, select: { id: true, salesOrderId: true, status: true, dueDate: true, updatedAt: true } } as any),
+      this.prisma.dispatchChallan.findMany({ where: { salesOrderId: { in: orderIds } }, select: { id: true, salesOrderId: true, challanNumber: true, status: true, dispatchedAt: true, deliveredAt: true, updatedAt: true } } as any),
+    ]);
+    const lineMap = new Map<string, any[]>();
+    for (const line of lines as any[]) lineMap.set(line.salesOrderId, [...(lineMap.get(line.salesOrderId) || []), line]);
+    const quoteMap = new Map((quotes as any[]).map((quote) => [quote.id, quote]));
+    const customerMap = new Map((customers as any[]).map((customer) => [customer.id, customer]));
+    const ownerMap = new Map((owners as any[]).map((owner) => [owner.id, owner]));
+    const jobMap = new Map((jobs as any[]).map((job) => [job.salesOrderId, job]));
+    const challanMap = new Map<string, any[]>();
+    for (const challan of challans as any[]) challanMap.set(challan.salesOrderId, [...(challanMap.get(challan.salesOrderId) || []), challan]);
+
+    const items = page.map((order) => {
+      const orderLines = lineMap.get(order.id) || [];
+      const metrics = orderLines.reduce((sum, line: any) => ({
+        ordered: sum.ordered + Number(line.orderedQuantity || 0),
+        reserved: sum.reserved + Number(line.reservedQuantity || 0),
+        allocated: sum.allocated + Number(line.allocatedQuantity || 0),
+        backordered: sum.backordered + Number(line.backorderedQuantity || 0),
+        dispatched: sum.dispatched + Number(line.dispatchedQuantity || 0),
+        delivered: sum.delivered + Number(line.deliveredQuantity || 0),
+        returned: sum.returned + Number(line.returnedQuantity || 0),
+      }), { ordered: 0, reserved: 0, allocated: 0, backordered: 0, dispatched: 0, delivered: 0, returned: 0 });
+      const leftToDispatch = Math.max(0, metrics.ordered - metrics.dispatched);
+      const readyToPick = Math.max(0, Math.min(leftToDispatch, metrics.reserved + metrics.allocated));
+      const status = this.deriveControlTowerStatus(order.status, metrics);
+      const dispatchRows = challanMap.get(order.id) || [];
+      const job = jobMap.get(order.id) || null;
+      return {
+        ...order,
+        quoteNumber: quoteMap.get(order.quoteId)?.quoteNumber || null,
+        customer: customerMap.get(order.customerId) || null,
+        owner: ownerMap.get(order.ownerId) || null,
+        fulfillmentStatus: status,
+        quantities: { ...metrics, leftToDispatch, readyToPick },
+        lines: orderLines.map((line: any) => ({
+          id: line.id,
+          lineKey: line.lineKey,
+          sku: line.sku,
+          name: line.name,
+          brand: line.brand,
+          category: line.category,
+          unit: line.unit,
+          orderedQuantity: line.orderedQuantity,
+          reservedQuantity: line.reservedQuantity,
+          allocatedQuantity: line.allocatedQuantity,
+          backorderedQuantity: line.backorderedQuantity,
+          dispatchedQuantity: line.dispatchedQuantity,
+          deliveredQuantity: line.deliveredQuantity,
+          remainingQuantity: Math.max(0, Number(line.orderedQuantity || 0) - Number(line.dispatchedQuantity || 0)),
+          listPrice: Number(line.listPrice || 0),
+          mrp: line.mrp === null || line.mrp === undefined ? null : Number(line.mrp),
+          mrpRateBasis: line.mrpRateBasis || null,
+          unitPrice: Number(line.unitPrice || 0),
+          grossLineTotal: Number(line.grossLineTotal || line.lineTotal || 0),
+          status: line.status,
+        })),
+        dispatch: {
+          job: job ? { id: job.id, status: job.status, dueDate: job.dueDate, updatedAt: job.updatedAt } : null,
+          challans: dispatchRows,
+        },
+      };
+    });
+
+    // KPI totals must not hydrate every matching line. Grouping once by order
+    // keeps the response bounded to one row per order even with a large order
+    // book, while the page above still returns full detail only for one page.
+    const matchingOrders = await this.prisma.salesOrder.findMany({
+      where,
+      select: { id: true, status: true, totalAmount: true, advanceAmount: true },
+    } as any);
+    const matchingOrderIds = (matchingOrders as any[]).map((order) => order.id);
+    const groupedLines = matchingOrderIds.length
+      ? await this.prisma.salesOrderLine.groupBy({
+          by: ['salesOrderId'],
+          where: { salesOrderId: { in: matchingOrderIds } },
+          _sum: {
+            orderedQuantity: true,
+            reservedQuantity: true,
+            allocatedQuantity: true,
+            backorderedQuantity: true,
+            dispatchedQuantity: true,
+            deliveredQuantity: true,
+          },
+        } as any)
+      : [];
+    const metricsForOrder = new Map((groupedLines as any[]).map((row) => [row.salesOrderId, {
+      ordered: Number(row._sum?.orderedQuantity || 0),
+      reserved: Number(row._sum?.reservedQuantity || 0),
+      allocated: Number(row._sum?.allocatedQuantity || 0),
+      backordered: Number(row._sum?.backorderedQuantity || 0),
+      dispatched: Number(row._sum?.dispatchedQuantity || 0),
+      delivered: Number(row._sum?.deliveredQuantity || 0),
+    }]));
+    const zeroMetrics = { ordered: 0, reserved: 0, allocated: 0, backordered: 0, dispatched: 0, delivered: 0 };
+    const summaryMetrics = (groupedLines as any[]).reduce((sum, row) => ({
+      ordered: sum.ordered + Number(row._sum?.orderedQuantity || 0),
+      reserved: sum.reserved + Number(row._sum?.reservedQuantity || 0),
+      allocated: sum.allocated + Number(row._sum?.allocatedQuantity || 0),
+      backordered: sum.backordered + Number(row._sum?.backorderedQuantity || 0),
+      dispatched: sum.dispatched + Number(row._sum?.dispatchedQuantity || 0),
+      delivered: sum.delivered + Number(row._sum?.deliveredQuantity || 0),
+    }), { ...zeroMetrics });
+    const statusCounts = (matchingOrders as any[]).reduce((counts: any, order: any) => {
+      const status = this.deriveControlTowerStatus(order.status, metricsForOrder.get(order.id) || zeroMetrics);
+      counts[status] = Number(counts[status] || 0) + 1;
+      return counts;
+    }, {});
+    const totalAmount = (matchingOrders as any[]).reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const advanceAmount = (matchingOrders as any[]).reduce((sum, order) => sum + Number(order.advanceAmount || 0), 0);
+    return {
+      items,
+      nextCursor: hasNextPage ? page[page.length - 1].id : null,
+      total: matchingOrders.length,
+      summary: {
+        orders: matchingOrders.length,
+        totalValue: totalAmount,
+        advanceValue: advanceAmount,
+        balanceValue: Math.max(0, totalAmount - advanceAmount),
+        reservedQty: summaryMetrics.reserved,
+        readyToPickQty: Math.max(0, Math.min(summaryMetrics.ordered - summaryMetrics.dispatched, summaryMetrics.reserved + summaryMetrics.allocated)),
+        leftToDispatchQty: Math.max(0, summaryMetrics.ordered - summaryMetrics.dispatched),
+        pendingInwardQty: summaryMetrics.backordered,
+        deliveredQty: summaryMetrics.delivered,
+        statusCounts,
+      },
+    };
+  }
+
+  private emptySalesOrderControlTower() {
+    return {
+      items: [],
+      nextCursor: null,
+      total: 0,
+      summary: {
+        orders: 0, totalValue: 0, advanceValue: 0, balanceValue: 0,
+        reservedQty: 0, readyToPickQty: 0, leftToDispatchQty: 0, pendingInwardQty: 0, deliveredQty: 0,
+        statusCounts: {},
+      },
+    };
+  }
+
+  private deriveControlTowerStatus(orderStatus: string, metrics: { ordered: number; reserved: number; allocated: number; backordered: number; dispatched: number; delivered: number }) {
+    if (metrics.ordered <= 0) return String(orderStatus || 'open');
+    if (metrics.delivered >= metrics.ordered) return 'delivered';
+    if (metrics.dispatched >= metrics.ordered) return 'dispatched';
+    if (metrics.dispatched > 0) return 'partial_dispatch';
+    const ready = metrics.reserved + metrics.allocated;
+    if (ready > 0 && metrics.backordered > 0) return 'partial_ready';
+    if (metrics.backordered > 0) return 'pending_inward';
+    if (ready > 0) return 'ready_to_pick';
+    return String(orderStatus || 'open');
   }
 
   async salesOrder(id: string) {
@@ -985,6 +1288,10 @@ export class QuotesService {
           closed,
           remaining: Math.max(0, quantity - ordered - cancelled - closed),
           status: line.status,
+          unit: line.unit,
+          listPrice: Number(line.listPrice || 0),
+          mrp: line.mrp === null || line.mrp === undefined ? null : Number(line.mrp),
+          mrpRateBasis: line.mrpRateBasis || null,
           unitRate: Number(line.unitPrice || 0),
           grossLineTotal: Number(line.grossLineTotal || line.lineTotal || 0),
         };
@@ -1031,6 +1338,7 @@ export class QuotesService {
 
   async approveQuote(id: string, approvedByUserId: string, note?: string) {
     const quote = await this.findById(id);
+    this.ensureCommercialReady(quote, 'approving this quote');
     const approved = await this.prisma.quote.update({
       where: { id },
       data: {
@@ -1267,7 +1575,7 @@ export class QuotesService {
         return this.normalizeTileLine({
           ...line, productId: product.id, sku: product.sku, name: product.name, brand: product.brand,
           tileSize: line.tileSize || product.dimensions, dimensions: product.dimensions,
-          listPrice: Number(line.listPrice ?? line.price ?? defaultListPrice), sellPrice: defaultListPrice,
+          listPrice: defaultListPrice, sellPrice: defaultListPrice,
           floorPrice, media: line.media || product.media || {},
           inventoryUom, pricingUom, rateBasis, sourceSalesUom: productSalesUom,
           sourceSellPrice: Number(product.sellPrice || 0),
@@ -1367,6 +1675,14 @@ export class QuotesService {
 
   private getLinesTotal(lines: any, quoteDiscountPercent = 0) {
     return priceQuoteLines(this.normalizeLines(lines), quoteDiscountPercent).totals.grandTotal;
+  }
+
+  private ensureCommercialReady(quote: any, action: string) {
+    const pricing = priceQuoteLines(this.normalizeLines(quote?.lines), quote?.discountPercent || 0, { requireMrp: true });
+    if (quote?.approvalStatus === 'pending' && !/approv/i.test(action)) {
+      throw new BadRequestException(`Cannot ${action}: owner approval is still required for a below-floor rate.`);
+    }
+    return pricing;
   }
 
   private async createReservationsForSalesOrder(tx: any, args: { quote: any; salesOrder: any; lines: any[]; salesOrderLines: any[] }) {

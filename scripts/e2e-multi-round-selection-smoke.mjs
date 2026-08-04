@@ -101,6 +101,8 @@ async function main() {
     qty: 1,
     unit: 'PC',
     price: product.sellPrice,
+    mrp: Number(product.sellPrice || 0) * 1.2,
+    mrpRateBasis: 'PIECE',
     area: 'Master Bath',
   }];
 

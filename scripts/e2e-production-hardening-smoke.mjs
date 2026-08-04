@@ -157,7 +157,7 @@ async function main() {
     { input: { customerId: customer.id, title: 'Production hardening quote order', source: 'Showroom', stage: 'new', notes: 'Smoke flow.' } },
     token,
   )).createLead;
-  const lines = JSON.stringify([{ productId: product.id, sku: product.sku, name: product.name, category: product.category, brand: product.brand, finish: product.finish, qty: 1, unit: 'PC', price: product.sellPrice }]);
+  const lines = JSON.stringify([{ productId: product.id, sku: product.sku, name: product.name, category: product.category, brand: product.brand, finish: product.finish, qty: 1, unit: 'PC', price: product.sellPrice, mrp: Number(product.sellPrice || 0) * 1.2, mrpRateBasis: 'PIECE' }]);
   const quote = (await gql(
     `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber lines } }`,
     { input: { leadId: lead.id, customerId: customer.id, title: 'Production hardening quote', projectName: 'Production Smoke', lines } },
@@ -224,10 +224,10 @@ async function main() {
   assert(returnOrder.returnNumber?.startsWith('RT/'), 'return order should receive a controlled return number');
 
   const finalData = await gql(
-    `query($productId: String, $locationId: String) {
+    `query($productId: String, $locationId: String, $customerId: ID!) {
       inventoryBalances(productId: $productId) { id productId onHand available reserved damaged product { sku } }
       documentJobs(take: 60)
-      paymentReceipts(take: 60)
+      customerAccount(customerId: $customerId)
       stockCountSessions(take: 20)
       returnOrders(take: 20)
       stockLedgerEntries(productId: $productId, take: 80)
@@ -235,7 +235,7 @@ async function main() {
       stockReconciliation(productId: $productId, take: 10)
       productionReadinessSummary
     }`,
-    { productId: product.id, locationId: plant.id },
+    { productId: product.id, locationId: plant.id, customerId: customer.id },
     token,
   );
 
@@ -243,7 +243,7 @@ async function main() {
   assert(balance?.onHand >= 5, 'final inventory should reflect GRN, approved count, dispatch, and return');
   assert(finalData.documentJobs.some((jobRow) => jobRow.entityId === quote.id), 'quote document job should exist');
   assert(finalData.documentJobs.some((jobRow) => jobRow.entityId === order.id), 'sales order document job should exist');
-  assert(finalData.paymentReceipts.some((receipt) => receipt.salesOrderId === order.id && receipt.status === 'posted'), 'payment receipt should exist for full advance');
+  assert(finalData.customerAccount?.payments?.some((receipt) => receipt.salesOrderId === order.id && receipt.status === 'posted' && Number(receipt.amount) === Number(product.sellPrice)), 'customer account should expose the posted full advance receipt');
   assert(finalData.stockCountSessions.some((session) => session.id === approvedCount.id && session.status === 'posted'), 'posted stock count should be queryable');
   assert(finalData.returnOrders.some((row) => row.id === returnOrder.id), 'return order should be queryable');
   assert(finalData.stockLedgerEntries.some((row) => row.referenceType === 'ReturnOrder' && row.referenceId === returnOrder.id), 'return should post stock ledger entry');

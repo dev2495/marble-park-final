@@ -177,7 +177,7 @@ async function main() {
       title: `Persistent image quote ${suffix}`,
       projectName: 'Release gate bathroom',
       displayMode: 'priced',
-      lines: JSON.stringify([{ productId: product.id, qty: 1, price: 5500, specialRate: 5500, taxRate: 18, area: 'Master Bathroom' }]),
+      lines: JSON.stringify([{ productId: product.id, qty: 1, price: 5500, specialRate: 5500, mrp: 6500, mrpRateBasis: 'PIECE', taxRate: 18, area: 'Master Bathroom' }]),
     } },
     token,
   )).createQuote;

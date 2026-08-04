@@ -1,5 +1,5 @@
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
-const WEB = process.env.WEB_URL || 'http://localhost:3001';
+const WEB = process.env.WEB_URL || 'http://localhost:3000';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const ROLE_PASSWORD = process.env.ROLE_PASSWORD || 'password123';
@@ -46,7 +46,7 @@ async function main() {
   await receive(stocked.id, 2, 'Initial showroom stock for CRM smoke');
 
   const customer = (await gql(`mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`, { input: { name: `Area Quote Notification Customer ${skuA}`, phone: '9777777777', email: `${skuA.toLowerCase()}@example.com`, city: 'Ahmedabad', address: 'Area smoke site', forceCreate: true } }, admin.token)).createCustomer;
-  const initialRows = [{ area: 'Master Bath', type: 'product', productId: stocked.id, sku: stocked.sku, name: stocked.name, category: stocked.category, brand: stocked.brand, qty: 1, unit: 'PC', price: stocked.sellPrice }];
+  const initialRows = [{ area: 'Master Bath', type: 'product', productId: stocked.id, sku: stocked.sku, name: stocked.name, category: stocked.category, brand: stocked.brand, qty: 1, unit: 'PC', price: stocked.sellPrice, mrp: Number(stocked.sellPrice || 0) * 1.2, mrpRateBasis: 'PIECE' }];
   const lead = (await gql(`mutation($input: CreateLeadInput!) { createLead(input: $input) { id stage owner customer } }`, { input: { customerId: customer.id, ownerId: sales.user.id, title: 'Area-wise multi quote smoke lead', source: 'Showroom', notes: 'Smoke with multiple quotes', intentNotes: 'Initial priced master bath selection', intentRows: JSON.stringify(initialRows) } }, admin.token)).createLead;
 
   const officeBefore = await gql(`query { notifications(unreadOnly: true, take: 20) }`, {}, office.token);
@@ -56,14 +56,14 @@ async function main() {
   const quote1 = (await gql(`mutation($intentId: String!, $displayMode: String, $note: String) { generateQuoteFromIntent(intentId: $intentId, displayMode: $displayMode, note: $note) }`, { intentId: pending1.id, displayMode: 'priced', note: 'Priced quote for master bath' }, office.token)).generateQuoteFromIntent.quote;
   assert(quote1.displayMode === 'priced', 'first generated quote should show prices');
 
-  const followRows = [{ area: 'Powder Room', type: 'product', productId: stocked.id, sku: stocked.sku, name: stocked.name, category: stocked.category, brand: stocked.brand, qty: 1, unit: 'PC', price: stocked.sellPrice }];
+  const followRows = [{ area: 'Powder Room', type: 'product', productId: stocked.id, sku: stocked.sku, name: stocked.name, category: stocked.category, brand: stocked.brand, qty: 1, unit: 'PC', price: stocked.sellPrice, mrp: Number(stocked.sellPrice || 0) * 1.2, mrpRateBasis: 'PIECE' }];
   const intent2 = (await gql(`mutation($input: CreateLeadIntentInput!) { createLeadIntent(input: $input) }`, { input: { leadId: lead.id, rows: JSON.stringify(followRows), notes: 'Customer wants selection-only PDF first', followUpReason: 'customer asked for no-price sharing copy' } }, sales.token)).createLeadIntent;
   const quote2 = (await gql(`mutation($intentId: String!, $displayMode: String, $note: String) { generateQuoteFromIntent(intentId: $intentId, displayMode: $displayMode, note: $note) }`, { intentId: intent2.id, displayMode: 'selection', note: 'Selection-only PDF for family approval' }, office.token)).generateQuoteFromIntent.quote;
   assert(quote2.displayMode === 'selection', 'second quote should be selection summary with hidden prices');
 
   const orderRows = [
-    { area: 'Master Bath', type: 'product', productId: stocked.id, sku: stocked.sku, name: stocked.name, category: stocked.category, brand: stocked.brand, qty: 1, unit: 'PC', price: stocked.sellPrice },
-    { area: 'Guest Bath', type: 'product', productId: backorder.id, sku: backorder.sku, name: backorder.name, category: backorder.category, brand: backorder.brand, qty: 1, unit: 'PC', price: backorder.sellPrice },
+    { area: 'Master Bath', type: 'product', productId: stocked.id, sku: stocked.sku, name: stocked.name, category: stocked.category, brand: stocked.brand, qty: 1, unit: 'PC', price: stocked.sellPrice, mrp: Number(stocked.sellPrice || 0) * 1.2, mrpRateBasis: 'PIECE' },
+    { area: 'Guest Bath', type: 'product', productId: backorder.id, sku: backorder.sku, name: backorder.name, category: backorder.category, brand: backorder.brand, qty: 1, unit: 'PC', price: backorder.sellPrice, mrp: Number(backorder.sellPrice || 0) * 1.2, mrpRateBasis: 'PIECE' },
   ];
   const intent3 = (await gql(`mutation($input: CreateLeadIntentInput!) { createLeadIntent(input: $input) }`, { input: { leadId: lead.id, rows: JSON.stringify(orderRows), notes: 'Final order has one in-store and one pending inward item', followUpReason: 'final selection confirmed' } }, sales.token)).createLeadIntent;
   const quote3 = (await gql(`mutation($intentId: String!, $displayMode: String, $note: String) { generateQuoteFromIntent(intentId: $intentId, displayMode: $displayMode, note: $note) }`, { intentId: intent3.id, displayMode: 'priced', note: 'Final priced order quote' }, office.token)).generateQuoteFromIntent.quote;

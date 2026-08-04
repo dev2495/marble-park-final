@@ -11,6 +11,13 @@ export type CommercialTotals = {
   grandTotal: number;
 };
 
+export type QuotePricingOptions = {
+  /** Require a positive tax-inclusive MRP for a commercial action. */
+  requireMrp?: boolean;
+  /** Extra rupee tolerance for decimal/rounding differences at the MRP edge. */
+  mrpTolerance?: number;
+};
+
 function money(value: unknown) {
   const amount = Number(value || 0);
   if (!Number.isFinite(amount)) throw new BadRequestException('Commercial values must be valid numbers');
@@ -28,6 +35,47 @@ function percent(value: unknown, fallback = 0, label = 'Discount') {
 
 function hasRate(value: any) {
   return value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
+}
+
+function rateBasis(line: any) {
+  const explicit = String(line?.mrpRateBasis || line?.rateBasis || '').trim().toUpperCase();
+  if (['PACK', 'PIECE', 'AREA'].includes(explicit)) return explicit;
+  const uom = String(line?.pricingUom || line?.salesUom || line?.unit || 'PC').trim().toUpperCase();
+  return ['SQFT', 'SQM', 'M2'].includes(uom) ? 'AREA' : uom === 'PC' ? 'PIECE' : 'PACK';
+}
+
+function pricingUom(line: any, basis: string) {
+  if (basis === 'AREA') return String(line?.pricingUom || line?.salesUom || 'SQFT').trim().toUpperCase();
+  if (basis === 'PIECE') return 'PC';
+  return String(line?.inventoryUom || line?.purchaseUom || line?.unit || 'PACK').trim().toUpperCase();
+}
+
+function mrpSnapshot(line: any, unitRate: number, quoteDiscountPercent: number, taxRate: number, options: QuotePricingOptions) {
+  const raw = line?.mrp;
+  const hasMrp = raw !== undefined && raw !== null && raw !== '';
+  const mrp = hasMrp ? money(raw) : null;
+  const basis = rateBasis(line);
+  const uom = pricingUom(line, basis);
+  const finalUnitPayable = money(unitRate * (1 - quoteDiscountPercent / 100) * (1 + taxRate / 100));
+  const tolerance = Math.max(0, Number(options.mrpTolerance ?? 0.5));
+  const missing = mrp === null || !Number.isFinite(mrp) || mrp <= 0;
+  const valid = !missing && finalUnitPayable <= Number(mrp) + tolerance;
+  if (options.requireMrp && missing) {
+    throw new BadRequestException(`MRP is required for ${line?.sku || line?.name || 'every quote line'} (enter a positive ${uom} value)`);
+  }
+  if (options.requireMrp && !valid) {
+    throw new BadRequestException(`${line?.sku || line?.name || 'Quote line'} exceeds MRP: payable ${finalUnitPayable.toFixed(2)} per ${uom}, MRP ${Number(mrp).toFixed(2)} per ${uom}`);
+  }
+  return {
+    mrp,
+    mrpRateBasis: basis,
+    mrpSource: String(line?.mrpSource || 'quote_entry'),
+    mrpUom: uom,
+    finalUnitPayable,
+    mrpVariance: mrp === null ? null : money(Number(mrp) - finalUnitPayable),
+    mrpMissing: missing,
+    mrpValid: valid,
+  };
 }
 
 export function finalUnitRate(line: any) {
@@ -56,7 +104,7 @@ function commercialQuantity(line: any, inventoryQuantity: number) {
   return { basis, piecesPerPack, coveragePerPack, pricingQuantity };
 }
 
-export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0) {
+export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0, options: QuotePricingOptions = {}) {
   const normalizedQuoteDiscount = percent(quoteDiscountPercent, 0, 'Quote discount');
   let totals: CommercialTotals = {
     subtotal: 0,
@@ -76,6 +124,7 @@ export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0)
     const { basis, piecesPerPack, coveragePerPack, pricingQuantity } = commercialQuantity(line, quantity);
     const { listPrice, discountPercent, unitRate } = finalUnitRate(line);
     const taxRate = percent(line.taxRate, DEFAULT_TAX_RATE, 'Tax rate');
+    const mrp = mrpSnapshot(line, unitRate, normalizedQuoteDiscount, taxRate, options);
     const listAmount = money(pricingQuantity * listPrice);
     const lineSubtotal = money(pricingQuantity * unitRate);
     const lineDiscountAmount = money(Math.max(0, listAmount - lineSubtotal));
@@ -122,6 +171,7 @@ export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0)
       total: grossLineTotal,
       floorPrice,
       belowFloor,
+      ...mrp,
     };
   });
 

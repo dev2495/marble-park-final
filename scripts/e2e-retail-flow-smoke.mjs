@@ -40,7 +40,7 @@ async function main() {
   await gql(`mutation($id: ID!, $stage: String!) { updateLeadStage(id: $id, stage: $stage) { id stage } }`, { id: lead.id, stage: 'contacted' }, token);
   await gql(`mutation($id: ID!, $stage: String!) { updateLeadStage(id: $id, stage: $stage) { id stage } }`, { id: lead.id, stage: 'proposal' }, token);
 
-  const lines = JSON.stringify([{ productId: product.id, sku: product.sku, name: product.name, qty: 2, unit: 'PC', price: product.sellPrice, sellPrice: product.sellPrice, media: { primary: '/catalogue-images/new-style-products-p011-106-98195b773d7d52.png', source: 'e2e' } }]);
+  const lines = JSON.stringify([{ productId: product.id, sku: product.sku, name: product.name, qty: 2, unit: 'PC', price: product.sellPrice, sellPrice: product.sellPrice, mrp: Number(product.sellPrice || 0) * 1.2, mrpRateBasis: 'PIECE', media: { primary: '/catalogue-images/new-style-products-p011-106-98195b773d7d52.png', source: 'e2e' } }]);
   const quoteData = await gql(`mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber status approvalStatus lines } }`, {
     input: { leadId: lead.id, customerId: customer.id, title: 'E2E quote with image and stock', projectName: 'E2E Bathroom', notes: 'E2E quote', lines },
   }, token);

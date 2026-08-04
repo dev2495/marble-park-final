@@ -334,7 +334,9 @@ export class LeadsService {
       },
       intentId: intent.id,
       supersedesQuoteId: (intent as any).referencesQuoteId || null,
+      saveAsDraft: true,
     } as any);
+    const incompletePricing = (quote.lines || []).some((line: any) => line.mrpMissing || !line.mrpValid);
     const pdfUrl = `/api/pdf/quote/${quote.id}`;
     await this.prisma.leadIntent.update({
       where: { id: intent.id },
@@ -368,33 +370,39 @@ export class LeadsService {
     await this.notifications.createMany([
       {
         title: 'Quote PDF generated',
-        message: `${quote.quoteNumber} is ready from office. Share the PDF and continue follow-up.`,
+        message: incompletePricing
+          ? `${quote.quoteNumber} is saved as a draft. Add MRP to every line before sharing or confirming.`
+          : `${quote.quoteNumber} is ready from office. Share the PDF and continue follow-up.`,
         type: 'quote_generated',
         entityType: 'Quote',
         entityId: quote.id,
         href: `/dashboard/leads/${intent.leadId}`,
         targetUserId: intent.ownerId,
-        metadata: { pdfUrl, intentId: intent.id, displayMode: quote.displayMode },
+        metadata: { pdfUrl, intentId: intent.id, displayMode: quote.displayMode, incompletePricing },
       },
       {
         title: 'Quote ready for owner visibility',
-        message: `${quote.quoteNumber} was generated from an intent. It can be shared, confirmed, and converted without an owner approval stop.`,
+        message: incompletePricing
+          ? `${quote.quoteNumber} was generated from an intent and needs MRP completion before commercial actions.`
+          : `${quote.quoteNumber} was generated from an intent. It can be shared, confirmed, and converted without an owner approval stop.`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: quote.id,
         href: `/dashboard/quotes/${quote.id}`,
         targetRole: 'owner',
-        metadata: { intentId: intent.id, pdfUrl, displayMode: quote.displayMode },
+        metadata: { intentId: intent.id, pdfUrl, displayMode: quote.displayMode, incompletePricing },
       },
       {
         title: 'Quote ready for admin visibility',
-        message: `${quote.quoteNumber} was generated from an intent and is unblocked for confirmation.`,
+        message: incompletePricing
+          ? `${quote.quoteNumber} was generated from an intent and needs MRP completion before confirmation.`
+          : `${quote.quoteNumber} was generated from an intent and is unblocked for confirmation.`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: quote.id,
         href: `/dashboard/quotes/${quote.id}`,
         targetRole: 'admin',
-        metadata: { intentId: intent.id, pdfUrl, displayMode: quote.displayMode },
+        metadata: { intentId: intent.id, pdfUrl, displayMode: quote.displayMode, incompletePricing },
       },
     ]);
     return { intentId: intent.id, quote, pdfUrl };
@@ -590,6 +598,10 @@ export class LeadsService {
         unit: row.unit || product?.unit || 'PC',
         price: Number(row.price || row.sellPrice || product?.sellPrice || 0),
         sellPrice: Number(row.price || row.sellPrice || product?.sellPrice || 0),
+        mrp: row.mrp === undefined || row.mrp === null || row.mrp === '' ? null : Number(row.mrp),
+        mrpRateBasis: row.mrpRateBasis || row.rateBasis || null,
+        mrpSource: row.mrpSource || 'quote_entry',
+        taxRate: row.taxRate === undefined ? 18 : Number(row.taxRate),
         media: product.media || row.media || {},
         area: row.area || row.room || 'General Selection',
         quoteImage: row.quoteImage || row.customImageUrl || '',

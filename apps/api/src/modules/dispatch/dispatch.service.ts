@@ -240,9 +240,216 @@ export class DispatchService {
         invalidLines: lineStatus.filter((line: any) => line.status === 'invalid_product'),
         specialOrderLines: lineStatus.filter((line: any) => line.status === 'tile_special_order'),
         completedLines: lineStatus.filter((line: any) => line.status === 'fully_dispatched'),
-        challans: challansByJob.get(job.id) || [],
+      challans: challansByJob.get(job.id) || [],
       };
     });
+  }
+
+  async reservedDispatchLines(args?: {
+    search?: string;
+    status?: string;
+    cursor?: string;
+    take?: number;
+  }) {
+    const limit = Math.max(1, Math.min(100, Math.trunc(Number(args?.take || 30))));
+    const search = String(args?.search || '').trim();
+    const lineWhere: any = {};
+
+    if (search) {
+      const [products, customers] = await Promise.all([
+        this.prisma.product.findMany({
+          where: { OR: [
+            { sku: { contains: search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+            { brand: { contains: search, mode: 'insensitive' } },
+          ] },
+          select: { id: true },
+          take: 200,
+        }),
+        this.prisma.customer.findMany({
+          where: { OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { mobile: { contains: search, mode: 'insensitive' } },
+            { email: { contains: search, mode: 'insensitive' } },
+          ] },
+          select: { id: true },
+          take: 200,
+        }),
+      ]);
+      const orders = await this.prisma.salesOrder.findMany({
+        where: { OR: [
+          { orderNumber: { contains: search, mode: 'insensitive' } },
+          { quoteId: { contains: search, mode: 'insensitive' } },
+          ...(customers.length ? [{ customerId: { in: customers.map((row) => row.id) } }] : []),
+        ] },
+        select: { id: true },
+        take: 200,
+      });
+      lineWhere.OR = [
+        { sku: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { brand: { contains: search, mode: 'insensitive' } },
+        ...(products.length ? [{ productId: { in: products.map((row) => row.id) } }] : []),
+        ...(orders.length ? [{ salesOrderId: { in: orders.map((row) => row.id) } }] : []),
+      ];
+    }
+
+    const status = String(args?.status || '').trim().toLowerCase();
+    if (status === 'pending_inward') lineWhere.backorderedQuantity = { gt: 0 };
+    else if (status === 'ready_to_pick') lineWhere.status = { in: ['open', 'reserved', 'ready', 'partial_ready'] };
+    else if (status === 'partial_dispatch') lineWhere.status = 'partial_dispatched';
+    else if (status === 'dispatched') lineWhere.status = 'dispatched';
+    else if (status === 'delivered') lineWhere.status = 'delivered';
+    else if (status === 'needs_reservation') lineWhere.reservedQuantity = 0;
+
+    const query: any = {
+      where: lineWhere,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+    };
+    const cursor = String(args?.cursor || '').trim();
+    if (cursor) {
+      query.cursor = { id: cursor };
+      query.skip = 1;
+    }
+    const [rawLines, aggregate, total] = await Promise.all([
+      this.prisma.salesOrderLine.findMany(query) as any,
+      this.prisma.salesOrderLine.aggregate({
+        where: lineWhere,
+        _sum: { orderedQuantity: true, reservedQuantity: true, allocatedQuantity: true, backorderedQuantity: true, dispatchedQuantity: true, deliveredQuantity: true, returnedQuantity: true },
+      }) as any,
+      this.prisma.salesOrderLine.count({ where: lineWhere }),
+    ]);
+    const hasNextPage = rawLines.length > limit;
+    const page = hasNextPage ? rawLines.slice(0, limit) : rawLines;
+    if (!page.length) {
+      return { items: [], nextCursor: null, total, summary: this.dispatchLineSummary(aggregate?._sum || {}) };
+    }
+
+    const orderIds = Array.from(new Set(page.map((line: any) => line.salesOrderId).filter(Boolean))) as string[];
+    const productIds = Array.from(new Set(page.map((line: any) => line.productId).filter(Boolean))) as string[];
+    const lineIds = page.map((line: any) => line.id) as string[];
+    const [orders, products, reservations, allocations, picks, dispatchLines, demands] = await Promise.all([
+      this.prisma.salesOrder.findMany({ where: { id: { in: orderIds } } }) as any,
+      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, sku: true, name: true, brand: true, media: true } }) as any : [],
+      this.prisma.reservation.findMany({ where: { salesOrderLineId: { in: lineIds }, status: { in: ['reserved', 'backordered'] } } }) as any,
+      this.prisma.lotReservation.findMany({ where: { salesOrderLineId: { in: lineIds }, status: 'reserved' }, include: { lot: true, location: true } }) as any,
+      this.prisma.pickLine.findMany({ where: { salesOrderLineId: { in: lineIds }, status: { notIn: ['cancelled', 'dispatched'] } }, include: { pickList: true, lot: true, location: true } }) as any,
+      this.prisma.dispatchLine.findMany({ where: { salesOrderLineId: { in: lineIds }, status: { not: 'cancelled' } } }) as any,
+      orderIds.length ? (this.prisma as any).purchaseDemand.findMany({ where: { sourceOrderId: { in: orderIds }, status: { notIn: ['closed', 'cancelled'] } } }) : [],
+    ]);
+    const orderMap = new Map((orders as any[]).map((row) => [row.id, row]));
+    const productMap = new Map((products as any[]).map((row) => [row.id, row]));
+    const reservationsByLine = this.groupByKey(reservations as any[], 'salesOrderLineId');
+    const allocationsByLine = this.groupByKey(allocations as any[], 'salesOrderLineId');
+    const picksByLine = this.groupByKey(picks as any[], 'salesOrderLineId');
+    const dispatchesByLine = this.groupByKey(dispatchLines as any[], 'salesOrderLineId');
+    const demandByKey = new Map((demands as any[]).map((row) => [`${row.sourceOrderId}:${row.sourceLineKey}`, row]));
+    const demandBySku = new Map((demands as any[]).map((row) => [`${row.sourceOrderId}:${row.sku}`, row]));
+    const customerIds = Array.from(new Set((orders as any[]).map((row) => row.customerId).filter(Boolean)));
+    const customers = customerIds.length ? await this.prisma.customer.findMany({ where: { id: { in: customerIds } }, select: { id: true, name: true, mobile: true, city: true, siteAddress: true } }) : [];
+    const customerMap = new Map((customers as any[]).map((row) => [row.id, row]));
+
+    const items = page.map((line: any) => {
+      const order = orderMap.get(line.salesOrderId) as any;
+      const ordered = Math.max(0, Number(line.orderedQuantity || 0));
+      const reserved = Math.max(0, Number(line.reservedQuantity || 0));
+      const allocated = Math.max(0, Number(line.allocatedQuantity || 0));
+      const backordered = Math.max(0, Number(line.backorderedQuantity || 0));
+      const dispatched = Math.max(0, Number(line.dispatchedQuantity || 0));
+      const delivered = Math.max(0, Number(line.deliveredQuantity || 0));
+      const returned = Math.max(0, Number(line.returnedQuantity || 0));
+      const leftToDispatch = Math.max(0, ordered + returned - dispatched);
+      const readyToPick = Math.max(0, Math.min(leftToDispatch, reserved + allocated));
+      const status = delivered >= ordered && ordered > 0
+        ? 'delivered'
+        : dispatched >= ordered && ordered > 0
+          ? 'dispatched'
+          : dispatched > 0
+            ? 'partial_dispatch'
+            : backordered > 0
+              ? 'pending_inward'
+              : readyToPick > 0
+                ? 'ready_to_pick'
+                : 'needs_reservation';
+      const lineReservations = reservationsByLine.get(line.id) || [];
+      const lineAllocations = allocationsByLine.get(line.id) || [];
+      const linePicks = picksByLine.get(line.id) || [];
+      const lineDispatches = dispatchesByLine.get(line.id) || [];
+      const demand = demandByKey.get(`${line.salesOrderId}:${line.lineKey}`) || demandBySku.get(`${line.salesOrderId}:${line.sku}`) || null;
+      return {
+        id: line.id,
+        salesOrderId: line.salesOrderId,
+        quoteId: line.quoteId,
+        lineKey: line.lineKey,
+        lineNo: line.lineNo,
+        productId: line.productId,
+        sku: line.sku,
+        name: line.name,
+        category: line.category,
+        brand: line.brand,
+        finish: line.finish,
+        unit: line.unit,
+        orderedQuantity: ordered,
+        reservedQuantity: reserved,
+        allocatedQuantity: allocated,
+        backorderedQuantity: backordered,
+        dispatchedQuantity: dispatched,
+        deliveredQuantity: delivered,
+        returnedQuantity: returned,
+        leftToDispatch,
+        readyToPick,
+        status,
+        nextAction: status === 'pending_inward' ? 'Receive or convert PO' : status === 'ready_to_pick' ? 'Create or continue pick' : status === 'partial_dispatch' ? 'Dispatch remaining balance' : status === 'needs_reservation' ? 'Reserve stock' : status === 'dispatched' ? 'Confirm delivery' : status,
+        order: order ? { id: order.id, orderNumber: order.orderNumber, status: order.status, paymentMode: order.paymentMode, paymentStatus: order.paymentStatus, totalAmount: order.totalAmount } : null,
+        customer: order ? customerMap.get(order.customerId) || null : null,
+        product: productMap.get(line.productId) || null,
+        purchaseDemand: demand,
+        reservations: lineReservations,
+        lotAllocations: lineAllocations,
+        openPickLines: linePicks,
+        dispatchLines: lineDispatches,
+      };
+    });
+    return {
+      items,
+      nextCursor: hasNextPage ? page[page.length - 1].id : null,
+      total,
+      summary: this.dispatchLineSummary(aggregate?._sum || {}),
+    };
+  }
+
+  private groupByKey(rows: any[], key: string) {
+    const groups = new Map<string, any[]>();
+    for (const row of rows || []) {
+      const value = String(row?.[key] || '');
+      if (!value) continue;
+      groups.set(value, [...(groups.get(value) || []), row]);
+    }
+    return groups;
+  }
+
+  private dispatchLineSummary(sum: any) {
+    const ordered = Number(sum.orderedQuantity || 0);
+    const reserved = Number(sum.reservedQuantity || 0);
+    const allocated = Number(sum.allocatedQuantity || 0);
+    const backordered = Number(sum.backorderedQuantity || 0);
+    const dispatched = Number(sum.dispatchedQuantity || 0);
+    const delivered = Number(sum.deliveredQuantity || 0);
+    const returned = Number(sum.returnedQuantity || 0);
+    const leftToDispatch = Math.max(0, ordered + returned - dispatched);
+    return {
+      ordered,
+      reserved,
+      allocated,
+      backordered,
+      dispatched,
+      delivered,
+      returned,
+      leftToDispatch,
+      readyToPick: Math.max(0, Math.min(leftToDispatch, reserved + allocated)),
+      pendingInward: backordered,
+    };
   }
 
   async findJobById(id: string): Promise<any> {

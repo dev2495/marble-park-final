@@ -1,139 +1,148 @@
 'use client';
 
+import { useDeferredValue, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { gql, useQuery } from '@apollo/client';
-import { useState } from 'react';
-import { CreditCard, Download, IndianRupee, Receipt, Truck, WalletCards } from 'lucide-react';
+import { CreditCard, Download, IndianRupee, PackageCheck, PackageOpen, Receipt, Search, Truck, WalletCards } from 'lucide-react';
 import { QueryErrorBanner } from '@/components/query-state';
 
-const ORDERS = gql`
-  query SalesOrders($paymentMode: String, $range: String) {
-    salesOrders(paymentMode: $paymentMode, range: $range)
-    salesOrderStats(range: $range)
+const CONTROL_TOWER = gql`
+  query SalesOrderControlTower($search: String, $fulfillmentStatus: String, $paymentMode: String, $range: String, $cursor: String, $take: Float) {
+    salesOrderControlTower(search: $search, fulfillmentStatus: $fulfillmentStatus, paymentMode: $paymentMode, range: $range, cursor: $cursor, take: $take)
   }
 `;
 
 function money(value: number) {
-  return `₹${Math.round(value || 0).toLocaleString('en-IN')}`;
+  return `₹${Math.round(Number(value || 0)).toLocaleString('en-IN')}`;
 }
 
-function orderLines(order: any) {
-  return Array.isArray(order?.lines) ? order.lines : [];
+function qty(value: number) {
+  return Math.round(Number(value || 0)).toLocaleString('en-IN');
 }
+
+function statusLabel(value: string) {
+  return String(value || 'open').replaceAll('_', ' ');
+}
+
+function statusTone(value: string) {
+  const status = String(value || '').toLowerCase();
+  if (status === 'delivered' || status === 'dispatched') return 'bg-emerald-50 text-emerald-800 ring-emerald-200';
+  if (status === 'pending_inward') return 'bg-amber-50 text-amber-900 ring-amber-200';
+  if (status === 'partial_dispatch' || status === 'partial_ready') return 'bg-blue-50 text-blue-800 ring-blue-200';
+  if (status === 'ready_to_pick') return 'bg-cyan-50 text-cyan-800 ring-cyan-200';
+  return 'bg-slate-100 text-slate-700 ring-slate-200';
+}
+
+const statusFilters = [
+  ['all', 'All orders'],
+  ['ready_to_pick', 'Ready to pick'],
+  ['pending_inward', 'Pending inward'],
+  ['partial_dispatch', 'Partially dispatched'],
+  ['left_to_dispatch', 'Left to dispatch'],
+  ['dispatched', 'Dispatched'],
+  ['delivered', 'Delivered'],
+];
 
 export default function OrdersPage() {
-  const [range, setRange] = useState('today');
+  const [range, setRange] = useState('all');
   const [paymentMode, setPaymentMode] = useState('');
-  const { data, loading, error, refetch } = useQuery(ORDERS, {
-    variables: { paymentMode: paymentMode || undefined, range },
+  const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
+  const [search, setSearch] = useState('');
+  const [cursor, setCursor] = useState('');
+  const [items, setItems] = useState<any[]>([]);
+  const deferredSearch = useDeferredValue(search);
+  const { data, loading, error, refetch, fetchMore } = useQuery(CONTROL_TOWER, {
+    variables: { search: deferredSearch || undefined, fulfillmentStatus, paymentMode: paymentMode || undefined, range, take: 25 },
+    notifyOnNetworkStatusChange: true,
   });
-  const stats = data?.salesOrderStats || {};
-  const orders = data?.salesOrders || [];
+  const tower = data?.salesOrderControlTower || { items: [], summary: {}, total: 0 };
+
+  useEffect(() => {
+    if (!cursor) setItems(tower.items || []);
+  }, [tower.items, cursor]);
+
+  const summary = tower.summary || {};
+  const resetPage = (next: () => void) => {
+    setCursor('');
+    setItems([]);
+    next();
+  };
+  const loadMore = async () => {
+    if (!tower.nextCursor || loading) return;
+    const result = await fetchMore({ variables: { cursor: tower.nextCursor } });
+    const nextItems = result.data?.salesOrderControlTower?.items || [];
+    setItems((current) => [...current, ...nextItems.filter((row: any) => !current.some((existing) => existing.id === row.id))]);
+    setCursor(tower.nextCursor);
+  };
 
   return (
     <div className="space-y-6 pb-10">
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
-
-      <section className="mp-card rounded-r6 p-6 text-[#18181b] dark:text-[#f8fafc]">
-        <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a] dark:text-[#94a3b8]">Sales orders</p>
-        <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em]">Cash, credit and dispatch-ready order book.</h1>
-        <p className="mt-4 max-w-3xl text-sm text-[#52525b] dark:text-[#cbd5e1]">
-          Quotes convert here without owner approval. Inventory is reserved when available, backorders stay blocked until inward, and every order carries a forwarding PDF.
-        </p>
-      </section>
-
-      <section className="mp-card flex flex-wrap gap-2 rounded-r5 p-3">
-        {['today', 'week', 'month', 'all'].map((item) => (
-          <button
-            key={item}
-            onClick={() => setRange(item)}
-            className={`rounded-2xl px-4 py-3 text-sm font-black uppercase tracking-wider ${range === item ? 'bg-[#18181b] text-white dark:bg-white dark:text-[#111827]' : 'bg-white/70 text-[#27272a] dark:bg-white/8 dark:text-[#e2e8f0]'}`}
-          >
-            {item}
-          </button>
-        ))}
-        <span className="mx-2 hidden h-10 w-px bg-[#cbd5e1]/25 sm:block" />
-        {[
-          ['', 'All'],
-          ['cash', 'Cash'],
-          ['credit', 'Credit'],
-        ].map(([value, label]) => (
-          <button
-            key={value || 'all'}
-            onClick={() => setPaymentMode(value)}
-            className={`rounded-2xl px-4 py-3 text-sm font-black uppercase tracking-wider ${paymentMode === value ? 'bg-[#2563eb] text-white' : 'bg-white/70 text-[#27272a] dark:bg-white/8 dark:text-[#e2e8f0]'}`}
-          >
-            {label}
-          </button>
-        ))}
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[
-          [Receipt, 'Orders', stats.totalOrders || 0],
-          [IndianRupee, 'Total value', money(stats.totalValue || 0)],
-          [WalletCards, 'Cash / advance', `${stats.cashOrders || 0} · ${money(stats.cashAdvance || 0)}`],
-          [CreditCard, 'Credit value', `${stats.creditOrders || 0} · ${money(stats.creditValue || 0)}`],
-        ].map(([Icon, label, value]: any) => (
-          <div key={label} className="mp-card rounded-r5 p-5">
-            <Icon className="h-6 w-6 text-[#2563eb]" />
-            <p className="mt-5 text-3xl font-semibold text-[#18181b] dark:text-[#f8fafc]">{loading ? '...' : value}</p>
-            <p className="mt-1 text-xs font-medium uppercase tracking-widest text-[#52525b] dark:text-[#94a3b8]">{label}</p>
+      <section className="mp-card rounded-r6 border border-[var(--line)] p-6 text-[var(--ink)] shadow-md-soft">
+        <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-[var(--brand-700)]">Operations control tower</p>
+            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em]">Order book, stock readiness and dispatch balance.</h1>
+            <p className="mt-3 max-w-3xl text-sm font-semibold leading-6 text-[var(--ink-4)]">Every quantity below is read from SalesOrderLine, reservations and dispatch records. A pending inward line stays visible until receiving creates available stock.</p>
           </div>
-        ))}
+          <div className="flex flex-wrap gap-2 text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">
+            <span className="rounded-full bg-[var(--brand-50)] px-3 py-2">{Number(tower.total || 0).toLocaleString('en-IN')} matching orders</span>
+            <span className="rounded-full bg-emerald-50 px-3 py-2 text-emerald-800">Live stock lifecycle</span>
+          </div>
+        </div>
       </section>
 
-      <section className="overflow-hidden rounded-r5 border border-[#e4e4e7]/20 bg-white/80 shadow-xl shadow-[#475569]/8 dark:border-white/10 dark:bg-[#111827]/80">
-        <div className="hidden grid-cols-[0.9fr_1fr_0.7fr_0.7fr_0.9fr] gap-4 border-b border-[#e4e4e7]/20 bg-[#eff6ff]/75 px-5 py-4 text-xs font-medium uppercase tracking-widest text-[#52525b] dark:border-white/10 dark:bg-white/5 dark:text-[#94a3b8] lg:grid">
-          <div>Order</div>
-          <div>Customer / sales</div>
-          <div>Payment</div>
-          <div className="text-right">Value</div>
-          <div>Documents / dispatch</div>
+      <section className="mp-card flex flex-col gap-3 rounded-r5 border border-[var(--line)] p-3 shadow-sm lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--ink-5)]" />
+          <input value={search} onChange={(event) => resetPage(() => setSearch(event.target.value))} placeholder="Search order, quote, customer, SKU or brand" aria-label="Search orders" className="h-12 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] pl-12 pr-4 text-sm font-semibold text-[var(--ink)] outline-none focus:border-[var(--brand-500)] focus:ring-4 focus:ring-[var(--ring)]" />
         </div>
-        <div className="divide-y divide-[#cbd5e1]/20 dark:divide-white/10">
-          {loading && <div className="p-10 text-center text-sm font-bold text-[#52525b] dark:text-[#94a3b8]">Loading orders...</div>}
-          {!loading && !orders.length && <div className="p-10 text-center text-sm font-bold text-[#52525b] dark:text-[#94a3b8]">No orders in this filter.</div>}
-          {orders.map((order: any) => {
+        <div className="flex flex-wrap gap-2">
+          {['all', 'today', 'week', 'month'].map((value) => <button key={value} type="button" onClick={() => resetPage(() => setRange(value))} className={`rounded-xl px-3 py-2 text-xs font-black uppercase tracking-wider ${range === value ? 'bg-[var(--ink)] text-white' : 'bg-[var(--muted)] text-[var(--ink-3)]'}`}>{value}</button>)}
+          <span className="mx-1 hidden h-8 w-px bg-[var(--line)] sm:block" />
+          {[['', 'All payment'], ['cash', 'Cash'], ['credit', 'Credit']].map(([value, label]) => <button key={label} type="button" onClick={() => resetPage(() => setPaymentMode(value))} className={`rounded-xl px-3 py-2 text-xs font-black uppercase tracking-wider ${paymentMode === value ? 'bg-[var(--brand-600)] text-white' : 'bg-[var(--muted)] text-[var(--ink-3)]'}`}>{label}</button>)}
+        </div>
+      </section>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        {[
+          [Receipt, 'Order book', qty(summary.orders), 'orders'],
+          [IndianRupee, 'Total value', money(summary.totalValue), 'commercial'],
+          [WalletCards, 'Balance due', money(summary.balanceValue), 'after advance'],
+          [PackageCheck, 'Reserved', qty(summary.reservedQty), 'units'],
+          [Truck, 'Left to dispatch', qty(summary.leftToDispatchQty), 'units'],
+          [PackageOpen, 'Pending inward', qty(summary.pendingInwardQty), 'units'],
+        ].map(([Icon, label, value, caption]: any) => <div key={label} className="mp-card rounded-r5 border border-[var(--line)] p-4 shadow-sm"><Icon className="h-5 w-5 text-[var(--brand-600)]" /><p className="mt-4 truncate text-2xl font-black text-[var(--ink)]">{loading && !items.length ? '...' : value}</p><p className="mt-1 text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ink-4)]">{label}</p><p className="mt-1 text-xs font-semibold text-[var(--ink-5)]">{caption}</p></div>)}
+      </section>
+
+      <section className="mp-card rounded-r5 border border-[var(--line)] p-3 shadow-sm">
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+          {statusFilters.map(([value, label]) => <button key={value} type="button" onClick={() => resetPage(() => setFulfillmentStatus(value))} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black uppercase tracking-wider ${fulfillmentStatus === value ? 'bg-[var(--ink)] text-white' : 'bg-[var(--muted)] text-[var(--ink-3)]'}`}>{label}</button>)}
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] shadow-md-soft">
+        <div className="hidden grid-cols-[1.1fr_1fr_1fr_0.8fr_1fr] gap-4 border-b border-[var(--line)] bg-[var(--muted)] px-5 py-4 text-[10px] font-black uppercase tracking-[0.16em] text-[var(--ink-4)] lg:grid">
+          <div>Order / customer</div><div>Fulfilment</div><div>Payment</div><div className="text-right">Value</div><div>Documents</div>
+        </div>
+        <div className="divide-y divide-[var(--line)]">
+          {loading && !items.length ? <div className="p-12 text-center text-sm font-bold text-[var(--ink-4)]">Loading operational order data...</div> : null}
+          {!loading && !items.length ? <div className="p-12 text-center"><Receipt className="mx-auto h-8 w-8 text-[var(--brand-600)]" /><p className="mt-3 font-black text-[var(--ink)]">No orders match this view.</p><p className="mt-1 text-sm font-semibold text-[var(--ink-4)]">Change the search or status filter to inspect another part of the order book.</p></div> : null}
+          {items.map((order: any) => {
+            const quantities = order.quantities || {};
             const docs = order.documents || {};
-            const salesOrderPdfUrl = docs.salesOrderPdf?.url || docs.salesOrderPdfUrl || `/api/pdf/order/${order.id}`;
-            const quotePdfUrl = docs.quotePdf?.url || docs.quotePdfUrl || `/api/pdf/quote/${order.quoteId}`;
-            const salesOrderPdfStatus = docs.salesOrderPdf?.status || 'generated_on_request';
-            return (
-              <article key={order.id} className="grid gap-4 p-5 lg:grid-cols-[0.9fr_1fr_0.7fr_0.7fr_0.9fr] lg:items-center">
-                <div>
-                  <p className="text-lg font-semibold text-[#18181b] dark:text-[#f8fafc]">{order.orderNumber}</p>
-                  <p className="mt-1 text-xs font-bold text-[#52525b] dark:text-[#94a3b8]">Quote {order.quoteId}</p>
-                  <p className="mt-1 text-xs font-bold text-[#52525b] dark:text-[#94a3b8]">{orderLines(order).length} line(s)</p>
-                </div>
-                <div>
-                  <p className="font-semibold text-[#18181b] dark:text-[#f8fafc]">{order.customer?.name || 'Customer'}</p>
-                  <p className="text-xs font-bold text-[#52525b] dark:text-[#94a3b8]">{order.owner?.name || 'Sales user'}</p>
-                </div>
-                <div>
-                  <span className={`rounded-full px-3 py-1.5 text-xs font-medium uppercase tracking-wider ${order.paymentMode === 'cash' ? 'bg-[#ecfdf5] text-[#059669] dark:bg-[#064e3b] dark:text-[#bbf7d0]' : 'bg-[#eff6ff] text-[#1d4ed8] dark:bg-[#1e3a8a] dark:text-[#bfdbfe]'}`}>
-                    {order.paymentMode} · {order.paymentStatus}
-                  </span>
-                  {order.advanceAmount > 0 && <p className="mt-2 text-xs font-bold text-[#52525b] dark:text-[#94a3b8]">Advance {money(order.advanceAmount)}</p>}
-                </div>
-                <div className="text-right text-xl font-semibold text-[#18181b] dark:text-[#f8fafc]">{money(order.totalAmount)}</div>
-                <div className="flex flex-wrap gap-2 text-sm font-semibold">
-                  <a className="inline-flex items-center rounded-2xl bg-[#2563eb] px-3 py-2 text-xs font-black uppercase tracking-wider text-white" href={salesOrderPdfUrl} target="_blank" rel="noreferrer">
-                    <Download className="mr-2 h-4 w-4" /> Order PDF
-                  </a>
-                  <a className="inline-flex items-center rounded-2xl bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-[#1d4ed8] ring-1 ring-[#dbeafe] dark:bg-white/8 dark:text-[#bfdbfe] dark:ring-white/10" href={quotePdfUrl} target="_blank" rel="noreferrer">
-                    Quote PDF
-                  </a>
-                  <span className="inline-flex items-center rounded-2xl bg-[#f8fafc] px-3 py-2 text-xs font-black uppercase tracking-wider text-[#475569] ring-1 ring-[#e2e8f0] dark:bg-white/8 dark:text-[#cbd5e1] dark:ring-white/10">
-                    <Truck className="mr-2 h-4 w-4" /> {order.status}
-                  </span>
-                  <span className="inline-flex items-center rounded-2xl bg-[#ecfdf5] px-3 py-2 text-xs font-black uppercase tracking-wider text-[#047857] ring-1 ring-[#bbf7d0]">
-                    PDF {salesOrderPdfStatus.replaceAll('_', ' ')}
-                  </span>
-                </div>
-              </article>
-            );
+            const orderPdf = docs.salesOrderPdf?.url || docs.salesOrderPdfUrl || `/api/pdf/order/${order.id}`;
+            const quotePdf = docs.quotePdf?.url || docs.quotePdfUrl || `/api/pdf/quote/${order.quoteId}`;
+            return <article key={order.id} className="grid gap-5 p-5 lg:grid-cols-[1.1fr_1fr_1fr_0.8fr_1fr] lg:items-center">
+              <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="text-lg font-black text-[var(--ink)]">{order.orderNumber}</p><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ring-1 ${statusTone(order.fulfillmentStatus)}`}>{statusLabel(order.fulfillmentStatus)}</span></div><Link href={`/dashboard/quotes/${order.quoteId}`} className="mt-1 block truncate text-xs font-bold text-[var(--brand-700)] hover:underline">Quote {order.quoteNumber || order.quoteId}</Link><p className="mt-2 truncate text-sm font-black text-[var(--ink)]">{order.customer?.name || 'Customer'}</p><p className="text-xs font-semibold text-[var(--ink-4)]">{order.owner?.name || 'Sales user'} · {order.lines?.length || 0} line(s)</p></div>
+              <div className="space-y-2 text-xs font-bold text-[var(--ink-3)]"><div className="flex justify-between gap-3"><span>Reserved / ready</span><span className="text-emerald-700">{qty(quantities.reserved)} / {qty(quantities.readyToPick)}</span></div><div className="flex justify-between gap-3"><span>Left to dispatch</span><span className="text-[var(--brand-700)]">{qty(quantities.leftToDispatch)}</span></div><div className="flex justify-between gap-3"><span>Pending inward</span><span className="text-amber-800">{qty(quantities.backordered)}</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[var(--muted)]"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${quantities.ordered ? Math.min(100, (quantities.dispatched / quantities.ordered) * 100) : 0}%` }} /></div><p className="text-[10px] uppercase tracking-wider text-[var(--ink-5)]">{qty(quantities.dispatched)} / {qty(quantities.ordered)} dispatched</p></div>
+              <div><span className={`inline-flex rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${order.paymentMode === 'cash' ? 'bg-emerald-50 text-emerald-800' : 'bg-blue-50 text-blue-800'}`}>{order.paymentMode} · {order.paymentStatus}</span><p className="mt-2 text-xs font-bold text-[var(--ink-4)]">Advance {money(order.advanceAmount)}</p><p className="mt-1 text-xs font-bold text-[var(--ink-4)]">{order.paymentTerms || 'Terms not recorded'}</p></div>
+              <div className="text-left lg:text-right"><p className="text-xl font-black text-[var(--ink)]">{money(order.totalAmount)}</p><p className="mt-1 text-xs font-semibold text-[var(--ink-4)]">Due {money(Math.max(0, Number(order.totalAmount || 0) - Number(order.advanceAmount || 0)))}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ink-5)]">{order.promisedDate ? `Promise ${new Date(order.promisedDate).toLocaleDateString('en-IN')}` : 'No promise date'}</p></div>
+              <div className="flex flex-wrap gap-2"><a href={orderPdf} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-xl bg-[var(--brand-600)] px-3 py-2 text-[10px] font-black uppercase tracking-wider text-white"><Download className="mr-1.5 h-3.5 w-3.5" /> Order PDF</a><a href={quotePdf} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--ink-3)]">Quote PDF</a><span className="inline-flex items-center rounded-xl bg-[var(--muted)] px-3 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--ink-4)]"><Truck className="mr-1.5 h-3.5 w-3.5" /> {order.dispatch?.job?.status || 'No dispatch job'}</span></div>
+            </article>;
           })}
         </div>
+        {tower.nextCursor ? <div className="border-t border-[var(--line)] p-4 text-center"><button type="button" disabled={loading} onClick={loadMore} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)] disabled:opacity-50">{loading ? 'Loading...' : 'Load more orders'}</button></div> : null}
       </section>
     </div>
   );

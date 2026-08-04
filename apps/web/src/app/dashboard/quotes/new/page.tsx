@@ -56,6 +56,13 @@ function pricingBasis(line: any): TileRateBasis {
   return ['SQFT', 'SQM', 'M2'].includes(uom) ? 'AREA' : uom === 'PC' ? 'PIECE' : 'PACK';
 }
 
+function mrpUom(line: any) {
+  const basis = pricingBasis(line);
+  if (basis === 'AREA') return String(line.pricingUom || line.salesUom || 'SQFT').toUpperCase();
+  if (basis === 'PIECE') return 'PC';
+  return String(line.inventoryUom || line.purchaseUom || line.unit || 'BOX').toUpperCase();
+}
+
 function areaPriced(line: any) {
   return pricingBasis(line) === 'AREA' && Number(line.coveragePerPack || 0) > 0;
 }
@@ -158,7 +165,7 @@ export default function QuoteBuilderPage() {
     const wastagePercent = isTile ? 10 : 0;
     const requestedArea = isTile && coveragePerPack > 0 ? coveragePerPack : 0;
     const qty = rateBasis === 'AREA' ? packsForArea(requestedArea, wastagePercent, coveragePerPack) : 1;
-    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces: isTile ? Number(product.piecesPerPack || 1) : 0, wastagePercent, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom, pricingUom, rateBasis, sourceSalesUom: pricingUom, sourceSellPrice: Number(product.sellPrice || 0), price: product.sellPrice || 0, listPrice: product.sellPrice || 0, specialRate: '', discountPercent: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
+    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces: isTile ? Number(product.piecesPerPack || 1) : 0, wastagePercent, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom, pricingUom, rateBasis, sourceSalesUom: pricingUom, sourceSellPrice: Number(product.sellPrice || 0), price: product.sellPrice || 0, listPrice: product.sellPrice || 0, mrp: '', mrpRateBasis: rateBasis, mrpSource: 'quote_entry', specialRate: '', discountPercent: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
     const matchedBrand = brands.find((brand: any) => String(brand.name || '').trim().toLowerCase() === String(product.brand || '').trim().toLowerCase());
     if (matchedBrand) setSelectedBrandIds((current) => current.includes(String(matchedBrand.id)) ? current : [...current, String(matchedBrand.id)]);
     setSearchQuery('');
@@ -194,6 +201,8 @@ export default function QuoteBuilderPage() {
       qty: nextQty,
       requestedArea,
       requestedPieces,
+      mrp: '',
+      mrpRateBasis: basis,
       listPrice: rateForBasis(Number(line.sourceSellPrice ?? line.listPrice ?? line.price ?? 0), sourceUom, basis, Number(line.piecesPerPack || 1), Number(line.coveragePerPack || 0)),
       price: rateForBasis(Number(line.sourceSellPrice ?? line.listPrice ?? line.price ?? 0), sourceUom, basis, Number(line.piecesPerPack || 1), Number(line.coveragePerPack || 0)),
       specialRate: '',
@@ -208,8 +217,13 @@ export default function QuoteBuilderPage() {
     const unitRate = specialRate !== null && Number.isFinite(specialRate) ? specialRate : listPrice * (1 - discountPercent / 100);
     const pricingQuantity = areaPriced(line) ? quantity * Number(line.coveragePerPack || 0) : pricingBasis(line) === 'PIECE' ? quantity * Number(line.piecesPerPack || 1) : quantity;
     const taxableValue = pricingQuantity * Math.max(0, unitRate);
-    const taxAmount = taxMode === 'non_gst' ? 0 : taxableValue * Math.max(0, Number(line.taxRate ?? 18)) / 100;
-    return { unitRate, pricingQuantity, taxableValue, taxAmount, total: taxableValue + taxAmount };
+    const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
+    const taxAmount = taxableValue * taxRate / 100;
+    const rawMrp = line.mrp === '' || line.mrp === null || line.mrp === undefined ? null : Number(line.mrp);
+    const mrpMissing = rawMrp === null || !Number.isFinite(rawMrp) || rawMrp <= 0;
+    const finalUnitPayable = Math.max(0, unitRate) * (1 + taxRate / 100);
+    const mrpValid = !mrpMissing && finalUnitPayable <= Number(rawMrp) + 0.5;
+    return { unitRate, pricingQuantity, taxableValue, taxAmount, total: taxableValue + taxAmount, mrp: rawMrp, mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(line) };
   };
   const subtotal = lines.reduce((sum, line) => sum + lineCommercial(line).taxableValue, 0);
   const tax = lines.reduce((sum, line) => sum + lineCommercial(line).taxAmount, 0);
@@ -231,6 +245,14 @@ export default function QuoteBuilderPage() {
       setValidationError(`Quantity must be greater than 0 (line: ${invalidLine.name || invalidLine.sku || 'unnamed'}).`);
       return;
     }
+    const mrpIssue = lines.map((line) => ({ line, commercial: lineCommercial(line) })).find(({ commercial }) => commercial.mrpMissing || !commercial.mrpValid);
+    if (mrpIssue) {
+      const { line, commercial } = mrpIssue;
+      setValidationError(commercial.mrpMissing
+        ? `MRP is required for ${line.sku || line.name}, entered per ${commercial.mrpUom}.`
+        : `${line.sku || line.name} exceeds MRP: payable ${money(commercial.finalUnitPayable)} per ${commercial.mrpUom}, MRP ${money(commercial.mrp || 0)}.`);
+      return;
+    }
     let ownerId = '';
     try {
       ownerId = JSON.parse(localStorage.getItem('user') || 'null')?.id || '';
@@ -249,7 +271,7 @@ export default function QuoteBuilderPage() {
             quoteMeta: JSON.stringify({ remarks: 'Prepared from quote studio.', taxMode, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds }),
             lines: JSON.stringify(lines.map(({ id, ...line }) => {
               const commercial = lineCommercial(line);
-              return { ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), listPrice: Number(line.listPrice ?? line.price ?? 0), price: Number(line.listPrice ?? line.price ?? 0), unitRate: commercial.unitRate, pricingQuantity: commercial.pricingQuantity, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, total: commercial.total };
+              return { ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), listPrice: Number(line.listPrice ?? line.price ?? 0), price: Number(line.listPrice ?? line.price ?? 0), mrp: Number(commercial.mrp), mrpRateBasis: pricingBasis(line), mrpSource: line.mrpSource || 'quote_entry', unitRate: commercial.unitRate, pricingQuantity: commercial.pricingQuantity, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, total: commercial.total };
             })),
           },
         },
@@ -385,14 +407,15 @@ export default function QuoteBuilderPage() {
           </div>
 
           <div className="mt-6 overflow-hidden rounded-r4 border border-[#e4e4e7]/12 bg-white/70">
-            <table className="w-full min-w-[1080px] text-left">
-              <thead className="bg-[#eff6ff]/70 text-xs font-medium uppercase tracking-widest text-[#52525b]"><tr><th className="px-4 py-4">Product</th><th className="px-4 py-4 text-center">Quantity / coverage</th><th className="px-4 py-4 text-right">List rate</th><th className="px-4 py-4 text-right">Negotiated</th><th className="px-4 py-4 text-right">{taxMode === 'gst' ? 'GST' : 'Tax'}</th><th className="px-4 py-4 text-right">Total</th><th className="px-4 py-4" /></tr></thead>
+              <table className="w-full min-w-[1240px] text-left">
+              <thead className="bg-[#eff6ff]/70 text-xs font-medium uppercase tracking-widest text-[#52525b]"><tr><th className="px-4 py-4">Product</th><th className="px-4 py-4 text-center">Quantity / coverage</th><th className="px-4 py-4 text-right">List rate</th><th className="px-4 py-4 text-right">MRP</th><th className="px-4 py-4 text-right">Negotiated</th><th className="px-4 py-4 text-right">{taxMode === 'gst' ? 'GST' : 'Tax'}</th><th className="px-4 py-4 text-right">Total</th><th className="px-4 py-4" /></tr></thead>
               <tbody className="divide-y divide-[#cbd5e1]/10">
                 {lines.map((line) => (
                   <tr key={line.id}>{(() => { const commercial = lineCommercial(line); return <>
                     <td className="px-4 py-4"><div className="flex items-center gap-4"><ProductImageFrame src={line.quoteImage || productImage(line.media)} alt={line.name} className="h-24 w-28 shrink-0 rounded-md" imageClassName="p-1.5" /><div className="min-w-0 space-y-2"><input list="mp-area-list" value={line.area || ''} onChange={(event)=>updateLine(line.id,{area:event.target.value})} placeholder="Area / room" className="h-8 w-full rounded-md border border-[#e4e4e7]/15 bg-white px-3 text-xs font-medium uppercase tracking-wider text-[#2563eb]" /><p className="font-black">{line.internalCode || line.sku} · {line.name}</p><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{line.sku} · {line.unit}</p><input value={line.quoteImage || ''} onChange={(event)=>updateLine(line.id,{quoteImage:event.target.value})} placeholder="Optional HTTPS quote photo URL" className="h-8 w-full rounded-md border border-[#e4e4e7]/15 bg-white px-3 text-[10px] font-bold" /><p className="text-[10px] text-[#71717a]">External images are copied into Marble Park when the quote is saved.</p></div></div></td>
                     <td className="px-4 py-4 text-center">{isTileLine(line) ? <TileQuantityEditor line={line} onChangeBasis={(basis) => changeTileBasis(line.id, basis)} onChange={(patch) => updateLine(line.id, patch)} /> : <input type="number" value={line.qty} min={1} onChange={(event) => updateQty(line.id, Number(event.target.value) || 0)} className="h-10 w-20 rounded-md border border-[#e4e4e7] bg-white text-center text-sm font-semibold outline-none" />}</td>
-                    <td className="px-4 py-4 text-right"><input aria-label={`List rate for ${line.name}`} type="number" min={0} value={line.listPrice ?? line.price ?? 0} onChange={(event) => updateLine(line.id, { listPrice: event.target.value, price: event.target.value })} className="h-10 w-28 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold" /><p className="mt-1 text-xs text-[#52525b]">per {line.pricingUom || line.unit}</p></td>
+                    <td className="px-4 py-4 text-right"><input aria-label={`List rate for ${line.name}`} type="number" min={0} value={line.listPrice ?? line.price ?? 0} readOnly className="h-10 w-28 cursor-not-allowed rounded-md border border-[#e4e4e7] bg-[#f4f4f5] px-2 text-right text-sm font-semibold text-[#52525b]" /><p className="mt-1 text-xs text-[#52525b]">Product Master · per {line.pricingUom || line.unit}</p></td>
+                    <td className="px-4 py-4 text-right"><input aria-label={`MRP per ${commercial.mrpUom} for ${line.name}`} type="number" min={0.01} step="0.01" value={line.mrp ?? ''} onChange={(event) => updateLine(line.id, { mrp: event.target.value, mrpRateBasis: pricingBasis(line) })} className={`h-10 w-28 rounded-xl border px-2 text-right text-sm font-black ${commercial.mrpMissing || !commercial.mrpValid ? 'border-[#dc2626]/55 bg-[#fef2f2]' : 'border-[#059669]/35 bg-[#ecfdf5]'}`} /><p className="mt-1 text-xs font-semibold text-[#52525b]">tax-inclusive / {commercial.mrpUom}</p></td>
                     <td className="px-4 py-4 text-right"><input aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate} placeholder={money(commercial.unitRate)} onChange={(event) => updateLine(line.id, { specialRate: event.target.value })} className="h-10 w-28 rounded-xl border border-[#2563eb]/30 bg-[#eff6ff]/50 px-2 text-right text-sm font-black" /><input aria-label={`Discount percent for ${line.name}`} type="number" min={0} max={100} value={line.discountPercent || 0} onChange={(event) => updateLine(line.id, { discountPercent: event.target.value })} className="mt-1 h-7 w-28 rounded-lg border border-[#e4e4e7]/18 bg-white px-2 text-right text-[11px] font-bold" /></td>
                     <td className="px-4 py-4 text-right">{taxMode === 'gst' ? <><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate ?? 18} onChange={(event) => updateLine(line.id, { taxRate: event.target.value })} className="h-10 w-20 rounded-xl border border-[#e4e4e7]/18 bg-white px-2 text-right text-sm font-black" /><p className="mt-1 text-xs font-semibold text-[#52525b]">{money(commercial.taxAmount)}</p></> : <span className="inline-flex rounded bg-[#f4f4f5] px-2 py-1 text-xs font-semibold text-[#52525b]">No GST</span>}</td>
                     <td className="px-4 py-4 text-right font-black text-[#059669]">{money(commercial.total)}</td>
@@ -402,6 +425,7 @@ export default function QuoteBuilderPage() {
               </tbody>
             </table>
             {lines.length === 0 && <div className="grid h-56 place-items-center text-center"><div><Plus className="mx-auto mb-3 h-8 w-8 text-[#2563eb]" /><p className="font-semibold text-[#18181b]">Search products to start a quote.</p><p className="mt-1 text-sm font-semibold text-[#52525b]">Catalogue images and price details will appear here.</p></div></div>}
+            {lines.length > 0 && <p className="border-t border-[#e4e4e7]/12 px-4 py-3 text-xs font-semibold text-[#52525b]">MRP is mandatory, tax-inclusive, and entered per the selected billing basis. A quote cannot be saved when the negotiated payable exceeds MRP.</p>}
           </div>
         </div>
       </section>

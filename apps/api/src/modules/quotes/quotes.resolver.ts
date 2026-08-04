@@ -123,11 +123,17 @@ export class CreateQuoteInput {
   @Field(() => String, { nullable: true })
   quoteMeta?: string;
 
+  @Field(() => Number, { nullable: true })
+  discountPercent?: number;
+
   @Field(() => String, { nullable: true })
   intentId?: string;
 
   @Field(() => String, { nullable: true })
   supersedesQuoteId?: string;
+
+  @Field(() => Boolean, { nullable: true, description: 'Save an incomplete commercial draft without enabling send, PDF, share, approval, or conversion.' })
+  saveAsDraft?: boolean;
 }
 
 @InputType()
@@ -158,6 +164,9 @@ export class UpdateQuoteInput {
 
   @Field(() => String, { nullable: true, description: 'Hero image shown on the PDF cover page (URL or /uploaded path)' })
   coverImage?: string;
+
+  @Field(() => Boolean, { nullable: true, description: 'Keep incomplete pricing as a draft. Commercial actions still require valid MRP.' })
+  saveAsDraft?: boolean;
 }
 
 @InputType()
@@ -420,6 +429,28 @@ export class QuotesResolver {
   async salesOrderStats(@Context() ctx: GraphqlRequestContext, @Args('range', { nullable: true }) range?: string) {
     await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
     return this.quotes.salesOrderStats({ range });
+  }
+
+  @Query(() => GraphQLJSON)
+  async salesOrderControlTower(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('fulfillmentStatus', { nullable: true }) fulfillmentStatus?: string,
+    @Args('paymentMode', { nullable: true }) paymentMode?: string,
+    @Args('range', { nullable: true }) range?: string,
+    @Args('cursor', { nullable: true }) cursor?: string,
+    @Args('take', { type: () => Number, nullable: true }) take?: number,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
+    return this.quotes.salesOrderControlTower({
+      search,
+      fulfillmentStatus,
+      paymentMode,
+      range,
+      cursor,
+      take,
+      ownerId: isPrivileged(user) || user.role === 'office_staff' || user.role === 'dispatch_ops' ? undefined : user.id,
+    });
   }
 
   @Mutation(() => QuoteOutput)

@@ -42,6 +42,69 @@ export class InventoryService {
     } as any) as any;
   }
 
+  async controlTower(args?: {
+    search?: string;
+    category?: string;
+    brand?: string;
+    stockState?: string;
+    cursor?: string;
+    take?: number;
+  }) {
+    const limit = Math.max(1, Math.min(100, Math.trunc(Number(args?.take || 30))));
+    const productWhere: any = {};
+    const search = String(args?.search || '').trim();
+    if (search) {
+      productWhere.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { sku: { contains: search, mode: 'insensitive' } },
+        { internalCode: { contains: search, mode: 'insensitive' } },
+        { brand: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (args?.category) productWhere.category = { equals: args.category, mode: 'insensitive' };
+    if (args?.brand) productWhere.brand = { equals: args.brand, mode: 'insensitive' };
+    const where: any = Object.keys(productWhere).length ? { product: productWhere } : {};
+    const stockState = String(args?.stockState || '').trim().toLowerCase();
+    if (stockState === 'out_of_stock') where.available = 0;
+    else if (stockState === 'reserved') where.reserved = { gt: 0 };
+    else if (stockState === 'available') where.available = { gt: 0 };
+    else if (stockState === 'low_stock') {
+      const lowIds = await (this.prisma as any).$queryRawUnsafe(
+        `SELECT "id" FROM "InventoryBalance"
+         WHERE "available" <= COALESCE("reorderPoint", "lowStockThreshold")
+           AND COALESCE("reorderPoint", "lowStockThreshold") > 0`,
+      ) as any[];
+      where.id = { in: lowIds.map((row) => row.id) };
+      if (!lowIds.length) return { items: [], nextCursor: null, total: 0, summary: await this.getStockSummary() };
+    }
+    const query: any = {
+      where,
+      include: { product: true },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+    };
+    const cursor = String(args?.cursor || '').trim();
+    if (cursor) {
+      query.cursor = { id: cursor };
+      query.skip = 1;
+    }
+    const rows = await this.prisma.inventoryBalance.findMany(query) as any[];
+    const hasNextPage = rows.length > limit;
+    const page = hasNextPage ? rows.slice(0, limit) : rows;
+    return {
+      items: page.map((row) => ({
+        ...row,
+        stockState: row.available === 0 ? 'out_of_stock' : (row.reorderPoint ?? row.lowStockThreshold ?? 5) > 0 && row.available <= (row.reorderPoint ?? row.lowStockThreshold ?? 5) ? 'low_stock' : row.reserved > 0 ? 'reserved' : 'available',
+        onHandValue: Number(row.onHand || 0) * Number(row.product?.costPrice || 0),
+        availableValue: Number(row.available || 0) * Number(row.product?.costPrice || 0),
+        retailValue: Number(row.available || 0) * Number(row.product?.sellPrice || 0),
+      })),
+      nextCursor: hasNextPage ? page[page.length - 1].id : null,
+      total: await this.prisma.inventoryBalance.count({ where }),
+      summary: await this.getStockSummary(),
+    };
+  }
+
   async findById(id: string): Promise<any> {
     const balance = await this.prisma.inventoryBalance.findUnique({
       where: { id },
@@ -129,30 +192,46 @@ export class InventoryService {
   }
 
   async getStockSummary() {
-    const balances = await this.prisma.inventoryBalance.findMany({
-      include: { product: true },
-    } as any) as any[];
-    
-    const summary = {
-      total: 0,
-      available: 0,
-      reserved: 0,
-      damaged: 0,
-      lowStock: 0,
-      outOfStock: 0,
+    // Keep dashboard KPI reads bounded as the master grows. The previous
+    // implementation hydrated every Product relation into Node just to sum
+    // balances, which made the inventory page degrade with catalogue size.
+    const rows = await (this.prisma as any).$queryRawUnsafe(`
+      SELECT
+        COUNT(*)::int AS "productCount",
+        COALESCE(SUM(b."onHand"), 0)::double precision AS "total",
+        COALESCE(SUM(b."available"), 0)::double precision AS "available",
+        COALESCE(SUM(b."reserved"), 0)::double precision AS "reserved",
+        COALESCE(SUM(b."damaged"), 0)::double precision AS "damaged",
+        COUNT(*) FILTER (
+          WHERE COALESCE(b."reorderPoint", b."lowStockThreshold") > 0
+            AND b."available" <= COALESCE(b."reorderPoint", b."lowStockThreshold")
+        )::int AS "lowStock",
+        COUNT(*) FILTER (WHERE b."available" = 0)::int AS "outOfStock",
+        COALESCE(SUM(b."onHand" * COALESCE(p."costPrice", 0)), 0)::double precision AS "onHandValue",
+        COALESCE(SUM(b."available" * COALESCE(p."costPrice", 0)), 0)::double precision AS "availableValue",
+        COALESCE(SUM(b."available" * COALESCE(p."sellPrice", 0)), 0)::double precision AS "retailValue",
+        COUNT(*) FILTER (WHERE COALESCE(p."sellPrice", 0) <= 0)::int AS "zeroSellPrice",
+        COUNT(*) FILTER (WHERE b."onHand" > 0 AND COALESCE(p."costPrice", 0) <= 0)::int AS "zeroCostOnHand",
+        COUNT(*) FILTER (WHERE COALESCE(p."sellPrice", 0) > 0)::int AS "priceCompleteProducts"
+      FROM "InventoryBalance" b
+      INNER JOIN "Product" p ON p."id" = b."productId"
+    `) as any[];
+    const row = rows[0] || {};
+    return {
+      total: Number(row.total || 0),
+      available: Number(row.available || 0),
+      reserved: Number(row.reserved || 0),
+      damaged: Number(row.damaged || 0),
+      lowStock: Number(row.lowStock || 0),
+      outOfStock: Number(row.outOfStock || 0),
+      productCount: Number(row.productCount || 0),
+      onHandValue: Number(row.onHandValue || 0),
+      availableValue: Number(row.availableValue || 0),
+      retailValue: Number(row.retailValue || 0),
+      zeroSellPrice: Number(row.zeroSellPrice || 0),
+      zeroCostOnHand: Number(row.zeroCostOnHand || 0),
+      priceCompleteProducts: Number(row.priceCompleteProducts || 0),
     };
-    
-    for (const b of balances) {
-      summary.total += b.onHand;
-      summary.available += b.available;
-      summary.reserved += b.reserved;
-      summary.damaged += b.damaged;
-      const threshold = b.reorderPoint ?? b.lowStockThreshold ?? 5;
-      if (Number(threshold) > 0 && b.available <= Number(threshold)) summary.lowStock++;
-      if (b.available === 0) summary.outOfStock++;
-    }
-    
-    return summary;
   }
 
   async pendingInwardItems(take = 200): Promise<any[]> {

@@ -3,8 +3,8 @@ import path from 'path';
 import os from 'os';
 import ExcelJS from 'exceljs';
 
-const API = process.env.API_URL || 'http://localhost:4011/graphql';
-const WEB = process.env.WEB_URL || 'http://localhost:3011';
+const API = process.env.API_URL || 'http://localhost:4000/graphql';
+const WEB = process.env.WEB_URL || 'http://localhost:3000';
 
 async function gql(query, variables = {}, token) {
   const res = await fetch(API, {

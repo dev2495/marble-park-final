@@ -249,8 +249,52 @@ function rateFor(line) {
   const storedUnitRate = Number(line.unitRate);
   const unitRate = hasStoredUnitRate && Number.isFinite(storedUnitRate) && storedUnitRate >= 0 ? storedUnitRate : specialRate > 0 ? specialRate : price * (1 - discount / 100);
   const hasStoredTaxable = line.taxableValue !== null && line.taxableValue !== undefined && line.taxableValue !== '';
-  const amount = hasStoredTaxable && Number.isFinite(Number(line.taxableValue)) ? Number(line.taxableValue) : pricingQuantity * unitRate;
-  return { qty, basis, pricingQuantity, pricingUom, price, discount, unitRate, amount };
+  const quoteDiscountPercent = Number(line.quoteDiscountPercent || 0);
+  const lineSubtotal = pricingQuantity * unitRate;
+  const quoteDiscountAmount = line.quoteDiscountAmount !== null && line.quoteDiscountAmount !== undefined && line.quoteDiscountAmount !== ''
+    ? Number(line.quoteDiscountAmount)
+    : lineSubtotal * quoteDiscountPercent / 100;
+  const taxableValue = hasStoredTaxable && Number.isFinite(Number(line.taxableValue))
+    ? Number(line.taxableValue)
+    : Math.max(0, lineSubtotal - quoteDiscountAmount);
+  const taxAmount = line.taxAmount !== null && line.taxAmount !== undefined && line.taxAmount !== ''
+    ? Number(line.taxAmount)
+    : taxableValue * Math.max(0, Number(line.taxRate ?? 18)) / 100;
+  const amount = line.grossLineTotal !== null && line.grossLineTotal !== undefined && line.grossLineTotal !== ''
+    ? Number(line.grossLineTotal)
+    : taxableValue + taxAmount;
+  const mrp = line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp);
+  const mrpUom = basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
+  return { qty, basis, pricingQuantity, pricingUom, price, discount, unitRate, lineSubtotal, quoteDiscountPercent, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, mrpUom };
+}
+
+function isLegacyQuoteBeforeMrpContract(quote) {
+  const createdAt = quote?.createdAt ? new Date(quote.createdAt).getTime() : 0;
+  return !createdAt || createdAt < Date.UTC(2026, 7, 4);
+}
+
+function assertQuoteCommercialReady(quote, taxMode, options = {}) {
+  const quoteDiscountPercent = Number(quote.discountPercent || 0);
+  const lines = asArray(quote.lines);
+  const legacyLines = lines.length > 0 && lines.every((line) => {
+    const mrp = line?.mrp;
+    return mrp === null || mrp === undefined || mrp === '';
+  });
+  if (options.allowLegacy !== false && legacyLines && isLegacyQuoteBeforeMrpContract(quote)) {
+    return { legacyPricing: true };
+  }
+  for (const line of lines) {
+    const rate = rateFor(line);
+    const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
+    const payable = Math.max(0, rate.unitRate) * (1 - quoteDiscountPercent / 100) * (1 + taxRate / 100);
+    if (rate.mrp === null || !Number.isFinite(rate.mrp) || rate.mrp <= 0) {
+      throw new Error(`Quote PDF blocked: MRP is required for ${line.sku || line.name || 'every line'} per ${rate.mrpUom}`);
+    }
+    if (payable > rate.mrp + 0.5) {
+      throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'Line'} payable ${payable.toFixed(2)} per ${rate.mrpUom} exceeds MRP ${rate.mrp.toFixed(2)}`);
+    }
+  }
+  return { legacyPricing: false };
 }
 
 function groupByArea(lines) {
@@ -320,7 +364,9 @@ async function fetchQuote(id, apiUrl) {
     const payload = await response.json();
     const shared = payload.data?.publicQuoteShareDocument;
     if (!response.ok || payload.errors?.length || !shared?.quote) throw new Error(payload.errors?.[0]?.message || 'Quote share link not found');
-    return { quote: shared.quote, settings: shared.settings || {}, brands: shared.brands || [] };
+    const result = { quote: shared.quote, settings: shared.settings || {}, brands: shared.brands || [] };
+    assertQuoteCommercialReady(result.quote, safeJson(result.quote.quoteMeta, {}).taxMode === 'non_gst' ? 'non_gst' : 'gst');
+    return result;
   }
   const query = `query QuoteForPdf($id: ID!) {
     quote(id: $id) {
@@ -341,11 +387,13 @@ async function fetchQuote(id, apiUrl) {
   if (!response.ok || payload.errors?.length || !payload.data?.quote) {
     throw new Error(payload.errors?.[0]?.message || 'Quote not found');
   }
-  return {
+  const result = {
     quote: payload.data.quote,
     settings: payload.data.documentSettings?.data || null,
     brands: payload.data.masterProductBrands || [],
   };
+  assertQuoteCommercialReady(result.quote, safeJson(result.quote.quoteMeta, {}).taxMode === 'non_gst' ? 'non_gst' : 'gst');
+  return result;
 }
 
 function requiredSessionToken() {
@@ -507,7 +555,7 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode }) {
       e(Text, { style: [styles.th, styles.descCol] }, 'Description'),
       e(Text, { style: [styles.th, styles.qtyCol] }, 'Qty'),
       showPrices ? e(Text, { style: [styles.th, styles.rateCol] }, 'MRP') : null,
-      showPrices ? e(Text, { style: [styles.th, styles.discountCol] }, 'Disc.') : null,
+      showPrices ? e(Text, { style: [styles.th, styles.discountCol] }, 'List rate') : null,
       showPrices ? e(Text, { style: [styles.th, styles.specialCol] }, 'Special') : null,
       showPrices ? e(Text, { style: [styles.th, styles.amountCol] }, 'Total') : null,
     ),
@@ -524,9 +572,9 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode }) {
           line.notes || line.description ? e(Text, { style: styles.meta }, line.notes || line.description) : null,
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}\n${rate.qty} ${line.inventoryUom || line.unit || line.uom || 'BOX'} stock`),
-        showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, money(rate.price)) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, rate.discount ? `${rate.discount}%` : '-') : null,
-        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, money(rate.unitRate)) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, money(rate.price)) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, `${money(rate.unitRate)}${rate.discount ? `\n${rate.discount}% off` : ''}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.amount)) : null,
       );
     }),
@@ -541,12 +589,13 @@ function PricedDocumentBody(payload, requestUrl) {
   const quoteMeta = safeJson(quote.quoteMeta, {});
   const groups = groupByArea(lines);
   const taxMode = quoteMeta.taxMode === 'non_gst' ? 'non_gst' : 'gst';
-  const subtotal = lines.reduce((sum, line) => sum + rateFor(line).amount, 0);
-  const discountAmount = subtotal * (Number(quote.discountPercent || 0) / 100);
-  const taxable = Math.max(0, subtotal - discountAmount);
-  const discountFactor = Math.max(0, 1 - Number(quote.discountPercent || 0) / 100);
-  const tax = taxMode === 'non_gst' ? 0 : lines.reduce((sum, line) => sum + rateFor(line).amount * discountFactor * Math.max(0, Number(line.taxRate ?? 18)) / 100, 0);
-  const total = taxable + tax;
+  assertQuoteCommercialReady(quote, taxMode);
+  const pricedLines = lines.map((line) => rateFor(line));
+  const subtotal = pricedLines.reduce((sum, rate) => sum + rate.lineSubtotal, 0);
+  const discountAmount = pricedLines.reduce((sum, rate) => sum + rate.quoteDiscountAmount, 0);
+  const taxable = pricedLines.reduce((sum, rate) => sum + rate.taxableValue, 0);
+  const tax = taxMode === 'non_gst' ? 0 : pricedLines.reduce((sum, rate) => sum + rate.taxAmount, 0);
+  const total = pricedLines.reduce((sum, rate) => sum + rate.amount, 0);
   const rawTerms = quoteMeta.terms || settings.defaultTerms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
   const terms = taxMode === 'non_gst' ? String(rawTerms).split('\n').filter((line) => !/\bGST\b/i.test(line)).join('\n') : rawTerms;
   const bank = quoteMeta.bankDetails || settings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';

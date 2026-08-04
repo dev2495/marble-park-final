@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 
-const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
@@ -27,9 +27,9 @@ async function main() {
   const quote = (await gql(
     `mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber lines } }`,
     { input: { customerId: customer.id, title: 'Tile multi-basis pricing quote', projectName: 'Tile pricing UAT', lines: JSON.stringify([
-      { productId: product.id, sku: product.sku, name: product.name, category: 'Tiles', tileCode: product.internalCode, tileSize: '600 x 1200 mm', requestedArea: 100, wastagePercent: 10, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'SQFT', rateBasis: 'AREA', coveragePerPack: 15.5, piecesPerPack: 2, listPrice: 100, price: 100, taxRate: 18, area: 'Living Room' },
-      { productId: product.id, sku: product.sku, name: product.name, category: 'Tiles', tileCode: product.internalCode, tileSize: '600 x 1200 mm', requestedPieces: 3, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'PC', rateBasis: 'PIECE', coveragePerPack: 15.5, piecesPerPack: 2, listPrice: 775, price: 775, taxRate: 18, area: 'Powder Room' },
-      { productId: product.id, sku: product.sku, name: product.name, category: 'Tiles', tileCode: product.internalCode, tileSize: '600 x 1200 mm', qty: 2, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'BOX', rateBasis: 'PACK', coveragePerPack: 15.5, piecesPerPack: 2, listPrice: 1550, price: 1550, taxRate: 18, area: 'Balcony' },
+      { productId: product.id, sku: product.sku, name: product.name, category: 'Tiles', tileCode: product.internalCode, tileSize: '600 x 1200 mm', requestedArea: 100, wastagePercent: 10, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'SQFT', rateBasis: 'AREA', coveragePerPack: 15.5, piecesPerPack: 2, listPrice: 100, price: 100, mrp: 125, mrpRateBasis: 'AREA', taxRate: 18, area: 'Living Room' },
+      { productId: product.id, sku: product.sku, name: product.name, category: 'Tiles', tileCode: product.internalCode, tileSize: '600 x 1200 mm', requestedPieces: 3, qty: 1, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'PC', rateBasis: 'PIECE', coveragePerPack: 15.5, piecesPerPack: 2, listPrice: 775, price: 775, mrp: 950, mrpRateBasis: 'PIECE', taxRate: 18, area: 'Powder Room' },
+      { productId: product.id, sku: product.sku, name: product.name, category: 'Tiles', tileCode: product.internalCode, tileSize: '600 x 1200 mm', qty: 2, unit: 'BOX', inventoryUom: 'BOX', pricingUom: 'BOX', rateBasis: 'PACK', coveragePerPack: 15.5, piecesPerPack: 2, listPrice: 1550, price: 1550, mrp: 1900, mrpRateBasis: 'PACK', taxRate: 18, area: 'Balcony' },
     ]) } }, token,
   )).createQuote;
   const line = quote.lines.find((row) => row.rateBasis === 'AREA');

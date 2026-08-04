@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 
-const API = process.env.API_URL || 'http://localhost:4100/graphql';
+const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const WEB = process.env.WEB_URL || 'http://localhost:3000';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';

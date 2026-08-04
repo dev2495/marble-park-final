@@ -137,6 +137,18 @@ export class DispatchResolver {
     return this.dispatch.dispatchQueue({ status });
   }
 
+  @Query(() => GraphQLJSON)
+  async reservedDispatchLines(
+    @Args('search', { type: () => String, nullable: true }) search: string | undefined,
+    @Args('status', { type: () => String, nullable: true }) status: string | undefined,
+    @Args('cursor', { type: () => String, nullable: true }) cursor: string | undefined,
+    @Args('take', { type: () => Number, nullable: true }) take: number | undefined,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.dispatch.reservedDispatchLines({ search, status, cursor, take });
+  }
+
   @Query(() => DispatchOutput)
   async dispatchJob(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
     await requireSession(this.prisma, ctx);

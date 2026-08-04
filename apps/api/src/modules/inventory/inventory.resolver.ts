@@ -105,6 +105,20 @@ export class InventoryResolver {
     return this.inventory.findAll({ productId, search, take });
   }
 
+  @Query(() => GraphQLJSON)
+  async inventoryControlTower(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('category', { nullable: true }) category?: string,
+    @Args('brand', { nullable: true }) brand?: string,
+    @Args('stockState', { nullable: true }) stockState?: string,
+    @Args('cursor', { nullable: true }) cursor?: string,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.inventory.controlTower({ search, category, brand, stockState, cursor, take });
+  }
+
   /**
    * Low-stock list for the inventory dashboard / purchasing alerts.
    * Returns balances where available <= COALESCE(reorderPoint, lowStockThreshold)
