@@ -135,7 +135,7 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
     { label: 'Active leads', value: leads.length, caption: `${pipelineByStage.find((s) => s.stage === 'new')?.count || 0} new this period`, icon: PackageSearch, tone: 'brand', href: '/dashboard/leads', numeric: true },
     { label: 'Won this month', value: orderStats.totalOrders || 0, caption: `${moneyShort(orderStats.cashValue || 0)} cash · ${moneyShort(orderStats.creditValue || 0)} credit`, icon: CheckCircle2, tone: 'success', href: '/dashboard/orders', numeric: true },
     { label: 'Customers', value: stats.totalCustomers || 0, caption: `${stats.totalUsers || 0} team members`, icon: Users, tone: 'violet', href: '/dashboard/customers', numeric: true },
-    { label: 'Low-stock SKUs', value: lowStock.length, caption: lowStock.length ? 'Need re-ordering' : 'Inventory healthy', icon: AlertTriangle, tone: lowStock.length ? 'danger' : 'neutral', href: '/dashboard/inventory', numeric: true },
+    { label: 'Low-stock SKUs', value: lowStock.length, caption: lowStock.length ? 'Need re-ordering' : 'Inventory healthy', icon: AlertTriangle, tone: lowStock.length ? 'danger' : 'neutral', href: '/dashboard/inventory/stock-alerts', numeric: true },
   ];
 
   return (
@@ -278,7 +278,7 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
           )}
         </Panel>
 
-        <Panel title="Low-stock alerts" subtitle={`${lowStock.length} SKU${lowStock.length === 1 ? '' : 's'} below threshold`} tone="danger" rightAction={<Link href="/dashboard/inventory" className="text-xs font-medium text-[#1d4ed8] hover:underline">Inventory</Link>}>
+        <Panel title="Low-stock alerts" subtitle={`${lowStock.length} SKU${lowStock.length === 1 ? '' : 's'} below threshold`} tone="danger" rightAction={<Link href="/dashboard/inventory/stock-alerts" className="text-xs font-medium text-[#1d4ed8] hover:underline">Configure alerts</Link>}>
           {lowStock.length ? (
             <ul className="space-y-1.5">
               {lowStock.slice(0, 6).map((row: any) => (

@@ -9,7 +9,7 @@ import {
   KeyRound, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
   Truck, UserCircle2, Users, UserCog, UserCheck, BadgeCheck, CreditCard, FileText, MapPinned, RotateCcw, PackagePlus,
   Menu, X,
-  ArrowLeftRight, QrCode, Scale, BarChart3, HelpCircle,
+  ArrowLeftRight, QrCode, Scale, BarChart3, HelpCircle, BellRing,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -80,6 +80,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
     items: [
       { name: 'Catalogue', href: '/dashboard/products', icon: Bath, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'office_staff'], permission: 'products.manage' },
       { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes, roles: ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff'], permission: 'inventory.manage' },
+      { name: 'Stock Alerts', href: '/dashboard/inventory/stock-alerts', icon: BellRing, roles: ['admin', 'owner'] },
       { name: 'Pending Inward', href: '/dashboard/pending-inward', icon: PackageSearch, roles: ['admin', 'owner', 'dispatch_ops', 'inventory_manager', 'sales_manager', 'sales', 'office_staff'], permission: 'goods_receipts.manage' },
       { name: 'Procurement', href: '/dashboard/procurement', icon: ClipboardList, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'procurement.manage' },
       { name: 'Opening Stock', href: '/dashboard/inventory/opening-stock', icon: PackagePlus, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
@@ -126,6 +127,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard': 'Command Center',
   '/dashboard/products': 'Catalogue',
   '/dashboard/inventory': 'Inventory',
+  '/dashboard/inventory/stock-alerts': 'Stock Alert Policy',
   '/dashboard/inventory/inwards': 'GRN Receiving',
   '/dashboard/inventory/opening-stock': 'Opening Stock',
   '/dashboard/inventory/transfers': 'Stock Transfers',

@@ -2,8 +2,9 @@ import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int,
 import { GraphQLJSON } from 'graphql-scalars';
 import { InventoryService } from './inventory.service';
 import { ProductOutput } from '../products/products.resolver';
-import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { computeStockAlertState, isAlertingState } from './stock-alerts';
 
 @InputType()
 export class CreateInventoryInput {
@@ -37,10 +38,16 @@ export class InventoryOutput {
   @Field(() => Number, { defaultValue: 5 })
   lowStockThreshold!: number;
 
+  @Field(() => Number, { nullable: true, description: 'Critical breach level. Null/0 disables.' })
+  criticalStockThreshold?: number | null;
+
   @Field(() => Number, { nullable: true })
   reorderPoint?: number | null;
 
-  @Field(() => Boolean, { description: 'True when available <= lowStockThreshold (or reorderPoint when set).' })
+  @Field(() => String, { description: 'healthy | warning | critical | off' })
+  alertState!: string;
+
+  @Field(() => Boolean, { description: 'True when alertState is warning or critical.' })
   isLowStock!: boolean;
 
   @Field(() => ProductOutput, { nullable: true })
@@ -61,11 +68,26 @@ export class UpdateInventoryInput {
   @Field(() => Number, { nullable: true })
   damaged?: number;
 
-  @Field(() => Number, { nullable: true, description: 'Below or equal => low-stock alert. 0 disables.' })
+  @Field(() => Number, { nullable: true, description: 'Warning tier. Available <= this (>0) fires stock_warning. 0 disables.' })
   lowStockThreshold?: number;
 
-  @Field(() => Number, { nullable: true, description: 'Hard reorder point (overrides lowStockThreshold for purchasing).' })
+  @Field(() => Number, { nullable: true, description: 'Critical breach tier. Null/0 disables.' })
+  criticalStockThreshold?: number | null;
+
+  @Field(() => Number, { nullable: true, description: 'Hard reorder point (procurement). Not the primary alert threshold.' })
   reorderPoint?: number;
+}
+
+@InputType()
+export class StockAlertPolicyRowInput {
+  @Field(() => ID)
+  balanceId!: string;
+
+  @Field(() => Number, { nullable: true })
+  lowStockThreshold?: number;
+
+  @Field(() => Number, { nullable: true })
+  criticalStockThreshold?: number | null;
 }
 
 @Resolver(() => InventoryOutput)
@@ -75,23 +97,21 @@ export class InventoryResolver {
     private prisma: PrismaService,
   ) {}
 
+  @ResolveField('alertState', () => String)
+  resolveAlertState(@Parent() balance: any): string {
+    if (balance?.alertState) return String(balance.alertState);
+    return computeStockAlertState(balance?.available, balance?.lowStockThreshold, balance?.criticalStockThreshold);
+  }
+
   /**
-   * Computed flag for the low-stock dashboard. Logic:
-   *   - reorderPoint set & available <= reorderPoint -> true
-   *   - else lowStockThreshold > 0 & available <= lowStockThreshold -> true
-   * Resolved at the field level so callers can query it without an extra
-   * round-trip and the threshold field is always returned alongside.
+   * Computed flag for the low-stock dashboard.
+   * True when warning or critical (two-tier alert policy).
    */
   @ResolveField('isLowStock', () => Boolean)
   resolveIsLowStock(@Parent() balance: any): boolean {
-    const available = Number(balance?.available || 0);
-    const reorder = balance?.reorderPoint;
-    if (reorder !== undefined && reorder !== null && Number(reorder) >= 0) {
-      return available <= Number(reorder);
-    }
-    const threshold = Number(balance?.lowStockThreshold ?? 5);
-    if (threshold <= 0) return false;
-    return available <= threshold;
+    const state = balance?.alertState
+      || computeStockAlertState(balance?.available, balance?.lowStockThreshold, balance?.criticalStockThreshold);
+    return isAlertingState(state as any);
   }
 
   @Query(() => [InventoryOutput])
@@ -124,8 +144,7 @@ export class InventoryResolver {
 
   /**
    * Low-stock list for the inventory dashboard / purchasing alerts.
-   * Returns balances where available <= COALESCE(reorderPoint, lowStockThreshold)
-   * and the threshold is positive.
+   * Returns balances in warning or critical alert state.
    */
   @Query(() => [InventoryOutput])
   async lowStockBalances(
@@ -134,6 +153,20 @@ export class InventoryResolver {
   ) {
     await requireSession(this.prisma, ctx);
     return this.inventory.findLowStock(take || 100);
+  }
+
+  @Query(() => GraphQLJSON)
+  async stockAlertPolicies(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('category', { nullable: true }) category?: string,
+    @Args('brand', { nullable: true }) brand?: string,
+    @Args('alertState', { nullable: true }) alertState?: string,
+    @Args('cursor', { nullable: true }) cursor?: string,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.inventory.stockAlertPolicies({ search, category, brand, alertState, cursor, take });
   }
 
   @Query(() => [GraphQLJSON])
@@ -163,8 +196,20 @@ export class InventoryResolver {
     @Args('input') input: UpdateInventoryInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.inventory.update(id, input as any);
+    const thresholdTouched = input.lowStockThreshold !== undefined || input.criticalStockThreshold !== undefined;
+    const user = thresholdTouched
+      ? await requireRoles(this.prisma, ctx, ['admin', 'owner'])
+      : await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.inventory.update(id, input as any, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async bulkUpdateStockAlertPolicies(
+    @Args('input', { type: () => [StockAlertPolicyRowInput] }) input: StockAlertPolicyRowInput[],
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.inventory.bulkUpdateStockAlertPolicies(input as any, user.id);
   }
 
   @Mutation(() => InventoryOutput)

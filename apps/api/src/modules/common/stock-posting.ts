@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { ulid } from 'ulid';
+import { evaluateStockAlertTransitionsTx } from '../inventory/stock-alerts';
 
 type Tx = any;
 
@@ -154,6 +155,18 @@ export async function applyStockPostingTx(tx: Tx, input: StockPostingInput) {
           updatedAt: new Date(),
         },
       });
+
+  // Stock alert transitions (warning / critical) — best-effort inside the same tx.
+  try {
+    await evaluateStockAlertTransitionsTx(tx, {
+      productId,
+      previousAvailable: before.available,
+      nextAvailable,
+      balance: current || balance,
+    });
+  } catch {
+    // Never block stock posting on notification failures.
+  }
 
   if (location && hasLocationDelta) {
     await applyLocationBucketDeltaTx(tx, {

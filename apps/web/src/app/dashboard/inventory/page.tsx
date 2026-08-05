@@ -8,6 +8,12 @@ import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { ProductImageFrame } from '@/components/product-image-frame';
 
+const ME = gql`
+  query InventoryPageMe {
+    me { id role }
+  }
+`;
+
 const INVENTORY_CONTROL_TOWER = gql`
   query InventoryControlTower($search: String, $category: String, $brand: String, $stockState: String, $locationId: String, $lotState: String, $sort: String, $cursor: String, $take: Int) {
     inventoryControlTower(search: $search, category: $category, brand: $brand, stockState: $stockState, locationId: $locationId, lotState: $lotState, sort: $sort, cursor: $cursor, take: $take)
@@ -83,6 +89,9 @@ export default function InventoryPage() {
   const [cursor, setCursor] = useState('');
   const [rows, setRows] = useState<any[]>([]);
   const deferredSearch = useDeferredValue(search.trim());
+
+  const { data: meData } = useQuery(ME);
+  const canConfigureAlerts = meData?.me?.role === 'admin' || meData?.me?.role === 'owner';
 
   const { data, loading, error, refetch, fetchMore } = useQuery(INVENTORY_CONTROL_TOWER, {
     variables: {
@@ -204,9 +213,14 @@ export default function InventoryPage() {
             <div>
               <p className="text-xs font-medium uppercase tracking-[0.14em] text-red-700">Low-stock alerts</p>
               <h2 className="mt-2 text-2xl font-semibold text-[var(--ink)]">{lowStockRows.length} SKU{lowStockRows.length === 1 ? '' : 's'} need attention</h2>
-              <p className="mt-1 text-sm font-bold text-[var(--ink-4)]">The alert uses each balance&apos;s reorder point, falling back to its low-stock threshold.</p>
+              <p className="mt-1 text-sm font-bold text-[var(--ink-4)]">Warning and critical thresholds drive bell alerts for owner, admin, and inventory managers.</p>
             </div>
-            <Link href="/dashboard/procurement" className="rounded-xl bg-red-700 px-4 py-2 text-xs font-black uppercase tracking-wider text-white">Open procurement</Link>
+            <div className="flex flex-wrap gap-2">
+              {canConfigureAlerts ? (
+                <Link href="/dashboard/inventory/stock-alerts" className="rounded-xl border border-red-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-wider text-red-800">Configure alerts</Link>
+              ) : null}
+              <Link href="/dashboard/procurement" className="rounded-xl bg-red-700 px-4 py-2 text-xs font-black uppercase tracking-wider text-white">Open procurement</Link>
+            </div>
           </div>
           <div className="mt-4 overflow-x-auto custom-scrollbar">
             <table className="w-full min-w-[760px] text-left">

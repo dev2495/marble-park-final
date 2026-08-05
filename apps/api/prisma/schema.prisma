@@ -200,12 +200,13 @@ model InventoryBalance {
   available         Int
   damaged           Int
   hold              Int
-  /// When `available` drops at or below this number the product is flagged as
-  /// "low stock" on dashboards. 0 disables the alert. Default = 5 covers
-  /// "almost empty" for retail showrooms; sales managers override per SKU.
+  /// Warning level — when available drops at or below this (>0) emit stock_warning
+  /// (unless already critical). 0 disables the warning tier. Default = 5.
   lowStockThreshold Int      @default(5)
-  /// Optional explicit reorder point. If non-null and `available` <= this,
-  /// the product is flagged for purchase planning.
+  /// Critical breach level. When available <= this (>0), emit stock_critical.
+  criticalStockThreshold Int?
+  /// Optional explicit reorder point for purchase planning (procurement).
+  /// Kept separate from alert tiers; not the primary UI alert threshold.
   reorderPoint      Int?
   updatedAt         DateTime
 
