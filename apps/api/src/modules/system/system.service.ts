@@ -155,6 +155,7 @@ export class SystemService {
     await this.prisma.auditEvent.deleteMany();
     await this.prisma.customer.deleteMany();
     await this.prisma.vendor.deleteMany();
+    await (this.prisma as any).architect.deleteMany();
     await this.prisma.product.deleteMany();
     await this.prisma.productBrand.deleteMany();
     await this.prisma.productCategory.deleteMany();
@@ -360,6 +361,49 @@ export class SystemService {
       : await this.prisma.vendor.create({ data: { id: ulid(), ...data } });
     await this.audit(actorUserId, 'master.vendor.save', 'Vendor', vendor.id, `Saved vendor ${vendor.name}`, data);
     return vendor;
+  }
+
+  async architects(args?: { search?: string; status?: string; take?: number }) {
+    const where: any = {};
+    if (args?.status) where.status = args.status;
+    if (args?.search) {
+      where.OR = [
+        { name: { contains: args.search, mode: 'insensitive' } },
+        { phone: { contains: args.search, mode: 'insensitive' } },
+        { email: { contains: args.search, mode: 'insensitive' } },
+        { firmName: { contains: args.search, mode: 'insensitive' } },
+        { city: { contains: args.search, mode: 'insensitive' } },
+        { registrationNo: { contains: args.search, mode: 'insensitive' } },
+      ];
+    }
+    return (this.prisma as any).architect.findMany({
+      where,
+      orderBy: { name: 'asc' },
+      take: args?.take || 100,
+    });
+  }
+
+  async upsertArchitect(input: any, actorUserId: string) {
+    const name = String(input.name || '').trim();
+    if (!name) throw new Error('Architect name is required');
+    const data = {
+      name,
+      phone: input.phone || '',
+      email: input.email || '',
+      firmName: input.firmName || '',
+      city: input.city || '',
+      address: input.address || '',
+      registrationNo: input.registrationNo || '',
+      status: input.status || 'active',
+      notes: input.notes || '',
+      metadata: input.metadata || {},
+      updatedAt: new Date(),
+    };
+    const architect = input.id
+      ? await (this.prisma as any).architect.update({ where: { id: input.id }, data })
+      : await (this.prisma as any).architect.create({ data: { id: ulid(), ...data } });
+    await this.audit(actorUserId, 'master.architect.save', 'Architect', architect.id, `Saved architect ${architect.name}`, data);
+    return architect;
   }
 
   async audit(actorUserId: string, action: string, entityType: string, entityId: string, summary: string, metadata: any = {}) {

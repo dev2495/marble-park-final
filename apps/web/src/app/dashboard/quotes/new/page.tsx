@@ -15,6 +15,7 @@ import { describeApolloError } from '@/lib/apollo-errors';
 const GET_QUOTE_SETUP = gql`
   query GetQuoteSetup {
     customers { id name email mobile siteAddress city }
+    architects(status: "active", take: 200)
     documentSettings { data }
     masterProductBrands(status: "active")
   }
@@ -25,7 +26,7 @@ const SEARCH_PRODUCTS = gql`
 `;
 
 const CREATE_QUOTE = gql`
-  mutation CreateQuote($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber } }
+  mutation CreateQuote($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber architectId architectName } }
 `;
 
 function money(value: number) {
@@ -134,6 +135,7 @@ const AREA_SUGGESTIONS = [
 export default function QuoteBuilderPage() {
   const [lines, setLines] = useState<any[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [selectedArchitectId, setSelectedArchitectId] = useState('');
   const [projectTitle, setProjectTitle] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [success, setSuccess] = useState('');
@@ -303,6 +305,7 @@ export default function QuoteBuilderPage() {
           input: {
             customerId: selectedCustomerId,
             ownerId,
+            architectId: selectedArchitectId || undefined,
             projectName: projectTitle,
             title: projectTitle || 'Retail product quotation',
             validUntil: validUntil ? new Date(`${validUntil}T23:59:59`).toISOString() : undefined,
@@ -366,6 +369,20 @@ export default function QuoteBuilderPage() {
                 <SelectMenuContent>
                   {customerData?.customers?.map((customer: any) => (
                     <SelectMenuItem key={customer.id} value={customer.id}>{customer.name}</SelectMenuItem>
+                  ))}
+                </SelectMenuContent>
+              </SelectMenu>
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Consulting architect</span>
+              <SelectMenu value={selectedArchitectId || '__none__'} onValueChange={(v) => setSelectedArchitectId(v === '__none__' ? '' : v)}>
+                <SelectMenuTrigger className="h-11 text-sm" placeholder="Optional — select architect…" />
+                <SelectMenuContent>
+                  <SelectMenuItem value="__none__">No architect</SelectMenuItem>
+                  {(customerData?.architects || []).map((architect: any) => (
+                    <SelectMenuItem key={architect.id} value={architect.id}>
+                      {architect.name}{architect.firmName ? ` · ${architect.firmName}` : ''}
+                    </SelectMenuItem>
                   ))}
                 </SelectMenuContent>
               </SelectMenu>

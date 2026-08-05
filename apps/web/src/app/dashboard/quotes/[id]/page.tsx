@@ -13,14 +13,15 @@ const QUOTE_DETAIL = gql`
   query QuoteDetail($id: ID!) {
     quote(id: $id) {
       id quoteNumber title projectName status approvalStatus discountPercent displayMode createdAt validUntil sentAt confirmedAt notes lines quoteMeta customer owner lead approval coverImage
-      versionNumber supersedesQuoteId supersededByQuoteId intentId
+      versionNumber supersedesQuoteId supersededByQuoteId intentId architectId architectName architect
     }
+    architects(status: "active", take: 200)
     documentSettings { data }
     masterProductBrands(status: "active")
   }
 `;
 
-const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id displayMode lines quoteMeta approvalStatus status } }`;
+const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id displayMode lines quoteMeta approvalStatus status architectId architectName } }`;
 const UPDATE_QUOTE_PRESENTATION = gql`mutation UpdateQuotePresentation($id: ID!, $input: UpdateQuotePresentationInput!) { updateQuotePresentation(id: $id, input: $input) { id displayMode lines quoteMeta coverImage } }`;
 const SEND_QUOTE = gql`mutation SendQuote($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
 const CREATE_SALES_ORDER = gql`mutation CreateSalesOrderFromQuote($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`;
@@ -104,6 +105,7 @@ export default function QuoteDetailPage() {
   const [coverImage, setCoverImage] = useState('');
   const [tagline, setTagline] = useState('');
   const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
+  const [selectedArchitectId, setSelectedArchitectId] = useState('');
   const [uploadingCover, setUploadingCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
   const [shareMessage, setShareMessage] = useState('');
@@ -161,6 +163,7 @@ export default function QuoteDetailPage() {
     setSelectedBrandIds(Array.isArray(meta.selectedBrandIds)
       ? meta.selectedBrandIds.map(String)
       : mode === 'none' ? [] : brands.filter((brand: any) => mode === 'all' || defaults.has(String(brand.id))).map((brand: any) => String(brand.id)));
+    setSelectedArchitectId(quote.architectId || '');
   }, [brands, documentSettings.bankDetails, documentSettings.defaultTerms, documentSettings.documentTagline, documentSettings.quoteBrandIds, documentSettings.quoteBrandSelectionMode, quote]);
 
   useEffect(() => {
@@ -237,12 +240,18 @@ export default function QuoteDetailPage() {
       return;
     }
     setValidationMessage('');
-    if (commercialLocked) return updatePresentation({ variables: { id: quote.id, input: presentationInput() } });
+    if (commercialLocked) {
+      return Promise.all([
+        updatePresentation({ variables: { id: quote.id, input: presentationInput() } }),
+        updateQuote({ variables: { id: quote.id, input: { architectId: selectedArchitectId || '' } } }),
+      ]);
+    }
     return updateQuote({ variables: { id: quote.id, input: {
       ...presentationInput(),
       linePresentation: undefined,
       discountPercent: Number(discountPercent || 0),
       saveAsDraft,
+      architectId: selectedArchitectId || '',
       lines: JSON.stringify(editLines.map((line) => ({ ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18) }))),
     } } });
   };
@@ -424,6 +433,28 @@ export default function QuoteDetailPage() {
 
       <aside className="space-y-5">
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Customer</h2><p className="mt-4 text-lg font-semibold text-[var(--ink)]">{quote.customer?.name || 'Customer'}</p><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">{quote.customer?.mobile || quote.customer?.phone}</p><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">{quote.customer?.siteAddress || quote.customer?.city}</p></div>
+        <div className="mp-card rounded-r5 p-6">
+          <h2 className="text-2xl font-black tracking-tight">Consulting architect</h2>
+          <p className="mt-2 text-sm font-bold text-[var(--ink-4)]">Who is consulting on this quote. Used on PDFs and available for filters/reports.</p>
+          <label className="mt-4 block space-y-2">
+            <span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Architect</span>
+            <select
+              value={selectedArchitectId || ''}
+              onChange={(e) => setSelectedArchitectId(e.target.value)}
+              className="h-11 w-full rounded-2xl border border-[var(--line)] bg-white px-4 text-sm font-black"
+            >
+              <option value="">No architect</option>
+              {(data?.architects || []).map((architect: any) => (
+                <option key={architect.id} value={architect.id}>
+                  {architect.name}{architect.firmName ? ` · ${architect.firmName}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          {(quote.architectName || quote.architect?.name) ? (
+            <p className="mt-3 text-sm font-semibold text-[var(--ink)]">Saved: {quote.architectName || quote.architect?.name}</p>
+          ) : null}
+        </div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Totals</h2>{showPrices ? <div className="mt-5 space-y-3 text-sm font-bold text-[var(--ink-2)]"><div className="flex justify-between"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between"><span>Discount</span><span>{money(quoteDiscount)}</span></div>{taxMode === 'gst' ? <div className="flex justify-between"><span>GST</span><span>{money(tax)}</span></div> : <div className="flex justify-between text-[var(--ink-4)]"><span>Tax treatment</span><span>Without GST</span></div>}<div className="flex justify-between border-t border-[var(--line)] pt-4 text-2xl font-semibold text-[var(--ink)]"><span>Total</span><span>{money(total)}</span></div></div> : <p className="mt-4 rounded-2xl bg-[var(--brand-50)] p-4 text-sm font-black text-[var(--brand-700)]">Selection summary mode hides all prices in the PDF.</p>}</div>
         <div className="mp-panel p-5">
           <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--brand-700)]">Quotation footer</p><h2 className="mt-1 text-xl font-semibold text-[var(--ink)]">Served brands</h2></div><span className="rounded-full bg-[var(--brand-50)] px-2.5 py-1 text-xs font-semibold text-[var(--brand-700)]">{selectedBrandIds.length} selected</span></div>

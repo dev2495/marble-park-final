@@ -318,6 +318,10 @@ export class LeadsService {
     const lead = await this.findById(intent.leadId);
     const rows = this.normalizeRows(intent.rows);
     const lines = await this.intentRowsToQuoteLines(rows);
+    const referencesQuoteId = (intent as any).referencesQuoteId || null;
+    const parentQuote = referencesQuoteId
+      ? await this.prisma.quote.findUnique({ where: { id: referencesQuoteId } })
+      : null;
     const quote = await this.quotes.create({
       leadId: intent.leadId,
       customerId: intent.customerId,
@@ -333,7 +337,8 @@ export class LeadsService {
         remarks: note || intent.notes || '',
       },
       intentId: intent.id,
-      supersedesQuoteId: (intent as any).referencesQuoteId || null,
+      supersedesQuoteId: referencesQuoteId,
+      architectId: (parentQuote as any)?.architectId || undefined,
       saveAsDraft: true,
     } as any);
     const incompletePricing = (quote.lines || []).some((line: any) => line.mrpMissing || !line.mrpValid);

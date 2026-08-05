@@ -374,6 +374,7 @@ async function fetchQuote(id, apiUrl) {
     quote(id: $id) {
       id quoteNumber title projectName validUntil createdAt
       lines quoteMeta displayMode discountPercent notes
+      architectId architectName architect
       customer owner lead approval
     }
     documentSettings { data }
@@ -413,7 +414,7 @@ function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
   const companyLogo = buildAbsoluteUrl((settings && settings.logoUrl) || '/brand/marble-park-logo.png', requestUrl);
   const customerName = quote.customer?.name || 'Premium Client';
   const customerMobile = quote.customer?.mobile || quote.customer?.phone || '';
-  const architect = quote.customer?.architectName || quoteMeta.architectName || '';
+  const architect = quote.architectName || quote.architect?.name || quoteMeta.architectName || quote.customer?.architectName || '';
   const sales = quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team';
   const salesPhone = quote.owner?.phone || (settings && settings.supportPhone) || '';
   const date = fmtDate(quote.createdAt) || fmtDate(new Date());
@@ -627,7 +628,9 @@ function PricedDocumentBody(payload, requestUrl) {
         e(Text, { style: styles.label }, 'Quotation To'),
         e(Text, { style: styles.value }, quote.customer?.name || 'Premium Client'),
         e(Text, { style: styles.text }, quote.customer?.siteAddress || quote.customer?.city || 'Site address pending'),
-        quote.customer?.architectName ? e(Text, { style: styles.text }, `Architect: ${quote.customer.architectName}`) : null,
+        (quote.architectName || quote.architect?.name || quoteMeta.architectName || quote.customer?.architectName)
+          ? e(Text, { style: styles.text }, `Architect: ${quote.architectName || quote.architect?.name || quoteMeta.architectName || quote.customer?.architectName}`)
+          : null,
         quote.customer?.designerName ? e(Text, { style: styles.text }, `Designer: ${quote.customer.designerName}`) : null,
       ),
       e(View, { style: styles.panel },
