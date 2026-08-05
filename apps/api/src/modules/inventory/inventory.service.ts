@@ -4,6 +4,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { Prisma } from '@prisma/client';
+import { computeStockAlertState, isAlertingState, normalizeThreshold } from './stock-alerts';
 
 export interface CreateInventoryInput {
   productId: string;
@@ -15,7 +16,14 @@ export interface UpdateInventoryInput {
   reserved?: number;
   damaged?: number;
   lowStockThreshold?: number;
+  criticalStockThreshold?: number | null;
   reorderPoint?: number | null;
+}
+
+export interface StockAlertPolicyRowInput {
+  balanceId: string;
+  lowStockThreshold?: number;
+  criticalStockThreshold?: number | null;
 }
 
 @Injectable()
@@ -79,7 +87,7 @@ export class InventoryService {
     if (!args?.locationId && stockState === 'out_of_stock') where.available = 0;
     else if (!args?.locationId && stockState === 'reserved') where.reserved = { gt: 0 };
     else if (!args?.locationId && stockState === 'available') where.available = { gt: 0 };
-    else if (stockState === 'low_stock') {
+    else if (stockState === 'low_stock' || stockState === 'warning' || stockState === 'critical') {
       const lowIds = args?.locationId
         ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
             SELECT policy."id"
@@ -87,14 +95,35 @@ export class InventoryService {
             INNER JOIN "InventoryLot" lot ON lot."id" = lb."lotId" AND lot."status" = 'active'
             INNER JOIN "InventoryBalance" policy ON policy."productId" = lot."productId"
             WHERE lb."locationId" = ${args.locationId}
-            GROUP BY policy."id", policy."reorderPoint", policy."lowStockThreshold"
-            HAVING COALESCE(policy."reorderPoint", policy."lowStockThreshold") > 0
-              AND SUM(lb."available") <= COALESCE(policy."reorderPoint", policy."lowStockThreshold")
+            GROUP BY policy."id", policy."criticalStockThreshold", policy."lowStockThreshold"
+            HAVING
+              CASE
+                WHEN ${stockState} = 'critical' THEN COALESCE(policy."criticalStockThreshold", 0) > 0
+                  AND SUM(lb."available") <= COALESCE(policy."criticalStockThreshold", 0)
+                WHEN ${stockState} = 'warning' THEN policy."lowStockThreshold" > 0
+                  AND SUM(lb."available") <= policy."lowStockThreshold"
+                  AND NOT (COALESCE(policy."criticalStockThreshold", 0) > 0 AND SUM(lb."available") <= COALESCE(policy."criticalStockThreshold", 0))
+                ELSE (
+                  (COALESCE(policy."criticalStockThreshold", 0) > 0 AND SUM(lb."available") <= COALESCE(policy."criticalStockThreshold", 0))
+                  OR (policy."lowStockThreshold" > 0 AND SUM(lb."available") <= policy."lowStockThreshold")
+                )
+              END
           `)
         : await (this.prisma as any).$queryRawUnsafe(
             `SELECT "id" FROM "InventoryBalance"
-             WHERE "available" <= COALESCE("reorderPoint", "lowStockThreshold")
-               AND COALESCE("reorderPoint", "lowStockThreshold") > 0`,
+             WHERE
+               CASE
+                 WHEN $1 = 'critical' THEN COALESCE("criticalStockThreshold", 0) > 0
+                   AND "available" <= COALESCE("criticalStockThreshold", 0)
+                 WHEN $1 = 'warning' THEN "lowStockThreshold" > 0
+                   AND "available" <= "lowStockThreshold"
+                   AND NOT (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))
+                 ELSE (
+                   (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))
+                   OR ("lowStockThreshold" > 0 AND "available" <= "lowStockThreshold")
+                 )
+               END`,
+            stockState,
           ) as any[];
       where.id = { in: lowIds.map((row: any) => row.id) };
       if (!lowIds.length) return { items: [], nextCursor: null, total: 0, summary: await this.getFilteredStockSummary({ search, category: args?.category, brand: args?.brand, stockState, locationId: args?.locationId, lotState: args?.lotState }) };
@@ -154,9 +183,11 @@ export class InventoryService {
         const onHand = Number(scoped.onHand || 0);
         const available = Number(scoped.available || 0);
         const reserved = Number(scoped.reserved || 0);
+        const alertState = computeStockAlertState(available, row.lowStockThreshold, row.criticalStockThreshold);
         return ({
         ...row, onHand, available, reserved, hold: Number(scoped.hold || 0), damaged: Number(scoped.damaged || 0),
-        stockState: available === 0 ? 'out_of_stock' : (row.reorderPoint ?? row.lowStockThreshold ?? 5) > 0 && available <= (row.reorderPoint ?? row.lowStockThreshold ?? 5) ? 'low_stock' : reserved > 0 ? 'reserved' : 'available',
+        alertState,
+        stockState: available === 0 ? 'out_of_stock' : isAlertingState(alertState) ? 'low_stock' : reserved > 0 ? 'reserved' : 'available',
         onHandValue: onHand * Number(row.product?.costPrice || 0),
         availableValue: available * Number(row.product?.costPrice || 0),
         retailValue: available * Number(row.product?.sellPrice || 0),
@@ -191,7 +222,13 @@ export class InventoryService {
     if (args.stockState === 'out_of_stock') conditions.push(Prisma.sql`b."available" = 0`);
     else if (args.stockState === 'reserved') conditions.push(Prisma.sql`b."reserved" > 0`);
     else if (args.stockState === 'available') conditions.push(Prisma.sql`b."available" > 0`);
-    else if (args.stockState === 'low_stock') conditions.push(Prisma.sql`COALESCE(b."reorderPoint", b."lowStockThreshold") > 0 AND b."available" <= COALESCE(b."reorderPoint", b."lowStockThreshold")`);
+    else if (args.stockState === 'low_stock') conditions.push(Prisma.sql`(
+      (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0))
+      OR (b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold")
+    )`);
+    else if (args.stockState === 'warning') conditions.push(Prisma.sql`b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold"
+      AND NOT (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0))`);
+    else if (args.stockState === 'critical') conditions.push(Prisma.sql`COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0)`);
     if (args.lotState === 'hold') conditions.push(Prisma.sql`b."hold" > 0`);
     else if (args.lotState === 'damaged') conditions.push(Prisma.sql`b."damaged" > 0`);
     const where = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
@@ -220,7 +257,13 @@ export class InventoryService {
         COALESCE(SUM(b."reserved"), 0)::double precision AS "reserved",
         COALESCE(SUM(b."hold"), 0)::double precision AS "hold",
         COALESCE(SUM(b."damaged"), 0)::double precision AS "damaged",
-        COUNT(*) FILTER (WHERE COALESCE(b."reorderPoint", b."lowStockThreshold") > 0 AND b."available" <= COALESCE(b."reorderPoint", b."lowStockThreshold"))::int AS "lowStock",
+        COUNT(*) FILTER (WHERE
+          (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0))
+          OR (b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold")
+        )::int AS "lowStock",
+        COUNT(*) FILTER (WHERE COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0))::int AS "criticalStock",
+        COUNT(*) FILTER (WHERE b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold"
+          AND NOT (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0)))::int AS "warningStock",
         COUNT(*) FILTER (WHERE b."available" = 0)::int AS "outOfStock",
         COALESCE(SUM(b."onHand" * COALESCE(p."costPrice", 0)), 0)::double precision AS "onHandValue",
         COALESCE(SUM(b."available" * COALESCE(p."sellPrice", 0)), 0)::double precision AS "retailValue",
@@ -267,17 +310,132 @@ export class InventoryService {
     const limit = Math.max(1, Math.min(500, Number(take) || 100));
     const rows = (await (this.prisma as any).$queryRawUnsafe(
       `SELECT * FROM "InventoryBalance"
-        WHERE ("available" <= COALESCE("reorderPoint", "lowStockThreshold"))
-          AND COALESCE("reorderPoint", "lowStockThreshold") > 0
-        ORDER BY ("available"::float / NULLIF(COALESCE("reorderPoint", "lowStockThreshold"), 0)) ASC,
-                 "available" ASC
+        WHERE (
+          (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))
+          OR ("lowStockThreshold" > 0 AND "available" <= "lowStockThreshold")
+        )
+        ORDER BY
+          CASE
+            WHEN COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0) THEN 0
+            ELSE 1
+          END ASC,
+          ("available"::float / NULLIF(GREATEST(COALESCE("criticalStockThreshold", 0), "lowStockThreshold"), 0)) ASC,
+          "available" ASC
         LIMIT ${limit}`,
     )) as any[];
     if (!rows.length) return [];
     const productIds = Array.from(new Set(rows.map((r) => r.productId)));
     const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
     const byId = new Map(products.map((p) => [p.id, p] as const));
-    return rows.map((row) => ({ ...row, product: byId.get(row.productId) || null }));
+    return rows.map((row) => ({
+      ...row,
+      product: byId.get(row.productId) || null,
+      alertState: computeStockAlertState(row.available, row.lowStockThreshold, row.criticalStockThreshold),
+    }));
+  }
+
+  async stockAlertPolicies(args?: {
+    search?: string;
+    category?: string;
+    brand?: string;
+    alertState?: string;
+    take?: number;
+    cursor?: string;
+  }) {
+    const limit = Math.max(1, Math.min(200, Math.trunc(Number(args?.take || 50))));
+    const productWhere: any = {};
+    const search = String(args?.search || '').trim();
+    if (search) {
+      productWhere.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { sku: { contains: search, mode: 'insensitive' } },
+        { brand: { contains: search, mode: 'insensitive' } },
+        { internalCode: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (args?.category) productWhere.category = { equals: args.category, mode: 'insensitive' };
+    if (args?.brand) productWhere.brand = { equals: args.brand, mode: 'insensitive' };
+    const where: any = Object.keys(productWhere).length ? { product: productWhere } : {};
+
+    const alertState = String(args?.alertState || '').trim().toLowerCase();
+    if (alertState && alertState !== 'all') {
+      const ids = await (this.prisma as any).$queryRawUnsafe(
+        `SELECT "id" FROM "InventoryBalance"
+         WHERE
+           CASE
+             WHEN $1 = 'critical' THEN COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0)
+             WHEN $1 = 'warning' THEN "lowStockThreshold" > 0 AND "available" <= "lowStockThreshold"
+               AND NOT (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))
+             WHEN $1 = 'healthy' THEN NOT (
+               (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))
+               OR ("lowStockThreshold" > 0 AND "available" <= "lowStockThreshold")
+             ) AND ("lowStockThreshold" > 0 OR COALESCE("criticalStockThreshold", 0) > 0)
+             WHEN $1 = 'off' THEN "lowStockThreshold" <= 0 AND COALESCE("criticalStockThreshold", 0) <= 0
+             ELSE TRUE
+           END`,
+        alertState,
+      ) as any[];
+      where.id = { in: ids.map((row: any) => row.id) };
+      if (!ids.length) {
+        return { items: [], nextCursor: null, summary: await this.stockAlertSummary() };
+      }
+    }
+
+    const query: any = {
+      where,
+      include: { product: true },
+      orderBy: [{ available: 'asc' }, { id: 'asc' }],
+      take: limit + 1,
+    };
+    const cursor = String(args?.cursor || '').trim();
+    if (cursor) {
+      query.cursor = { id: cursor };
+      query.skip = 1;
+    }
+    const rows = await this.prisma.inventoryBalance.findMany(query) as any[];
+    const hasNext = rows.length > limit;
+    const page = hasNext ? rows.slice(0, limit) : rows;
+    return {
+      items: page.map((row) => ({
+        ...row,
+        alertState: computeStockAlertState(row.available, row.lowStockThreshold, row.criticalStockThreshold),
+      })),
+      nextCursor: hasNext ? page[page.length - 1].id : null,
+      summary: await this.stockAlertSummary(),
+    };
+  }
+
+  async stockAlertSummary() {
+    const rows = await (this.prisma as any).$queryRawUnsafe(`
+      SELECT
+        COUNT(*)::int AS "tracked",
+        COUNT(*) FILTER (WHERE COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))::int AS "critical",
+        COUNT(*) FILTER (WHERE "lowStockThreshold" > 0 AND "available" <= "lowStockThreshold"
+          AND NOT (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0)))::int AS "warning",
+        COUNT(*) FILTER (WHERE "lowStockThreshold" <= 0 AND COALESCE("criticalStockThreshold", 0) <= 0)::int AS "off",
+        COUNT(*) FILTER (WHERE
+          ("lowStockThreshold" > 0 OR COALESCE("criticalStockThreshold", 0) > 0)
+          AND NOT (
+            (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))
+            OR ("lowStockThreshold" > 0 AND "available" <= "lowStockThreshold")
+          )
+        )::int AS "healthy"
+      FROM "InventoryBalance"
+    `) as any[];
+    const row = rows[0] || {};
+    return {
+      tracked: Number(row.tracked || 0),
+      warning: Number(row.warning || 0),
+      critical: Number(row.critical || 0),
+      healthy: Number(row.healthy || 0),
+      off: Number(row.off || 0),
+    };
+  }
+
+  private assertPolicyThresholds(warning: number, critical: number | null) {
+    if (critical != null && critical > 0 && warning > 0 && critical > warning) {
+      throw new BadRequestException('Critical threshold must be less than or equal to warning threshold');
+    }
   }
 
   async create(data: CreateInventoryInput): Promise<any> {
@@ -299,21 +457,57 @@ export class InventoryService {
     } as any) as any;
   }
 
-  async update(id: string, data: UpdateInventoryInput): Promise<any> {
+  async update(id: string, data: UpdateInventoryInput, actorUserId?: string): Promise<any> {
     const current = await this.findById(id);
     const stockFieldTouched = data.onHand !== undefined || data.reserved !== undefined || data.damaged !== undefined;
     const policyData: any = {};
-    if (data.lowStockThreshold !== undefined) policyData.lowStockThreshold = Math.max(0, Math.trunc(Number(data.lowStockThreshold || 0)));
+    if (data.lowStockThreshold !== undefined) policyData.lowStockThreshold = normalizeThreshold(data.lowStockThreshold) as number;
+    if (data.criticalStockThreshold !== undefined) {
+      policyData.criticalStockThreshold = normalizeThreshold(data.criticalStockThreshold, true);
+    }
     if (data.reorderPoint !== undefined) policyData.reorderPoint = data.reorderPoint === null ? null : Math.max(0, Math.trunc(Number(data.reorderPoint || 0)));
 
     if (!stockFieldTouched) {
-      return this.prisma.inventoryBalance.update({
+      const nextWarning = policyData.lowStockThreshold !== undefined ? policyData.lowStockThreshold : Number(current.lowStockThreshold || 0);
+      const nextCritical = policyData.criticalStockThreshold !== undefined ? policyData.criticalStockThreshold : current.criticalStockThreshold;
+      this.assertPolicyThresholds(nextWarning, nextCritical);
+      const updated = await this.prisma.inventoryBalance.update({
         where: { id },
         data: { ...policyData, updatedAt: new Date() },
         include: { product: true },
       } as any) as any;
+      if (actorUserId) {
+        await this.prisma.auditEvent.create({
+          data: {
+            id: ulid(),
+            actorUserId,
+            action: 'stock_alert.policy_update',
+            entityType: 'InventoryBalance',
+            entityId: id,
+            summary: `Updated stock alert policy for ${updated.product?.sku || updated.productId}`,
+            metadata: policyData,
+          },
+        }).catch(() => null);
+      }
+      return { ...updated, alertState: computeStockAlertState(updated.available, updated.lowStockThreshold, updated.criticalStockThreshold) };
     }
     throw new BadRequestException('Physical balances cannot be overwritten. Use stock count, GRN, reservation, dispatch, return, or approved adjustment workflows');
+  }
+
+  async bulkUpdateStockAlertPolicies(rows: StockAlertPolicyRowInput[], actorUserId: string) {
+    if (!Array.isArray(rows) || !rows.length) throw new BadRequestException('At least one policy row is required');
+    if (rows.length > 200) throw new BadRequestException('Bulk update is limited to 200 rows');
+    const updated: any[] = [];
+    for (const row of rows) {
+      const balanceId = String(row.balanceId || '').trim();
+      if (!balanceId) continue;
+      const next = await this.update(balanceId, {
+        lowStockThreshold: row.lowStockThreshold,
+        criticalStockThreshold: row.criticalStockThreshold,
+      }, actorUserId);
+      updated.push(next);
+    }
+    return { updated: updated.length, items: updated, summary: await this.stockAlertSummary() };
   }
 
   async adjustQuantity(
@@ -340,8 +534,8 @@ export class InventoryService {
         COALESCE(SUM(b."reserved"), 0)::double precision AS "reserved",
         COALESCE(SUM(b."damaged"), 0)::double precision AS "damaged",
         COUNT(*) FILTER (
-          WHERE COALESCE(b."reorderPoint", b."lowStockThreshold") > 0
-            AND b."available" <= COALESCE(b."reorderPoint", b."lowStockThreshold")
+          WHERE (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0))
+            OR (b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold")
         )::int AS "lowStock",
         COUNT(*) FILTER (WHERE b."available" = 0)::int AS "outOfStock",
         COALESCE(SUM(b."onHand" * COALESCE(p."costPrice", 0)), 0)::double precision AS "onHandValue",
@@ -609,6 +803,26 @@ export class InventoryService {
           entityId: quote.id,
           href: `/dashboard/leads/${quote.leadId}`,
           targetUserId: quote.ownerId,
+          metadata: { productId, quoteId: quote.id },
+        },
+        {
+          title: 'Backorder item reserved',
+          message: `${balance.product?.sku || 'Item'} has arrived for ${quote.quoteNumber} and is reserved.`,
+          type: 'stock_ready',
+          entityType: 'Quote',
+          entityId: quote.id,
+          href: `/dashboard/leads/${quote.leadId}`,
+          targetRole: 'owner',
+          metadata: { productId, quoteId: quote.id },
+        },
+        {
+          title: 'Backorder item reserved',
+          message: `${balance.product?.sku || 'Item'} has arrived for ${quote.quoteNumber} and is reserved.`,
+          type: 'stock_ready',
+          entityType: 'Quote',
+          entityId: quote.id,
+          href: `/dashboard/leads/${quote.leadId}`,
+          targetRole: 'admin',
           metadata: { productId, quoteId: quote.id },
         },
         {

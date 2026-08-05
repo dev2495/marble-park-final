@@ -138,7 +138,7 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
         </Panel>
       </section>
 
-      <Panel title="Re-order list" subtitle={`${lowStock.length} SKU${lowStock.length === 1 ? '' : 's'} below threshold`} tone="danger" rightAction={<Link href="/dashboard/inventory" className="text-xs font-medium text-[#1d4ed8] hover:underline">Inventory</Link>}>
+      <Panel title="Re-order list" subtitle={`${lowStock.length} SKU${lowStock.length === 1 ? '' : 's'} below threshold`} tone="danger" rightAction={<Link href="/dashboard/inventory" className="text-xs font-medium text-[#1d4ed8] hover:underline">Inventory tower</Link>}>
         {lowStock.length ? (
           <div className="overflow-hidden rounded-r3 border border-[#f4f4f5]">
             <table className="w-full text-sm">
