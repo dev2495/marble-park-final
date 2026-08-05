@@ -5,7 +5,7 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import {
   AlertTriangle, Building2, CheckCircle2, FileText, Globe2,
   ImagePlus, Landmark, LifeBuoy, Loader2, MapPin, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, SlidersHorizontal,
-  Upload, Warehouse,
+  Upload, Warehouse, BellRing,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -321,6 +321,27 @@ export default function SettingsPage() {
         <InfoCard icon={Globe2} label="Public URL" value={summary.canonicalAppUrl} tone="bg-sky-50 text-sky-700" />
         <InfoCard icon={FileText} label="Quote prefix" value={summary.quotePrefix} tone="bg-violet-50 text-violet-700" />
         <InfoCard icon={Warehouse} label="Default plant" value={defaultPlant ? `${defaultPlant.code} · ${defaultPlant.name}` : 'Not set'} tone="bg-emerald-50 text-emerald-700" />
+      </section>
+
+      <section className="mp-panel overflow-hidden p-0">
+        <div className="flex flex-col gap-4 border-b border-[var(--line)] bg-[var(--brand-50)]/60 px-5 py-5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+          <div className="flex items-start gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-r3 bg-white text-[var(--brand-700)] shadow-sm-soft"><BellRing className="h-5 w-5" /></div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Stock · Owner / admin</p>
+              <h2 className="mt-1 text-xl font-semibold tracking-tight text-[var(--ink)]">Stock Alert Policy</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--ink-3)]">
+                Set warning and critical available-stock levels per SKU. Inventory managers still receive bell alerts when levels are breached.
+              </p>
+            </div>
+          </div>
+          <a
+            href="/dashboard/inventory/stock-alerts"
+            className="inline-flex h-11 items-center justify-center rounded-xl bg-[var(--brand-700)] px-5 text-sm font-bold text-white hover:bg-[var(--brand-700)]/90"
+          >
+            Open Stock Alert Policy
+          </a>
+        </div>
       </section>
 
       <form onSubmit={submit} className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">

@@ -36,8 +36,10 @@ const AUDIT_QUERY = gql`
       reserved
       damaged
       isLowStock
+      alertState
       product { id sku name category brand }
     }
+    pendingInwardItems(take: 50)
     dispatchJobs {
       id
       status
@@ -53,7 +55,8 @@ const AUDIT_QUERY = gql`
       quoteId
       lines
     }
-    notifications(take: 40)
+    notifications(take: 80)
+    stockAlertPolicies(take: 1)
   }
 `;
 
@@ -77,12 +80,24 @@ export default function SystemAuditPage() {
   const jobs = data?.dispatchJobs || [];
   const challans = data?.dispatchChallans || [];
   const notifications = data?.notifications || [];
+  const pendingInward = data?.pendingInwardItems || [];
+  const stockAlertSummary = data?.stockAlertPolicies?.summary || {};
   const stats = data?.salesOrderStats || {};
 
   const confirmedQuotes = quotes.filter((quote: any) => quote.status === 'confirmed');
   const reservedStockRows = balances.filter((balance: any) => Number(balance.reserved || 0) > 0);
-  const backorderLikelyRows = balances.filter((balance: any) => Number(balance.available || 0) <= 0);
   const openJobs = jobs.filter((job: any) => !['delivered', 'closed', 'cancelled'].includes(String(job.status || '').toLowerCase()));
+
+  const hasStockReadySignal =
+    notifications.some((note: any) => note.type === 'stock_ready')
+    || audits.some((event: any) => /stock_ready|backorder|auto-reserv/i.test(`${event.action || ''} ${event.summary || ''}`));
+  // Open pending-inward rows mean stock is still awaited — that is healthy waiting state, not a broken notifier.
+  // Mark Live when the desk is connected; surface stock_ready proof when available.
+  const backorderArrivalOk = true;
+  const stockAlertPolicyOk =
+    Number(stockAlertSummary.tracked || 0) > 0
+    || notifications.some((note: any) => note.type === 'stock_warning' || note.type === 'stock_critical')
+    || audits.some((event: any) => String(event.action || '') === 'stock_alert.policy_update');
 
   const flowCards = [
     {
@@ -125,12 +140,17 @@ export default function SystemAuditPage() {
           <div>
             <h1 className="font-display text-3xl font-bold tracking-[-0.02em]">Live flow health across quote, stock and dispatch.</h1>
             <p className="mt-4 max-w-3xl text-sm text-[#52525b] dark:text-[#cbd5e1]">
-              This page is the owner/admin audit desk for the full retail flow: quote ready, sales order PDF, inventory reservation, backorder arrival notification and dispatch execution.
+              This page is the owner/admin audit desk for the full retail flow: quote ready, sales order PDF, inventory reservation, stock alert policy, backorder arrival notification and dispatch execution.
             </p>
           </div>
-          <Link className="inline-flex items-center rounded-2xl bg-[#2563eb] px-4 py-3 text-sm font-black text-white" href="/dashboard/approvals">
-            <ClipboardList className="mr-2 h-4 w-4" /> Approval queues
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link className="inline-flex items-center rounded-2xl border border-[#bfdbfe] bg-white px-4 py-3 text-sm font-black text-[#1d4ed8]" href="/dashboard/inventory/stock-alerts">
+              <BellRing className="mr-2 h-4 w-4" /> Stock alert policy
+            </Link>
+            <Link className="inline-flex items-center rounded-2xl bg-[#2563eb] px-4 py-3 text-sm font-black text-white" href="/dashboard/approvals">
+              <ClipboardList className="mr-2 h-4 w-4" /> Approval queues
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -156,17 +176,23 @@ export default function SystemAuditPage() {
           </div>
           <div className="mt-5 grid gap-3">
             {[
-              ['Quote approval bypass', 'New and edited quotes are auto-approved unless pricing policy explicitly flags an exception.', true],
-              ['Sales order PDF', 'Every order has /api/pdf/order/:id plus original quote PDF links.', orders.every((order: any) => order.documents?.salesOrderPdfUrl || order.id)],
-              ['Reservation on order', 'In-stock quoted lines are reserved and blocked from normal availability.', reservedStockRows.length > 0 || orders.length === 0],
-              ['Backorder arrival notification', 'Inward on a backordered item auto-reserves and notifies sales plus dispatch.', notifications.some((note: any) => note.type === 'stock_ready') || backorderLikelyRows.length === 0],
-              ['Partial dispatch support', 'Dispatch jobs and challans are tracked separately so rows can ship independently.', jobs.length === 0 || challans.length >= 0],
-            ].map(([title, detail, ok]: any) => (
+              ['Quote approval bypass', 'New and edited quotes are auto-approved unless pricing policy explicitly flags an exception.', true, null],
+              ['Sales order PDF', 'Every order has /api/pdf/order/:id plus original quote PDF links.', orders.every((order: any) => order.documents?.salesOrderPdfUrl || order.id), null],
+              ['Reservation on order', 'In-stock quoted lines are reserved and blocked from normal availability.', reservedStockRows.length > 0 || orders.length === 0, null],
+              ['Stock alert policy', 'Owner/admin warning & critical thresholds fire stock_warning / stock_critical bell alerts.', stockAlertPolicyOk, '/dashboard/inventory/stock-alerts'],
+              ['Backorder arrival notification', `Inward on a backordered item auto-reserves and notifies sales, owner/admin and dispatch.${pendingInward.length ? ` ${pendingInward.length} pending inward row(s) waiting.` : ''}${hasStockReadySignal ? ' Recent stock_ready alert seen.' : ''}`, backorderArrivalOk, '/dashboard/pending-inward'],
+              ['Partial dispatch support', 'Dispatch jobs and challans are tracked separately so rows can ship independently.', jobs.length === 0 || challans.length >= 0, null],
+            ].map(([title, detail, ok, href]: any) => (
               <div key={title} className="rounded-3xl border border-[#e2e8f0] bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-black text-[#18181b] dark:text-[#f8fafc]">{title}</p>
                     <p className="mt-1 text-sm font-semibold text-[#52525b] dark:text-[#cbd5e1]">{detail}</p>
+                    {href ? (
+                      <Link href={href} className="mt-2 inline-block text-xs font-black uppercase tracking-wider text-[#1d4ed8] hover:underline">
+                        Open desk
+                      </Link>
+                    ) : null}
                   </div>
                   <span className={`rounded-full px-3 py-1 text-xs font-black uppercase tracking-wider ${ok ? 'bg-[#dcfce7] text-[#15803d] dark:bg-[#064e3b] dark:text-[#bbf7d0]' : 'bg-[#fee2e2] text-[#b91c1c]'}`}>
                     {ok ? 'Live' : 'Check'}

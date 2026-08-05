@@ -80,7 +80,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
     items: [
       { name: 'Catalogue', href: '/dashboard/products', icon: Bath, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'office_staff'], permission: 'products.manage' },
       { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes, roles: ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff'], permission: 'inventory.manage' },
-      { name: 'Stock Alerts', href: '/dashboard/inventory/stock-alerts', icon: BellRing, roles: ['admin', 'owner'] },
+      { name: 'Stock Alert Policy', href: '/dashboard/inventory/stock-alerts', icon: BellRing, roles: ['admin', 'owner'] },
       { name: 'Pending Inward', href: '/dashboard/pending-inward', icon: PackageSearch, roles: ['admin', 'owner', 'dispatch_ops', 'inventory_manager', 'sales_manager', 'sales', 'office_staff'], permission: 'goods_receipts.manage' },
       { name: 'Procurement', href: '/dashboard/procurement', icon: ClipboardList, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'procurement.manage' },
       { name: 'Opening Stock', href: '/dashboard/inventory/opening-stock', icon: PackagePlus, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
@@ -100,6 +100,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
       { name: 'Customers', href: '/dashboard/customers', icon: Users, roles: ['admin', 'owner', 'sales_manager', 'sales', 'dispatch_ops', 'office_staff'] },
       { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: ['admin', 'owner'], permission: 'users.manage' },
       { name: 'System Audit', href: '/dashboard/audit', icon: BadgeCheck, roles: ['admin', 'owner'], permission: 'audit.view' },
+      { name: 'Stock Alert Policy', href: '/dashboard/inventory/stock-alerts', icon: BellRing, roles: ['admin', 'owner'] },
       { name: 'Master Data', href: '/dashboard/master-data', icon: Settings, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'master_data.manage' },
       { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'owner'], permission: 'settings.manage' },
     ],
@@ -222,8 +223,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const visibleSections = navSections
     .map((section) => ({ ...section, items: section.items.filter((item) => item.roles.includes(effectiveRole) || (item.permission && can(item.permission))) }))
     .filter((section) => section.items.length > 0);
-  const isNavActive = (href: string) =>
-    href === '/dashboard' ? pathname === '/dashboard' : pathname === href || pathname.startsWith(`${href}/`);
+  const isNavActive = (href: string) => {
+    if (href === '/dashboard') return pathname === '/dashboard';
+    if (pathname === href) return true;
+    // Inventory tower has nested routes with their own nav entries — keep parent exact-only.
+    if (href === '/dashboard/inventory') return false;
+    return pathname.startsWith(`${href}/`);
+  };
 
   const { data: searchResults, loading: searching } = useQuery(SEARCH_QUERY, {
     variables: { query: deferredSearchQuery },
@@ -288,7 +294,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {section.items.map((item) => {
                     const active = isNavActive(item.href);
                     return (
-                      <li key={item.href}>
+                      <li key={`${section.title}:${item.href}:${item.name}`}>
                         <Link
                           href={item.href}
                           prefetch={false}
@@ -578,7 +584,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       {section.items.map((item) => {
                         const active = isNavActive(item.href);
                         return (
-                          <li key={item.href}>
+                          <li key={`${section.title}:${item.href}:${item.name}`}>
                             <Link
                               href={item.href}
                               prefetch={false}

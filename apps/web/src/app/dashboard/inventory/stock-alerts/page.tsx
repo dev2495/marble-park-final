@@ -4,7 +4,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { BellRing, Download, Loader2, Save } from 'lucide-react';
+import { BellRing, CheckCircle2, Download, Loader2, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { cn } from '@/lib/utils';
@@ -74,7 +74,34 @@ function badgeLabel(state: string) {
   return 'Off';
 }
 
+function parseThreshold(value: string) {
+  return Math.max(0, Math.trunc(Number(value || 0)) || 0);
+}
+
 type Draft = { warning: string; critical: string };
+
+function draftFromRow(row: any): Draft {
+  return {
+    warning: String(row.lowStockThreshold ?? 0),
+    critical: String(row.criticalStockThreshold ?? 0),
+  };
+}
+
+function isDirty(row: any, draft?: Draft) {
+  if (!draft) return false;
+  return parseThreshold(draft.warning) !== Number(row.lowStockThreshold ?? 0)
+    || parseThreshold(draft.critical) !== Number(row.criticalStockThreshold ?? 0);
+}
+
+function rowError(draft?: Draft) {
+  if (!draft) return '';
+  const warning = parseThreshold(draft.warning);
+  const critical = parseThreshold(draft.critical);
+  if (critical > 0 && warning > 0 && critical > warning) {
+    return 'Critical must be ≤ warning';
+  }
+  return '';
+}
 
 export default function StockAlertPolicyPage() {
   const router = useRouter();
@@ -89,6 +116,9 @@ export default function StockAlertPolicyPage() {
   const [bulkWarning, setBulkWarning] = useState('5');
   const [bulkCritical, setBulkCritical] = useState('2');
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [flashSku, setFlashSku] = useState('');
+  const [statusMessage, setStatusMessage] = useState('');
+  const [actionError, setActionError] = useState('');
   const deferredSearch = useDeferredValue(search.trim());
 
   const { data: meData, loading: meLoading } = useQuery(ME);
@@ -98,7 +128,10 @@ export default function StockAlertPolicyPage() {
   useEffect(() => {
     try {
       const sku = new URLSearchParams(window.location.search).get('sku');
-      if (sku) setSearch(sku);
+      if (sku) {
+        setSearch(sku);
+        setFlashSku(sku);
+      }
     } catch { /* ignore */ }
   }, []);
 
@@ -135,12 +168,7 @@ export default function StockAlertPolicyPage() {
       setDrafts((prev) => {
         const next = { ...prev };
         for (const row of items) {
-          if (!next[row.id]) {
-            next[row.id] = {
-              warning: String(row.lowStockThreshold ?? 0),
-              critical: String(row.criticalStockThreshold ?? 0),
-            };
-          }
+          if (!next[row.id] || !isDirty(row, next[row.id])) next[row.id] = draftFromRow(row);
         }
         return next;
       });
@@ -149,11 +177,14 @@ export default function StockAlertPolicyPage() {
 
   const selectedIds = Object.keys(selected).filter((id) => selected[id]);
   const allSelected = rows.length > 0 && rows.every((row) => selected[row.id]);
+  const dirtyCount = rows.filter((row) => isDirty(row, drafts[row.id])).length;
 
   const resetPage = (fn: () => void) => {
     setCursor('');
     setRows([]);
     setSelected({});
+    setStatusMessage('');
+    setActionError('');
     fn();
   };
 
@@ -171,23 +202,23 @@ export default function StockAlertPolicyPage() {
     setDrafts((prev) => {
       const next = { ...prev };
       for (const row of nextRows) {
-        if (!next[row.id]) {
-          next[row.id] = {
-            warning: String(row.lowStockThreshold ?? 0),
-            critical: String(row.criticalStockThreshold ?? 0),
-          };
-        }
+        if (!next[row.id]) next[row.id] = draftFromRow(row);
       }
       return next;
     });
     setCursor(payload.nextCursor);
   };
 
-  const parseThreshold = (value: string) => Math.max(0, Math.trunc(Number(value || 0)) || 0);
-
   const saveRow = async (row: any) => {
-    const draft = drafts[row.id] || { warning: String(row.lowStockThreshold ?? 0), critical: String(row.criticalStockThreshold ?? 0) };
+    const draft = drafts[row.id] || draftFromRow(row);
+    const validation = rowError(draft);
+    if (validation) {
+      setActionError(`${row.product?.sku || 'SKU'}: ${validation}`);
+      return;
+    }
     setSavingId(row.id);
+    setActionError('');
+    setStatusMessage('');
     try {
       const result = await updateOne({
         variables: {
@@ -201,15 +232,12 @@ export default function StockAlertPolicyPage() {
       const updated = result.data?.updateInventory;
       if (updated) {
         setRows((current) => current.map((item) => (item.id === row.id ? { ...item, ...updated } : item)));
-        setDrafts((prev) => ({
-          ...prev,
-          [row.id]: {
-            warning: String(updated.lowStockThreshold ?? 0),
-            critical: String(updated.criticalStockThreshold ?? 0),
-          },
-        }));
+        setDrafts((prev) => ({ ...prev, [row.id]: draftFromRow(updated) }));
       }
+      setStatusMessage(`Saved alert levels for ${updated?.product?.sku || row.product?.sku || 'SKU'}.`);
       await refetch();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not save this SKU policy.');
     } finally {
       setSavingId(null);
     }
@@ -217,45 +245,69 @@ export default function StockAlertPolicyPage() {
 
   const saveSelected = async () => {
     if (!selectedIds.length) return;
+    for (const id of selectedIds) {
+      const err = rowError(drafts[id]);
+      if (err) {
+        setActionError(err);
+        return;
+      }
+    }
     const input = selectedIds.map((id) => {
       const row = rows.find((item) => item.id === id);
-      const draft = drafts[id] || {
-        warning: String(row?.lowStockThreshold ?? 0),
-        critical: String(row?.criticalStockThreshold ?? 0),
-      };
+      const draft = drafts[id] || draftFromRow(row || {});
       return {
         balanceId: id,
         lowStockThreshold: parseThreshold(draft.warning),
         criticalStockThreshold: parseThreshold(draft.critical),
       };
     });
-    await bulkUpdate({ variables: { input } });
-    setCursor('');
-    setRows([]);
-    await refetch();
+    setActionError('');
+    setStatusMessage('');
+    try {
+      await bulkUpdate({ variables: { input } });
+      setCursor('');
+      setRows([]);
+      setSelected({});
+      setStatusMessage(`Saved ${input.length} selected SKU polic${input.length === 1 ? 'y' : 'ies'}.`);
+      await refetch();
+    } catch (err: any) {
+      setActionError(err?.message || 'Bulk save failed.');
+    }
   };
 
   const applyBulk = async () => {
     if (!selectedIds.length) return;
     const warning = parseThreshold(bulkWarning);
     const critical = parseThreshold(bulkCritical);
+    if (critical > 0 && warning > 0 && critical > warning) {
+      setActionError('Bulk critical must be less than or equal to warning.');
+      return;
+    }
     setDrafts((prev) => {
       const next = { ...prev };
       for (const id of selectedIds) next[id] = { warning: String(warning), critical: String(critical) };
       return next;
     });
-    await bulkUpdate({
-      variables: {
-        input: selectedIds.map((id) => ({
-          balanceId: id,
-          lowStockThreshold: warning,
-          criticalStockThreshold: critical,
-        })),
-      },
-    });
-    setCursor('');
-    setRows([]);
-    await refetch();
+    setActionError('');
+    setStatusMessage('');
+    try {
+      await bulkUpdate({
+        variables: {
+          input: selectedIds.map((id) => ({
+            balanceId: id,
+            lowStockThreshold: warning,
+            criticalStockThreshold: critical,
+          })),
+        },
+      });
+      setCursor('');
+      setRows([]);
+      setSelected({});
+      setStatusMessage(`Applied warning ${warning} / critical ${critical} to ${selectedIds.length} SKU(s).`);
+      await refetch();
+    } catch (err: any) {
+      setActionError(err?.message || 'Bulk apply failed.');
+    }
   };
 
   const exportCsv = () => {
@@ -263,7 +315,7 @@ export default function StockAlertPolicyPage() {
     const csv = [
       ['SKU', 'Product', 'Brand', 'Category', 'Available', 'Warning', 'Critical', 'Status'],
       ...rows.map((row) => {
-        const draft = drafts[row.id] || { warning: row.lowStockThreshold, critical: row.criticalStockThreshold };
+        const draft = drafts[row.id] || draftFromRow(row);
         return [
           row.product?.sku,
           row.product?.name,
@@ -294,16 +346,30 @@ export default function StockAlertPolicyPage() {
   return (
     <div className="space-y-5 pb-10">
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {actionError ? <QueryErrorBanner error={new Error(actionError)} /> : null}
+      {statusMessage ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+          <CheckCircle2 className="mr-2 inline h-4 w-4" />
+          {statusMessage}
+        </div>
+      ) : null}
 
       <section className="mp-card rounded-r6 border border-[var(--line)] bg-[var(--surface)] p-7 shadow-md-soft">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Stock · Alert policy</p>
-        <h1 className="mt-2 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">
-          Set warning &amp; critical levels for every SKU.
-        </h1>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
-          Owner and admin only. Warning fires when available stock is close to empty; critical fires on breach.
-          Inventory managers still receive bell alerts so they can reorder.
-        </p>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Stock · Alert policy</p>
+            <h1 className="mt-2 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">
+              Set warning &amp; critical levels for every SKU.
+            </h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
+              Owner and admin only. Warning fires when available stock is close to empty; critical fires on breach.
+              Inventory managers still receive bell alerts so they can reorder.
+            </p>
+          </div>
+          <Link href="/dashboard/inventory" className="text-sm font-semibold text-[var(--brand-700)] hover:underline">
+            Inventory tower →
+          </Link>
+        </div>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
@@ -312,12 +378,22 @@ export default function StockAlertPolicyPage() {
             ['Critical now', summary.critical, 'text-[var(--crit-700,#b91c1c)]'],
             ['Alerts off', summary.off, 'text-[var(--ink)]'],
           ].map(([label, value, tone]) => (
-            <div key={String(label)} className="rounded-2xl border border-[var(--line)] bg-[#fafafa] px-4 py-3">
+            <button
+              key={String(label)}
+              type="button"
+              onClick={() => {
+                if (label === 'Warning now') resetPage(() => setAlertState('warning'));
+                else if (label === 'Critical now') resetPage(() => setAlertState('critical'));
+                else if (label === 'Alerts off') resetPage(() => setAlertState('off'));
+                else resetPage(() => setAlertState(''));
+              }}
+              className="rounded-2xl border border-[var(--line)] bg-[#fafafa] px-4 py-3 text-left transition hover:border-[var(--brand-300)]"
+            >
               <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ink-5)]">{label}</span>
               <b className={cn('mt-1.5 block text-3xl font-bold tracking-[-0.03em]', tone)}>
                 {loading && !rows.length ? '…' : qty(Number(value || 0))}
               </b>
-            </div>
+            </button>
           ))}
         </div>
 
@@ -369,7 +445,7 @@ export default function StockAlertPolicyPage() {
             onClick={() => void saveSelected()}
           >
             {bulkSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-            Save selected
+            Save selected{dirtyCount ? ` (${dirtyCount} edited)` : ''}
           </Button>
         </div>
       </section>
@@ -405,7 +481,9 @@ export default function StockAlertPolicyPage() {
           >
             Apply
           </Button>
-          <span className="text-xs text-[var(--ink-4)]">0 disables that tier for the selected rows. {selectedIds.length} selected.</span>
+          <span className="text-xs text-[var(--ink-4)]">
+            0 disables that tier. {selectedIds.length} selected{dirtyCount ? ` · ${dirtyCount} unsaved edit(s)` : ''}.
+          </span>
         </div>
 
         <div className="overflow-x-auto">
@@ -447,12 +525,20 @@ export default function StockAlertPolicyPage() {
                 </tr>
               ) : null}
               {rows.map((row) => {
-                const draft = drafts[row.id] || {
-                  warning: String(row.lowStockThreshold ?? 0),
-                  critical: String(row.criticalStockThreshold ?? 0),
-                };
+                const draft = drafts[row.id] || draftFromRow(row);
+                const dirty = isDirty(row, draft);
+                const validation = rowError(draft);
+                const highlighted = flashSku && String(row.product?.sku || '') === flashSku;
                 return (
-                  <tr key={row.id} className="border-b border-[#f1f1f3] hover:bg-[#fcfcfd]">
+                  <tr
+                    key={row.id}
+                    className={cn(
+                      'border-b border-[#f1f1f3] hover:bg-[#fcfcfd]',
+                      dirty && 'bg-[var(--brand-50)]/40',
+                      highlighted && 'ring-2 ring-inset ring-[var(--brand-300)]',
+                      validation && 'bg-[var(--crit-50,#fef2f2)]/50',
+                    )}
+                  >
                     <td className="px-4 py-3.5 align-middle">
                       <input
                         type="checkbox"
@@ -466,6 +552,7 @@ export default function StockAlertPolicyPage() {
                       <div className="mt-0.5 text-xs text-[var(--ink-4)]">
                         {row.product?.name || 'Product'} · {row.product?.brand || '—'} · {row.product?.category || '—'}
                       </div>
+                      {validation ? <div className="mt-1 text-[11px] font-semibold text-[var(--crit-700,#b91c1c)]">{validation}</div> : null}
                     </td>
                     <td className="px-4 py-3.5 align-middle">
                       <div className="text-lg font-extrabold text-[var(--ink)]">{qty(row.available)}</div>
@@ -496,12 +583,12 @@ export default function StockAlertPolicyPage() {
                     <td className="px-4 py-3.5 align-middle text-right">
                       <Button
                         type="button"
-                        variant="outline"
-                        className="h-9 rounded-xl"
-                        disabled={savingId === row.id}
+                        variant={dirty ? 'default' : 'outline'}
+                        className={cn('h-9 rounded-xl', dirty && 'bg-[var(--brand-700)] text-white')}
+                        disabled={savingId === row.id || Boolean(validation)}
                         onClick={() => void saveRow(row)}
                       >
-                        {savingId === row.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+                        {savingId === row.id ? <Loader2 className="h-4 w-4 animate-spin" /> : dirty ? 'Save' : 'Saved'}
                       </Button>
                     </td>
                   </tr>
