@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 
 const QUOTES = gql`
-  query QuotesRegister($ownerId: String) {
-    quotes(ownerId: $ownerId) {
+  query QuotesRegister($ownerId: String, $architectId: String) {
+    quotes(ownerId: $ownerId, architectId: $architectId) {
       id
       quoteNumber
       title
@@ -23,7 +23,11 @@ const QUOTES = gql`
       lines
       customer
       owner
+      architectId
+      architectName
+      architect
     }
+    architects(status: "active", take: 200)
     ownerDashboard { stats userPerformance }
   }
 `;
@@ -50,6 +54,7 @@ export default function QuotesRegisterPage() {
   const [user, setUser] = useState<any>(null);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState('all');
+  const [architectId, setArchitectId] = useState('all');
 
   useEffect(() => {
     try {
@@ -60,7 +65,10 @@ export default function QuotesRegisterPage() {
   }, []);
 
   const ownerId = user?.role === 'sales' ? user.id : undefined;
-  const { data, loading, error, refetch } = useQuery(QUOTES, { variables: { ownerId }, skip: !ready });
+  const { data, loading, error, refetch } = useQuery(QUOTES, {
+    variables: { ownerId, architectId: architectId === 'all' ? undefined : architectId },
+    skip: !ready,
+  });
   const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
 
   const quotes = useMemo(() => {
@@ -68,6 +76,8 @@ export default function QuotesRegisterPage() {
     if (status === 'all') return rows;
     return rows.filter((quote: any) => quote.status === status);
   }, [data, status]);
+
+  const architects = useMemo(() => data?.architects || [], [data?.architects]);
 
   const totals = useMemo(() => {
     const all = data?.quotes || [];
@@ -114,10 +124,23 @@ export default function QuotesRegisterPage() {
 
       <section className="mp-card rounded-r5 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {['all', 'draft', 'sent', 'confirmed', 'lost'].map((item) => (
               <button key={item} onClick={() => setStatus(item)} className={`rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-wider ${status === item ? 'bg-[#18181b] text-white' : 'bg-white/75 text-[#27272a]'}`}>{item}</button>
             ))}
+            <label className="ml-1 flex items-center gap-2 rounded-2xl border border-[#e4e4e7] bg-white px-3 py-1.5 text-xs font-black uppercase tracking-wider text-[#52525b]">
+              Architect
+              <select
+                value={architectId}
+                onChange={(e) => setArchitectId(e.target.value)}
+                className="max-w-[14rem] bg-transparent text-xs font-black normal-case tracking-normal text-[#18181b] outline-none"
+              >
+                <option value="all">All architects</option>
+                {architects.map((architect: any) => (
+                  <option key={architect.id} value={architect.id}>{architect.name}</option>
+                ))}
+              </select>
+            </label>
           </div>
           <Button asChild><Link href="/dashboard/quotes/new"><Plus className="mr-2 h-4 w-4" /> Build quote</Link></Button>
         </div>
@@ -129,8 +152,8 @@ export default function QuotesRegisterPage() {
       {sendError ? <QueryErrorBanner error={sendError} /> : null}
 
       <section className="overflow-hidden rounded-r5 border border-[#e4e4e7]/10 bg-white/80 shadow-xl shadow-[#475569]/8">
-        <div className="hidden grid-cols-[1.2fr_1fr_0.72fr_0.55fr_1.25fr] gap-4 border-b border-[#e4e4e7]/10 bg-[#eff6ff]/75 px-5 py-4 text-xs font-medium uppercase tracking-widest text-[#52525b] lg:grid">
-          <div>Quote</div><div>Customer</div><div>Status</div><div className="text-right">Value</div><div className="text-right">Actions</div>
+        <div className="hidden grid-cols-[1.2fr_1fr_0.9fr_0.72fr_0.55fr_1.25fr] gap-4 border-b border-[#e4e4e7]/10 bg-[#eff6ff]/75 px-5 py-4 text-xs font-medium uppercase tracking-widest text-[#52525b] lg:grid">
+          <div>Quote</div><div>Customer</div><div>Architect</div><div>Status</div><div className="text-right">Value</div><div className="text-right">Actions</div>
         </div>
         <div className="divide-y divide-[#cbd5e1]/10">
           {loading && <div className="p-10 text-center text-sm font-bold text-[#52525b]" role="status" aria-live="polite">Loading quotes...</div>}
@@ -139,7 +162,7 @@ export default function QuotesRegisterPage() {
             const value = quoteTotal(quote.lines);
             const pdfHref = `/api/pdf/quote/${quote.id}`;
             return (
-              <article key={quote.id} className="grid gap-4 p-5 lg:grid-cols-[1.2fr_1fr_0.72fr_0.55fr_1.25fr] lg:items-center">
+              <article key={quote.id} className="grid gap-4 p-5 lg:grid-cols-[1.2fr_1fr_0.9fr_0.72fr_0.55fr_1.25fr] lg:items-center">
                 <div>
                   <Link href={`/dashboard/quotes/${quote.id}`} className="text-lg font-semibold text-[#18181b] hover:underline">{quote.quoteNumber}</Link>
                   <p className="mt-1 line-clamp-1 text-sm font-bold text-[#52525b]">{quote.title || quote.projectName || 'Retail quotation'}</p>
@@ -148,6 +171,10 @@ export default function QuotesRegisterPage() {
                 <div>
                   <p className="font-semibold text-[#18181b]">{quote.customer?.name || 'Customer'}</p>
                   <p className="mt-1 text-xs font-bold text-[#52525b]">{quote.customer?.siteAddress || quote.customer?.city || 'Site pending'}</p>
+                </div>
+                <div>
+                  <p className="font-semibold text-[#18181b]">{quote.architectName || quote.architect?.name || '—'}</p>
+                  {quote.architect?.firmName ? <p className="mt-1 text-xs font-bold text-[#52525b]">{quote.architect.firmName}</p> : null}
                 </div>
                 <div><span className={`rounded-full px-3 py-1.5 text-xs font-medium uppercase tracking-wider ${statusClass(quote.status)}`}>{quote.status}</span></div>
                 <div className="text-right text-xl font-semibold text-[#18181b]">{money(value)}</div>

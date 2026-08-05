@@ -91,6 +91,7 @@ async function seedDemo() {
   await prisma.inventoryBalance.deleteMany();
   await prisma.product.deleteMany();
   await prisma.customer.deleteMany();
+  await (prisma as any).architect.deleteMany();
   await prisma.user.deleteMany();
 
   const passwordHash = await bcrypt.hash('password123', 10);
@@ -148,13 +149,41 @@ async function seedDemo() {
     });
   }
 
+  const architect1 = await (prisma as any).architect.create({
+    data: {
+      id: ulid(),
+      name: 'Arc. Gauravbhai Patel',
+      firmName: 'Patel Design Studio',
+      phone: '9876501001',
+      email: 'gaurav@patelstudio.in',
+      city: 'Ahmedabad',
+      status: 'active',
+      notes: 'Frequent bathroom and kitchen consulting partner.',
+      updatedAt: new Date(),
+    },
+  });
+
+  const architect2 = await (prisma as any).architect.create({
+    data: {
+      id: ulid(),
+      name: 'Studio Nexus',
+      firmName: 'Studio Nexus Architects',
+      phone: '9876501002',
+      email: 'projects@studionexus.in',
+      city: 'Mumbai',
+      status: 'active',
+      notes: 'Commercial washroom selections.',
+      updatedAt: new Date(),
+    },
+  });
+
   const customer1 = await prisma.customer.create({
     data: {
       id: ulid(),
       name: 'Gupta Residence Upgrade',
       email: 'gaurav@guptaco.in',
       mobile: '9833398333',
-      architectName: 'Arc. Gauravbhai Patel',
+      architectName: architect1.name,
       siteAddress: 'Satellite Road, Ahmedabad',
       city: 'Ahmedabad',
       updatedAt: new Date(),
@@ -167,7 +196,7 @@ async function seedDemo() {
       name: 'Nexus Commercial Washroom Project',
       email: 'procurement@nexus.in',
       mobile: '9844498444',
-      architectName: 'Studio Nexus',
+      architectName: architect2.name,
       siteAddress: 'Andheri Kurla Road',
       city: 'Mumbai',
       updatedAt: new Date(),
@@ -214,6 +243,8 @@ async function seedDemo() {
       leadId: lead1.id,
       customerId: customer1.id,
       ownerId: sales.id,
+      architectId: architect1.id,
+      architectName: architect1.name,
       status: 'sent',
       approvalStatus: 'approved',
       discountPercent: 7.5,
@@ -228,8 +259,9 @@ async function seedDemo() {
         { sku: 'TIL-STAT-6001200', name: 'Statuario Porcelain Tile 600x1200', qty: 42, price: 1450, total: 60900 },
       ],
       versions: [],
+      quoteMeta: { architectName: architect1.name, remarks: 'Seed quote with consulting architect.' },
       updatedAt: new Date(),
-    },
+    } as any,
   });
 
   await prisma.followUpTask.create({

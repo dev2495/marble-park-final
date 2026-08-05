@@ -14,6 +14,7 @@ export interface AppDataLoaders {
   customerById: DataLoader<string, any | null>;
   userById: DataLoader<string, any | null>;
   leadById: DataLoader<string, any | null>;
+  architectById: DataLoader<string, any | null>;
   productById: DataLoader<string, any | null>;
   inventoryBalanceByProductId: DataLoader<string, any | null>;
 }
@@ -46,6 +47,9 @@ export function buildLoaders(prisma: PrismaService): AppDataLoaders {
     ),
     leadById: makeBatchLoader<string, any>((ids) =>
       prisma.lead.findMany({ where: { id: { in: ids as string[] } } }),
+    ),
+    architectById: makeBatchLoader<string, any>((ids) =>
+      (prisma as any).architect.findMany({ where: { id: { in: ids as string[] } } }),
     ),
     productById: makeBatchLoader<string, any>((ids) =>
       prisma.product.findMany({ where: { id: { in: ids as string[] } } }),
