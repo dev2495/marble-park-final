@@ -61,6 +61,12 @@ export class QuoteOutput {
   leadId?: string;
 
   @Field({ nullable: true })
+  architectId?: string;
+
+  @Field({ nullable: true })
+  architectName?: string;
+
+  @Field({ nullable: true })
   intentId?: string;
 
   @Field({ nullable: true })
@@ -86,6 +92,9 @@ export class QuoteOutput {
 
   @Field(() => GraphQLJSON, { nullable: true })
   lead?: any;
+
+  @Field(() => GraphQLJSON, { nullable: true })
+  architect?: any;
 
   @Field(() => GraphQLJSON, { nullable: true })
   approval?: any;
@@ -128,6 +137,9 @@ export class CreateQuoteInput {
 
   @Field(() => String, { nullable: true })
   supersedesQuoteId?: string;
+
+  @Field(() => String, { nullable: true })
+  architectId?: string;
 }
 
 @InputType()
@@ -158,6 +170,9 @@ export class UpdateQuoteInput {
 
   @Field(() => String, { nullable: true, description: 'Hero image shown on the PDF cover page (URL or /uploaded path)' })
   coverImage?: string;
+
+  @Field(() => String, { nullable: true })
+  architectId?: string;
 }
 
 @InputType()
@@ -210,6 +225,13 @@ export class QuotesResolver {
     return loadOrNull(ctx.loaders.leadById, quote?.leadId);
   }
 
+  @ResolveField('architect', () => GraphQLJSON, { nullable: true })
+  async resolveArchitect(@Parent() quote: any, @Context() ctx: GraphqlRequestContext) {
+    if (quote?.architect) return quote.architect;
+    if (!ctx.loaders) return null;
+    return loadOrNull(ctx.loaders.architectById, quote?.architectId);
+  }
+
   @Query(() => [QuoteOutput], { name: 'quotes' })
   getQuotes(
     @Context() ctx: GraphqlRequestContext,
@@ -217,9 +239,10 @@ export class QuotesResolver {
     @Args('customerId', { nullable: true }) customerId?: string,
     @Args('ownerId', { nullable: true }) ownerId?: string,
     @Args('status', { nullable: true }) status?: string,
+    @Args('architectId', { nullable: true }) architectId?: string,
   ) {
     return requireSession(this.prisma, ctx).then((user) =>
-      this.quotes.findAll({ leadId, customerId, ownerId: isPrivileged(user) ? ownerId : user.id, status }),
+      this.quotes.findAll({ leadId, customerId, ownerId: isPrivileged(user) ? ownerId : user.id, status, architectId }),
     );
   }
 

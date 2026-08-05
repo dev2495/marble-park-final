@@ -84,6 +84,21 @@ class VendorInput {
   @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
 }
 
+@InputType()
+class ArchitectInput {
+  @Field({ nullable: true }) id?: string;
+  @Field() name!: string;
+  @Field({ nullable: true }) phone?: string;
+  @Field({ nullable: true }) email?: string;
+  @Field({ nullable: true }) firmName?: string;
+  @Field({ nullable: true }) city?: string;
+  @Field({ nullable: true }) address?: string;
+  @Field({ nullable: true }) registrationNo?: string;
+  @Field({ nullable: true }) status?: string;
+  @Field({ nullable: true }) notes?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
+}
+
 @Resolver()
 export class SystemResolver {
   constructor(private system: SystemService, private prisma: PrismaService) {}
@@ -192,5 +207,22 @@ export class SystemResolver {
   async saveVendor(@Args('input') input: VendorInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'master_data.manage');
     return { data: await this.system.upsertVendor(input, user.id) };
+  }
+
+  @Query(() => [GraphQLJSON])
+  async architects(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('take', { nullable: true }) take?: number,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff']);
+    return this.system.architects({ search, status, take });
+  }
+
+  @Mutation(() => SystemJsonOutput)
+  async saveArchitect(@Args('input') input: ArchitectInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'master_data.manage');
+    return { data: await this.system.upsertArchitect(input, user.id) };
   }
 }

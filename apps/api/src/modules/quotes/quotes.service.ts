@@ -19,6 +19,7 @@ export interface CreateQuoteInput {
   quoteMeta?: any;
   intentId?: string | null;
   supersedesQuoteId?: string | null;
+  architectId?: string | null;
 }
 
 export interface UpdateQuoteInput {
@@ -31,6 +32,7 @@ export interface UpdateQuoteInput {
   displayMode?: string;
   quoteMeta?: any;
   coverImage?: string;
+  architectId?: string | null;
 }
 
 export interface CreateSalesOrderInput {
@@ -50,6 +52,7 @@ const QUOTE_STATUSES = ['draft', 'pending_approval', 'approved', 'sent', 'custom
 const quoteInclude = {
   customer: true,
   lead: true,
+  architect: true,
   owner: { select: { id: true, name: true, email: true, role: true, phone: true, active: true } },
 } as any;
 
@@ -62,12 +65,13 @@ export class QuotesService {
    * the resolver can fan relations through DataLoader and avoid the classic
    * 1 + 2N (`customer`, `owner` per row) hit pattern when listing 100s of quotes.
    */
-  async findAll(args?: { leadId?: string; customerId?: string; ownerId?: string; status?: string }): Promise<any[]> {
+  async findAll(args?: { leadId?: string; customerId?: string; ownerId?: string; status?: string; architectId?: string }): Promise<any[]> {
     const where: any = {};
     if (args?.leadId) where.leadId = args.leadId;
     if (args?.customerId) where.customerId = args.customerId;
     if (args?.ownerId) where.ownerId = args.ownerId;
     if (args?.status) where.status = args.status;
+    if (args?.architectId) where.architectId = args.architectId;
 
     return this.prisma.quote.findMany({
       where,
@@ -110,7 +114,16 @@ export class QuotesService {
 
     const normalizedLines = await this.assertQuoteLines(data.lines, 'creating a quote');
     const displayMode = this.normalizeDisplayMode(data.displayMode);
-    const quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, normalizedLines);
+    const consultingArchitect = await this.resolveConsultingArchitect(data.architectId);
+    const quoteMeta = this.normalizeQuoteMeta(
+      {
+        ...(typeof data.quoteMeta === 'string'
+          ? (() => { try { return JSON.parse(data.quoteMeta); } catch { return {}; } })()
+          : (data.quoteMeta || {})),
+        architectName: consultingArchitect?.name || undefined,
+      },
+      normalizedLines,
+    );
     const availabilityIssues = await this.getAvailabilityIssues(normalizedLines);
 
     // Atomic boundary: lead-autocreate + quote insert + (reservation pre-allocation
@@ -156,7 +169,7 @@ export class QuotesService {
             await this.releaseReservationsTx(tx, supersedesId, 'Quote superseded by revision');
           }
 
-          const { intentId, supersedesQuoteId: _supersedesQuoteId, ...quoteData } = data as any;
+          const { intentId, supersedesQuoteId: _supersedesQuoteId, architectId: _architectId, ...quoteData } = data as any;
           const quote = await tx.quote.create({
             data: {
               id: ulid(),
@@ -164,6 +177,8 @@ export class QuotesService {
               customerId,
               ownerId,
               leadId,
+              architectId: consultingArchitect?.id || null,
+              architectName: consultingArchitect?.name || null,
               lines: normalizedLines,
               quoteNumber,
               status: 'draft',
@@ -266,6 +281,19 @@ export class QuotesService {
     }
     if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
     if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, await this.assertQuoteLines((await this.findById(id)).lines, 'updating quote metadata'));
+    if (data.architectId !== undefined) {
+      const consultingArchitect = await this.resolveConsultingArchitect(data.architectId);
+      updateData.architectId = consultingArchitect?.id || null;
+      updateData.architectName = consultingArchitect?.name || null;
+      const current = await this.findById(id);
+      const baseMeta = updateData.quoteMeta !== undefined
+        ? updateData.quoteMeta
+        : this.normalizeQuoteMeta(current.quoteMeta, await this.assertQuoteLines(current.lines, 'updating quote architect'));
+      updateData.quoteMeta = {
+        ...baseMeta,
+        architectName: consultingArchitect?.name || '',
+      };
+    }
     
     const updated = await this.prisma.quote.update({
       where: { id },
@@ -884,6 +912,17 @@ export class QuotesService {
 
   private normalizeDisplayMode(value?: string) {
     return String(value || '').toLowerCase() === 'selection' ? 'selection' : 'priced';
+  }
+
+  private async resolveConsultingArchitect(architectId?: string | null) {
+    const id = String(architectId || '').trim();
+    if (!id) return null;
+    const architect = await (this.prisma as any).architect.findUnique({ where: { id } });
+    if (!architect) throw new BadRequestException('Consulting architect was not found');
+    if (String(architect.status || '').toLowerCase() === 'inactive') {
+      throw new BadRequestException('Consulting architect is inactive');
+    }
+    return architect;
   }
 
   private normalizeQuoteMeta(meta: any, lines: any[]) {
