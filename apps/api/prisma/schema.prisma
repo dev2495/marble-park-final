@@ -79,6 +79,29 @@ model Customer {
   @@index([gstNo])
 }
 
+/// Consulting architect / firm master — selected per quote for PDF, filters and reports.
+model Architect {
+  id            String   @id
+  name          String
+  phone         String?
+  email         String?
+  firmName      String?
+  city          String?
+  address       String?
+  registrationNo String?
+  status        String   @default("active")
+  notes         String?
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+  quotes        Quote[]
+
+  @@index([name])
+  @@index([status])
+  @@index([firmName])
+  @@index([city])
+}
+
 model DispatchChallan {
   id              String      @id
   challanNumber   String      @unique
@@ -503,6 +526,11 @@ model Quote {
   customerId          String
   owner               User              @relation(fields: [ownerId], references: [id])
   ownerId             String
+  /// Consulting architect on this quote (optional; one customer can use many architects).
+  architect           Architect?        @relation(fields: [architectId], references: [id])
+  architectId         String?
+  /// Denormalized snapshot for PDF / history if the master row is later renamed.
+  architectName       String?
   title               String
   status              String
   approvalStatus      String
@@ -532,6 +560,8 @@ model Quote {
   @@index([leadId])
   @@index([customerId])
   @@index([ownerId])
+  @@index([architectId])
+  @@index([architectName])
   @@index([status])
   @@index([approvalStatus])
   @@index([validUntil])

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { BadgeCheck, Building2, Database, Grid3X3, Layers3, PackagePlus, Palette, Settings, Users } from 'lucide-react';
+import { BadgeCheck, Building2, Database, Compass, Grid3X3, Layers3, PackagePlus, Palette, Settings, Users } from 'lucide-react';
 
 const modules = [
   ['Product Master','Create and edit SKUs, prices, media galleries, quote-ready descriptions and inventory defaults.','/dashboard/master-data/products',PackagePlus],
@@ -9,7 +9,8 @@ const modules = [
   ['Brand Master','Control dropdown brands and optional quote-logo metadata.','/dashboard/master-data/brands',BadgeCheck],
   ['Finish Master','Control colour/finish dropdowns for all SKUs and imports.','/dashboard/master-data/finishes',Palette],
   ['Vendor Master','Manage suppliers used by procurement, PO and GRN flows.','/dashboard/master-data/vendors',Building2],
-  ['Customer Master','Manage customers, sites, designers and architects.','/dashboard/customers',Users],
+  ['Architect Master','Manage consulting architects selected on quotes for PDFs, filters and reports.','/dashboard/master-data/architects',Compass],
+  ['Customer Master','Manage customers, sites, designers and legacy architect notes.','/dashboard/customers',Users],
   ['System Settings','Company profile, document prefixes, contact details and client-reset controls.','/dashboard/settings',Settings],
 ];
 

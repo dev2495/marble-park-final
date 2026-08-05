@@ -14,12 +14,16 @@ const GET_CUSTOMERS = gql`
   query GetCustomers { customers { id name email mobile siteAddress city } }
 `;
 
+const GET_ARCHITECTS = gql`
+  query GetArchitectsForQuote { architects(status: "active", take: 200) }
+`;
+
 const SEARCH_PRODUCTS = gql`
   query SearchProducts($query: String!) { globalSearch(query: $query) { products } }
 `;
 
 const CREATE_QUOTE = gql`
-  mutation CreateQuote($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber } }
+  mutation CreateQuote($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber architectId architectName } }
 `;
 
 function money(value: number) {
@@ -61,6 +65,7 @@ const AREA_SUGGESTIONS = [
 export default function QuoteBuilderPage() {
   const [lines, setLines] = useState<any[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [selectedArchitectId, setSelectedArchitectId] = useState('');
   const [projectTitle, setProjectTitle] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [success, setSuccess] = useState('');
@@ -68,6 +73,7 @@ export default function QuoteBuilderPage() {
   const [displayMode, setDisplayMode] = useState<'priced' | 'selection'>('priced');
   const [defaultArea, setDefaultArea] = useState('General Selection');
   const { data: customerData, error: customerError } = useQuery(GET_CUSTOMERS);
+  const { data: architectData, error: architectError } = useQuery(GET_ARCHITECTS);
   const { data: searchData, loading: searching, error: searchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: searchQuery }, skip: searchQuery.length < 2 });
   const [createQuote, { loading: saving, error: saveError }] = useMutation(CREATE_QUOTE);
   const [validationError, setValidationError] = useState<string>('');
@@ -111,6 +117,7 @@ export default function QuoteBuilderPage() {
           input: {
             customerId: selectedCustomerId,
             ownerId,
+            architectId: selectedArchitectId || undefined,
             projectName: projectTitle,
             title: projectTitle || 'Retail product quotation',
             displayMode,
@@ -132,7 +139,7 @@ export default function QuoteBuilderPage() {
     }
   };
 
-  const queryError = customerError || searchError;
+  const queryError = customerError || architectError || searchError;
   return (
     <div className="grid gap-4 pb-4 xl:h-[calc(100vh-10rem)] xl:overflow-hidden xl:grid-cols-[1fr_0.52fr]">
       {queryError ? <div className="xl:col-span-2"><QueryErrorBanner error={queryError} /></div> : null}
@@ -166,6 +173,20 @@ export default function QuoteBuilderPage() {
                 <SelectMenuContent>
                   {customerData?.customers?.map((customer: any) => (
                     <SelectMenuItem key={customer.id} value={customer.id}>{customer.name}</SelectMenuItem>
+                  ))}
+                </SelectMenuContent>
+              </SelectMenu>
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Consulting architect</span>
+              <SelectMenu value={selectedArchitectId || '__none__'} onValueChange={(v) => setSelectedArchitectId(v === '__none__' ? '' : v)}>
+                <SelectMenuTrigger className="h-11 text-sm" placeholder="Optional — select architect…" />
+                <SelectMenuContent>
+                  <SelectMenuItem value="__none__">No architect</SelectMenuItem>
+                  {(architectData?.architects || []).map((architect: any) => (
+                    <SelectMenuItem key={architect.id} value={architect.id}>
+                      {architect.name}{architect.firmName ? ` · ${architect.firmName}` : ''}
+                    </SelectMenuItem>
                   ))}
                 </SelectMenuContent>
               </SelectMenu>

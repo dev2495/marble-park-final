@@ -13,12 +13,16 @@ const QUOTE_DETAIL = gql`
   query QuoteDetail($id: ID!) {
     quote(id: $id) {
       id quoteNumber title projectName status approvalStatus discountPercent displayMode createdAt validUntil sentAt confirmedAt notes lines quoteMeta customer owner lead approval coverImage
-      versionNumber supersedesQuoteId supersededByQuoteId intentId
+      versionNumber supersedesQuoteId supersededByQuoteId intentId architectId architectName architect
     }
   }
 `;
 
-const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id displayMode lines quoteMeta approvalStatus status } }`;
+const GET_ARCHITECTS = gql`
+  query ArchitectsForQuoteDetail { architects(status: "active", take: 200) }
+`;
+
+const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id displayMode lines quoteMeta approvalStatus status architectId architectName } }`;
 const SEND_QUOTE = gql`mutation SendQuote($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
 const CREATE_SALES_ORDER = gql`mutation CreateSalesOrderFromQuote($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`;
 const START_REVISION_FROM_QUOTE = gql`mutation StartRevisionFromQuote($quoteId: String!) { startQuoteRevision(quoteId: $quoteId) }`;
@@ -66,9 +70,11 @@ export default function QuoteDetailPage() {
   const [discountPercent, setDiscountPercent] = useState('0');
   const [coverImage, setCoverImage] = useState('');
   const [tagline, setTagline] = useState('');
+  const [selectedArchitectId, setSelectedArchitectId] = useState('');
   const [uploadingCover, setUploadingCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
   const { data, loading, error, refetch } = useQuery(QUOTE_DETAIL, { variables: { id } });
+  const { data: architectData } = useQuery(GET_ARCHITECTS);
   const [updateQuote, { loading: savingQuote, error: updateError }] = useMutation(UPDATE_QUOTE, { onCompleted: () => refetch() });
   const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
   const [createSalesOrder, { loading: creatingOrder, error: createOrderError }] = useMutation(CREATE_SALES_ORDER, {
@@ -103,6 +109,7 @@ export default function QuoteDetailPage() {
     setDiscountPercent(String(quote.discountPercent || 0));
     setCoverImage(quote.coverImage || meta.coverImage || '');
     setTagline(meta.tagline || '');
+    setSelectedArchitectId(quote.architectId || '');
   }, [quote]);
 
   async function handleCoverUpload(file: File | null) {
@@ -144,6 +151,7 @@ export default function QuoteDetailPage() {
         discountPercent: Number(discountPercent || 0),
         lines: JSON.stringify(editLines),
         coverImage: coverImage || undefined,
+        architectId: selectedArchitectId || null,
         quoteMeta: JSON.stringify({ remarks, terms, bankDetails, showBrandLogos: true, coverImage, tagline }),
       },
     },
@@ -279,6 +287,28 @@ export default function QuoteDetailPage() {
 
       <aside className="space-y-5">
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Customer</h2><p className="mt-4 text-lg font-semibold text-[#18181b]">{quote.customer?.name || 'Customer'}</p><p className="mt-2 text-sm font-bold text-[#52525b]">{quote.customer?.mobile || quote.customer?.phone}</p><p className="mt-2 text-sm font-bold text-[#52525b]">{quote.customer?.siteAddress || quote.customer?.city}</p></div>
+        <div className="mp-card rounded-r5 p-6">
+          <h2 className="text-2xl font-black tracking-tight">Consulting architect</h2>
+          <p className="mt-2 text-sm font-bold text-[#52525b]">Who is consulting on this quote. Used on PDFs and available for filters/reports.</p>
+          <label className="mt-4 block space-y-2">
+            <span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Architect</span>
+            <select
+              value={selectedArchitectId || ''}
+              onChange={(e) => setSelectedArchitectId(e.target.value)}
+              className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black"
+            >
+              <option value="">No architect</option>
+              {(architectData?.architects || []).map((architect: any) => (
+                <option key={architect.id} value={architect.id}>
+                  {architect.name}{architect.firmName ? ` · ${architect.firmName}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          {(quote.architectName || quote.architect?.name) ? (
+            <p className="mt-3 text-sm font-semibold text-[#18181b]">Saved: {quote.architectName || quote.architect?.name}</p>
+          ) : null}
+        </div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Totals</h2>{showPrices ? <div className="mt-5 space-y-3 text-sm font-bold text-[#27272a]"><div className="flex justify-between"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between"><span>Discount</span><span>{money(quoteDiscount)}</span></div><div className="flex justify-between"><span>GST 18%</span><span>{money(tax)}</span></div><div className="flex justify-between border-t border-[#e4e4e7]/10 pt-4 text-2xl font-semibold text-[#18181b]"><span>Total</span><span>{money(total)}</span></div></div> : <p className="mt-4 rounded-2xl bg-[#eff6ff]/70 p-4 text-sm font-black text-[#1d4ed8]">Selection summary mode hides all prices in the PDF.</p>}</div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">PDF terms</h2><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Terms</span><textarea value={terms} onChange={(event)=>setTerms(event.target.value)} className="min-h-28 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 py-3 text-xs font-bold" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Bank details</span><textarea value={bankDetails} onChange={(event)=>setBankDetails(event.target.value)} className="min-h-24 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 py-3 text-xs font-bold" /></label></div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert to sales order</h2><p className="mt-2 text-sm font-bold text-[#52525b]">Use after final customer confirmation. Cash orders capture advance/full payment; credit orders are tagged for owner reports. No owner approval is required at this step.</p><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[#52525b]">Advance / full paid</span><input type="number" value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[#e4e4e7]/15 bg-white px-4 text-sm font-black" /></label>}{orderMessage && <div className="mt-3 rounded-2xl bg-[#eff6ff]/70 p-3 text-xs font-black uppercase tracking-wider text-[#1d4ed8]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[#2563eb] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder || quote.status === 'superseded'} onClick={()=>createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),notes:'Created from quote detail'}}})}>Create sales order</Button></div>
