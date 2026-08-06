@@ -21,7 +21,9 @@ const s = StyleSheet.create({
   tr: { flexDirection: 'row', minHeight: 32, borderBottomWidth: 1, borderBottomColor: '#eee7e1', paddingHorizontal: 7, paddingVertical: 7 },
   th: { backgroundColor: '#211b16', color: '#ffffff' },
   c1: { width: '8%', fontSize: 7 }, c2: { width: '18%', fontSize: 7 }, c3: { width: '34%', fontSize: 7 }, c4: { width: '10%', fontSize: 7, textAlign: 'right' }, c5: { width: '14%', fontSize: 7, textAlign: 'right' }, c6: { width: '16%', fontSize: 7, textAlign: 'right' },
-  total: { marginTop: 14, marginLeft: 'auto', width: 210, flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 2, borderTopColor: '#211b16', paddingTop: 9, fontSize: 13, fontWeight: 900 },
+  totalBlock: { marginTop: 14, marginLeft: 'auto', width: 240, borderTopWidth: 2, borderTopColor: '#211b16', paddingTop: 9 },
+  totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4, fontSize: 10 },
+  totalStrong: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, fontSize: 13, fontWeight: 900 },
   notes: { marginTop: 22, borderWidth: 1, borderColor: '#e2d8ce', padding: 12, minHeight: 58, backgroundColor: '#ffffff' },
   signatures: { marginTop: 44, flexDirection: 'row', justifyContent: 'space-between' },
   sign: { width: '42%', borderTopWidth: 1, borderTopColor: '#766b63', paddingTop: 7, fontSize: 8, color: '#665b54' },
@@ -63,11 +65,24 @@ async function fetchData(id, apiUrl) {
   return { order: payload.data.purchaseOrder, settings: payload.data.documentSettings?.data || {} };
 }
 
+function commercialTotals(order, lines) {
+  const fallbackSubtotal = lines.reduce((sum, line) => sum + Number(line.orderedQuantity || 0) * Number(line.unitCost || 0), 0);
+  const discountPercent = Number(order.discountPercent || 0);
+  const taxRate = Number(order.taxRate || 0);
+  const subtotal = Number(order.subtotal || 0) || fallbackSubtotal;
+  const discountAmount = Number(order.discountAmount || 0) || Math.round((fallbackSubtotal * discountPercent / 100) * 100) / 100;
+  const taxableValue = Number(order.taxableValue || 0) || Math.round((fallbackSubtotal - discountAmount) * 100) / 100;
+  const taxAmount = Number(order.taxAmount || 0) || Math.round((taxableValue * taxRate / 100) * 100) / 100;
+  const grandTotal = Number(order.grandTotal || 0) || Math.round((taxableValue + taxAmount) * 100) / 100;
+  return { subtotal, discountAmount, taxableValue, taxAmount, grandTotal, discountPercent, taxRate };
+}
+
 function build({ order, settings }, requestUrl) {
   const e = React.createElement;
   const lines = Array.isArray(order.lines) ? order.lines : [];
-  const subtotal = lines.reduce((sum, line) => sum + Number(line.orderedQuantity || 0) * Number(line.unitCost || 0), 0);
+  const totals = commercialTotals(order, lines);
   const hasPendingCost = lines.some((line) => Number(line.unitCost || 0) <= 0);
+  const vendorGst = order.vendor?.gstNo || order.vendor?.gstNumber || '';
   const logo = absolute(settings.logoUrl, requestUrl);
   return e(Document, null, e(Page, { size: 'A4', style: s.page },
     e(View, { style: s.rule }),
@@ -76,15 +91,20 @@ function build({ order, settings }, requestUrl) {
       e(View, null, e(Text, { style: s.title }, 'PURCHASE ORDER'), e(Text, { style: s.reference }, order.poNumber), e(Text, { style: s.small }, `Date: ${date(order.orderedAt || order.createdAt)}`)),
     ),
     e(View, { style: s.panels },
-      e(View, { style: s.panel }, e(Text, { style: s.label }, 'Supplier'), e(Text, { style: s.value }, order.vendorName || 'Vendor'), e(Text, { style: s.small }, order.vendor?.address || ''), order.vendor?.gstNumber ? e(Text, { style: s.small }, `GSTIN ${order.vendor.gstNumber}`) : null),
+      e(View, { style: s.panel }, e(Text, { style: s.label }, 'Supplier'), e(Text, { style: s.value }, order.vendorName || 'Vendor'), e(Text, { style: s.small }, order.vendor?.address || ''), vendorGst ? e(Text, { style: s.small }, `GSTIN ${vendorGst}`) : null),
       e(View, { style: s.panel }, e(Text, { style: s.label }, 'Delivery'), e(Text, { style: s.value }, settings.companyName || 'Marble Park'), e(Text, { style: s.small }, settings.companyAddress || ''), e(Text, { style: s.small }, `Expected: ${date(order.expectedDate)}`)),
     ),
     e(View, { style: s.table },
       e(View, { style: [s.tr, s.th] }, e(Text, { style: s.c1 }, '#'), e(Text, { style: s.c2 }, 'SKU / CODE'), e(Text, { style: s.c3 }, 'DESCRIPTION'), e(Text, { style: s.c4 }, 'QTY'), e(Text, { style: s.c5 }, 'UNIT COST'), e(Text, { style: s.c6 }, 'VALUE')),
-      ...lines.map((line, index) => { const known = Number(line.unitCost || 0) > 0; return e(View, { key: line.id || index, style: s.tr, wrap: false }, e(Text, { style: s.c1 }, String(index + 1)), e(Text, { style: s.c2 }, line.metadata?.internalCode || line.sku || ''), e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')), e(Text, { style: s.c4 }, `${line.orderedQuantity || 0} ${line.unit || 'PC'}`), e(Text, { style: s.c5 }, known ? money(line.unitCost) : 'At GRN'), e(Text, { style: s.c6 }, known ? money(Number(line.orderedQuantity || 0) * Number(line.unitCost || 0)) : 'Pending')); }),
+      ...lines.map((line, index) => { const known = Number(line.unitCost || 0) > 0; const lineValue = Number(line.lineTotal || 0) > 0 ? Number(line.lineTotal) : Number(line.orderedQuantity || 0) * Number(line.unitCost || 0); return e(View, { key: line.id || index, style: s.tr, wrap: false }, e(Text, { style: s.c1 }, String(index + 1)), e(Text, { style: s.c2 }, line.metadata?.internalCode || line.sku || ''), e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')), e(Text, { style: s.c4 }, `${line.orderedQuantity || 0} ${line.unit || 'PC'}`), e(Text, { style: s.c5 }, known ? money(line.unitCost) : 'At GRN'), e(Text, { style: s.c6 }, known ? money(lineValue) : 'Pending')); }),
     ),
-    e(View, { style: s.total }, e(Text, null, hasPendingCost ? 'Known order value' : 'Order value'), e(Text, null, money(subtotal))),
-    e(View, { style: s.notes }, e(Text, { style: s.label }, 'Instructions / terms'), e(Text, { style: s.small }, [order.notes || 'Supply against this purchase order only. Quantity and condition are subject to GRN verification.', hasPendingCost ? 'Pending line costs will be recorded at GRN; if left blank, Product Master default purchase cost is used.' : ''].filter(Boolean).join('\n'))),
+    e(View, { style: s.totalBlock },
+      e(View, { style: s.totalRow }, e(Text, null, 'Subtotal'), e(Text, null, money(totals.subtotal))),
+      totals.discountAmount > 0 ? e(View, { style: s.totalRow }, e(Text, null, `Discount ${totals.discountPercent}%`), e(Text, null, `- ${money(totals.discountAmount)}`)) : null,
+      totals.taxAmount > 0 ? e(View, { style: s.totalRow }, e(Text, null, `GST ${totals.taxRate}%`), e(Text, null, money(totals.taxAmount))) : null,
+      e(View, { style: s.totalStrong }, e(Text, null, hasPendingCost ? 'Known order value' : 'Order value'), e(Text, null, money(totals.grandTotal))),
+    ),
+    e(View, { style: s.notes }, e(Text, { style: s.label }, 'Instructions / terms'), e(Text, { style: s.small }, [order.notes || 'Supply against this purchase order only. Quantity and condition are subject to GRN verification.', hasPendingCost ? 'Pending line costs will be recorded at GRN; if left blank, Product Master default purchase cost is used.' : '', totals.discountAmount > 0 || totals.taxAmount > 0 ? 'Discount and GST shown are commercial document totals; GRN stock cost uses unit cost.' : ''].filter(Boolean).join('\n'))),
     e(View, { style: s.signatures }, e(Text, { style: s.sign }, 'Supplier acceptance'), e(Text, { style: s.sign }, `For ${settings.companyName || 'Marble Park'}`)),
     e(View, { style: s.footer }, e(Text, null, settings.supportPhone || settings.supportEmail || ''), e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}` })),
   ));
