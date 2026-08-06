@@ -23,6 +23,12 @@ class CreatePurchaseOrderInput {
 
   @Field({ nullable: true })
   notes?: string;
+
+  @Field(() => Number, { nullable: true, description: 'Optional PO discount % (0–100). Blank/0 = none.' })
+  discountPercent?: number;
+
+  @Field(() => Number, { nullable: true, description: 'Optional GST % (0–100). Blank/0 = no GST.' })
+  taxRate?: number;
 }
 
 @InputType()

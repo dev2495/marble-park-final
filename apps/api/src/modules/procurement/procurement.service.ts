@@ -4,6 +4,7 @@ import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { reserveAvailableLotsTx } from '../common/lot-allocation';
+import { pricePoLines } from '../common/po-pricing';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreatePurchaseOrderInput {
@@ -13,6 +14,10 @@ export interface CreatePurchaseOrderInput {
   vendorName?: string;
   expectedDate?: Date;
   notes?: string;
+  /** Optional header discount % (0–100). Blank/0 = none. */
+  discountPercent?: number;
+  /** Optional GST % (0–100). Blank/0/null = no GST. */
+  taxRate?: number | null;
 }
 
 export interface ReceivePurchaseOrderInput {
@@ -139,6 +144,59 @@ export class ProcurementService {
     const poNumber = await this.generatePoNumber();
     const expectedDate = input.expectedDate ? new Date(input.expectedDate) : null;
 
+    // Build commercial line drafts, then price once (header discount + GST).
+    const commercialDrafts: Array<{
+      kind: 'demand' | 'direct';
+      demand?: any;
+      product?: any;
+      orderedQuantity: number;
+      unitCost: number;
+      unit: string;
+      note?: string;
+      sku: string;
+      name: string;
+      category: string;
+      brand: string;
+      finish: string | null;
+      productId: string | null;
+      purchaseDemandId?: string;
+    }> = [
+      ...demandLines.map(({ demand, unitCost }) => ({
+        kind: 'demand' as const,
+        demand,
+        orderedQuantity: Math.max(0, Number(demand.quantity || 0) - Number(demand.receivedQuantity || 0)),
+        unitCost,
+        unit: demand.unit || 'PC',
+        sku: demand.sku,
+        name: demand.name,
+        category: demand.category,
+        brand: demand.brand,
+        finish: demand.finish || null,
+        productId: demand.productId || null,
+        purchaseDemandId: demand.id,
+      })),
+      ...directLines.map((row) => ({
+        kind: 'direct' as const,
+        product: row.product,
+        orderedQuantity: row.orderedQuantity,
+        unitCost: row.unitCost,
+        unit: row.unit,
+        note: row.note,
+        sku: row.product.sku,
+        name: row.product.name,
+        category: row.product.category,
+        brand: row.product.brand,
+        finish: row.product.finish || null,
+        productId: row.product.id,
+      })),
+    ];
+    if (!commercialDrafts.length) throw new BadRequestException('No purchase order lines to create');
+
+    const priced = pricePoLines(
+      commercialDrafts.map((row) => ({ orderedQuantity: row.orderedQuantity, unitCost: row.unitCost })),
+      { discountPercent: input.discountPercent, taxRate: input.taxRate },
+    );
+
     const po = await this.prisma.$transaction(async (tx: any) => {
       const order = await tx.purchaseOrder.create({
         data: {
@@ -151,97 +209,119 @@ export class ProcurementService {
           orderedAt: new Date(),
           createdBy: actorUserId,
           notes: input.notes || '',
+          discountPercent: priced.totals.discountPercent,
+          taxRate: priced.totals.taxRate > 0 ? priced.totals.taxRate : null,
+          subtotal: priced.totals.subtotal,
+          discountAmount: priced.totals.discountAmount,
+          taxableValue: priced.totals.taxableValue,
+          taxAmount: priced.totals.taxAmount,
+          grandTotal: priced.totals.grandTotal,
           metadata: {
             source: demandIds.length && directLines.length ? 'mixed_purchase_order' : demandIds.length ? 'purchase_demand_queue' : 'direct_product_master',
             demandIds,
             directLineCount: directLines.length,
+            commercial: {
+              discountPercent: priced.totals.discountPercent,
+              taxRate: priced.totals.taxRate,
+              grandTotal: priced.totals.grandTotal,
+            },
           },
           updatedAt: new Date(),
         },
       });
 
-      for (const demandLine of demandLines) {
-        const { demand, unitCost } = demandLine;
-        await tx.purchaseOrderLine.create({
-          data: {
-            id: ulid(),
-            purchaseOrderId: order.id,
-            purchaseDemandId: demand.id,
-            productId: demand.productId || null,
-            sku: demand.sku,
-            name: demand.name,
-            category: demand.category,
-            brand: demand.brand,
-            finish: demand.finish || null,
-            unit: demand.unit || 'PC',
-            orderedQuantity: Math.max(0, Number(demand.quantity || 0) - Number(demand.receivedQuantity || 0)),
-            unitCost,
-            status: 'ordered',
-            metadata: {
-              sourceLineKey: demand.sourceLineKey,
-              sourceOrderId: demand.sourceOrderId,
-              sourceQuoteId: demand.sourceQuoteId,
-              customerId: demand.customerId,
-              ownerId: demand.ownerId,
-              costStatus: unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn',
-            },
-            updatedAt: new Date(),
-          },
-        });
-        if (input.vendorId && demand.productId) {
-          await tx.productVendor.upsert({
-            where: { productId_vendorId: { productId: demand.productId, vendorId: input.vendorId } },
-            update: {
-              vendorName,
-              preferred: true,
-              status: 'active',
-              updatedAt: new Date(),
-              metadata: { source: 'purchase_order', poNumber },
-            },
-            create: {
+      for (let index = 0; index < commercialDrafts.length; index += 1) {
+        const draft = commercialDrafts[index];
+        const commercial = priced.lines[index];
+        if (draft.kind === 'demand') {
+          const demand = draft.demand;
+          await tx.purchaseOrderLine.create({
+            data: {
               id: ulid(),
-              productId: demand.productId,
-              vendorId: input.vendorId,
-              vendorName,
-              preferred: true,
-              status: 'active',
-              updatedAt: new Date(),
-              metadata: { source: 'purchase_order', poNumber },
-            },
-          });
-          await tx.reorderPolicy.upsert({
-            where: { productId: demand.productId },
-            update: {
-              preferredVendorId: input.vendorId,
-              reorderQuantity: Math.max(Number(demand.quantity || 0), 1),
-              reorderPoint: 0,
-              updatedAt: new Date(),
-            },
-            create: {
-              id: ulid(),
-              productId: demand.productId,
-              preferredVendorId: input.vendorId,
-              reorderQuantity: Math.max(Number(demand.quantity || 0), 1),
-              reorderPoint: 0,
+              purchaseOrderId: order.id,
+              purchaseDemandId: demand.id,
+              productId: demand.productId || null,
+              sku: demand.sku,
+              name: demand.name,
+              category: demand.category,
+              brand: demand.brand,
+              finish: demand.finish || null,
+              unit: demand.unit || 'PC',
+              orderedQuantity: commercial.orderedQuantity,
+              unitCost: commercial.unitCost,
+              discountPercent: commercial.discountPercent,
+              taxRate: commercial.taxRate,
+              taxableValue: commercial.taxableValue,
+              taxAmount: commercial.taxAmount,
+              lineTotal: commercial.lineTotal,
+              status: 'ordered',
+              metadata: {
+                sourceLineKey: demand.sourceLineKey,
+                sourceOrderId: demand.sourceOrderId,
+                sourceQuoteId: demand.sourceQuoteId,
+                customerId: demand.customerId,
+                ownerId: demand.ownerId,
+                costStatus: commercial.unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn',
+                lineGross: commercial.lineGross,
+                lineDiscount: commercial.lineDiscount,
+              },
               updatedAt: new Date(),
             },
           });
+          if (input.vendorId && demand.productId) {
+            await tx.productVendor.upsert({
+              where: { productId_vendorId: { productId: demand.productId, vendorId: input.vendorId } },
+              update: {
+                vendorName,
+                preferred: true,
+                status: 'active',
+                updatedAt: new Date(),
+                metadata: { source: 'purchase_order', poNumber },
+              },
+              create: {
+                id: ulid(),
+                productId: demand.productId,
+                vendorId: input.vendorId,
+                vendorName,
+                preferred: true,
+                status: 'active',
+                updatedAt: new Date(),
+                metadata: { source: 'purchase_order', poNumber },
+              },
+            });
+            await tx.reorderPolicy.upsert({
+              where: { productId: demand.productId },
+              update: {
+                preferredVendorId: input.vendorId,
+                reorderQuantity: Math.max(Number(demand.quantity || 0), 1),
+                reorderPoint: 0,
+                updatedAt: new Date(),
+              },
+              create: {
+                id: ulid(),
+                productId: demand.productId,
+                preferredVendorId: input.vendorId,
+                reorderQuantity: Math.max(Number(demand.quantity || 0), 1),
+                reorderPoint: 0,
+                updatedAt: new Date(),
+              },
+            });
+          }
+          await tx.purchaseDemand.update({
+            where: { id: demand.id },
+            data: {
+              status: 'ordered',
+              orderedQuantity: Math.max(Number(demand.orderedQuantity || 0), Number(demand.quantity || 0)),
+              vendorName,
+              preferredVendorId: input.vendorId || demand.preferredVendorId || null,
+              expectedDate,
+              updatedAt: new Date(),
+            },
+          });
+          continue;
         }
-        await tx.purchaseDemand.update({
-          where: { id: demand.id },
-          data: {
-            status: 'ordered',
-            orderedQuantity: Math.max(Number(demand.orderedQuantity || 0), Number(demand.quantity || 0)),
-            vendorName,
-            preferredVendorId: input.vendorId || demand.preferredVendorId || null,
-            expectedDate,
-            updatedAt: new Date(),
-          },
-        });
-      }
 
-      for (const row of directLines) {
-        const product: any = row.product;
+        const product: any = draft.product;
         await tx.purchaseOrderLine.create({
           data: {
             id: ulid(),
@@ -252,11 +332,23 @@ export class ProcurementService {
             category: product.category,
             brand: product.brand,
             finish: product.finish || null,
-            unit: row.unit,
-            orderedQuantity: row.orderedQuantity,
-            unitCost: row.unitCost,
+            unit: draft.unit,
+            orderedQuantity: commercial.orderedQuantity,
+            unitCost: commercial.unitCost,
+            discountPercent: commercial.discountPercent,
+            taxRate: commercial.taxRate,
+            taxableValue: commercial.taxableValue,
+            taxAmount: commercial.taxAmount,
+            lineTotal: commercial.lineTotal,
             status: 'ordered',
-            metadata: { source: 'direct_product_master', internalCode: product.internalCode || null, note: row.note || null, costStatus: row.unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn' },
+            metadata: {
+              source: 'direct_product_master',
+              internalCode: product.internalCode || null,
+              note: draft.note || null,
+              costStatus: commercial.unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn',
+              lineGross: commercial.lineGross,
+              lineDiscount: commercial.lineDiscount,
+            },
             updatedAt: new Date(),
           },
         });
@@ -268,8 +360,8 @@ export class ProcurementService {
           });
           await tx.reorderPolicy.upsert({
             where: { productId: product.id },
-            update: { preferredVendorId: input.vendorId, reorderQuantity: row.orderedQuantity, reorderPoint: 0, updatedAt: new Date() },
-            create: { id: ulid(), productId: product.id, preferredVendorId: input.vendorId, reorderQuantity: row.orderedQuantity, reorderPoint: 0, updatedAt: new Date() },
+            update: { preferredVendorId: input.vendorId, reorderQuantity: commercial.orderedQuantity, reorderPoint: 0, updatedAt: new Date() },
+            create: { id: ulid(), productId: product.id, preferredVendorId: input.vendorId, reorderQuantity: commercial.orderedQuantity, reorderPoint: 0, updatedAt: new Date() },
           });
         }
       }
@@ -282,7 +374,13 @@ export class ProcurementService {
           entityType: 'PurchaseOrder',
           entityId: order.id,
           summary: `Created ${order.poNumber} for ${vendorName}`,
-          metadata: { demandIds, directLineCount: directLines.length },
+          metadata: {
+            demandIds,
+            directLineCount: directLines.length,
+            discountPercent: priced.totals.discountPercent,
+            taxRate: priced.totals.taxRate,
+            grandTotal: priced.totals.grandTotal,
+          },
         },
       });
       return order;
@@ -701,25 +799,48 @@ export class ProcurementService {
   private async attachPoLines(orders: any[]) {
     if (!orders.length) return [];
     const orderIds = orders.map((order) => order.id);
+    const vendorIds = Array.from(new Set(orders.map((order) => order.vendorId).filter(Boolean))) as string[];
     const lines = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId: { in: orderIds } }, orderBy: { createdAt: 'asc' } });
     const demandIds = Array.from(new Set(lines.map((line: any) => line.purchaseDemandId).filter(Boolean)));
     const productIds = Array.from(new Set(lines.map((line: any) => line.productId).filter(Boolean))) as string[];
-    const [demands, products] = await Promise.all([
+    const [demands, products, vendors] = await Promise.all([
       demandIds.length ? (this.prisma as any).purchaseDemand.findMany({ where: { id: { in: demandIds } } }) : [],
       productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, costPrice: true } }) : [],
+      vendorIds.length ? (this.prisma as any).vendor.findMany({ where: { id: { in: vendorIds } } }) : [],
     ]);
     const demandMap = new Map(demands.map((demand: any) => [demand.id, demand] as const));
     const productMap = new Map(products.map((product: any) => [product.id, product] as const));
+    const vendorMap = new Map(vendors.map((vendor: any) => [vendor.id, vendor] as const));
     const linesByPo = this.groupBy(lines.map((line: any) => {
       const skuCost = Number((productMap.get(line.productId) as any)?.costPrice || 0);
+      const unitCost = Number(line.unitCost || 0);
+      const orderedQuantity = Number(line.orderedQuantity || 0);
+      const lineGross = Number(line.metadata?.lineGross ?? (orderedQuantity * unitCost));
       return {
         ...line,
         skuCost,
-        effectiveUnitCost: Number(line.unitCost || 0) > 0 ? Number(line.unitCost) : skuCost,
+        effectiveUnitCost: unitCost > 0 ? unitCost : skuCost,
+        lineGross,
+        lineDiscount: Number(line.metadata?.lineDiscount ?? 0),
         demand: line.purchaseDemandId ? demandMap.get(line.purchaseDemandId) || null : null,
       };
     }), 'purchaseOrderId');
-    return orders.map((order) => ({ ...order, lines: linesByPo.get(order.id) || [] }));
+    return orders.map((order) => {
+      const orderLines = linesByPo.get(order.id) || [];
+      const fallbackSubtotal = orderLines.reduce((sum: number, line: any) => sum + Number(line.orderedQuantity || 0) * Number(line.unitCost || 0), 0);
+      return {
+        ...order,
+        vendor: order.vendorId ? vendorMap.get(order.vendorId) || null : null,
+        discountPercent: Number(order.discountPercent || 0),
+        taxRate: order.taxRate == null ? 0 : Number(order.taxRate || 0),
+        subtotal: Number(order.subtotal || 0) || fallbackSubtotal,
+        discountAmount: Number(order.discountAmount || 0),
+        taxableValue: Number(order.taxableValue || 0) || fallbackSubtotal,
+        taxAmount: Number(order.taxAmount || 0),
+        grandTotal: Number(order.grandTotal || 0) || fallbackSubtotal,
+        lines: orderLines,
+      };
+    });
   }
 
   private async decorateGrns(notes: any[]) {

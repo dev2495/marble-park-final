@@ -282,20 +282,29 @@ model PurchaseDemand {
 }
 
 model PurchaseOrder {
-  id           String    @id
-  poNumber     String    @unique
-  vendorId     String?
-  vendorName   String
-  status       String    @default("draft")
-  expectedDate DateTime?
-  sentAt       DateTime?
-  orderedAt    DateTime?
-  closedAt     DateTime?
-  createdBy    String
-  notes        String    @default("")
-  metadata     Json      @default("{}")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime
+  id              String    @id
+  poNumber        String    @unique
+  vendorId        String?
+  vendorName      String
+  status          String    @default("draft")
+  expectedDate    DateTime?
+  sentAt          DateTime?
+  orderedAt       DateTime?
+  closedAt        DateTime?
+  createdBy       String
+  notes           String    @default("")
+  /// Optional header discount % applied to qty × unitCost before GST. 0 = none.
+  discountPercent Float     @default(0)
+  /// Optional GST %. Null/0 = no GST on this PO.
+  taxRate         Float?
+  subtotal        Float     @default(0)
+  discountAmount  Float     @default(0)
+  taxableValue    Float     @default(0)
+  taxAmount       Float     @default(0)
+  grandTotal      Float     @default(0)
+  metadata        Json      @default("{}")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime
 
   @@index([vendorId])
   @@index([vendorName])
@@ -319,6 +328,11 @@ model PurchaseOrderLine {
   receivedQuantity  Int      @default(0)
   cancelledQuantity Int      @default(0)
   unitCost          Float    @default(0)
+  discountPercent   Float    @default(0)
+  taxRate           Float    @default(0)
+  taxableValue      Float    @default(0)
+  taxAmount         Float    @default(0)
+  lineTotal         Float    @default(0)
   status            String   @default("ordered")
   metadata          Json     @default("{}")
   createdAt         DateTime @default(now())

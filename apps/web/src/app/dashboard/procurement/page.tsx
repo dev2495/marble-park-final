@@ -37,6 +37,22 @@ function money(value: number) {
   return `₹${Math.round(Number(value || 0)).toLocaleString('en-IN')}`;
 }
 
+function moneyExact(value: number) {
+  return `₹${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Live PO commercial estimate (mirrors server po-pricing). */
+function estimatePoCommercial(lines: Array<{ quantity: number; unitCost: number }>, discountPercent: number, taxRate: number) {
+  const disc = Math.max(0, Math.min(100, Number(discountPercent || 0)));
+  const tax = Math.max(0, Math.min(100, Number(taxRate || 0)));
+  const subtotal = lines.reduce((sum, line) => sum + Math.max(0, Number(line.quantity || 0)) * Math.max(0, Number(line.unitCost || 0)), 0);
+  const discountAmount = Math.round((subtotal * disc / 100 + Number.EPSILON) * 100) / 100;
+  const taxableValue = Math.round((subtotal - discountAmount + Number.EPSILON) * 100) / 100;
+  const taxAmount = Math.round((taxableValue * tax / 100 + Number.EPSILON) * 100) / 100;
+  const grandTotal = Math.round((taxableValue + taxAmount + Number.EPSILON) * 100) / 100;
+  return { subtotal, discountAmount, taxableValue, taxAmount, grandTotal, discountPercent: disc, taxRate: tax };
+}
+
 function statusTone(status?: string) {
   if (status === 'received' || status === 'allocated') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
   if (status === 'partial_received') return 'bg-blue-50 text-blue-700 ring-blue-200';
@@ -65,6 +81,8 @@ export default function ProcurementPage() {
   const [productSearch, setProductSearch] = useState('');
   const [directLines, setDirectLines] = useState<any[]>([]);
   const [poMessage, setPoMessage] = useState('');
+  const [poDiscountPercent, setPoDiscountPercent] = useState('');
+  const [poTaxRate, setPoTaxRate] = useState('');
 
   const { data, loading, error, refetch } = useQuery(PROCUREMENT, {
     pollInterval: 120000,
@@ -72,7 +90,24 @@ export default function ProcurementPage() {
     notifyOnNetworkStatusChange: false,
   });
   const { data: productSearchData, error: productSearchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: productSearch }, skip: productSearch.trim().length < 2 });
-  const [createPo, { loading: creatingPo, error: createPoError }] = useMutation(CREATE_PO, { onCompleted: (result) => { const po = result.createPurchaseOrder; setPoMessage(`${po.poNumber} created. Open the supplier PDF or select it for GRN receiving.`); setActivePoId(po.id); setSelectedDemand({}); setDemandCostRows({}); setDirectLines([]); setVendorId(''); setVendorName(''); setExpectedDate(''); setPoNotes(''); setProductSearch(''); refetch(); } });
+  const [createPo, { loading: creatingPo, error: createPoError }] = useMutation(CREATE_PO, {
+    onCompleted: (result) => {
+      const po = result.createPurchaseOrder;
+      setPoMessage(`${po.poNumber} created${Number(po.grandTotal || 0) > 0 ? ` · order value ${moneyExact(po.grandTotal)}` : ''}. Open the supplier PDF or select it for GRN receiving.`);
+      setActivePoId(po.id);
+      setSelectedDemand({});
+      setDemandCostRows({});
+      setDirectLines([]);
+      setVendorId('');
+      setVendorName('');
+      setExpectedDate('');
+      setPoNotes('');
+      setPoDiscountPercent('');
+      setPoTaxRate('');
+      setProductSearch('');
+      refetch();
+    },
+  });
   const [receivePo, { loading: receivingPo, error: receivePoError }] = useMutation(RECEIVE_PO, { onCompleted: (result) => { setReceiveMessage(`Posted ${result.receivePurchaseOrder?.grnNumber || 'GRN'} and updated inventory/backorder allocation.`); setReceiveRows({}); setDamagedRows({}); setBatchRows({}); setCostRows({}); setReceiptKey(crypto.randomUUID()); setSupplierChallan(''); setSupplierBill(''); refetch(); } });
 
   const summary = data?.procurementSummary || {};
@@ -86,8 +121,28 @@ export default function ProcurementPage() {
   const activePo = useMemo(() => purchaseOrders.find((po) => po.id === activePoId) || purchaseOrders.find((po) => ['ordered', 'partial_received'].includes(po.status)) || purchaseOrders[0], [purchaseOrders, activePoId]);
   const selectedIds = Object.entries(selectedDemand).filter(([, checked]) => checked).map(([id]) => id);
   const selectedRows = demands.filter((row) => selectedIds.includes(row.id));
-  const selectedValue = selectedRows.reduce((sum, row) => sum + Number(row.quantity || 0) * Number(demandCostRows[row.id] || 0), 0);
+  const demandEstimate = useMemo(
+    () => estimatePoCommercial(
+      selectedRows.map((row) => ({ quantity: Number(row.quantity || 0), unitCost: Number(demandCostRows[row.id] || 0) })),
+      Number(poDiscountPercent || 0),
+      Number(poTaxRate || 0),
+    ),
+    [selectedRows, demandCostRows, poDiscountPercent, poTaxRate],
+  );
+  const directEstimate = useMemo(
+    () => estimatePoCommercial(
+      directLines.map((line) => ({ quantity: Number(line.quantity || 0), unitCost: Number(line.unitCost || 0) })),
+      Number(poDiscountPercent || 0),
+      Number(poTaxRate || 0),
+    ),
+    [directLines, poDiscountPercent, poTaxRate],
+  );
   const selectedDemandCostsValid = selectedRows.length > 0;
+
+  const commercialInput = () => ({
+    discountPercent: poDiscountPercent === '' ? undefined : Number(poDiscountPercent || 0),
+    taxRate: poTaxRate === '' ? undefined : Number(poTaxRate || 0),
+  });
 
   useEffect(() => {
     if (!receiveLocationId && defaultLocation?.id) setReceiveLocationId(defaultLocation.id);
@@ -104,6 +159,7 @@ export default function ProcurementPage() {
           vendorName: vendorName || vendors.find((vendor) => vendor.id === vendorId)?.name || selectedRows[0]?.vendorName || selectedRows[0]?.brand || 'Vendor confirmation pending',
           expectedDate: expectedDate ? new Date(expectedDate).toISOString() : undefined,
           notes: poNotes || 'Created from sales-order purchase demand.',
+          ...commercialInput(),
         },
       },
     });
@@ -116,7 +172,19 @@ export default function ProcurementPage() {
   const updateDirectLine = (productId: string, patch: any) => setDirectLines((current) => current.map((line) => line.productId === productId ? { ...line, ...patch } : line));
   const submitDirectPo = () => {
     if (!directLines.length || !vendorId) return;
-    createPo({ variables: { input: { demandIds: [], lines: JSON.stringify(directLines), vendorId, vendorName: vendorName || vendors.find((vendor) => vendor.id === vendorId)?.name, expectedDate: expectedDate ? new Date(expectedDate).toISOString() : undefined, notes: poNotes || 'Direct purchase order from Product Master.' } } });
+    createPo({
+      variables: {
+        input: {
+          demandIds: [],
+          lines: JSON.stringify(directLines),
+          vendorId,
+          vendorName: vendorName || vendors.find((vendor) => vendor.id === vendorId)?.name,
+          expectedDate: expectedDate ? new Date(expectedDate).toISOString() : undefined,
+          notes: poNotes || 'Direct purchase order from Product Master.',
+          ...commercialInput(),
+        },
+      },
+    });
   };
 
   const submitReceive = () => {
@@ -210,6 +278,23 @@ export default function ProcurementPage() {
             ))}
           </div>
         ) : null}
+        <div className="mt-5 grid gap-3 rounded-md border border-[var(--line)] bg-[var(--bg-soft)] p-4 md:grid-cols-[1fr_1fr_1.2fr]">
+          <label className="space-y-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">PO discount % <span className="font-semibold normal-case tracking-normal text-[var(--ink-5)]">(optional)</span></span>
+            <Input type="number" min={0} max={100} step="0.01" value={poDiscountPercent} onChange={(event) => setPoDiscountPercent(event.target.value)} placeholder="0" />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">GST % <span className="font-semibold normal-case tracking-normal text-[var(--ink-5)]">(optional)</span></span>
+            <Input type="number" min={0} max={100} step="0.01" value={poTaxRate} onChange={(event) => setPoTaxRate(event.target.value)} placeholder="0 = no GST" />
+          </label>
+          <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold text-[var(--ink-3)]">
+            <p className="flex justify-between gap-3"><span>Subtotal</span><span>{moneyExact(directEstimate.subtotal)}</span></p>
+            {directEstimate.discountAmount > 0 ? <p className="mt-1 flex justify-between gap-3"><span>Discount</span><span>−{moneyExact(directEstimate.discountAmount)}</span></p> : null}
+            {directEstimate.taxAmount > 0 ? <p className="mt-1 flex justify-between gap-3"><span>GST {directEstimate.taxRate}%</span><span>{moneyExact(directEstimate.taxAmount)}</span></p> : null}
+            <p className="mt-2 flex justify-between gap-3 border-t border-[var(--line)] pt-2 text-sm font-black text-[var(--ink)]"><span>Order value</span><span>{moneyExact(directEstimate.grandTotal)}</span></p>
+          </div>
+        </div>
+        <p className="mt-2 text-xs font-semibold text-[var(--ink-4)]">Discount and GST apply after unit cost × qty. Leave blank for a plain cost PO. Stock/GRN still posts at unit cost.</p>
         <div className="mt-5 grid gap-3 md:grid-cols-[1fr_12rem_auto]"><select value={vendorId} onChange={(event) => { setVendorId(event.target.value); setVendorName(vendors.find((vendor) => vendor.id === event.target.value)?.name || ''); }} className="h-11 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--ink)]"><option value="">Select vendor from master</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select><Input type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} /><Button onClick={submitDirectPo} disabled={!vendorId || !directLines.length || directLines.some((line) => Number(line.quantity) <= 0) || creatingPo}><Send className="mr-2 h-4 w-4" />Create direct PO</Button></div>
         <p className="mt-2 text-xs font-semibold text-[var(--ink-4)]">Blank costs stay pending on the PO. Enter the actual cost at GRN or leave it blank to use the SKU default.</p>
       </section>
@@ -283,8 +368,26 @@ export default function ProcurementPage() {
             </div>
             <textarea value={poNotes} onChange={(event) => setPoNotes(event.target.value)} placeholder="PO note / vendor follow-up detail" className="mt-3 min-h-[72px] w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" />
             {selectedRows.length ? <div className="mt-3 space-y-2">{selectedRows.map((row) => <label key={row.id} className="grid items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 text-xs font-bold text-[var(--ink-3)] sm:grid-cols-[1fr_10rem]"><span className="truncate">{row.sku} · {row.name} · {row.quantity} {row.unit || 'PC'}</span><Input aria-label={`Optional unit cost for ${row.sku}`} type="number" min={0} step="0.01" value={demandCostRows[row.id] || ''} onChange={(event) => setDemandCostRows((current) => ({ ...current, [row.id]: event.target.value }))} placeholder="Optional cost" /></label>)}</div> : null}
+            <div className="mt-3 grid gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 md:grid-cols-2">
+              <label className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">PO discount % (optional)</span>
+                <Input type="number" min={0} max={100} step="0.01" value={poDiscountPercent} onChange={(event) => setPoDiscountPercent(event.target.value)} placeholder="0" />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">GST % (optional)</span>
+                <Input type="number" min={0} max={100} step="0.01" value={poTaxRate} onChange={(event) => setPoTaxRate(event.target.value)} placeholder="0 = no GST" />
+              </label>
+            </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">{selectedIds.length} row(s) selected · Estimated {money(selectedValue)}</p>
+              <div className="text-xs font-bold text-[var(--ink-4)]">
+                <p className="uppercase tracking-wider">{selectedIds.length} row(s) selected</p>
+                <p className="mt-1 font-semibold normal-case tracking-normal">
+                  Subtotal {moneyExact(demandEstimate.subtotal)}
+                  {demandEstimate.discountAmount > 0 ? ` · Disc −${moneyExact(demandEstimate.discountAmount)}` : ''}
+                  {demandEstimate.taxAmount > 0 ? ` · GST ${moneyExact(demandEstimate.taxAmount)}` : ''}
+                  {' · '}<span className="text-[var(--ink)]">Order {moneyExact(demandEstimate.grandTotal)}</span>
+                </p>
+              </div>
               <Button onClick={submitPo} disabled={!selectedDemandCostsValid || creatingPo}><Send className="mr-2 h-4 w-4" /> Create vendor PO</Button>
             </div>
           </div>
@@ -334,7 +437,22 @@ export default function ProcurementPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             {purchaseOrders.slice(0, 6).map((po: any) => (
               <article key={po.id} className={cn('rounded-r4 border p-4 shadow-sm-soft transition', activePo?.id === po.id ? 'border-[var(--brand-400)] bg-[var(--brand-50)]' : 'border-[var(--line)] bg-[var(--surface)]')}>
-                <a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="block text-left" title={`Open ${po.poNumber} PDF`}><ClipboardList className="h-5 w-5 text-[var(--brand-700)]" /><p className="mt-3 text-sm font-black text-[var(--ink)]">{po.poNumber}</p><p className="mt-1 text-xs font-bold text-[var(--ink-4)]">{po.vendorName}</p><span className={cn('mt-3 inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase ring-1', statusTone(po.status))}>{po.status}</span></a>
+                <a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="block text-left" title={`Open ${po.poNumber} PDF`}>
+                  <ClipboardList className="h-5 w-5 text-[var(--brand-700)]" />
+                  <p className="mt-3 text-sm font-black text-[var(--ink)]">{po.poNumber}</p>
+                  <p className="mt-1 text-xs font-bold text-[var(--ink-4)]">{po.vendorName}</p>
+                  <p className="mt-2 text-xs font-semibold text-[var(--ink-3)]">
+                    {Number(po.grandTotal || 0) > 0
+                      ? `Order value ${moneyExact(po.grandTotal)}`
+                      : (po.lines || []).some((line: any) => Number(line.unitCost || 0) > 0)
+                        ? `Known costs ${moneyExact((po.lines || []).reduce((sum: number, line: any) => sum + Number(line.orderedQuantity || 0) * Number(line.unitCost || 0), 0))}`
+                        : 'Costs pending at GRN'}
+                    {Number(po.discountAmount || 0) > 0 || Number(po.taxAmount || 0) > 0
+                      ? ` · ${Number(po.discountPercent || 0) > 0 ? `Disc ${po.discountPercent}%` : ''}${Number(po.discountPercent || 0) > 0 && Number(po.taxRate || 0) > 0 ? ' · ' : ''}${Number(po.taxRate || 0) > 0 ? `GST ${po.taxRate}%` : ''}`
+                      : ''}
+                  </p>
+                  <span className={cn('mt-3 inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase ring-1', statusTone(po.status))}>{po.status}</span>
+                </a>
                 <div className="mt-4 flex gap-2 border-t border-[var(--line)] pt-3"><a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><ExternalLink className="mr-1.5 h-3.5 w-3.5" />Open PO</a><a href={`/api/pdf/purchase-order/${po.id}?download=1`} className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><Download className="mr-1.5 h-3.5 w-3.5" />PDF</a><button type="button" onClick={() => setActivePoId(po.id)} className="ml-auto text-xs font-bold text-[var(--brand-700)]">Receive</button></div>
               </article>
             ))}
