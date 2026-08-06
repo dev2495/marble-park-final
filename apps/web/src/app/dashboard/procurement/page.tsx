@@ -9,6 +9,12 @@ import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 import { cn } from '@/lib/utils';
 
+const ME = gql`
+  query ProcurementDeskMe {
+    me { id role }
+  }
+`;
+
 const PROCUREMENT = gql`
   query ProcurementDesk {
     procurementSummary
@@ -31,6 +37,13 @@ const RECEIVE_PO = gql`
     receivePurchaseOrder(input: $input)
   }
 `;
+
+const DELETE_PO = gql`
+  mutation DeletePurchaseOrder($id: ID!) {
+    deletePurchaseOrder(id: $id)
+  }
+`;
+
 const SEARCH_PRODUCTS = gql`query SearchProductsForPo($query: String!) { globalSearch(query: $query) { products } }`;
 
 function money(value: number) {
@@ -84,6 +97,8 @@ export default function ProcurementPage() {
   const [poDiscountPercent, setPoDiscountPercent] = useState('');
   const [poTaxRate, setPoTaxRate] = useState('');
 
+  const { data: meData } = useQuery(ME);
+  const canDeletePo = meData?.me?.role === 'admin' || meData?.me?.role === 'owner';
   const { data, loading, error, refetch } = useQuery(PROCUREMENT, {
     pollInterval: 120000,
     skipPollAttempt: () => typeof document !== 'undefined' && document.hidden,
@@ -109,6 +124,21 @@ export default function ProcurementPage() {
     },
   });
   const [receivePo, { loading: receivingPo, error: receivePoError }] = useMutation(RECEIVE_PO, { onCompleted: (result) => { setReceiveMessage(`Posted ${result.receivePurchaseOrder?.grnNumber || 'GRN'} and updated inventory/backorder allocation.`); setReceiveRows({}); setDamagedRows({}); setBatchRows({}); setCostRows({}); setReceiptKey(crypto.randomUUID()); setSupplierChallan(''); setSupplierBill(''); refetch(); } });
+  const [deletePo, { loading: deletingPo, error: deletePoError }] = useMutation(DELETE_PO, {
+    onCompleted: (result) => {
+      const deleted = result.deletePurchaseOrder;
+      setPoMessage(`${deleted?.poNumber || 'Purchase order'} permanently deleted. GRNs kept; stock unchanged.`);
+      if (activePoId && deleted?.id === activePoId) setActivePoId('');
+      refetch();
+    },
+  });
+
+  const confirmDeletePo = (po: any) => {
+    if (!canDeletePo || deletingPo) return;
+    const ok = window.confirm(`Permanently delete ${po.poNumber}? GRNs stay; stock is unchanged.`);
+    if (!ok) return;
+    deletePo({ variables: { id: po.id } });
+  };
 
   const summary = data?.procurementSummary || {};
   const demands = useMemo<any[]>(() => data?.purchaseDemandQueue || [], [data?.purchaseDemandQueue]);
@@ -227,6 +257,7 @@ export default function ProcurementPage() {
       {createPoError ? <QueryErrorBanner error={createPoError} /> : null}
       {productSearchError ? <QueryErrorBanner error={productSearchError} /> : null}
       {receivePoError ? <QueryErrorBanner error={receivePoError} /> : null}
+      {deletePoError ? <QueryErrorBanner error={deletePoError} /> : null}
       {receiveMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{receiveMessage}</div> : null}
       {poMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{poMessage}</div> : null}
 
@@ -453,7 +484,16 @@ export default function ProcurementPage() {
                   </p>
                   <span className={cn('mt-3 inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase ring-1', statusTone(po.status))}>{po.status}</span>
                 </a>
-                <div className="mt-4 flex gap-2 border-t border-[var(--line)] pt-3"><a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><ExternalLink className="mr-1.5 h-3.5 w-3.5" />Open PO</a><a href={`/api/pdf/purchase-order/${po.id}?download=1`} className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><Download className="mr-1.5 h-3.5 w-3.5" />PDF</a><button type="button" onClick={() => setActivePoId(po.id)} className="ml-auto text-xs font-bold text-[var(--brand-700)]">Receive</button></div>
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--line)] pt-3">
+                  <a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><ExternalLink className="mr-1.5 h-3.5 w-3.5" />Open PO</a>
+                  <a href={`/api/pdf/purchase-order/${po.id}?download=1`} className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><Download className="mr-1.5 h-3.5 w-3.5" />PDF</a>
+                  {canDeletePo ? (
+                    <button type="button" disabled={deletingPo} onClick={() => confirmDeletePo(po)} className="inline-flex items-center rounded border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-50" title="Permanently delete PO (Admin/Owner)">
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={() => setActivePoId(po.id)} className="ml-auto text-xs font-bold text-[var(--brand-700)]">Receive</button>
+                </div>
               </article>
             ))}
           </div>

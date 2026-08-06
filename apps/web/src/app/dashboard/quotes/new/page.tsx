@@ -240,7 +240,7 @@ export default function QuoteBuilderPage() {
     const mrpValid = !mrpMissing && finalUnitPayable <= Number(rawMrp) + 0.5;
     const belowFloor = Number(line.floorPrice || 0) > 0 && unitRate < Number(line.floorPrice || 0);
     const grossMrp = rawMrp && rawMrp > 0 ? pricingQuantity * rawMrp : 0;
-    return { unitRate, pricingQuantity, listAmount, offeredBeforeQuoteDiscount, taxableValue, taxAmount, total: taxableValue + taxAmount, mrp: rawMrp, mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(line), belowFloor, grossMrp, savingFromMrp: Math.max(0, grossMrp - (taxableValue + taxAmount)) };
+    return { unitRate, pricingQuantity, listAmount, offeredBeforeQuoteDiscount, taxableValue, taxAmount, total: taxableValue + taxAmount, mrp: rawMrp, mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(line), belowFloor, grossMrp, savingFromMrp: Math.max(0, grossMrp - offeredBeforeQuoteDiscount) };
   };
   const subtotal = lines.reduce((sum, line) => sum + lineCommercial(line).taxableValue, 0);
   const tax = lines.reduce((sum, line) => sum + lineCommercial(line).taxAmount, 0);
@@ -312,7 +312,7 @@ export default function QuoteBuilderPage() {
             displayMode,
             discountPercent: Number(quoteDiscountPercent || 0),
             saveAsDraft,
-            quoteMeta: JSON.stringify({ remarks: 'Prepared from quote studio.', taxMode, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, pricingReadiness: { missingMrpCount, invalidMrpCount, missingListCount, belowFloorCount } }),
+            quoteMeta: JSON.stringify({ remarks: '', taxMode, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, pricingReadiness: { missingMrpCount, invalidMrpCount, missingListCount, belowFloorCount } }),
             lines: JSON.stringify(lines.map(({ id, ...line }) => {
               const commercial = lineCommercial(line);
               return { ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), listPrice: Number(line.listPrice ?? line.price ?? 0), price: Number(line.listPrice ?? line.price ?? 0), mrp: commercial.mrp, mrpRateBasis: pricingBasis(line), mrpSource: line.mrpSource || 'MANUAL', unitRate: commercial.unitRate, pricingQuantity: commercial.pricingQuantity, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, total: commercial.total };
@@ -460,7 +460,7 @@ export default function QuoteBuilderPage() {
               [BadgeIndianRupee, 'Gross MRP', money(grossMrp), missingMrpCount ? () => focusLine(lines.find((line) => lineCommercial(line).mrpMissing)) : null],
               [BadgeIndianRupee, 'List value', money(listValue), missingListCount ? () => focusLine(lines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0)) : null],
               [BadgeIndianRupee, 'Offered', money(subtotal), null],
-              [Percent, 'Saving from MRP', money(Math.max(0, grossMrp - total)), null],
+              [Percent, 'Saving from MRP', money(lines.reduce((sum, line) => sum + lineCommercial(line).savingFromMrp, 0)), null],
               [BadgeIndianRupee, 'GST', money(tax), null],
               [AlertTriangle, 'Pricing exceptions', `${missingMrpCount + invalidMrpCount + missingListCount + belowFloorCount}`, () => focusLine(lines.find((line) => { const rate = lineCommercial(line); return rate.mrpMissing || !rate.mrpValid || Number(line.listPrice ?? line.price ?? 0) <= 0 || rate.belowFloor; }))],
               [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : lines.length ? 'Draft only' : 'No lines', null],

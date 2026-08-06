@@ -412,6 +412,69 @@ export class ProcurementService {
     return this.purchaseOrder(updated.id);
   }
 
+  /**
+   * Permanently delete a PO (Admin/Owner only at resolver).
+   * GRNs are kept: purchaseOrderId / purchaseOrderLineId are nulled first.
+   * Stock is never reversed.
+   */
+  async deletePurchaseOrder(id: string, actorUserId: string) {
+    const order = await (this.prisma as any).purchaseOrder.findUnique({ where: { id } });
+    if (!order) throw new NotFoundException('Purchase order not found');
+    const lines = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId: id } });
+    const lineIds = lines.map((line: any) => line.id);
+    const demandIds = Array.from(new Set(lines.map((line: any) => line.purchaseDemandId).filter(Boolean))) as string[];
+
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.goodsReceiptNote.updateMany({
+        where: { purchaseOrderId: id },
+        data: { purchaseOrderId: null, updatedAt: new Date() },
+      });
+      if (lineIds.length) {
+        await tx.goodsReceiptLine.updateMany({
+          where: { purchaseOrderLineId: { in: lineIds } },
+          data: { purchaseOrderLineId: null },
+        });
+      }
+      if (demandIds.length) {
+        const demands = await tx.purchaseDemand.findMany({ where: { id: { in: demandIds } } });
+        for (const demand of demands) {
+          if (!['ordered', 'partial_received'].includes(String(demand.status || ''))) continue;
+          const remaining = Math.max(0, Number(demand.quantity || 0) - Number(demand.receivedQuantity || 0));
+          if (remaining <= 0) continue;
+          await tx.purchaseDemand.update({
+            where: { id: demand.id },
+            data: {
+              status: Number(demand.receivedQuantity || 0) > 0 ? 'partial_received' : 'open',
+              orderedQuantity: Math.max(0, Number(demand.receivedQuantity || 0)),
+              updatedAt: new Date(),
+            },
+          });
+        }
+      }
+      await tx.purchaseOrderLine.deleteMany({ where: { purchaseOrderId: id } });
+      await tx.purchaseOrder.delete({ where: { id } });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(),
+          actorUserId,
+          action: 'purchase_order.delete',
+          entityType: 'PurchaseOrder',
+          entityId: id,
+          summary: `Permanently deleted ${order.poNumber}`,
+          metadata: {
+            poNumber: order.poNumber,
+            vendorName: order.vendorName,
+            lineCount: lines.length,
+            demandIds,
+            statusWas: order.status,
+          },
+        },
+      });
+    });
+
+    return { id, poNumber: order.poNumber, deleted: true };
+  }
+
   async receivePurchaseOrder(input: ReceivePurchaseOrderInput, actorUserId: string) {
     const idempotencyKey = String((input as any).idempotencyKey || '').trim() || null;
     if (idempotencyKey) {

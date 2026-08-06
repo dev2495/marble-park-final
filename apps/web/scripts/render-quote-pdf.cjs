@@ -266,8 +266,16 @@ function rateFor(line) {
   const mrp = line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp);
   const mrpUom = basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
   const grossMrp = mrp !== null && Number.isFinite(mrp) && mrp > 0 ? mrp * pricingQuantity : null;
-  const savingFromMrp = grossMrp === null ? null : Math.max(0, grossMrp - amount);
-  return { qty, basis, pricingQuantity, pricingUom, price, discount, unitRate, lineSubtotal, quoteDiscountPercent, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, mrpUom, grossMrp, savingFromMrp };
+  // Customer-facing Save is vs pre-tax special/unit rate (not GST-inclusive total).
+  const savingFromMrp = grossMrp === null ? null : Math.max(0, grossMrp - lineSubtotal);
+  // % off: prefer accurate vs MRP when MRP is shown; else list discount when it drives the rate.
+  let displayOffPercent = 0;
+  if (mrp !== null && Number.isFinite(mrp) && mrp > 0 && unitRate < mrp) {
+    displayOffPercent = Math.round((1 - unitRate / mrp) * 100);
+  } else if (price > 0 && unitRate < price && discount > 0 && !(specialRate > 0)) {
+    displayOffPercent = Math.round(discount);
+  }
+  return { qty, basis, pricingQuantity, pricingUom, price, discount, displayOffPercent, unitRate, lineSubtotal, quoteDiscountPercent, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, mrpUom, grossMrp, savingFromMrp };
 }
 
 function isLegacyQuoteBeforeMrpContract(quote) {
@@ -319,7 +327,9 @@ function selectedBrands(payload, quoteMeta) {
   if (quoteMeta.showBrandLogos === false) return [];
   const brands = asArray(payload.brands).filter((brand) => {
     const metadata = safeJson(brand.metadata, {});
-    return brand.status === 'active' && metadata.quoteEnabled !== false;
+    const logoUrl = String(metadata.logoUrl || '').trim();
+    // Option B: never render text-only / no-logo junk tiles (e.g. Release Contract).
+    return brand.status === 'active' && metadata.quoteEnabled !== false && Boolean(logoUrl);
   });
   if (Array.isArray(quoteMeta.selectedBrandIds)) {
     const ids = new Set(quoteMeta.selectedBrandIds.map(String));
@@ -346,8 +356,9 @@ function BrandStrip({ payload, quoteMeta, requestUrl }) {
     e(View, { style: styles.brandLogoGrid },
       ...brands.map((brand) => {
         const src = buildAbsoluteUrl(safeJson(brand.metadata, {}).logoUrl, requestUrl);
+        if (!src) return null;
         return e(View, { key: String(brand.id), style: styles.brandLogoTile },
-          src ? e(Image, { src, style: styles.brandLogo }) : e(Text, { style: styles.brandLogoName }, brand.name),
+          e(Image, { src, style: styles.brandLogo }),
         );
       }),
     ),
@@ -574,10 +585,10 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode }) {
           e(Text, { style: styles.sku }, [line.sku || line.tileCode || '', line.brand || '', line.finish || '', line.tileSize || ''].filter(Boolean).join(' · ')),
           line.notes || line.description ? e(Text, { style: styles.meta }, line.notes || line.description) : null,
         ),
-        e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}\n${rate.qty} ${line.inventoryUom || line.unit || line.uom || 'BOX'} stock`),
+        e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, money(rate.price)) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, `${money(rate.unitRate)}${rate.discount ? `\n${rate.discount}% off` : ''}${rate.savingFromMrp !== null ? `\nSave ${money(rate.savingFromMrp)}` : ''}`) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, `${money(rate.unitRate)}${rate.displayOffPercent ? `\n${rate.displayOffPercent}% off` : ''}${rate.savingFromMrp !== null && rate.savingFromMrp > 0 ? `\nSave ${money(rate.savingFromMrp)}` : ''}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.amount)) : null,
       );
     }),
@@ -600,10 +611,18 @@ function PricedDocumentBody(payload, requestUrl) {
   const tax = taxMode === 'non_gst' ? 0 : pricedLines.reduce((sum, rate) => sum + rate.taxAmount, 0);
   const total = pricedLines.reduce((sum, rate) => sum + rate.amount, 0);
   const savingFromMrp = pricedLines.reduce((sum, rate) => sum + Number(rate.savingFromMrp || 0), 0);
-  const rawTerms = quoteMeta.terms || settings.defaultTerms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
+  const DEFAULT_TERMS = 'Prices are valid until the quote validity date. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
+  const rawTermsSource = quoteMeta.terms || settings.defaultTerms || DEFAULT_TERMS;
+  const rawTerms = String(rawTermsSource)
+    .replace(/\s*Delivery depends on stock availability\.\s*/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim() || DEFAULT_TERMS;
   const terms = taxMode === 'non_gst' ? String(rawTerms).split('\n').filter((line) => !/\bGST\b/i.test(line)).join('\n') : rawTerms;
   const bank = quoteMeta.bankDetails || settings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
-  const remarks = quoteMeta.remarks || quote.notes || 'Selections can be revised area-wise before final order confirmation.';
+  const rawRemarks = String(quoteMeta.remarks || quote.notes || '').trim();
+  const remarks = !rawRemarks || /^prepared from quote studio\.?$/i.test(rawRemarks)
+    ? 'Selections can be revised area-wise before final order confirmation.'
+    : rawRemarks;
   const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.png', requestUrl);
   const contactLine = [settings.companyAddress, settings.gstNumber ? `GSTIN ${settings.gstNumber}` : '', settings.supportPhone, settings.supportEmail].filter(Boolean).join(' · ');
 
@@ -641,12 +660,6 @@ function PricedDocumentBody(payload, requestUrl) {
         e(Text, { style: [styles.label, { marginTop: 9 }] }, 'Sales Person'),
         e(Text, { style: styles.value }, quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team'),
       ),
-    ),
-    e(View, { style: styles.badgeRow },
-      e(Text, { style: styles.badge }, quote.projectName || quote.title || 'Retail selection'),
-      e(Text, { style: styles.badge }, `${groups.length} area(s)`),
-      e(Text, { style: styles.badge }, 'Prices shown'),
-      e(Text, { style: styles.badge }, taxMode === 'non_gst' ? 'Without GST' : 'GST quotation'),
     ),
     ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode })),
     e(View, { style: styles.totalsWrap },

@@ -1,6 +1,6 @@
 import { Args, Context, Field, ID, InputType, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProcurementService } from './procurement.service';
 
@@ -152,8 +152,17 @@ export class ProcurementResolver {
     @Args('status') status: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requirePermission(this.prisma, ctx, 'procurement.manage');
+    // Soft-cancel is Admin/Owner only; other status transitions stay on procurement.manage.
+    const user = status === 'cancelled'
+      ? await requireRoles(this.prisma, ctx, ['admin', 'owner'])
+      : await requirePermission(this.prisma, ctx, 'procurement.manage');
     return this.procurement.updatePurchaseOrderStatus(id, status, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async deletePurchaseOrder(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.procurement.deletePurchaseOrder(id, user.id);
   }
 
   @Mutation(() => GraphQLJSON)
