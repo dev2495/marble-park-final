@@ -152,8 +152,9 @@ export default function QuoteDetailPage() {
     setEditLines((Array.isArray(quote.lines) ? quote.lines : []).map((line: any) => ({ ...line, area: line.area || 'General Selection', quoteImage: line.quoteImage || line.customImageUrl || '' })));
     setDisplayMode(quote.displayMode || 'priced');
     setTaxMode(meta.taxMode === 'non_gst' ? 'non_gst' : 'gst');
-    setRemarks(meta.remarks || quote.notes || '');
-    setTerms(meta.terms || documentSettings.defaultTerms || 'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, unloading, plumbing and civil work are excluded unless mentioned.');
+    const loadedRemarks = String(meta.remarks || quote.notes || '').trim();
+    setRemarks(/^prepared from quote studio\.?$/i.test(loadedRemarks) ? '' : loadedRemarks);
+    setTerms(meta.terms || documentSettings.defaultTerms || 'Prices are valid until the quote validity date. Installation, unloading, plumbing and civil work are excluded unless mentioned.');
     setBankDetails(meta.bankDetails || documentSettings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.');
     setDiscountPercent(String(quote.discountPercent || 0));
     setCoverImage(quote.coverImage || meta.coverImage || '');
@@ -398,7 +399,7 @@ export default function QuoteDetailPage() {
             [BadgeIndianRupee, 'Gross MRP', money(grossMrp), mrpIssues.length ? () => focusQuoteLine(mrpIssues[0].line) : null],
             [BadgeIndianRupee, 'List value', money(listValue), missingListCount ? () => focusQuoteLine(editLines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0)) : null],
             [BadgeIndianRupee, 'Offered', money(subtotal - quoteDiscount), null],
-            [BadgeIndianRupee, 'Saving from MRP', money(Math.max(0, grossMrp - total)), null],
+            [BadgeIndianRupee, 'Saving from MRP', money(Math.max(0, grossMrp - subtotal)), null],
             [BadgeIndianRupee, 'GST', money(tax), null],
             [AlertTriangle, 'Exceptions', `${mrpIssues.length + missingListCount + belowFloorCount}`, () => focusQuoteLine(mrpIssues[0]?.line || editLines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0))],
             [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : 'Draft only', null],
