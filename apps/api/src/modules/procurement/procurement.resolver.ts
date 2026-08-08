@@ -160,9 +160,13 @@ export class ProcurementResolver {
   }
 
   @Mutation(() => GraphQLJSON)
-  async deletePurchaseOrder(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+  async cancelPurchaseOrder(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
-    return this.procurement.deletePurchaseOrder(id, user.id);
+    return this.procurement.cancelPurchaseOrder(id, reason, user.id);
   }
 
   @Mutation(() => GraphQLJSON)

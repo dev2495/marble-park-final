@@ -4,7 +4,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { Prisma } from '@prisma/client';
-import { computeStockAlertState, isAlertingState, normalizeThreshold } from './stock-alerts';
+import { computeStockAlertState, evaluateStockAlertTransitionsTx, isAlertingState, normalizeThreshold } from './stock-alerts';
 
 export interface CreateInventoryInput {
   productId: string;
@@ -241,6 +241,7 @@ export class InventoryService {
             COALESCE(SUM(lb."hold"), 0)::double precision AS "hold",
             COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged",
             MAX(policy."lowStockThreshold") AS "lowStockThreshold",
+            MAX(policy."criticalStockThreshold") AS "criticalStockThreshold",
             MAX(policy."reorderPoint") AS "reorderPoint"
           FROM "InventoryLotBalance" lb
           INNER JOIN "InventoryLot" lot ON lot."id" = lb."lotId" AND lot."status" = 'active'
@@ -279,7 +280,7 @@ export class InventoryService {
     });
     return {
       total: Number(row.total || 0), available: Number(row.available || 0), reserved: Number(row.reserved || 0), hold: Number(row.hold || 0), damaged: Number(row.damaged || 0),
-      lowStock: Number(row.lowStock || 0), outOfStock: Number(row.outOfStock || 0), productCount: Number(row.productCount || 0),
+      lowStock: Number(row.lowStock || 0), criticalStock: Number(row.criticalStock || 0), warningStock: Number(row.warningStock || 0), outOfStock: Number(row.outOfStock || 0), productCount: Number(row.productCount || 0),
       onHandValue: Number(row.onHandValue || 0), retailValue: Number(row.retailValue || 0), zeroSellPrice: Number(row.zeroSellPrice || 0), zeroCostOnHand: Number(row.zeroCostOnHand || 0), staleStock: Number(row.staleStock || 0),
       inbound: Math.max(0, Number(demand._sum.quantity || 0) - Number(demand._sum.receivedQuantity || 0)),
     };
@@ -471,13 +472,20 @@ export class InventoryService {
       const nextWarning = policyData.lowStockThreshold !== undefined ? policyData.lowStockThreshold : Number(current.lowStockThreshold || 0);
       const nextCritical = policyData.criticalStockThreshold !== undefined ? policyData.criticalStockThreshold : current.criticalStockThreshold;
       this.assertPolicyThresholds(nextWarning, nextCritical);
-      const updated = await this.prisma.inventoryBalance.update({
-        where: { id },
-        data: { ...policyData, updatedAt: new Date() },
-        include: { product: true },
-      } as any) as any;
-      if (actorUserId) {
-        await this.prisma.auditEvent.create({
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const next = await tx.inventoryBalance.update({
+          where: { id },
+          data: { ...policyData, updatedAt: new Date() },
+          include: { product: true },
+        } as any) as any;
+        await evaluateStockAlertTransitionsTx(tx, {
+          productId: next.productId,
+          previousAvailable: Number(current.available || 0),
+          nextAvailable: Number(next.available || 0),
+          previousBalance: current,
+          balance: next,
+        });
+        if (actorUserId) await tx.auditEvent.create({
           data: {
             id: ulid(),
             actorUserId,
@@ -488,7 +496,8 @@ export class InventoryService {
             metadata: policyData,
           },
         }).catch(() => null);
-      }
+        return next;
+      });
       return { ...updated, alertState: computeStockAlertState(updated.available, updated.lowStockThreshold, updated.criticalStockThreshold) };
     }
     throw new BadRequestException('Physical balances cannot be overwritten. Use stock count, GRN, reservation, dispatch, return, or approved adjustment workflows');
@@ -497,16 +506,43 @@ export class InventoryService {
   async bulkUpdateStockAlertPolicies(rows: StockAlertPolicyRowInput[], actorUserId: string) {
     if (!Array.isArray(rows) || !rows.length) throw new BadRequestException('At least one policy row is required');
     if (rows.length > 200) throw new BadRequestException('Bulk update is limited to 200 rows');
-    const updated: any[] = [];
-    for (const row of rows) {
+    const normalized = rows.map((row) => {
       const balanceId = String(row.balanceId || '').trim();
-      if (!balanceId) continue;
-      const next = await this.update(balanceId, {
-        lowStockThreshold: row.lowStockThreshold,
-        criticalStockThreshold: row.criticalStockThreshold,
-      }, actorUserId);
-      updated.push(next);
-    }
+      if (!balanceId) throw new BadRequestException('Every policy row needs a balance ID');
+      return {
+        balanceId,
+        lowStockThreshold: normalizeThreshold(row.lowStockThreshold) as number,
+        criticalStockThreshold: normalizeThreshold(row.criticalStockThreshold, true),
+      };
+    });
+    if (new Set(normalized.map((row) => row.balanceId)).size !== normalized.length) throw new BadRequestException('The same balance cannot appear twice in one bulk update');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const currentRows = await tx.inventoryBalance.findMany({ where: { id: { in: normalized.map((row) => row.balanceId) } }, include: { product: true } } as any) as any[];
+      if (currentRows.length !== normalized.length) throw new BadRequestException('One or more inventory balances no longer exist. Refresh and retry.');
+      const byId = new Map(currentRows.map((row) => [row.id, row]));
+      const result: any[] = [];
+      for (const row of normalized) {
+        const current = byId.get(row.balanceId)!;
+        this.assertPolicyThresholds(row.lowStockThreshold, row.criticalStockThreshold);
+        const next = await tx.inventoryBalance.update({
+          where: { id: row.balanceId },
+          data: { lowStockThreshold: row.lowStockThreshold, criticalStockThreshold: row.criticalStockThreshold, updatedAt: new Date() },
+          include: { product: true },
+        } as any) as any;
+        await evaluateStockAlertTransitionsTx(tx, {
+          productId: next.productId,
+          previousAvailable: Number(current.available || 0),
+          nextAvailable: Number(next.available || 0),
+          previousBalance: current,
+          balance: next,
+        });
+        result.push({ ...next, alertState: computeStockAlertState(next.available, next.lowStockThreshold, next.criticalStockThreshold) });
+      }
+      await tx.auditEvent.create({
+        data: { id: ulid(), actorUserId, action: 'stock_alert.policy_bulk_update', entityType: 'InventoryBalance', entityId: 'bulk', summary: `Updated ${result.length} stock alert policies`, metadata: { balanceIds: normalized.map((row) => row.balanceId) } },
+      });
+      return result;
+    });
     return { updated: updated.length, items: updated, summary: await this.stockAlertSummary() };
   }
 
@@ -583,7 +619,7 @@ export class InventoryService {
     const quoteIds = Array.from(new Set([
       ...reservations.map((reservation) => reservation.quoteId),
       ...salesOrders.map((order) => order.quoteId),
-    ].filter(Boolean)));
+    ].filter((id): id is string => Boolean(id))));
     const productIds = Array.from(new Set(reservations.map((reservation) => reservation.productId).filter(Boolean)));
     const [quotes, products, balances] = await Promise.all([
       quoteIds.length
@@ -634,8 +670,8 @@ export class InventoryService {
     const reservationRows = reservations.map((reservation) => {
       const product = productMap.get(reservation.productId) as any;
       const balance = balanceMap.get(reservation.productId) as any;
-      const quote = quoteMap.get(reservation.quoteId) as any;
-      const legacyOrders = ordersByQuote.get(reservation.quoteId) || [];
+      const quote = reservation.quoteId ? quoteMap.get(reservation.quoteId) as any : null;
+      const legacyOrders = reservation.quoteId ? ordersByQuote.get(reservation.quoteId) || [] : [];
       const order = (reservation.salesOrderId
         ? orderById.get(reservation.salesOrderId)
         : legacyOrders.length === 1 ? legacyOrders[0] : null) as any;

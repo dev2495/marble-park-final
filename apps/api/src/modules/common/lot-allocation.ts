@@ -8,7 +8,7 @@ export async function reserveAvailableLotsTx(tx: any, args: {
   productId: string;
   quantity: number;
   actorUserId: string;
-  quoteId: string;
+  quoteId?: string | null;
   orderNumber: string;
 }) {
   const quantity = Math.trunc(Number(args.quantity || 0));

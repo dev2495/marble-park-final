@@ -116,11 +116,21 @@ export class ReceivablesService {
   }
 
   private async syncSalesOrderPaymentStatusTx(tx: any, salesOrderId: string) {
-    const invoices = await tx.salesInvoice.findMany({
-      where: { salesOrderId, status: { not: 'void' } },
-      select: { openAmount: true, totalAmount: true },
-    });
-    if (!invoices.length) return;
+    const [order, invoices, payments] = await Promise.all([
+      tx.salesOrder.findUnique({ where: { id: salesOrderId }, select: { totalAmount: true, paymentMode: true } }),
+      tx.salesInvoice.findMany({ where: { salesOrderId, status: { not: 'void' } }, select: { openAmount: true, totalAmount: true } }),
+      tx.customerPayment.findMany({ where: { salesOrderId, status: 'posted' }, select: { amount: true } }),
+    ]);
+    if (!order) return;
+    if (!invoices.length) {
+      const received = roundMoney(payments.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0));
+      const total = roundMoney(Number(order.totalAmount || 0));
+      const paymentStatus = order.paymentMode === 'credit'
+        ? 'credit'
+        : received >= total && total > 0 ? 'paid' : received > 0 ? 'advance' : 'pending_cash';
+      await tx.salesOrder.update({ where: { id: salesOrderId }, data: { paymentStatus, advanceAmount: Math.min(received, total), updatedAt: new Date() } });
+      return;
+    }
     const total = invoices.reduce((sum: number, row: any) => sum + Number(row.totalAmount || 0), 0);
     const open = invoices.reduce((sum: number, row: any) => sum + Number(row.openAmount || 0), 0);
     const paymentStatus = open <= 0 ? 'paid' : open < total ? 'partial' : 'awaiting_payment';
@@ -323,8 +333,20 @@ export class ReceivablesService {
       const existing = await tx.customerPayment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
       if (existing) return existing;
     }
-    if (input.salesOrderId) {
-      const order = await tx.salesOrder.findUnique({ where: { id: input.salesOrderId } });
+    let salesOrderId = input.salesOrderId || null;
+    let selectedInvoice: any = null;
+    if (input.salesInvoiceId) {
+      selectedInvoice = await tx.salesInvoice.findUnique({ where: { id: input.salesInvoiceId } });
+      if (!selectedInvoice || selectedInvoice.customerId !== input.customerId || !ACTIVE_INVOICE.includes(selectedInvoice.status)) {
+        throw new BadRequestException('The selected invoice is not open for this customer.');
+      }
+      if (salesOrderId && salesOrderId !== selectedInvoice.salesOrderId) {
+        throw new BadRequestException('The selected invoice does not belong to the selected sales order.');
+      }
+      salesOrderId = selectedInvoice.salesOrderId;
+    }
+    if (salesOrderId) {
+      const order = await tx.salesOrder.findUnique({ where: { id: salesOrderId } });
       if (!order || order.customerId !== input.customerId) throw new BadRequestException('The selected sales order does not belong to this customer.');
     }
     const receivedAt = asDate(input.receivedAt) || new Date();
@@ -336,7 +358,7 @@ export class ReceivablesService {
     const payment = await tx.customerPayment.create({
       data: {
         id: ulid(), receiptNumber, idempotencyKey: input.idempotencyKey || null, customerId: input.customerId,
-        salesOrderId: input.salesOrderId || null, paymentMode, moneyAccount: String(input.moneyAccount || (paymentMode === 'cash' ? 'cash_drawer' : 'bank')),
+        salesOrderId, paymentMode, moneyAccount: String(input.moneyAccount || (paymentMode === 'cash' ? 'cash_drawer' : 'bank')),
         amount, unappliedAmount: amount, status: 'posted', receivedAt, valueDate: asDate(input.valueDate), reference: String(input.reference || '').trim() || null,
         notes: String(input.notes || ''), attachmentUrls: Array.isArray(input.attachmentUrls) ? input.attachmentUrls : [],
         createdBy: actorUserId, postedAt: new Date(), updatedAt: new Date(),
@@ -348,12 +370,24 @@ export class ReceivablesService {
       effectiveAt: receivedAt, credit: amount, narration: `Receipt ${receiptNumber}`, createdBy: actorUserId,
       metadata: { receiptNumber, paymentMode, salesOrderId: payment.salesOrderId || null },
     });
-    const targets = input.salesInvoiceId ? [input.salesInvoiceId] : undefined;
+    let targets = input.salesInvoiceId ? [input.salesInvoiceId] : undefined;
+    if (!targets && salesOrderId) {
+      const orderInvoices = await tx.salesInvoice.findMany({
+        where: { salesOrderId, customerId: payment.customerId, status: { in: ACTIVE_INVOICE }, openAmount: { gt: 0 } },
+        select: { id: true },
+      });
+      targets = orderInvoices.map((invoice: any) => invoice.id);
+    }
+    let allocation: { invoiceIds: string[] } = { invoiceIds: [] };
     if (input.autoAllocate !== false) {
-      await this.allocateSourceTx(tx, { customerId: payment.customerId, sourceType: 'CustomerPayment', sourceId: payment.id, amount, createdBy: actorUserId, invoiceIds: targets });
+      allocation = await this.allocateSourceTx(tx, { customerId: payment.customerId, sourceType: 'CustomerPayment', sourceId: payment.id, amount, createdBy: actorUserId, invoiceIds: targets });
       await this.updatePaymentUnappliedTx(tx, payment.id);
     }
-    if (payment.salesOrderId) await this.syncSalesOrderPaymentStatusTx(tx, payment.salesOrderId);
+    const touchedInvoices = allocation.invoiceIds.length
+      ? await tx.salesInvoice.findMany({ where: { id: { in: allocation.invoiceIds } }, select: { salesOrderId: true } })
+      : [];
+    const touchedOrderIds = [...new Set([salesOrderId, ...touchedInvoices.map((invoice: any) => invoice.salesOrderId)].filter(Boolean))];
+    for (const orderId of touchedOrderIds) await this.syncSalesOrderPaymentStatusTx(tx, String(orderId));
     return tx.customerPayment.findUnique({ where: { id: payment.id } });
   }
 
@@ -396,6 +430,7 @@ export class ReceivablesService {
         const invoice = await this.syncInvoiceOpenAmountTx(tx, allocation.salesInvoiceId);
         if (invoice) await this.syncSalesOrderPaymentStatusTx(tx, invoice.salesOrderId);
       }
+      if (payment.salesOrderId) await this.syncSalesOrderPaymentStatusTx(tx, payment.salesOrderId);
       await this.ledgerEntry(tx, {
         customerId: payment.customerId, sourceType: 'CustomerPaymentVoid', sourceId: payment.id, sourceKey: `payment-void:${payment.id}`,
         debit: Number(payment.amount || 0), narration: `Receipt reversal ${payment.receiptNumber}`, createdBy: actorUserId,
@@ -415,14 +450,17 @@ export class ReceivablesService {
       effectiveAt: creditNote.issuedAt || new Date(), credit: Number(creditNote.amount || 0), narration: `Credit note ${creditNote.creditNoteNumber}`,
       createdBy: actorUserId, metadata: { salesOrderId: creditNote.salesOrderId || null },
     });
-    if (String(creditNote.refundMode || '').toLowerCase() === 'refund') {
+    const refundMode = String(creditNote.refundMode || '').toLowerCase();
+    if (refundMode === 'refund') {
       await this.ledgerEntry(tx, {
         customerId: creditNote.customerId, sourceType: 'CreditNoteRefund', sourceId: creditNote.id, sourceKey: `credit-note-refund:${creditNote.id}`,
         effectiveAt: new Date(), debit: Number(creditNote.amount || 0), narration: `Refund against ${creditNote.creditNoteNumber}`,
         createdBy: actorUserId,
       });
-    } else {
-      await this.allocateSourceTx(tx, { customerId: creditNote.customerId, sourceType: 'CreditNote', sourceId: creditNote.id, amount: Number(creditNote.amount || 0), createdBy: actorUserId });
+      await tx.creditNote.update({ where: { id: creditNote.id }, data: { unappliedAmount: 0, updatedAt: new Date() } });
+    } else if (refundMode === 'order_adjustment') {
+      const allocation = await this.allocateSourceTx(tx, { customerId: creditNote.customerId, sourceType: 'CreditNote', sourceId: creditNote.id, amount: Number(creditNote.amount || 0), createdBy: actorUserId });
+      await tx.creditNote.update({ where: { id: creditNote.id }, data: { unappliedAmount: allocation.remaining, updatedAt: new Date() } });
     }
     if (creditNote.salesOrderId) await this.syncSalesOrderPaymentStatusTx(tx, creditNote.salesOrderId);
     return tx.customerLedgerEntry.findUnique({ where: { sourceKey: `credit-note:${creditNote.id}` } });
@@ -448,15 +486,18 @@ export class ReceivablesService {
   async customerAccount(customerId: string) {
     const customer = await this.prisma.customer.findUnique({ where: { id: customerId } });
     if (!customer) throw new NotFoundException('Customer not found.');
-    const [profile, invoices, payments, ledger, tasks] = await Promise.all([
+    const [profile, invoices, payments, ledger, ledgerTotals, creditNotes, salesOrders, tasks] = await Promise.all([
       this.prisma.customerCreditProfile.findUnique({ where: { customerId } }),
       this.prisma.salesInvoice.findMany({ where: { customerId }, orderBy: [{ dueDate: 'asc' }, { issueDate: 'desc' }], take: 120 }),
       this.prisma.customerPayment.findMany({ where: { customerId }, orderBy: { receivedAt: 'desc' }, take: 120 }),
       this.prisma.customerLedgerEntry.findMany({ where: { customerId }, orderBy: [{ effectiveAt: 'desc' }, { createdAt: 'desc' }], take: 240 }),
+      this.prisma.customerLedgerEntry.aggregate({ where: { customerId }, _sum: { debit: true, credit: true } }),
+      this.prisma.creditNote.findMany({ where: { customerId, status: 'issued' }, orderBy: { issuedAt: 'desc' }, take: 120 }),
+      this.prisma.salesOrder.findMany({ where: { customerId, status: { notIn: ['cancelled', 'closed'] } }, orderBy: { createdAt: 'desc' }, take: 120 }),
       this.prisma.collectionTask.findMany({ where: { customerId }, orderBy: [{ status: 'asc' }, { dueAt: 'asc' }], take: 80 }),
     ]);
-    const debit = ledger.reduce((sum: number, row: any) => sum + Number(row.debit || 0), 0);
-    const credit = ledger.reduce((sum: number, row: any) => sum + Number(row.credit || 0), 0);
+    const debit = Number(ledgerTotals._sum.debit || 0);
+    const credit = Number(ledgerTotals._sum.credit || 0);
     const now = new Date();
     const aging = { current: 0, d1to30: 0, d31to60: 0, d61plus: 0 };
     for (const invoice of invoices as any[]) {
@@ -471,21 +512,22 @@ export class ReceivablesService {
     }
     return {
       customer, profile: profile || { creditLimit: 0, defaultPaymentTerms: '', creditHold: false, holdReason: '' },
-      summary: { debit: roundMoney(debit), credit: roundMoney(credit), balance: roundMoney(debit - credit), openInvoices: roundMoney(invoices.reduce((sum: number, row: any) => sum + Number(row.openAmount || 0), 0)), unallocatedCredit: roundMoney(payments.filter((row: any) => row.status === 'posted').reduce((sum: number, row: any) => sum + Number(row.unappliedAmount || 0), 0)), aging: Object.fromEntries(Object.entries(aging).map(([key, value]) => [key, roundMoney(value)])) },
-      invoices, payments, ledger: ledger.map((entry: any) => ({ ...entry, sourceLabel: sourceLabel(entry.sourceType) })), tasks,
+      summary: { debit: roundMoney(debit), credit: roundMoney(credit), balance: roundMoney(debit - credit), openInvoices: roundMoney(invoices.filter((row: any) => ACTIVE_INVOICE.includes(row.status)).reduce((sum: number, row: any) => sum + Number(row.openAmount || 0), 0)), unallocatedCredit: roundMoney(payments.filter((row: any) => row.status === 'posted').reduce((sum: number, row: any) => sum + Number(row.unappliedAmount || 0), 0) + creditNotes.reduce((sum: number, row: any) => sum + Number(row.unappliedAmount || 0), 0)), aging: Object.fromEntries(Object.entries(aging).map(([key, value]) => [key, roundMoney(value)])) },
+      invoices, payments, creditNotes, salesOrders, ledger: ledger.map((entry: any) => ({ ...entry, sourceLabel: sourceLabel(entry.sourceType) })), tasks,
     };
   }
 
   async dashboard(args?: { search?: string; take?: number }) {
     const take = Math.min(Math.max(Number(args?.take || 120), 1), 300);
-    const [balances, invoices, payments, tasks] = await Promise.all([
+    const [balances, invoices, payments, creditNotes, tasks] = await Promise.all([
       (this.prisma as any).customerLedgerEntry.groupBy({ by: ['customerId'], _sum: { debit: true, credit: true } }),
       this.prisma.salesInvoice.findMany({ where: { status: { in: ACTIVE_INVOICE } }, orderBy: { dueDate: 'asc' }, take: 2500 }),
       this.prisma.customerPayment.findMany({ where: { status: 'posted' }, orderBy: { receivedAt: 'desc' }, take: 2500 }),
+      this.prisma.creditNote.findMany({ where: { status: 'issued', unappliedAmount: { gt: 0 } }, orderBy: { issuedAt: 'desc' }, take: 2500 }),
       this.prisma.collectionTask.findMany({ where: { status: 'open' }, orderBy: { dueAt: 'asc' }, take: 500 }),
     ]);
     const balanceRows = (balances as any[]).map((row) => ({ customerId: row.customerId, debit: Number(row._sum?.debit || 0), credit: Number(row._sum?.credit || 0) }));
-    const customerIds = [...new Set([...balanceRows.map((row) => row.customerId), ...(invoices as any[]).map((row) => row.customerId), ...(tasks as any[]).map((row) => row.customerId)])];
+    const customerIds = [...new Set([...balanceRows.map((row) => row.customerId), ...(invoices as any[]).map((row) => row.customerId), ...(creditNotes as any[]).map((row) => row.customerId), ...(tasks as any[]).map((row) => row.customerId)])];
     const customers = customerIds.length ? await this.prisma.customer.findMany({ where: { id: { in: customerIds } } }) : [];
     const profiles = customerIds.length ? await this.prisma.customerCreditProfile.findMany({ where: { customerId: { in: customerIds } } }) : [];
     const customerById = new Map((customers as any[]).map((row) => [row.id, row]));
@@ -504,7 +546,10 @@ export class ReceivablesService {
       return {
         customerId: balance.customerId, customer, profile: profile || null,
         balance: roundMoney(balance.debit - balance.credit), openInvoices: roundMoney(openInvoices), overdue: roundMoney(overdue),
-        unallocatedCredit: roundMoney((payments as any[]).filter((row) => row.customerId === balance.customerId).reduce((sum, row) => sum + Number(row.unappliedAmount || 0), 0)),
+        unallocatedCredit: roundMoney(
+          (payments as any[]).filter((row) => row.customerId === balance.customerId).reduce((sum, row) => sum + Number(row.unappliedAmount || 0), 0)
+          + (creditNotes as any[]).filter((row) => row.customerId === balance.customerId).reduce((sum, row) => sum + Number(row.unappliedAmount || 0), 0),
+        ),
         openTaskCount: (tasksByCustomer.get(balance.customerId) || []).length,
         nextDueDate: customerInvoices.find((row) => Number(row.openAmount || 0) > 0)?.dueDate || null,
       };
@@ -517,7 +562,10 @@ export class ReceivablesService {
     return {
       kpis: {
         receivable: roundMoney(totalReceivable), overdue: roundMoney(overdue), currentMonthCollections: roundMoney(currentMonthCollections), currentMonthBilling: roundMoney(currentMonthBilling),
-        unappliedCredit: roundMoney((payments as any[]).reduce((sum, row) => sum + Number(row.unappliedAmount || 0), 0)), openTasks: tasks.length,
+        unappliedCredit: roundMoney(
+          (payments as any[]).reduce((sum, row) => sum + Number(row.unappliedAmount || 0), 0)
+          + (creditNotes as any[]).reduce((sum, row) => sum + Number(row.unappliedAmount || 0), 0),
+        ), openTasks: tasks.length,
       },
       accounts,
       collectionQueue: (invoices as any[]).filter((invoice) => Number(invoice.openAmount || 0) > 0).map((invoice) => ({ ...invoice, customer: customerById.get(invoice.customerId) || null, overdueDays: invoice.dueDate ? Math.max(0, Math.floor((now.getTime() - new Date(invoice.dueDate).getTime()) / 86400000)) : 0 })).sort((a, b) => b.overdueDays - a.overdueDays || Number(b.openAmount) - Number(a.openAmount)).slice(0, take),

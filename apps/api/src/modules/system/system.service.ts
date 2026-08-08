@@ -386,6 +386,8 @@ export class SystemService {
   async upsertArchitect(input: any, actorUserId: string) {
     const name = String(input.name || '').trim();
     if (!name) throw new Error('Architect name is required');
+    const status = String(input.status || 'active').trim().toLowerCase();
+    if (!['active', 'inactive'].includes(status)) throw new Error('Architect status must be active or inactive');
     const data = {
       name,
       phone: input.phone || '',
@@ -394,7 +396,7 @@ export class SystemService {
       city: input.city || '',
       address: input.address || '',
       registrationNo: input.registrationNo || '',
-      status: input.status || 'active',
+      status,
       notes: input.notes || '',
       metadata: input.metadata || {},
       updatedAt: new Date(),

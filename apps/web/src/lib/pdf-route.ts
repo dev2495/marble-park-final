@@ -39,12 +39,14 @@ function rendererErrorStatus(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '');
   if (/login required|session expired|unauthenticated|unauthorized|account is disabled/i.test(message)) return 401;
   if (/not found|restricted|permission required|forbidden/i.test(message)) return 404;
+  if (/MRP is required|exceeds MRP|PDF blocked|incomplete pricing|commercial.*not ready/i.test(message)) return 422;
   return 500;
 }
 
 function errorCode(status: number) {
   if (status === 401) return 'UNAUTHENTICATED';
   if (status === 404) return 'NOT_FOUND';
+  if (status === 422) return 'COMMERCIAL_VALIDATION_FAILED';
   return 'PDF_GENERATION_FAILED';
 }
 
@@ -116,7 +118,11 @@ export async function servePdf(input: RenderPdfInput) {
     console.error(`[${input.action}] ref=${requestId}`, error);
     return NextResponse.json(
       {
-        error: status === 401 ? 'Your session expired. Sign in again and retry.' : input.errorMessage,
+        error: status === 401
+          ? 'Your session expired. Sign in again and retry.'
+          : status === 422
+            ? (error instanceof Error ? error.message : 'Complete quote pricing and MRP before generating this document.')
+            : input.errorMessage,
         code: errorCode(status),
         action: input.action,
         ref: requestId,

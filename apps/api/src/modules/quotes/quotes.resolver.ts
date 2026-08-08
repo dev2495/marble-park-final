@@ -226,12 +226,35 @@ export class CreateSalesOrderInput {
   paymentTerms?: string;
 }
 
+@InputType()
+export class CreateDirectSalesOrderInput {
+  @Field(() => ID) customerId!: string;
+  @Field(() => ID) ownerId!: string;
+  @Field() paymentMode!: string;
+  @Field(() => Number, { nullable: true }) advanceAmount?: number;
+  @Field({ nullable: true }) paymentTerms?: string;
+  @Field(() => Date, { nullable: true }) promisedDate?: Date;
+  @Field({ nullable: true }) notes?: string;
+  @Field({ description: 'JSON array of fully priced order lines' }) lines!: string;
+  @Field({ nullable: true }) idempotencyKey?: string;
+}
+
 @Resolver(() => QuoteOutput)
 export class QuotesResolver {
   constructor(
     private quotes: QuotesService,
     private prisma: PrismaService,
   ) {}
+
+  @Query(() => [GraphQLJSON])
+  async salesAssignees(@Context() ctx: GraphqlRequestContext) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    return this.prisma.user.findMany({
+      where: { active: true, role: { in: ['sales', 'sales_manager', 'owner', 'admin'] } as any },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, email: true, role: true },
+    });
+  }
 
   // ----- DataLoader-backed field resolvers -----
   // For a list of N quotes, GraphQL would otherwise issue N findUnique() per
@@ -408,6 +431,12 @@ export class QuotesResolver {
     return this.quotes.createSalesOrderFromQuote(input as any, user.id);
   }
 
+  @Mutation(() => GraphQLJSON)
+  async createDirectSalesOrder(@Args('input') input: CreateDirectSalesOrderInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
+    return this.quotes.createDirectSalesOrder(input as any, user.id);
+  }
+
   @Query(() => GraphQLJSON)
   async quoteFulfillment(@Args('quoteId', { type: () => ID }) quoteId: string, @Context() ctx: GraphqlRequestContext) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
@@ -497,8 +526,12 @@ export class QuotesResolver {
   }
 
   @Mutation(() => QuoteOutput)
-  async deleteQuote(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager']);
-    return this.quotes.delete(id);
+  async cancelQuote(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager']);
+    return this.quotes.cancelQuote(id, reason, user.id);
   }
 }

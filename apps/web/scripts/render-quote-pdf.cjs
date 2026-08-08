@@ -266,12 +266,13 @@ function rateFor(line) {
   const mrp = line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp);
   const mrpUom = basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
   const grossMrp = mrp !== null && Number.isFinite(mrp) && mrp > 0 ? mrp * pricingQuantity : null;
-  // Customer-facing Save is vs pre-tax special/unit rate (not GST-inclusive total).
-  const savingFromMrp = grossMrp === null ? null : Math.max(0, grossMrp - lineSubtotal);
-  // % off: prefer accurate vs MRP when MRP is shown; else list discount when it drives the rate.
+  // MRP is tax-inclusive, so compare it with the final tax-inclusive payable.
+  const savingFromMrp = grossMrp === null ? null : Math.max(0, grossMrp - amount);
+  const finalUnitPayable = pricingQuantity > 0 ? amount / pricingQuantity : 0;
+  // % off: prefer the final payable vs MRP when MRP is shown.
   let displayOffPercent = 0;
-  if (mrp !== null && Number.isFinite(mrp) && mrp > 0 && unitRate < mrp) {
-    displayOffPercent = Math.round((1 - unitRate / mrp) * 100);
+  if (mrp !== null && Number.isFinite(mrp) && mrp > 0 && finalUnitPayable < mrp) {
+    displayOffPercent = Math.round((1 - finalUnitPayable / mrp) * 100);
   } else if (price > 0 && unitRate < price && discount > 0 && !(specialRate > 0)) {
     displayOffPercent = Math.round(discount);
   }

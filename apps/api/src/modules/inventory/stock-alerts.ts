@@ -40,19 +40,23 @@ export async function evaluateStockAlertTransitionsTx(
     previousAvailable: number;
     nextAvailable: number;
     balance?: { lowStockThreshold?: number; criticalStockThreshold?: number | null };
+    previousBalance?: { lowStockThreshold?: number; criticalStockThreshold?: number | null };
   },
 ) {
   const productId = String(args.productId || '').trim();
   if (!productId) return;
-  if (Number(args.previousAvailable) === Number(args.nextAvailable)) return;
-
   const balance = args.balance
     || (await tx.inventoryBalance.findUnique({ where: { productId } }).catch(() => null));
   if (!balance) return;
 
   const warning = Number(balance.lowStockThreshold ?? 0);
   const critical = balance.criticalStockThreshold;
-  const prevState = computeStockAlertState(args.previousAvailable, warning, critical);
+  const previousBalance = args.previousBalance || balance;
+  const prevState = computeStockAlertState(
+    args.previousAvailable,
+    Number(previousBalance.lowStockThreshold ?? 0),
+    previousBalance.criticalStockThreshold,
+  );
   const nextState = computeStockAlertState(args.nextAvailable, warning, critical);
   if (prevState === nextState) return;
 

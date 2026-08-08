@@ -412,29 +412,19 @@ export class ProcurementService {
     return this.purchaseOrder(updated.id);
   }
 
-  /**
-   * Permanently delete a PO (Admin/Owner only at resolver).
-   * GRNs are kept: purchaseOrderId / purchaseOrderLineId are nulled first.
-   * Stock is never reversed.
-   */
-  async deletePurchaseOrder(id: string, actorUserId: string) {
+  async cancelPurchaseOrder(id: string, reason: string, actorUserId: string) {
     const order = await (this.prisma as any).purchaseOrder.findUnique({ where: { id } });
     if (!order) throw new NotFoundException('Purchase order not found');
+    if (order.status === 'cancelled') return this.purchaseOrder(id);
+    if (order.status === 'received' || order.status === 'closed') {
+      throw new BadRequestException('A received or closed purchase order cannot be cancelled. Use a supplier return or stock correction workflow.');
+    }
+    const cancellationReason = String(reason || '').trim();
+    if (!cancellationReason) throw new BadRequestException('Enter a cancellation reason.');
     const lines = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId: id } });
-    const lineIds = lines.map((line: any) => line.id);
     const demandIds = Array.from(new Set(lines.map((line: any) => line.purchaseDemandId).filter(Boolean))) as string[];
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.goodsReceiptNote.updateMany({
-        where: { purchaseOrderId: id },
-        data: { purchaseOrderId: null, updatedAt: new Date() },
-      });
-      if (lineIds.length) {
-        await tx.goodsReceiptLine.updateMany({
-          where: { purchaseOrderLineId: { in: lineIds } },
-          data: { purchaseOrderLineId: null },
-        });
-      }
       if (demandIds.length) {
         const demands = await tx.purchaseDemand.findMany({ where: { id: { in: demandIds } } });
         for (const demand of demands) {
@@ -451,28 +441,48 @@ export class ProcurementService {
           });
         }
       }
-      await tx.purchaseOrderLine.deleteMany({ where: { purchaseOrderId: id } });
-      await tx.purchaseOrder.delete({ where: { id } });
+      for (const line of lines) {
+        const remaining = Math.max(0, Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0));
+        await tx.purchaseOrderLine.update({
+          where: { id: line.id },
+          data: {
+            cancelledQuantity: Number(line.cancelledQuantity || 0) + remaining,
+            status: Number(line.receivedQuantity || 0) > 0 ? 'partial_received_cancelled' : 'cancelled',
+            updatedAt: new Date(),
+          },
+        });
+      }
+      await tx.purchaseOrder.update({
+        where: { id },
+        data: {
+          status: 'cancelled',
+          closedAt: new Date(),
+          notes: [String(order.notes || '').trim(), `Cancelled: ${cancellationReason}`].filter(Boolean).join('\n'),
+          metadata: { ...(order.metadata || {}), cancellation: { reason: cancellationReason, cancelledAt: new Date().toISOString(), cancelledBy: actorUserId } },
+          updatedAt: new Date(),
+        },
+      });
       await tx.auditEvent.create({
         data: {
           id: ulid(),
           actorUserId,
-          action: 'purchase_order.delete',
+          action: 'purchase_order.cancel',
           entityType: 'PurchaseOrder',
           entityId: id,
-          summary: `Permanently deleted ${order.poNumber}`,
+          summary: `Cancelled ${order.poNumber}`,
           metadata: {
             poNumber: order.poNumber,
             vendorName: order.vendorName,
             lineCount: lines.length,
             demandIds,
             statusWas: order.status,
+            reason: cancellationReason,
           },
         },
       });
     });
 
-    return { id, poNumber: order.poNumber, deleted: true };
+    return this.purchaseOrder(id);
   }
 
   async receivePurchaseOrder(input: ReceivePurchaseOrderInput, actorUserId: string) {
@@ -1059,7 +1069,9 @@ export class ProcurementService {
         where: { lot: { productId, status: 'active' } }, _sum: { available: true },
       });
       if (!balance || Number(lotAvailability._sum.available || 0) < Number(reservation.quantity || 0)) return;
-      const quote = await tx.quote.findUnique({ where: { id: reservation.quoteId } });
+      const quote = reservation.quoteId
+        ? await tx.quote.findUnique({ where: { id: reservation.quoteId } })
+        : null;
       const salesOrder = reservation.salesOrderId
         ? await tx.salesOrder.findUnique({ where: { id: reservation.salesOrderId } })
         : null;
@@ -1081,7 +1093,29 @@ export class ProcurementService {
         where: { sourceReservationId: reservation.id },
         data: { status: 'allocated', updatedAt: new Date() },
       }).catch(() => null);
-      await syncSalesOrderLinesForQuoteTx(tx, reservation.quoteId);
+      if (reservation.quoteId) {
+        await syncSalesOrderLinesForQuoteTx(tx, reservation.quoteId);
+      } else if (reservation.salesOrderLineId) {
+        const siblingReservations = await tx.reservation.findMany({
+          where: { salesOrderLineId: reservation.salesOrderLineId },
+          select: { quantity: true, status: true },
+        });
+        const reservedQuantity = siblingReservations
+          .filter((row: any) => row.status === 'reserved')
+          .reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
+        const backorderedQuantity = siblingReservations
+          .filter((row: any) => row.status === 'backordered')
+          .reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
+        await tx.salesOrderLine.update({
+          where: { id: reservation.salesOrderLineId },
+          data: {
+            reservedQuantity,
+            backorderedQuantity,
+            status: backorderedQuantity > 0 ? (reservedQuantity > 0 ? 'partial_ready' : 'backordered') : 'reserved',
+            updatedAt: new Date(),
+          },
+        });
+      }
       if (quote?.leadId) {
         await tx.activity.create({
           data: {

@@ -1129,7 +1129,7 @@ export class DispatchService {
         });
       }
     }
-    await syncSalesOrderLinesForQuoteTx(tx, challan.quoteId);
+    if (challan.quoteId) await syncSalesOrderLinesForQuoteTx(tx, challan.quoteId);
   }
 
   private async consumeSpecialOrderLineTx(tx: any, challan: any, line: any, quantity: number) {
@@ -1233,12 +1233,12 @@ export class DispatchService {
 
   private async assertDispatchableLines(lines: any[], job: any, options?: { excludeChallanId?: string }) {
     const quoteId = job.quoteId;
-    const quote = await this.prisma.quote.findUnique({ where: { id: quoteId } });
-    if (!quote) throw new BadRequestException('Dispatch quote not found');
+    const quote = quoteId ? await this.prisma.quote.findUnique({ where: { id: quoteId } }) : null;
     const salesOrder = job.salesOrderId
       ? await this.prisma.salesOrder.findUnique({ where: { id: job.salesOrderId } }).catch(() => null)
       : await this.prisma.salesOrder.findFirst({ where: { quoteId } }).catch(() => null);
     if (!salesOrder) throw new BadRequestException('Dispatch requires a linked Sales Order. Convert the quote first.');
+    if (quoteId && !quote) throw new BadRequestException('Dispatch quote not found');
     const quoteLines = this.normalizeLines(salesOrder.lines) || [];
     const quoteQtyByProduct = new Map<string, number>();
     const tileQtyByKey = new Map<string, number>();
@@ -1355,7 +1355,7 @@ export class DispatchService {
       ? await tx.salesOrder.findUnique({ where: { id: job.salesOrderId } }).catch(() => null)
       : await tx.salesOrder.findFirst({ where: { quoteId: job.quoteId } }).catch(() => null);
     const orderedKeys = new Map<string, number>();
-    (this.normalizeLines(order?.lines || job.quote.lines) || []).forEach((line: any, index: number) => {
+    (this.normalizeLines(order?.lines || job.quote?.lines) || []).forEach((line: any, index: number) => {
       const productId = String(line.productId || '').trim();
       const key = productId || (order ? this.tileDemandKey(order.id, line, index) : this.lineDispatchKey(line, index));
       const qty = Number(line.qty || line.quantity || 0);

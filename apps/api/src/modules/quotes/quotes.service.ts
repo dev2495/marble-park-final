@@ -49,6 +49,18 @@ export interface UpdateQuotePresentationInput {
   linePresentation?: any[] | string;
 }
 
+export interface CreateDirectSalesOrderInput {
+  customerId: string;
+  ownerId: string;
+  paymentMode: string;
+  advanceAmount?: number;
+  paymentTerms?: string;
+  promisedDate?: Date;
+  notes?: string;
+  lines: any[] | string;
+  idempotencyKey?: string;
+}
+
 export interface CreateSalesOrderInput {
   quoteId: string;
   paymentMode: string;
@@ -60,7 +72,7 @@ export interface CreateSalesOrderInput {
   paymentTerms?: string;
 }
 
-const QUOTE_STATUSES = ['incomplete_pricing', 'draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'partially_ordered', 'confirmed', 'won', 'closed', 'lost', 'expired', 'superseded'];
+const QUOTE_STATUSES = ['incomplete_pricing', 'draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'partially_ordered', 'confirmed', 'won', 'closed', 'lost', 'expired', 'superseded', 'cancelled'];
 
 // Eager-include retained ONLY for endpoints that legitimately need the embedded
 // objects in a single round-trip (e.g. internal services that don't go through
@@ -585,7 +597,7 @@ export class QuotesService {
     if (quote.approvalStatus === 'pending') {
       throw new BadRequestException('Owner approval is required because this quote contains a below-floor rate.');
     }
-    if (['closed', 'lost', 'expired', 'superseded'].includes(quote.status)) {
+    if (['closed', 'lost', 'expired', 'superseded', 'cancelled'].includes(quote.status)) {
       throw new BadRequestException(`This quote is ${quote.status} and cannot create another sales order.`);
     }
 
@@ -758,6 +770,95 @@ export class QuotesService {
       }
     }
     throw new BadRequestException('Could not safely create this sales order. Review remaining quote quantities and try again.');
+  }
+
+  async createDirectSalesOrder(input: CreateDirectSalesOrderInput, actorUserId: string) {
+    const customerId = String(input.customerId || '').trim();
+    const ownerId = String(input.ownerId || '').trim();
+    if (!customerId) throw new BadRequestException('Select a customer.');
+    if (!ownerId) throw new BadRequestException('Select the responsible sales user.');
+    const [customer, owner] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: customerId } }),
+      this.prisma.user.findUnique({ where: { id: ownerId } }),
+    ]);
+    if (!customer) throw new NotFoundException('Customer not found.');
+    if (!owner || !owner.active || !['sales', 'sales_manager', 'owner', 'admin'].includes(owner.role)) {
+      throw new BadRequestException('Select an active sales user.');
+    }
+    const asserted = await this.persistQuoteLineImages(await this.assertQuoteLines(input.lines, 'creating a direct sales order'));
+    const commercial = priceQuoteLines(asserted, 0, { requireMrp: true });
+    const lines = this.withMrpConfirmation(commercial.lines, actorUserId);
+    if (commercial.totals.grandTotal <= 0) throw new BadRequestException('A direct sales order must have a positive value.');
+    const paymentMode = String(input.paymentMode || '').toLowerCase() === 'credit' ? 'credit' : 'cash';
+    const advanceAmount = paymentMode === 'cash' ? Number(input.advanceAmount || 0) : 0;
+    if (!Number.isFinite(advanceAmount) || advanceAmount < 0 || advanceAmount > commercial.totals.grandTotal) {
+      throw new BadRequestException('Advance amount must be between zero and the order total.');
+    }
+    const idempotencyKey = String(input.idempotencyKey || ulid()).trim();
+
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.salesOrder.findUnique({ where: { idempotencyKey } }).catch(() => null);
+      if (existing) return existing;
+      if (paymentMode === 'credit') {
+        const profile = await tx.customerCreditProfile.findUnique({ where: { customerId } });
+        if (profile?.creditHold) throw new BadRequestException(profile.holdReason || 'This customer is on credit hold.');
+      }
+      const lead = await tx.lead.create({
+        data: {
+          id: ulid(), customerId, ownerId, title: `Direct sales order for ${customer.name}`,
+          source: 'Direct sales order', stage: 'won', expectedValue: commercial.totals.grandTotal,
+          lastContactAt: new Date(), nextActionAt: new Date(Date.now() + 86400000), notes: 'Auto-created for a direct sales order without a quotation.', updatedAt: new Date(),
+        },
+      });
+      const salesOrderId = ulid();
+      const orderNumber = await nextDocumentNumber(tx as any, 'sales_order', 'SO', new Date(), {
+        existingNumbers: async (prefixForYear) => (await tx.salesOrder.findMany({ where: { orderNumber: { startsWith: prefixForYear } }, select: { orderNumber: true } })).map((row: any) => row.orderNumber),
+      });
+      const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= commercial.totals.grandTotal ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
+      const salesOrder = await tx.salesOrder.create({
+        data: {
+          id: salesOrderId, orderNumber, quoteId: null, idempotencyKey, leadId: lead.id, customerId, ownerId,
+          status: 'open', paymentMode, paymentStatus,
+          paymentTerms: String(input.paymentTerms || (paymentMode === 'credit' ? 'Net 30' : 'Cash on order')).trim(),
+          promisedDate: input.promisedDate ? new Date(input.promisedDate) : new Date(Date.now() + 86400000),
+          advanceAmount, totalAmount: commercial.totals.grandTotal, lines, notes: String(input.notes || ''),
+          documents: { salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`, salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request' }, pricing: commercial.totals, source: 'direct_order' },
+          updatedAt: new Date(),
+        },
+      });
+      const orderLines: any[] = [];
+      for (const [index, line] of lines.entries()) {
+        const lineKey = this.quoteLineKey(line, index);
+        orderLines.push(await tx.salesOrderLine.create({
+          data: {
+            id: ulid(), salesOrderId, quoteId: null, quoteLineId: null, lineKey, lineNo: index + 1,
+            productId: line.productId || null, sku: String(line.sku || line.tileCode || `LINE-${index + 1}`),
+            name: String(line.name || line.description || line.sku || `Line ${index + 1}`), category: String(line.category || 'Product'),
+            brand: String(line.brand || ''), finish: line.finish || null, area: line.area || 'General Selection',
+            unit: String(line.unit || line.inventoryUom || 'PC').toUpperCase(), orderedQuantity: Number(line.qty || line.quantity || 0),
+            listPrice: Number(line.listPrice || 0), mrp: Number(line.mrp), mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
+            mrpSource: line.mrpSource || 'direct_order', mrpConfirmedAt: new Date(), mrpConfirmedById: actorUserId,
+            unitPrice: Number(line.unitRate || 0), discountPercent: Number(line.discountPercent || 0), taxRate: Number(line.taxRate || 0),
+            taxableValue: Number(line.taxableValue || 0), taxAmount: Number(line.taxAmount || 0), grossLineTotal: Number(line.grossLineTotal || line.total || 0),
+            lineTotal: Number(line.grossLineTotal || line.total || 0), status: 'open', isTileSpecial: this.isTileLine(line) && !line.productId,
+            metadata: { snapshot: line, source: 'direct_order' }, updatedAt: new Date(),
+          },
+        }));
+      }
+      const source = { id: null, ownerId, customerId, quoteNumber: 'Direct order' };
+      await this.createReservationsForSalesOrder(tx, { quote: source, salesOrder, lines, salesOrderLines: orderLines });
+      await tx.dispatchJob.create({
+        data: { id: ulid(), quoteId: null, salesOrderId, customerId, siteAddress: customer.siteAddress || '', status: 'pending', dueDate: salesOrder.promisedDate || new Date(Date.now() + 86400000), ownerId, updatedAt: new Date() },
+      });
+      await this.upsertDocumentJobTx(tx, { entityType: 'SalesOrder', entityId: salesOrderId, documentType: 'sales_order_pdf', url: `/api/pdf/order/${salesOrderId}`, actorUserId, metadata: { orderNumber, source: 'direct_order' } });
+      if (advanceAmount > 0) {
+        await this.receivables.recordCustomerPaymentTx(tx, { customerId, salesOrderId, paymentMode: 'cash', amount: advanceAmount, notes: `Advance received for ${orderNumber}.`, autoAllocate: false, idempotencyKey: `sales-order-advance:${salesOrderId}` }, actorUserId);
+      }
+      await this.createPurchaseDemandForSalesOrderTx(tx, { quote: source, salesOrder, lines });
+      await tx.activity.create({ data: { id: ulid(), leadId: lead.id, quoteId: null, userId: actorUserId, type: 'sales_order_created', message: `${orderNumber} created directly and assigned to ${owner.name}.` } });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'sales_order.direct_create', entityType: 'SalesOrder', entityId: salesOrderId, summary: `Created direct order ${orderNumber}`, metadata: { customerId, ownerId, totalAmount: commercial.totals.grandTotal } } });
+      return salesOrder;
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
   }
 
   private async syncQuoteLinesTx(tx: any, quote: any, lines: any[]) {
@@ -1436,19 +1537,75 @@ export class QuotesService {
     } as any) as any;
   }
 
-  async delete(id: string) {
-    await this.findById(id);
-    const orders = await this.prisma.salesOrder.count({ where: { quoteId: id } });
-    if (orders > 0) throw new BadRequestException('A quote with sales orders is an audit record and cannot be deleted. Close any remaining quantity instead.');
-    // Release reservations and remove dependent rows in one tx so we never
-    // leave orphan reservations / activities pointing at a deleted quote.
+  async cancelQuote(id: string, reason: string, actorUserId: string) {
+    const quote = await this.findById(id);
+    if (quote.status === 'cancelled') return quote;
+    const cancellationReason = String(reason || '').trim();
+    if (!cancellationReason) throw new BadRequestException('Enter a cancellation reason.');
+    const orders = await this.prisma.salesOrder.findMany({ where: { quoteId: id } });
+    const orderIds = orders.map((order: any) => order.id);
+    if (orderIds.length) {
+      const [physicalActivity, invoices, postedPayments] = await Promise.all([
+        this.prisma.dispatchLine.count({ where: { salesOrderId: { in: orderIds }, OR: [{ dispatchedQuantity: { gt: 0 } }, { deliveredQuantity: { gt: 0 } }] } as any }),
+        this.prisma.salesInvoice.count({ where: { salesOrderId: { in: orderIds }, status: { not: 'void' } } }),
+        this.prisma.customerPayment.count({ where: { salesOrderId: { in: orderIds }, status: 'posted' } }),
+      ]);
+      if (physicalActivity || invoices || postedPayments) {
+        throw new BadRequestException('This quote has dispatched goods, invoices, or posted receipts. Reverse those documents first; commercial history cannot be silently cancelled.');
+      }
+    }
+
     return this.prisma.$transaction(async (tx) => {
-      await this.releaseReservationsTx(tx, id, 'Quote deleted');
-      await tx.reservation.deleteMany({ where: { quoteId: id, salesOrderId: null } });
-      await tx.activity.deleteMany({ where: { quoteId: id } });
-      await tx.leadIntent.updateMany({ where: { quoteId: id }, data: { quoteId: null, status: 'pending_quote', updatedAt: new Date() } }).catch(() => null);
-      return tx.quote.delete({ where: { id } });
-    }, { timeout: 15000 });
+      const reservations = await tx.reservation.findMany({ where: { quoteId: id, status: 'reserved' } });
+      for (const reservation of reservations) {
+        const allocated = await tx.lotReservation.count({ where: { reservationId: reservation.id, status: 'reserved' } });
+        if (allocated > 0) {
+          await releaseReservedLotsTx(tx, { reservation, reason: `Quote cancelled: ${cancellationReason}`, actorUserId });
+        } else {
+          await applyStockPostingTx(tx, {
+            productId: reservation.productId, type: 'release', movementType: 'release', ledgerType: 'release',
+            quantity: Number(reservation.quantity || 0), reservedDelta: -Number(reservation.quantity || 0),
+            locationReservedDelta: -Number(reservation.quantity || 0), requireReserved: true,
+            reason: `Quote cancelled: ${cancellationReason}`, relatedQuoteId: id,
+            referenceType: 'Reservation', referenceId: reservation.id, createdBy: actorUserId,
+          });
+        }
+        await tx.reservation.update({ where: { id: reservation.id }, data: { status: 'released', updatedAt: new Date() } });
+      }
+      if (orderIds.length) {
+        await tx.salesOrderLine.updateMany({ where: { salesOrderId: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
+        await tx.salesOrder.updateMany({ where: { id: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
+        await tx.dispatchJob.updateMany({ where: { salesOrderId: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
+        await tx.purchaseDemand.updateMany({
+          where: { sourceOrderId: { in: orderIds }, status: { in: ['open', 'ordered'] } },
+          data: { status: 'cancelled', updatedAt: new Date() },
+        });
+      }
+      const lines = await tx.quoteLine.findMany({ where: { quoteId: id } });
+      for (const line of lines) {
+        const remaining = Math.max(0, Number(line.quantity || 0) - Number(line.cancelledQuantity || 0) - Number(line.closedQuantity || 0));
+        await tx.quoteLine.update({
+          where: { id: line.id },
+          data: { cancelledQuantity: { increment: remaining }, status: 'cancelled', updatedAt: new Date() },
+        });
+      }
+      await tx.quoteShare.updateMany({ where: { quoteId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+      await tx.lead.update({ where: { id: quote.leadId }, data: { stage: 'lost', updatedAt: new Date(), lastContactAt: new Date() } }).catch(() => null);
+      const updated = await tx.quote.update({
+        where: { id },
+        data: {
+          status: 'cancelled',
+          approvalStatus: 'cancelled',
+          approval: { ...((quote.approval as any) || {}), cancellation: { reason: cancellationReason, cancelledAt: new Date().toISOString(), cancelledBy: actorUserId, orderIds } },
+          updatedAt: new Date(),
+        },
+        include: quoteInclude,
+      } as any) as any;
+      await tx.auditEvent.create({
+        data: { id: ulid(), actorUserId, action: 'quote.cancel', entityType: 'Quote', entityId: id, summary: `Cancelled ${quote.quoteNumber}`, metadata: { reason: cancellationReason, orderIds } },
+      });
+      return updated;
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
   }
 
   private async generateQuoteNumber(): Promise<string> {
@@ -1764,11 +1921,12 @@ export class QuotesService {
     const existing = await tx.reservation.count({ where: { salesOrderId: salesOrder.id } });
     if (existing > 0) return;
 
-    for (const line of this.normalizeLines(lines)) {
+    for (const [index, line] of this.normalizeLines(lines).entries()) {
       const productId = line.productId;
       const quantity = Number(line.qty || line.quantity || 0);
       if (!productId || quantity <= 0) continue;
-      const salesOrderLine = salesOrderLines.find((row: any) => row.quoteLineId === line.quoteLineId || row.lineKey === line.lineKey);
+      const lineKey = String(line.lineKey || this.quoteLineKey(line, index));
+      const salesOrderLine = salesOrderLines.find((row: any) => row.quoteLineId === line.quoteLineId || row.lineKey === lineKey);
 
       const lotAvailability = await tx.inventoryLotBalance.aggregate({
         where: { lot: { productId, status: 'active' } }, _sum: { available: true },
@@ -1781,7 +1939,7 @@ export class QuotesService {
         const reservation = await tx.reservation.create({
           data: {
             id: ulid(),
-            quoteId: quote.id,
+            quoteId: quote.id || null,
             salesOrderId: salesOrder.id,
             salesOrderLineId: salesOrderLine?.id || null,
             productId,
@@ -1792,7 +1950,7 @@ export class QuotesService {
         });
         const allocations = await reserveAvailableLotsTx(tx, {
           reservationId: reservation.id, salesOrderLineId: salesOrderLine?.id,
-          productId, quantity: reserveQty, actorUserId: quote.ownerId, quoteId: quote.id,
+          productId, quantity: reserveQty, actorUserId: quote.ownerId, quoteId: quote.id || null,
           orderNumber: salesOrder.orderNumber,
         });
         const locations = Array.from(new Set(allocations.map((row: any) => row.locationId)));
@@ -1805,12 +1963,23 @@ export class QuotesService {
         await tx.reservation.create({
           data: {
             id: ulid(),
-            quoteId: quote.id,
+            quoteId: quote.id || null,
             salesOrderId: salesOrder.id,
             salesOrderLineId: salesOrderLine?.id || null,
             productId,
             quantity: backorderQty,
             status: 'backordered',
+            updatedAt: new Date(),
+          },
+        });
+      }
+      if (salesOrderLine) {
+        await tx.salesOrderLine.update({
+          where: { id: salesOrderLine.id },
+          data: {
+            reservedQuantity: reserveQty,
+            backorderedQuantity: backorderQty,
+            status: backorderQty > 0 ? (reserveQty > 0 ? 'partial_ready' : 'backordered') : 'reserved',
             updatedAt: new Date(),
           },
         });
@@ -1837,7 +2006,7 @@ export class QuotesService {
         sourceType: 'backorder_reservation',
         sourceLineKey: `reservation:${reservation.id}`,
         sourceOrderId: salesOrder.id,
-        sourceQuoteId: quote.id,
+        sourceQuoteId: quote.id || null,
         sourceReservationId: reservation.id,
         customerId: quote.customerId,
         ownerId: quote.ownerId,
@@ -1851,11 +2020,11 @@ export class QuotesService {
         quantity: Number(reservation.quantity || 0),
         status: 'open',
         vendorName: product.brand || null,
-        notes: `${salesOrder.orderNumber} shortage for ${quote.quoteNumber}`,
+        notes: `${salesOrder.orderNumber} shortage for ${quote.quoteNumber || 'direct order'}`,
         metadata: {
           orderNumber: salesOrder.orderNumber,
-          quoteNumber: quote.quoteNumber,
-          source: 'sales_order_conversion',
+          quoteNumber: quote.quoteNumber || null,
+          source: quote.id ? 'sales_order_conversion' : 'direct_sales_order',
         },
         updatedAt: new Date(),
       });

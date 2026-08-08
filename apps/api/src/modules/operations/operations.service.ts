@@ -949,7 +949,7 @@ export class OperationsService {
           data: {
             id: ulid(), creditNoteNumber, returnOrderId: order.id,
             salesOrderId: input.salesOrderId || null, customerId: input.customerId || null,
-            amount: refundAmount, refundMode: String(input.refundMode || 'credit_note'),
+            amount: refundAmount, unappliedAmount: refundAmount, refundMode: String(input.refundMode || 'credit_note'),
             status: 'issued', createdBy: actorUserId, notes: input.reason || 'Customer return',
             metadata: { returnNumber, maximumRefundAmount }, updatedAt: new Date(),
           },

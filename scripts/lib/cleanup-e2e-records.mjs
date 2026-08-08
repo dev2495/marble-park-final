@@ -9,9 +9,11 @@ export async function cleanupE2eRecords(prisma, context = {}) {
   const quoteIds = [...new Set((context.quoteIds || []).filter(Boolean))];
   const leadIds = [...new Set((context.leadIds || []).filter(Boolean))];
   const brandIds = [...new Set((context.brandIds || []).filter(Boolean))];
-  const orderIds = quoteIds.length
+  const explicitOrderIds = [...new Set((context.orderIds || []).filter(Boolean))];
+  const quoteOrderIds = quoteIds.length
     ? (await prisma.salesOrder.findMany({ where: { quoteId: { in: quoteIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
     : [];
+  const orderIds = [...new Set([...explicitOrderIds, ...quoteOrderIds])];
 
   const invoiceIds = orderIds.length
     ? (await prisma.salesInvoice.findMany({ where: { salesOrderId: { in: orderIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
@@ -28,8 +30,8 @@ export async function cleanupE2eRecords(prisma, context = {}) {
   const pickListIds = orderIds.length
     ? (await prisma.pickList.findMany({ where: { salesOrderId: { in: orderIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
     : [];
-  const challanIds = quoteIds.length
-    ? (await prisma.dispatchChallan.findMany({ where: { quoteId: { in: quoteIds } }, select: { id: true } }).catch(() => [])).map((row) => row.id)
+  const challanIds = quoteIds.length || orderIds.length
+    ? (await prisma.dispatchChallan.findMany({ where: { OR: [quoteIds.length ? { quoteId: { in: quoteIds } } : undefined, orderIds.length ? { salesOrderId: { in: orderIds } } : undefined].filter(Boolean) }, select: { id: true } }).catch(() => [])).map((row) => row.id)
     : [];
   await safeDelete(prisma, 'customerAllocation', invoiceIds.length || paymentIds.length ? { OR: [invoiceIds.length ? { salesInvoiceId: { in: invoiceIds } } : undefined, paymentIds.length ? { sourceType: 'CustomerPayment', sourceId: { in: paymentIds } } : undefined].filter(Boolean) } : null);
   await safeDelete(prisma, 'salesInvoiceLine', invoiceIds.length ? { salesInvoiceId: { in: invoiceIds } } : null);
@@ -44,13 +46,13 @@ export async function cleanupE2eRecords(prisma, context = {}) {
   await safeDelete(prisma, 'dispatchLine', challanIds.length ? { challanId: { in: challanIds } } : null);
   await safeDelete(prisma, 'pickLine', pickListIds.length ? { pickListId: { in: pickListIds } } : null);
   await safeDelete(prisma, 'pickList', pickListIds.length ? { id: { in: pickListIds } } : null);
-  await safeDelete(prisma, 'dispatchChallan', quoteIds.length ? { quoteId: { in: quoteIds } } : null);
+  await safeDelete(prisma, 'dispatchChallan', challanIds.length ? { id: { in: challanIds } } : null);
   await safeDelete(prisma, 'documentJob', { OR: [quoteIds.length ? { entityId: { in: quoteIds } } : undefined, orderIds.length ? { entityId: { in: orderIds } } : undefined].filter(Boolean) });
   await safeDelete(prisma, 'paymentReceipt', orderIds.length ? { salesOrderId: { in: orderIds } } : null);
   await safeDelete(prisma, 'purchaseDemand', quoteIds.length || orderIds.length ? { OR: [quoteIds.length ? { sourceQuoteId: { in: quoteIds } } : undefined, orderIds.length ? { sourceOrderId: { in: orderIds } } : undefined].filter(Boolean) } : null);
-  await safeDelete(prisma, 'dispatchJob', quoteIds.length ? { quoteId: { in: quoteIds } } : null);
+  await safeDelete(prisma, 'dispatchJob', quoteIds.length || orderIds.length ? { OR: [quoteIds.length ? { quoteId: { in: quoteIds } } : undefined, orderIds.length ? { salesOrderId: { in: orderIds } } : undefined].filter(Boolean) } : null);
   await safeDelete(prisma, 'lotReservation', orderIds.length ? { reservation: { salesOrderId: { in: orderIds } } } : null);
-  await safeDelete(prisma, 'reservation', quoteIds.length ? { quoteId: { in: quoteIds } } : null);
+  await safeDelete(prisma, 'reservation', quoteIds.length || orderIds.length ? { OR: [quoteIds.length ? { quoteId: { in: quoteIds } } : undefined, orderIds.length ? { salesOrderId: { in: orderIds } } : undefined].filter(Boolean) } : null);
   await safeDelete(prisma, 'salesOrderLine', orderIds.length ? { salesOrderId: { in: orderIds } } : null);
   await safeDelete(prisma, 'salesOrder', orderIds.length ? { id: { in: orderIds } } : null);
   await safeDelete(prisma, 'activity', quoteIds.length || leadIds.length ? { OR: [quoteIds.length ? { quoteId: { in: quoteIds } } : undefined, leadIds.length ? { leadId: { in: leadIds } } : undefined].filter(Boolean) } : null);

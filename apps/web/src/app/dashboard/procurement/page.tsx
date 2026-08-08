@@ -38,9 +38,9 @@ const RECEIVE_PO = gql`
   }
 `;
 
-const DELETE_PO = gql`
-  mutation DeletePurchaseOrder($id: ID!) {
-    deletePurchaseOrder(id: $id)
+const CANCEL_PO = gql`
+  mutation CancelPurchaseOrder($id: ID!, $reason: String!) {
+    cancelPurchaseOrder(id: $id, reason: $reason)
   }
 `;
 
@@ -98,7 +98,7 @@ export default function ProcurementPage() {
   const [poTaxRate, setPoTaxRate] = useState('');
 
   const { data: meData } = useQuery(ME);
-  const canDeletePo = meData?.me?.role === 'admin' || meData?.me?.role === 'owner';
+  const canCancelPo = meData?.me?.role === 'admin' || meData?.me?.role === 'owner';
   const { data, loading, error, refetch } = useQuery(PROCUREMENT, {
     pollInterval: 120000,
     skipPollAttempt: () => typeof document !== 'undefined' && document.hidden,
@@ -124,20 +124,20 @@ export default function ProcurementPage() {
     },
   });
   const [receivePo, { loading: receivingPo, error: receivePoError }] = useMutation(RECEIVE_PO, { onCompleted: (result) => { setReceiveMessage(`Posted ${result.receivePurchaseOrder?.grnNumber || 'GRN'} and updated inventory/backorder allocation.`); setReceiveRows({}); setDamagedRows({}); setBatchRows({}); setCostRows({}); setReceiptKey(crypto.randomUUID()); setSupplierChallan(''); setSupplierBill(''); refetch(); } });
-  const [deletePo, { loading: deletingPo, error: deletePoError }] = useMutation(DELETE_PO, {
+  const [cancelPo, { loading: cancellingPo, error: cancelPoError }] = useMutation(CANCEL_PO, {
     onCompleted: (result) => {
-      const deleted = result.deletePurchaseOrder;
-      setPoMessage(`${deleted?.poNumber || 'Purchase order'} permanently deleted. GRNs kept; stock unchanged.`);
-      if (activePoId && deleted?.id === activePoId) setActivePoId('');
+      const cancelled = result.cancelPurchaseOrder;
+      setPoMessage(`${cancelled?.poNumber || 'Purchase order'} cancelled. The document, GRNs and audit history remain linked.`);
+      if (activePoId && cancelled?.id === activePoId) setActivePoId('');
       refetch();
     },
   });
 
-  const confirmDeletePo = (po: any) => {
-    if (!canDeletePo || deletingPo) return;
-    const ok = window.confirm(`Permanently delete ${po.poNumber}? GRNs stay; stock is unchanged.`);
-    if (!ok) return;
-    deletePo({ variables: { id: po.id } });
+  const confirmCancelPo = (po: any) => {
+    if (!canCancelPo || cancellingPo) return;
+    const reason = window.prompt(`Why is ${po.poNumber} being cancelled? The document and all receipts will be retained.`);
+    if (!reason?.trim()) return;
+    cancelPo({ variables: { id: po.id, reason: reason.trim() } });
   };
 
   const summary = data?.procurementSummary || {};
@@ -257,7 +257,7 @@ export default function ProcurementPage() {
       {createPoError ? <QueryErrorBanner error={createPoError} /> : null}
       {productSearchError ? <QueryErrorBanner error={productSearchError} /> : null}
       {receivePoError ? <QueryErrorBanner error={receivePoError} /> : null}
-      {deletePoError ? <QueryErrorBanner error={deletePoError} /> : null}
+      {cancelPoError ? <QueryErrorBanner error={cancelPoError} /> : null}
       {receiveMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{receiveMessage}</div> : null}
       {poMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{poMessage}</div> : null}
 
@@ -487,9 +487,9 @@ export default function ProcurementPage() {
                 <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--line)] pt-3">
                   <a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><ExternalLink className="mr-1.5 h-3.5 w-3.5" />Open PO</a>
                   <a href={`/api/pdf/purchase-order/${po.id}?download=1`} className="inline-flex items-center rounded border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--ink)]"><Download className="mr-1.5 h-3.5 w-3.5" />PDF</a>
-                  {canDeletePo ? (
-                    <button type="button" disabled={deletingPo} onClick={() => confirmDeletePo(po)} className="inline-flex items-center rounded border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-50" title="Permanently delete PO (Admin/Owner)">
-                      <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete
+                  {canCancelPo && !['cancelled', 'received', 'closed'].includes(po.status) ? (
+                    <button type="button" disabled={cancellingPo} onClick={() => confirmCancelPo(po)} className="inline-flex items-center rounded border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-50" title="Cancel PO and retain its audit history">
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" />Cancel
                     </button>
                   ) : null}
                   <button type="button" onClick={() => setActivePoId(po.id)} className="ml-auto text-xs font-bold text-[var(--brand-700)]">Receive</button>

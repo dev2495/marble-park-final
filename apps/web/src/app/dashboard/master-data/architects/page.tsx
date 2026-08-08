@@ -43,13 +43,20 @@ export default function ArchitectMasterPage() {
           <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><Compass className="h-5 w-5" /></div><div><h2 className="text-xl font-semibold text-[var(--ink)]">{form.id ? 'Edit architect' : 'Add architect'}</h2><p className="text-sm text-[var(--ink-4)]">Selected while creating quotes.</p></div></div>
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             {[
-              ['name', 'Architect name'], ['firmName', 'Firm name'], ['phone', 'Phone'], ['email', 'Email'], ['registrationNo', 'Registration No'], ['city', 'City'], ['status', 'Status'], ['address', 'Address'], ['notes', 'Notes'],
+              ['name', 'Architect name'], ['firmName', 'Firm name'], ['phone', 'Phone'], ['email', 'Email'], ['registrationNo', 'Registration No'], ['city', 'City'], ['address', 'Address'], ['notes', 'Notes'],
             ].map(([key, label]) => (
               <label key={key} className={key === 'address' || key === 'notes' ? 'space-y-2 md:col-span-2' : 'space-y-2'}>
                 <span className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">{label}</span>
                 <Input value={form[key] || ''} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
               </label>
             ))}
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">Status</span>
+              <select value={form.status || 'active'} onChange={(event) => setForm({ ...form, status: event.target.value })} className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
           </div>
           <div className="mt-5 flex gap-3"><Button disabled={saving || !form.name} onClick={submit}><Save className="mr-2 h-4 w-4" />Save architect</Button><Button variant="outline" onClick={() => setForm(empty)}><RotateCcw className="mr-2 h-4 w-4" />Clear</Button></div>
         </div>

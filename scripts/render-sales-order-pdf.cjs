@@ -205,6 +205,7 @@ async function fetchOrder(id, apiUrl) {
 
   let quote = null;
   try {
+    if (!order.quoteId) throw new Error('Direct sales order');
     const quoteData = await graphqlRequest(
       apiUrl,
       `query QuoteForSalesOrderPdf($id: ID!) {
@@ -304,7 +305,7 @@ function buildDocument(payload, requestUrl) {
         e(View, { style: styles.panel },
           e(Text, { style: styles.label }, 'Reference'),
           e(Text, { style: styles.value }, order.orderNumber),
-          e(Text, { style: styles.small }, `Quote: ${quote?.quoteNumber || order.quoteId}`),
+          e(Text, { style: styles.small }, order.quoteId ? `Quote: ${quote?.quoteNumber || order.quoteId}` : 'Source: Direct sales order'),
           e(Text, { style: styles.small }, `Sales: ${owner?.name || 'Sales user'}`),
           e(View, { style: styles.badgeRow },
             e(Text, { style: styles.badge }, String(order.paymentMode || '').toUpperCase()),
@@ -344,7 +345,7 @@ function buildDocument(payload, requestUrl) {
       ),
       e(View, { style: styles.footer },
         e(Text, null, support || 'Thank you for choosing Marble Park.'),
-        e(Text, null, `${order.orderNumber} | Quote PDF: /api/pdf/quote/${order.quoteId}`),
+        e(Text, null, order.quoteId ? `${order.orderNumber} | Quote PDF: /api/pdf/quote/${order.quoteId}` : `${order.orderNumber} | Direct sales order`),
       ),
     ),
   );

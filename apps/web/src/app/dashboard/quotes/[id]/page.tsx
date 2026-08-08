@@ -30,6 +30,7 @@ const QUOTE_FULFILLMENT = gql`query QuoteFulfillment($quoteId: ID!) { quoteFulfi
 const CLOSE_QUOTE_REMAINDER = gql`mutation CloseQuoteRemainder($quoteId: ID!, $reason: String!) { closeQuoteRemainder(quoteId: $quoteId, reason: $reason) { id status } }`;
 const UPLOAD_QUOTE_COVER = gql`mutation UploadQuoteCover($filename: String!, $contentBase64: String!, $scope: String) { uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result } }`;
 const CREATE_QUOTE_SHARE = gql`mutation CreateQuoteShare($quoteId: ID!) { createQuoteShare(quoteId: $quoteId) }`;
+const CANCEL_QUOTE = gql`mutation CancelQuote($id: ID!, $reason: String!) { cancelQuote(id: $id, reason: $reason) { id status approvalStatus } }`;
 
 async function fileBase64(file: File) {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -134,6 +135,7 @@ export default function QuoteDetailPage() {
   });
   const [uploadCover] = useMutation(UPLOAD_QUOTE_COVER);
   const [createQuoteShare, { loading: sharing, error: shareError }] = useMutation(CREATE_QUOTE_SHARE);
+  const [cancelQuote, { loading: cancelling, error: cancelError }] = useMutation(CANCEL_QUOTE, { onCompleted: () => refetch() });
   const [startRevision, { loading: revising, error: reviseError }] = useMutation(START_REVISION_FROM_QUOTE, {
     onCompleted: (data) => {
       const intent = data?.startQuoteRevision;
@@ -145,6 +147,7 @@ export default function QuoteDetailPage() {
   const brands = useMemo<any[]>(() => (data?.masterProductBrands || []).filter((brand: any) => brand.metadata?.quoteEnabled !== false), [data?.masterProductBrands]);
   const fulfillment = fulfillmentData?.quoteFulfillment;
   const commercialLocked = Boolean(fulfillment?.orders?.length);
+  const cancelled = quote?.status === 'cancelled';
 
   useEffect(() => {
     if (!quote) return;
@@ -305,21 +308,24 @@ export default function QuoteDetailPage() {
           <p className="mt-3 max-w-2xl text-sm text-[var(--ink-3)]">{quote.title || quote.projectName || 'Retail quotation'} for {quote.customer?.name || 'Customer'}.</p>
         </div>
         <div className="flex flex-wrap gap-3">
-          {!quote.supersededByQuoteId && !['lost', 'expired', 'won'].includes(quote.status) ? (
+          {!quote.supersededByQuoteId && !['lost', 'expired', 'won', 'cancelled'].includes(quote.status) ? (
             <Button size="lg" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}>
               <PenLine className="mr-2 h-5 w-5" /> {revising ? 'Starting...' : 'Revise quote'}
             </Button>
           ) : null}
-          {!commercialLocked ? <Button disabled={savingQuote || quote.status === 'superseded'} onClick={() => saveQuote(true)} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" />Save draft</Button> : null}
-          <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded' || (!commercialLocked && !pricingReady)} onClick={() => saveQuote(false)} size="lg" variant="outline"><ShieldCheck className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Validate changes'}</Button>
-          {pricingReady || commercialLocked ? <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button> : <Button size="lg" disabled><Download className="mr-2 h-5 w-5"/>PDF waiting</Button>}
-          {pricingReady || commercialLocked ? <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button> : null}
-          <Button size="lg" variant="outline" disabled={sharing || Boolean(mrpIssues.length)} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button>
-          {quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending || Boolean(mrpIssues.length)} onClick={() => { if (!mrpIssues.length) sendQuote({ variables: { id: quote.id } }); }} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
+          {!commercialLocked && !cancelled ? <Button disabled={savingQuote || quote.status === 'superseded'} onClick={() => saveQuote(true)} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" />Save draft</Button> : null}
+          {!cancelled ? <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded' || (!commercialLocked && !pricingReady)} onClick={() => saveQuote(false)} size="lg" variant="outline"><ShieldCheck className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Validate changes'}</Button> : null}
+          {!cancelled && (pricingReady || commercialLocked) ? <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button> : !cancelled ? <Button size="lg" disabled><Download className="mr-2 h-5 w-5"/>PDF waiting</Button> : null}
+          {!cancelled && (pricingReady || commercialLocked) ? <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button> : null}
+          {!cancelled ? <Button size="lg" variant="outline" disabled={sharing || Boolean(mrpIssues.length)} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button> : null}
+          {!cancelled && quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending || Boolean(mrpIssues.length)} onClick={() => { if (!mrpIssues.length) sendQuote({ variables: { id: quote.id } }); }} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
+          {!cancelled && !['won', 'closed', 'superseded'].includes(quote.status) ? <Button size="lg" variant="outline" disabled={cancelling} onClick={() => { const reason = window.prompt('Cancellation reason. Converted orders can only be cancelled before dispatch, invoice, or receipt activity.'); if (reason?.trim()) cancelQuote({ variables: { id: quote.id, reason: reason.trim() } }); }} className="border-red-200 text-red-700">{cancelling ? 'Cancelling...' : 'Cancel quote'}</Button> : null}
         </div>
       </div>
       {shareMessage ? <p role="status" className="relative mt-4 rounded-r3 border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{shareMessage}</p> : null}
       {shareError ? <div className="relative mt-4"><QueryErrorBanner error={shareError} /></div> : null}
+      {cancelError ? <div className="relative mt-4"><QueryErrorBanner error={cancelError} /></div> : null}
+      {cancelled ? <div className="relative mt-4 rounded-r4 border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-900">This quote is cancelled. Its document history is retained, and commercial actions are disabled.</div> : null}
       {quote.supersededByQuoteId ? (
         <div className="relative mt-4 flex flex-wrap items-center gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
           <Sparkles className="h-4 w-4" />
@@ -399,7 +405,7 @@ export default function QuoteDetailPage() {
             [BadgeIndianRupee, 'Gross MRP', money(grossMrp), mrpIssues.length ? () => focusQuoteLine(mrpIssues[0].line) : null],
             [BadgeIndianRupee, 'List value', money(listValue), missingListCount ? () => focusQuoteLine(editLines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0)) : null],
             [BadgeIndianRupee, 'Offered', money(subtotal - quoteDiscount), null],
-            [BadgeIndianRupee, 'Saving from MRP', money(Math.max(0, grossMrp - subtotal)), null],
+            [BadgeIndianRupee, 'Saving from MRP', money(Math.max(0, grossMrp - total)), null],
             [BadgeIndianRupee, 'GST', money(tax), null],
             [AlertTriangle, 'Exceptions', `${mrpIssues.length + missingListCount + belowFloorCount}`, () => focusQuoteLine(mrpIssues[0]?.line || editLines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0))],
             [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : 'Draft only', null],

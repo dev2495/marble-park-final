@@ -16,6 +16,7 @@ const GET_QUOTE_SETUP = gql`
   query GetQuoteSetup {
     customers { id name email mobile siteAddress city }
     architects(status: "active", take: 200)
+    salesAssignees
     documentSettings { data }
     masterProductBrands(status: "active")
   }
@@ -136,6 +137,7 @@ export default function QuoteBuilderPage() {
   const [lines, setLines] = useState<any[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedArchitectId, setSelectedArchitectId] = useState('');
+  const [selectedOwnerId, setSelectedOwnerId] = useState('');
   const [projectTitle, setProjectTitle] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [success, setSuccess] = useState('');
@@ -161,6 +163,14 @@ export default function QuoteBuilderPage() {
     setSelectedBrandIds(mode === 'none' ? [] : brands.filter((brand: any) => mode === 'all' || configured.has(String(brand.id))).map((brand: any) => String(brand.id)));
     brandDefaultsApplied.current = true;
   }, [brands, customerData, documentSettings.quoteBrandIds, documentSettings.quoteBrandSelectionMode]);
+
+  useEffect(() => {
+    if (selectedOwnerId || !customerData?.salesAssignees?.length) return;
+    let currentUserId = '';
+    try { currentUserId = JSON.parse(localStorage.getItem('user') || 'null')?.id || ''; } catch {}
+    const match = customerData.salesAssignees.find((user: any) => user.id === currentUserId);
+    setSelectedOwnerId(match?.id || customerData.salesAssignees[0].id);
+  }, [customerData?.salesAssignees, selectedOwnerId]);
 
   const addProduct = (product: any) => {
     const isTile = String(product.category || '').toLowerCase() === 'tiles';
@@ -240,7 +250,8 @@ export default function QuoteBuilderPage() {
     const mrpValid = !mrpMissing && finalUnitPayable <= Number(rawMrp) + 0.5;
     const belowFloor = Number(line.floorPrice || 0) > 0 && unitRate < Number(line.floorPrice || 0);
     const grossMrp = rawMrp && rawMrp > 0 ? pricingQuantity * rawMrp : 0;
-    return { unitRate, pricingQuantity, listAmount, offeredBeforeQuoteDiscount, taxableValue, taxAmount, total: taxableValue + taxAmount, mrp: rawMrp, mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(line), belowFloor, grossMrp, savingFromMrp: Math.max(0, grossMrp - offeredBeforeQuoteDiscount) };
+    const total = taxableValue + taxAmount;
+    return { unitRate, pricingQuantity, listAmount, offeredBeforeQuoteDiscount, taxableValue, taxAmount, total, mrp: rawMrp, mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(line), belowFloor, grossMrp, savingFromMrp: Math.max(0, grossMrp - total) };
   };
   const subtotal = lines.reduce((sum, line) => sum + lineCommercial(line).taxableValue, 0);
   const tax = lines.reduce((sum, line) => sum + lineCommercial(line).taxAmount, 0);
@@ -293,11 +304,10 @@ export default function QuoteBuilderPage() {
       focusLine(line);
       return;
     }
-    let ownerId = '';
-    try {
-      ownerId = JSON.parse(localStorage.getItem('user') || 'null')?.id || '';
-    } catch {
-      ownerId = '';
+    const ownerId = selectedOwnerId;
+    if (!ownerId) {
+      setValidationError('Select the responsible sales user so this quote appears in the correct CRM timeline and reports.');
+      return;
     }
     try {
       const { data, errors } = await createQuote({
@@ -353,8 +363,8 @@ export default function QuoteBuilderPage() {
               <p className="mt-2 text-sm font-semibold text-[#52525b]">Search catalogue SKUs, add product-image rows, and save a quote version.</p>
             </div>
             <div className="flex gap-3">
-              <Button disabled={saving || !selectedCustomerId || lines.length === 0} onClick={() => handleSave(true)} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" /> {saving ? 'Saving...' : 'Save draft'}</Button>
-              <Button disabled={saving || !selectedCustomerId || lines.length === 0 || !pricingReady} onClick={() => handleSave(false)} size="lg"><ShieldCheck className="mr-2 h-5 w-5" /> Validate quote</Button>
+              <Button disabled={saving || !selectedCustomerId || !selectedOwnerId || lines.length === 0} onClick={() => handleSave(true)} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" /> {saving ? 'Saving...' : 'Save draft'}</Button>
+              <Button disabled={saving || !selectedCustomerId || !selectedOwnerId || lines.length === 0 || !pricingReady} onClick={() => handleSave(false)} size="lg"><ShieldCheck className="mr-2 h-5 w-5" /> Validate quote</Button>
               {savedQuote?.id && <Button asChild variant="warning" size="lg"><a href={`/api/pdf/quote/${savedQuote.id}`} target="_blank" rel="noreferrer"><Download className="mr-2 h-5 w-5" /> PDF</a></Button>}
             </div>
           </div>
@@ -370,6 +380,15 @@ export default function QuoteBuilderPage() {
                   {customerData?.customers?.map((customer: any) => (
                     <SelectMenuItem key={customer.id} value={customer.id}>{customer.name}</SelectMenuItem>
                   ))}
+                </SelectMenuContent>
+              </SelectMenu>
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Responsible sales user</span>
+              <SelectMenu value={selectedOwnerId || undefined} onValueChange={setSelectedOwnerId}>
+                <SelectMenuTrigger className="h-11 text-sm" placeholder="Select sales user…" />
+                <SelectMenuContent>
+                  {(customerData?.salesAssignees || []).map((user: any) => <SelectMenuItem key={user.id} value={user.id}>{user.name} · {String(user.role || '').replace('_', ' ')}</SelectMenuItem>)}
                 </SelectMenuContent>
               </SelectMenu>
             </label>
@@ -532,7 +551,7 @@ export default function QuoteBuilderPage() {
         </div>
       </aside>
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#e4e4e7] bg-white/95 p-3 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur xl:hidden">
-        <div className="mx-auto grid max-w-xl grid-cols-[1fr_auto_1fr] items-center gap-2"><Button disabled={saving || !selectedCustomerId || !lines.length} variant="outline" onClick={() => handleSave(true)}><Save className="mr-2 h-4 w-4"/>Draft</Button><button type="button" onClick={() => { const line = lines.find((row) => { const rate = lineCommercial(row); return rate.mrpMissing || !rate.mrpValid; }); focusLine(line); }} className={`grid h-10 min-w-14 place-items-center rounded-md px-2 text-xs font-black ${pricingReady ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{pricingReady ? 'Ready' : `${missingMrpCount + invalidMrpCount} errors`}</button><Button disabled={saving || !selectedCustomerId || !lines.length || !pricingReady} onClick={() => handleSave(false)}><ShieldCheck className="mr-2 h-4 w-4"/>Validate</Button></div>
+        <div className="mx-auto grid max-w-xl grid-cols-[1fr_auto_1fr] items-center gap-2"><Button disabled={saving || !selectedCustomerId || !selectedOwnerId || !lines.length} variant="outline" onClick={() => handleSave(true)}><Save className="mr-2 h-4 w-4"/>Draft</Button><button type="button" onClick={() => { const line = lines.find((row) => { const rate = lineCommercial(row); return rate.mrpMissing || !rate.mrpValid; }); focusLine(line); }} className={`grid h-10 min-w-14 place-items-center rounded-md px-2 text-xs font-black ${pricingReady ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{pricingReady ? 'Ready' : `${missingMrpCount + invalidMrpCount} errors`}</button><Button disabled={saving || !selectedCustomerId || !selectedOwnerId || !lines.length || !pricingReady} onClick={() => handleSave(false)}><ShieldCheck className="mr-2 h-4 w-4"/>Validate</Button></div>
       </div>
     </div>
   );

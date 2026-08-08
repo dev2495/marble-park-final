@@ -118,8 +118,8 @@ model Architect {
 model DispatchChallan {
   id              String      @id
   challanNumber   String      @unique
-  quote           Quote       @relation(fields: [quoteId], references: [id])
-  quoteId         String
+  quote           Quote?      @relation(fields: [quoteId], references: [id])
+  quoteId         String?
   salesOrder      SalesOrder? @relation("SalesOrderChallans", fields: [salesOrderId], references: [id])
   salesOrderId    String?
   dispatchJob     DispatchJob @relation(fields: [dispatchJobId], references: [id])
@@ -151,8 +151,8 @@ model DispatchChallan {
 
 model DispatchJob {
   id               String            @id
-  quote            Quote             @relation(fields: [quoteId], references: [id])
-  quoteId          String
+  quote            Quote?            @relation(fields: [quoteId], references: [id])
+  quoteId          String?
   salesOrder       SalesOrder?       @relation("SalesOrderDispatchJob", fields: [salesOrderId], references: [id])
   salesOrderId     String?           @unique
   customer         Customer          @relation(fields: [customerId], references: [id])
@@ -771,8 +771,8 @@ model QuoteShare {
 
 model Reservation {
   id        String   @id
-  quote     Quote    @relation(fields: [quoteId], references: [id])
-  quoteId   String
+  quote     Quote?   @relation(fields: [quoteId], references: [id])
+  quoteId   String?
   salesOrderId String?
   salesOrderLineId String?
   product   Product  @relation(fields: [productId], references: [id])
@@ -807,7 +807,7 @@ model Session {
 model SalesOrder {
   id            String   @id
   orderNumber   String   @unique
-  quoteId       String
+  quoteId       String?
   idempotencyKey String? @unique
   leadId        String
   customerId    String
@@ -890,7 +890,7 @@ model QuoteLine {
 model SalesOrderLine {
   id                  String   @id
   salesOrderId        String
-  quoteId             String
+  quoteId             String?
   quoteLineId         String?
   lineKey             String
   lineNo              Int
@@ -1930,6 +1930,7 @@ model CreditNote {
   salesOrderId  String?
   customerId    String?
   amount        Float
+  unappliedAmount Float @default(0)
   refundMode    String
   status        String   @default("issued")
   issuedAt      DateTime @default(now())

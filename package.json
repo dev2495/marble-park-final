@@ -33,6 +33,7 @@
     "smoke:document-vault": "node scripts/e2e-document-vault-smoke.mjs",
     "smoke:client-workflow": "node scripts/e2e-client-workflow-release-gate.mjs",
     "smoke:customer-accounts": "node scripts/e2e-customer-accounts-e2e.mjs",
+    "smoke:lifecycle-direct-order": "node scripts/e2e-lifecycle-direct-order.mjs",
     "smoke:release-contract": "node scripts/e2e-release-contract-smoke.mjs",
     "smoke:tile-area": "node scripts/e2e-tile-area-pricing-smoke.mjs",
     "smoke:branded": "node scripts/e2e-branded-quotation-smoke.mjs",
