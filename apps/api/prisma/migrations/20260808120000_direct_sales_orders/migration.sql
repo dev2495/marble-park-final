@@ -11,7 +11,7 @@ SET "unappliedAmount" = CASE
     0,
     credit_note."amount" - COALESCE((
       SELECT SUM(allocation."amount")
-      FROM "PaymentAllocation" allocation
+      FROM "CustomerAllocation" allocation
       WHERE allocation."sourceType" = 'CreditNote'
         AND allocation."sourceId" = credit_note."id"
         AND allocation."status" = 'posted'
