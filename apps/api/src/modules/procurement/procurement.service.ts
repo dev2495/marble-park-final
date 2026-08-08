@@ -390,10 +390,16 @@ export class ProcurementService {
   }
 
   async updatePurchaseOrderStatus(id: string, status: string, actorUserId: string) {
-    const allowed = ['draft', 'ordered', 'partial_received', 'received', 'closed', 'cancelled'];
+    const allowed = ['draft', 'ordered', 'partial_received', 'received', 'closed'];
+    if (status === 'cancelled') {
+      throw new BadRequestException('Use cancelPurchaseOrder with a cancellation reason. Purchase orders are never deleted or silently cancelled.');
+    }
     if (!allowed.includes(status)) throw new BadRequestException(`Invalid purchase order status: ${status}`);
     const order = await (this.prisma as any).purchaseOrder.findUnique({ where: { id } });
     if (!order) throw new NotFoundException('Purchase order not found');
+    if (['cancelled', 'closed'].includes(String(order.status || '')) && order.status !== status) {
+      throw new BadRequestException(`${order.poNumber} is ${order.status} and cannot be reopened through a status update.`);
+    }
     const update: any = { status, updatedAt: new Date() };
     if (status === 'ordered') update.orderedAt = order.orderedAt || new Date();
     if (status === 'closed') update.closedAt = new Date();

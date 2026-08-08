@@ -152,10 +152,7 @@ export class ProcurementResolver {
     @Args('status') status: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    // Soft-cancel is Admin/Owner only; other status transitions stay on procurement.manage.
-    const user = status === 'cancelled'
-      ? await requireRoles(this.prisma, ctx, ['admin', 'owner'])
-      : await requirePermission(this.prisma, ctx, 'procurement.manage');
+    const user = await requirePermission(this.prisma, ctx, 'procurement.manage');
     return this.procurement.updatePurchaseOrderStatus(id, status, user.id);
   }
 

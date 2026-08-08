@@ -591,6 +591,44 @@ export class QuotesService {
     } as any) as any;
   }
 
+  private async assertCustomerCreditAvailableTx(tx: any, customerId: string, additionalAmount: number) {
+    const profile = await tx.customerCreditProfile.findUnique({ where: { customerId } });
+    if (profile?.creditHold) {
+      throw new BadRequestException(profile.holdReason || 'This customer is on credit hold. Release the hold before creating a credit sales order.');
+    }
+    const creditLimit = Number(profile?.creditLimit || 0);
+    if (creditLimit <= 0) return;
+
+    const [ledger, creditOrders] = await Promise.all([
+      tx.customerLedgerEntry.aggregate({
+        where: { customerId },
+        _sum: { debit: true, credit: true },
+      }),
+      tx.salesOrder.findMany({
+        where: { customerId, paymentMode: 'credit', status: { not: 'cancelled' } },
+        select: { id: true, totalAmount: true },
+      }),
+    ]);
+    const orderIds = creditOrders.map((order: any) => order.id);
+    const billed = orderIds.length
+      ? await tx.salesInvoice.groupBy({
+          by: ['salesOrderId'],
+          where: { salesOrderId: { in: orderIds }, status: { not: 'void' } },
+          _sum: { totalAmount: true },
+        })
+      : [];
+    const billedByOrder = new Map(billed.map((row: any) => [row.salesOrderId, Number(row._sum?.totalAmount || 0)]));
+    const unbilledCommitment = creditOrders.reduce(
+      (sum: number, order: any) => sum + Math.max(0, Number(order.totalAmount || 0) - Number(billedByOrder.get(order.id) || 0)),
+      0,
+    );
+    const ledgerExposure = Number(ledger._sum.debit || 0) - Number(ledger._sum.credit || 0);
+    const currentExposure = Math.max(0, ledgerExposure + unbilledCommitment);
+    if (currentExposure + additionalAmount > creditLimit + 0.01) {
+      throw new BadRequestException(`Credit limit exceeded. Current committed exposure is ₹${currentExposure.toFixed(2)} against a limit of ₹${creditLimit.toFixed(2)}.`);
+    }
+  }
+
   async createSalesOrderFromQuote(input: CreateSalesOrderInput, actorUserId: string) {
     const quote = await this.findByIdWithRelations(input.quoteId);
     this.ensureCommercialReady(quote, 'converting this quote to a sales order');
@@ -631,21 +669,7 @@ export class QuotesService {
             throw new BadRequestException('Advance amount must be between zero and the selected order total.');
           }
           if (paymentMode === 'credit') {
-            const profile = await tx.customerCreditProfile.findUnique({ where: { customerId: latestQuote.customerId } });
-            if (profile?.creditHold) {
-              throw new BadRequestException(profile.holdReason || 'This customer is on credit hold. Release the hold before creating a credit sales order.');
-            }
-            const creditLimit = Number(profile?.creditLimit || 0);
-            if (creditLimit > 0) {
-              const ledger = await tx.customerLedgerEntry.aggregate({
-                where: { customerId: latestQuote.customerId },
-                _sum: { debit: true, credit: true },
-              });
-              const currentExposure = Math.max(0, Number(ledger._sum.debit || 0) - Number(ledger._sum.credit || 0));
-              if (currentExposure + totalAmount > creditLimit + 0.01) {
-                throw new BadRequestException(`Credit limit exceeded. Current exposure is ₹${currentExposure.toFixed(2)} against a limit of ₹${creditLimit.toFixed(2)}.`);
-              }
-            }
+            await this.assertCustomerCreditAvailableTx(tx, latestQuote.customerId, totalAmount);
           }
           const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= totalAmount ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
           const salesOrderId = ulid();
@@ -796,69 +820,76 @@ export class QuotesService {
     }
     const idempotencyKey = String(input.idempotencyKey || ulid()).trim();
 
-    return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.salesOrder.findUnique({ where: { idempotencyKey } }).catch(() => null);
-      if (existing) return existing;
-      if (paymentMode === 'credit') {
-        const profile = await tx.customerCreditProfile.findUnique({ where: { customerId } });
-        if (profile?.creditHold) throw new BadRequestException(profile.holdReason || 'This customer is on credit hold.');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const existing = await tx.salesOrder.findUnique({ where: { idempotencyKey } }).catch(() => null);
+          if (existing) return existing;
+          if (paymentMode === 'credit') {
+            await this.assertCustomerCreditAvailableTx(tx, customerId, commercial.totals.grandTotal);
+          }
+          const lead = await tx.lead.create({
+            data: {
+              id: ulid(), customerId, ownerId, title: `Direct sales order for ${customer.name}`,
+              source: 'Direct sales order', stage: 'won', expectedValue: commercial.totals.grandTotal,
+              lastContactAt: new Date(), nextActionAt: new Date(Date.now() + 86400000), notes: 'Auto-created for a direct sales order without a quotation.', updatedAt: new Date(),
+            },
+          });
+          const salesOrderId = ulid();
+          const orderNumber = await nextDocumentNumber(tx as any, 'sales_order', 'SO', new Date(), {
+            existingNumbers: async (prefixForYear) => (await tx.salesOrder.findMany({ where: { orderNumber: { startsWith: prefixForYear } }, select: { orderNumber: true } })).map((row: any) => row.orderNumber),
+          });
+          const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= commercial.totals.grandTotal ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
+          const salesOrder = await tx.salesOrder.create({
+            data: {
+              id: salesOrderId, orderNumber, quoteId: null, idempotencyKey, leadId: lead.id, customerId, ownerId,
+              status: 'open', paymentMode, paymentStatus,
+              paymentTerms: String(input.paymentTerms || (paymentMode === 'credit' ? 'Net 30' : 'Cash on order')).trim(),
+              promisedDate: input.promisedDate ? new Date(input.promisedDate) : new Date(Date.now() + 86400000),
+              advanceAmount, totalAmount: commercial.totals.grandTotal, lines, notes: String(input.notes || ''),
+              documents: { salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`, salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request' }, pricing: commercial.totals, source: 'direct_order' },
+              updatedAt: new Date(),
+            },
+          });
+          const orderLines: any[] = [];
+          for (const [index, line] of lines.entries()) {
+            const lineKey = this.quoteLineKey(line, index);
+            orderLines.push(await tx.salesOrderLine.create({
+              data: {
+                id: ulid(), salesOrderId, quoteId: null, quoteLineId: null, lineKey, lineNo: index + 1,
+                productId: line.productId || null, sku: String(line.sku || line.tileCode || `LINE-${index + 1}`),
+                name: String(line.name || line.description || line.sku || `Line ${index + 1}`), category: String(line.category || 'Product'),
+                brand: String(line.brand || ''), finish: line.finish || null, area: line.area || 'General Selection',
+                unit: String(line.unit || line.inventoryUom || 'PC').toUpperCase(), orderedQuantity: Number(line.qty || line.quantity || 0),
+                listPrice: Number(line.listPrice || 0), mrp: Number(line.mrp), mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
+                mrpSource: line.mrpSource || 'direct_order', mrpConfirmedAt: new Date(), mrpConfirmedById: actorUserId,
+                unitPrice: Number(line.unitRate || 0), discountPercent: Number(line.discountPercent || 0), taxRate: Number(line.taxRate || 0),
+                taxableValue: Number(line.taxableValue || 0), taxAmount: Number(line.taxAmount || 0), grossLineTotal: Number(line.grossLineTotal || line.total || 0),
+                lineTotal: Number(line.grossLineTotal || line.total || 0), status: 'open', isTileSpecial: this.isTileLine(line) && !line.productId,
+                metadata: { snapshot: line, source: 'direct_order' }, updatedAt: new Date(),
+              },
+            }));
+          }
+          const source = { id: null, ownerId, customerId, quoteNumber: 'Direct order' };
+          await this.createReservationsForSalesOrder(tx, { quote: source, salesOrder, lines, salesOrderLines: orderLines });
+          await tx.dispatchJob.create({
+            data: { id: ulid(), quoteId: null, salesOrderId, customerId, siteAddress: customer.siteAddress || '', status: 'pending', dueDate: salesOrder.promisedDate || new Date(Date.now() + 86400000), ownerId, updatedAt: new Date() },
+          });
+          await this.upsertDocumentJobTx(tx, { entityType: 'SalesOrder', entityId: salesOrderId, documentType: 'sales_order_pdf', url: `/api/pdf/order/${salesOrderId}`, actorUserId, metadata: { orderNumber, source: 'direct_order' } });
+          if (advanceAmount > 0) {
+            await this.receivables.recordCustomerPaymentTx(tx, { customerId, salesOrderId, paymentMode: 'cash', amount: advanceAmount, notes: `Advance received for ${orderNumber}.`, autoAllocate: false, idempotencyKey: `sales-order-advance:${salesOrderId}` }, actorUserId);
+          }
+          await this.createPurchaseDemandForSalesOrderTx(tx, { quote: source, salesOrder, lines });
+          await tx.activity.create({ data: { id: ulid(), leadId: lead.id, quoteId: null, userId: actorUserId, type: 'sales_order_created', message: `${orderNumber} created directly and assigned to ${owner.name}.` } });
+          await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'sales_order.direct_create', entityType: 'SalesOrder', entityId: salesOrderId, summary: `Created direct order ${orderNumber}`, metadata: { customerId, ownerId, totalAmount: commercial.totals.grandTotal } } });
+          return salesOrder;
+        }, { isolationLevel: 'Serializable', timeout: 30000 });
+      } catch (error: any) {
+        if ((error?.code === 'P2034' || error?.code === 'P2002') && attempt < 2) continue;
+        throw error;
       }
-      const lead = await tx.lead.create({
-        data: {
-          id: ulid(), customerId, ownerId, title: `Direct sales order for ${customer.name}`,
-          source: 'Direct sales order', stage: 'won', expectedValue: commercial.totals.grandTotal,
-          lastContactAt: new Date(), nextActionAt: new Date(Date.now() + 86400000), notes: 'Auto-created for a direct sales order without a quotation.', updatedAt: new Date(),
-        },
-      });
-      const salesOrderId = ulid();
-      const orderNumber = await nextDocumentNumber(tx as any, 'sales_order', 'SO', new Date(), {
-        existingNumbers: async (prefixForYear) => (await tx.salesOrder.findMany({ where: { orderNumber: { startsWith: prefixForYear } }, select: { orderNumber: true } })).map((row: any) => row.orderNumber),
-      });
-      const paymentStatus = paymentMode === 'credit' ? 'credit' : advanceAmount >= commercial.totals.grandTotal ? 'paid' : advanceAmount > 0 ? 'advance' : 'pending_cash';
-      const salesOrder = await tx.salesOrder.create({
-        data: {
-          id: salesOrderId, orderNumber, quoteId: null, idempotencyKey, leadId: lead.id, customerId, ownerId,
-          status: 'open', paymentMode, paymentStatus,
-          paymentTerms: String(input.paymentTerms || (paymentMode === 'credit' ? 'Net 30' : 'Cash on order')).trim(),
-          promisedDate: input.promisedDate ? new Date(input.promisedDate) : new Date(Date.now() + 86400000),
-          advanceAmount, totalAmount: commercial.totals.grandTotal, lines, notes: String(input.notes || ''),
-          documents: { salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`, salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request' }, pricing: commercial.totals, source: 'direct_order' },
-          updatedAt: new Date(),
-        },
-      });
-      const orderLines: any[] = [];
-      for (const [index, line] of lines.entries()) {
-        const lineKey = this.quoteLineKey(line, index);
-        orderLines.push(await tx.salesOrderLine.create({
-          data: {
-            id: ulid(), salesOrderId, quoteId: null, quoteLineId: null, lineKey, lineNo: index + 1,
-            productId: line.productId || null, sku: String(line.sku || line.tileCode || `LINE-${index + 1}`),
-            name: String(line.name || line.description || line.sku || `Line ${index + 1}`), category: String(line.category || 'Product'),
-            brand: String(line.brand || ''), finish: line.finish || null, area: line.area || 'General Selection',
-            unit: String(line.unit || line.inventoryUom || 'PC').toUpperCase(), orderedQuantity: Number(line.qty || line.quantity || 0),
-            listPrice: Number(line.listPrice || 0), mrp: Number(line.mrp), mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
-            mrpSource: line.mrpSource || 'direct_order', mrpConfirmedAt: new Date(), mrpConfirmedById: actorUserId,
-            unitPrice: Number(line.unitRate || 0), discountPercent: Number(line.discountPercent || 0), taxRate: Number(line.taxRate || 0),
-            taxableValue: Number(line.taxableValue || 0), taxAmount: Number(line.taxAmount || 0), grossLineTotal: Number(line.grossLineTotal || line.total || 0),
-            lineTotal: Number(line.grossLineTotal || line.total || 0), status: 'open', isTileSpecial: this.isTileLine(line) && !line.productId,
-            metadata: { snapshot: line, source: 'direct_order' }, updatedAt: new Date(),
-          },
-        }));
-      }
-      const source = { id: null, ownerId, customerId, quoteNumber: 'Direct order' };
-      await this.createReservationsForSalesOrder(tx, { quote: source, salesOrder, lines, salesOrderLines: orderLines });
-      await tx.dispatchJob.create({
-        data: { id: ulid(), quoteId: null, salesOrderId, customerId, siteAddress: customer.siteAddress || '', status: 'pending', dueDate: salesOrder.promisedDate || new Date(Date.now() + 86400000), ownerId, updatedAt: new Date() },
-      });
-      await this.upsertDocumentJobTx(tx, { entityType: 'SalesOrder', entityId: salesOrderId, documentType: 'sales_order_pdf', url: `/api/pdf/order/${salesOrderId}`, actorUserId, metadata: { orderNumber, source: 'direct_order' } });
-      if (advanceAmount > 0) {
-        await this.receivables.recordCustomerPaymentTx(tx, { customerId, salesOrderId, paymentMode: 'cash', amount: advanceAmount, notes: `Advance received for ${orderNumber}.`, autoAllocate: false, idempotencyKey: `sales-order-advance:${salesOrderId}` }, actorUserId);
-      }
-      await this.createPurchaseDemandForSalesOrderTx(tx, { quote: source, salesOrder, lines });
-      await tx.activity.create({ data: { id: ulid(), leadId: lead.id, quoteId: null, userId: actorUserId, type: 'sales_order_created', message: `${orderNumber} created directly and assigned to ${owner.name}.` } });
-      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'sales_order.direct_create', entityType: 'SalesOrder', entityId: salesOrderId, summary: `Created direct order ${orderNumber}`, metadata: { customerId, ownerId, totalAmount: commercial.totals.grandTotal } } });
-      return salesOrder;
-    }, { isolationLevel: 'Serializable', timeout: 30000 });
+    }
+    throw new BadRequestException('Could not safely create this direct sales order. Review the customer credit and submit again.');
   }
 
   private async syncQuoteLinesTx(tx: any, quote: any, lines: any[]) {
@@ -1545,17 +1576,63 @@ export class QuotesService {
     const orders = await this.prisma.salesOrder.findMany({ where: { quoteId: id } });
     const orderIds = orders.map((order: any) => order.id);
     if (orderIds.length) {
-      const [physicalActivity, invoices, postedPayments] = await Promise.all([
+      const [physicalActivity, nonReversibleChallans, dispatchedPicks, invoices, postedPayments] = await Promise.all([
         this.prisma.dispatchLine.count({ where: { salesOrderId: { in: orderIds }, OR: [{ dispatchedQuantity: { gt: 0 } }, { deliveredQuantity: { gt: 0 } }] } as any }),
+        this.prisma.dispatchChallan.count({ where: { salesOrderId: { in: orderIds }, status: { in: ['dispatched', 'delivered', 'failed_delivery'] } } }),
+        this.prisma.pickList.count({ where: { salesOrderId: { in: orderIds }, status: 'dispatched' } }),
         this.prisma.salesInvoice.count({ where: { salesOrderId: { in: orderIds }, status: { not: 'void' } } }),
         this.prisma.customerPayment.count({ where: { salesOrderId: { in: orderIds }, status: 'posted' } }),
       ]);
-      if (physicalActivity || invoices || postedPayments) {
+      if (physicalActivity || nonReversibleChallans || dispatchedPicks || invoices || postedPayments) {
         throw new BadRequestException('This quote has dispatched goods, invoices, or posted receipts. Reverse those documents first; commercial history cannot be silently cancelled.');
       }
     }
 
     return this.prisma.$transaction(async (tx) => {
+      const pendingChallans = orderIds.length
+        ? await tx.dispatchChallan.findMany({ where: { salesOrderId: { in: orderIds }, status: 'pending' }, select: { id: true } })
+        : [];
+      const pendingChallanIds = pendingChallans.map((challan: any) => challan.id);
+      if (pendingChallanIds.length) {
+        await tx.dispatchLine.updateMany({
+          where: { challanId: { in: pendingChallanIds }, dispatchedQuantity: 0, deliveredQuantity: 0 },
+          data: { status: 'cancelled', updatedAt: new Date() },
+        });
+        await tx.shipment.updateMany({
+          where: { challanId: { in: pendingChallanIds }, status: { notIn: ['dispatched', 'delivered'] } },
+          data: { status: 'cancelled', updatedAt: new Date() },
+        });
+        await tx.dispatchChallan.updateMany({
+          where: { id: { in: pendingChallanIds }, status: 'pending' },
+          data: { status: 'cancelled', updatedAt: new Date() },
+        });
+      }
+
+      const activePickLists = orderIds.length
+        ? await tx.pickList.findMany({
+            where: { salesOrderId: { in: orderIds }, status: { notIn: ['cancelled', 'dispatched'] } },
+            select: { id: true, metadata: true },
+          })
+        : [];
+      const activePickListIds = activePickLists.map((pick: any) => pick.id);
+      if (activePickListIds.length) {
+        await tx.pickLine.updateMany({
+          where: { pickListId: { in: activePickListIds }, status: { not: 'dispatched' } },
+          data: { status: 'cancelled', updatedAt: new Date() },
+        });
+        for (const pick of activePickLists) {
+          await tx.pickList.update({
+            where: { id: pick.id },
+            data: {
+              status: 'cancelled',
+              cancelledAt: new Date(),
+              metadata: { ...((pick.metadata as any) || {}), cancelReason: `Quote cancelled: ${cancellationReason}`, cancelledBy: actorUserId },
+              updatedAt: new Date(),
+            },
+          });
+        }
+      }
+
       const reservations = await tx.reservation.findMany({ where: { quoteId: id, status: 'reserved' } });
       for (const reservation of reservations) {
         const allocated = await tx.lotReservation.count({ where: { reservationId: reservation.id, status: 'reserved' } });
@@ -1576,14 +1653,28 @@ export class QuotesService {
         await tx.salesOrderLine.updateMany({ where: { salesOrderId: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
         await tx.salesOrder.updateMany({ where: { id: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
         await tx.dispatchJob.updateMany({ where: { salesOrderId: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
-        await tx.purchaseDemand.updateMany({
-          where: { sourceOrderId: { in: orderIds }, status: { in: ['open', 'ordered'] } },
-          data: { status: 'cancelled', updatedAt: new Date() },
+        const activeDemands = await tx.purchaseDemand.findMany({
+          where: { sourceOrderId: { in: orderIds }, status: { in: ['open', 'ordered', 'partial_received'] } },
         });
+        for (const demand of activeDemands) {
+          await tx.purchaseDemand.update({
+            where: { id: demand.id },
+            data: {
+              status: Number(demand.receivedQuantity || 0) > 0 ? 'partial_received_cancelled' : 'cancelled',
+              updatedAt: new Date(),
+            },
+          });
+        }
       }
       const lines = await tx.quoteLine.findMany({ where: { quoteId: id } });
       for (const line of lines) {
-        const remaining = Math.max(0, Number(line.quantity || 0) - Number(line.cancelledQuantity || 0) - Number(line.closedQuantity || 0));
+        const remaining = Math.max(
+          0,
+          Number(line.quantity || 0)
+            - Number(line.orderedQuantity || 0)
+            - Number(line.cancelledQuantity || 0)
+            - Number(line.closedQuantity || 0),
+        );
         await tx.quoteLine.update({
           where: { id: line.id },
           data: { cancelledQuantity: { increment: remaining }, status: 'cancelled', updatedAt: new Date() },
@@ -1602,7 +1693,11 @@ export class QuotesService {
         include: quoteInclude,
       } as any) as any;
       await tx.auditEvent.create({
-        data: { id: ulid(), actorUserId, action: 'quote.cancel', entityType: 'Quote', entityId: id, summary: `Cancelled ${quote.quoteNumber}`, metadata: { reason: cancellationReason, orderIds } },
+        data: {
+          id: ulid(), actorUserId, action: 'quote.cancel', entityType: 'Quote', entityId: id,
+          summary: `Cancelled ${quote.quoteNumber}`,
+          metadata: { reason: cancellationReason, orderIds, pickListIds: activePickListIds, challanIds: pendingChallanIds },
+        },
       });
       return updated;
     }, { isolationLevel: 'Serializable', timeout: 30000 });
