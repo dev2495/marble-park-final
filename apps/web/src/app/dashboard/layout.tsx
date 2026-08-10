@@ -164,6 +164,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/master-data/imports': 'Excel Import',
   '/dashboard/master-data/categories': 'Category Master',
   '/dashboard/master-data/tiles': 'Tile Master',
+  '/dashboard/master-data/tile-sizes': 'Tile Size Master',
   '/dashboard/master-data/vendors': 'Vendor Master',
   '/dashboard/master-data/architects': 'Architect Master',
   '/dashboard/settings': 'Settings',

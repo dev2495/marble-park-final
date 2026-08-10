@@ -41,6 +41,7 @@
     "smoke:pricing-matrix": "node scripts/quote-pricing-matrix-smoke.cjs",
     "smoke:control-tower-scale": "node scripts/control-tower-scale-gate.mjs",
     "smoke:inventory-location": "node scripts/inventory-location-scope-smoke.mjs",
+    "smoke:shared-labels-tiles": "node scripts/e2e-shared-label-tile-master-smoke.mjs",
     "cleanup:e2e": "node scripts/cleanup-client-flow-test-data.mjs",
     "reset:client-data": "node scripts/reset-client-test-data.mjs"
   },

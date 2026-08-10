@@ -133,6 +133,7 @@ export class ProductsService {
     const internalCode = this.normalizeInternalCode(data.internalCode || sku);
     const existingInternal = await this.prisma.product.findFirst({ where: { internalCode } });
     if (existingInternal) throw new BadRequestException('This internal product code is already assigned');
+    await this.assertCodeAvailable(internalCode, '');
     const tileDefaults = category.toLowerCase() === 'tiles';
     const uoms = [data.baseUom || (tileDefaults ? 'PC' : data.unit) || 'PC', data.purchaseUom || data.unit || (tileDefaults ? 'BOX' : 'PC'), data.salesUom || data.unit || (tileDefaults ? 'BOX' : 'PC')]
       .map((value) => String(value).trim().toUpperCase());
@@ -265,6 +266,7 @@ export class ProductsService {
       const internalCode = this.normalizeInternalCode(data.internalCode);
       const duplicate = await this.prisma.product.findFirst({ where: { internalCode, id: { not: id } } });
       if (duplicate) throw new BadRequestException('This internal product code is already assigned');
+      await this.assertCodeAvailable(internalCode, id);
       update.internalCode = internalCode;
     }
     for (const key of ['materialId', 'tileSizeId']) if ((data as any)[key] !== undefined) update[key] = (data as any)[key] || null;
@@ -285,6 +287,7 @@ export class ProductsService {
       if (result.count !== 1) throw new BadRequestException('This product was changed by another user. Refresh it before saving your changes.');
       const product = await tx.product.findUniqueOrThrow({ where: { id } });
       if (data.internalCode !== undefined && product.internalCode) {
+        await tx.productAlias.updateMany({ where: { productId: product.id, type: 'internal_code', status: 'active' }, data: { isPrimary: false, updatedAt: new Date() } });
         await tx.productAlias.upsert({
           where: { type_normalizedValue: { type: 'internal_code', normalizedValue: product.internalCode } },
           update: { productId: product.id, value: product.internalCode, status: 'active', isPrimary: true, updatedAt: new Date() },
@@ -451,11 +454,50 @@ export class ProductsService {
     };
   }
 
+  async productAliases(productId: string) {
+    await this.findById(productId);
+    return this.prisma.productAlias.findMany({
+      where: { productId }, orderBy: [{ status: 'asc' }, { isPrimary: 'desc' }, { createdAt: 'asc' }],
+    });
+  }
+
+  async saveProductAlias(input: any, actorUserId: string) {
+    const product = await this.findById(String(input.productId || ''));
+    const type = String(input.type || 'legacy_code').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+    const value = String(input.value || '').trim();
+    const normalizedValue = this.normalizeInternalCode(value);
+    if (!value) throw new BadRequestException('Alias value is required');
+    await this.assertCodeAvailable(normalizedValue, product.id);
+    return this.prisma.$transaction(async (tx: any) => {
+      if (input.isPrimary) await tx.productAlias.updateMany({ where: { productId: product.id, type, status: 'active' }, data: { isPrimary: false, updatedAt: new Date() } });
+      const alias = await tx.productAlias.upsert({
+        where: { type_normalizedValue: { type, normalizedValue } },
+        update: { productId: product.id, value, status: 'active', isPrimary: Boolean(input.isPrimary), updatedAt: new Date() },
+        create: { id: ulid(), productId: product.id, type, value, normalizedValue, status: 'active', isPrimary: Boolean(input.isPrimary), metadata: { source: 'manual' }, updatedAt: new Date() },
+      });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'product.alias.save', entityType: 'ProductAlias', entityId: alias.id, summary: `Saved alias ${value} for ${product.sku}`, metadata: { productId: product.id, type, normalizedValue } } });
+      return alias;
+    });
+  }
+
+  async archiveProductAlias(id: string, reason: string, actorUserId: string) {
+    const cleanReason = String(reason || '').trim();
+    if (!cleanReason) throw new BadRequestException('An archive reason is required');
+    return this.prisma.$transaction(async (tx: any) => {
+      const alias = await tx.productAlias.findUnique({ where: { id }, include: { product: true } });
+      if (!alias) throw new NotFoundException('Product alias not found');
+      if (alias.type === 'internal_code' && alias.isPrimary) throw new BadRequestException('The primary display code must be changed from Product Master, not archived');
+      const updated = await tx.productAlias.update({ where: { id }, data: { status: 'archived', isPrimary: false, metadata: { ...(alias.metadata || {}), archiveReason: cleanReason }, updatedAt: new Date() } });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'product.alias.archive', entityType: 'ProductAlias', entityId: id, summary: `Archived alias ${alias.value} for ${alias.product.sku}`, metadata: { reason: cleanReason } } });
+      return updated;
+    });
+  }
+
   async createDisplaySample(input: any, actorUserId: string) {
     const product = await this.findById(String(input.productId || ''));
     const internalCode = this.normalizeInternalCode(input.internalCode || product.internalCode || product.sku);
-    const duplicate = await this.prisma.displaySample.findUnique({ where: { internalCode } });
-    if (duplicate) throw new BadRequestException('This display code is already registered');
+    if (await this.prisma.displaySample.findUnique({ where: { internalCode } })) throw new BadRequestException('This display code is already registered');
+    await this.assertCodeAvailable(internalCode, product.id);
     return this.prisma.$transaction(async (tx: any) => {
       const sampleNumber = await nextDocumentNumber(tx, 'display_sample', 'DS', new Date(), {
         existingNumbers: async (prefixForYear) => (await tx.displaySample.findMany({ where: { sampleNumber: { startsWith: prefixForYear } }, select: { sampleNumber: true } })).map((row: any) => row.sampleNumber),
@@ -466,6 +508,11 @@ export class ProductsService {
         imageUrl: input.imageUrl || (product.media as any)?.primaryUrl || null, status: 'active', sellable: false,
         installedAt: input.installedAt ? new Date(input.installedAt) : new Date(), metadata: input.metadata || {}, updatedAt: new Date(),
       } });
+      await tx.productAlias.upsert({
+        where: { type_normalizedValue: { type: 'showroom_code', normalizedValue: internalCode } },
+        update: { productId: product.id, value: internalCode, status: 'active', updatedAt: new Date() },
+        create: { id: ulid(), productId: product.id, type: 'showroom_code', value: internalCode, normalizedValue: internalCode, status: 'active', isPrimary: false, metadata: { displaySampleId: sample.id }, updatedAt: new Date() },
+      });
       await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'display_sample.create', entityType: 'DisplaySample', entityId: sample.id,
         summary: `Registered display ${internalCode}`, metadata: { productId: product.id, sampleNumber } } });
       return tx.displaySample.findUnique({ where: { id: sample.id }, include: { product: true } });
@@ -476,8 +523,8 @@ export class ProductsService {
     const existing = await this.prisma.displaySample.findUnique({ where: { id }, include: { product: true } });
     if (!existing) throw new NotFoundException('Display sample not found');
     const internalCode = input.internalCode === undefined ? existing.internalCode : this.normalizeInternalCode(input.internalCode);
-    const duplicate = await this.prisma.displaySample.findFirst({ where: { internalCode, id: { not: id } } });
-    if (duplicate) throw new BadRequestException('This display code is already registered');
+    if (await this.prisma.displaySample.findFirst({ where: { internalCode, id: { not: id } } })) throw new BadRequestException('This display code is already registered');
+    await this.assertCodeAvailable(internalCode, existing.productId, id);
     const status = String(input.status ?? existing.status).trim().toLowerCase();
     if (!['active', 'removed', 'maintenance'].includes(status)) throw new BadRequestException('Display status must be active, maintenance, or removed');
     return this.prisma.$transaction(async (tx: any) => {
@@ -496,12 +543,27 @@ export class ProductsService {
         },
         include: { product: true },
       });
+      await tx.productAlias.upsert({
+        where: { type_normalizedValue: { type: 'showroom_code', normalizedValue: internalCode } },
+        update: { productId: existing.productId, value: internalCode, status: 'active', updatedAt: new Date() },
+        create: { id: ulid(), productId: existing.productId, type: 'showroom_code', value: internalCode, normalizedValue: internalCode, status: 'active', isPrimary: false, metadata: { displaySampleId: id }, updatedAt: new Date() },
+      });
       await tx.auditEvent.create({ data: {
         id: ulid(), actorUserId, action: 'display_sample.update', entityType: 'DisplaySample', entityId: id,
         summary: `Updated display ${internalCode}`, metadata: { status, locationId: sample.locationId },
       } });
       return sample;
     });
+  }
+
+  private async assertCodeAvailable(normalizedCode: string, productId: string, displaySampleId?: string) {
+    const [product, alias, display] = await Promise.all([
+      this.prisma.product.findFirst({ where: { id: { not: productId }, OR: [{ sku: normalizedCode }, { internalCode: normalizedCode }] }, select: { sku: true } }),
+      this.prisma.productAlias.findFirst({ where: { productId: { not: productId }, normalizedValue: normalizedCode, status: 'active' }, include: { product: { select: { sku: true } } } }),
+      this.prisma.displaySample.findFirst({ where: { id: displaySampleId ? { not: displaySampleId } : undefined, productId: { not: productId }, internalCode: normalizedCode, status: { not: 'removed' } }, include: { product: { select: { sku: true } } } }),
+    ]);
+    const owner = product?.sku || alias?.product?.sku || display?.product?.sku;
+    if (owner) throw new BadRequestException(`Code ${normalizedCode} is already assigned to ${owner}`);
   }
 
   private async ensureCategory(name: string) {

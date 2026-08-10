@@ -88,7 +88,17 @@ class InternalLabelJobInput {
   @Field({ nullable: true }) lotId?: string;
   @Field({ nullable: true }) displaySampleId?: string;
   @Field({ nullable: true }) template?: string;
+  @Field({ nullable: true }) newJob?: boolean;
   @Field() quantity!: number;
+}
+
+@InputType()
+class InternalLabelPrintRunInput {
+  @Field(() => ID) labelJobId!: string;
+  @Field() templateCode!: string;
+  @Field(() => [ID], { nullable: true }) labelIds?: string[];
+  @Field(() => Int, { nullable: true }) copies?: number;
+  @Field({ nullable: true }) reason?: string;
 }
 
 @InputType()
@@ -352,10 +362,24 @@ export class OperationsResolver {
     @Args('sourceType', { nullable: true }) sourceType?: string,
     @Args('sourceId', { nullable: true }) sourceId?: string,
     @Args('status', { nullable: true }) status?: string,
+    @Args('search', { nullable: true }) search?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.operations.internalLabelJobs({ sourceType, sourceId, status, take });
+    return this.operations.internalLabelJobs({ sourceType, sourceId, status, search, take, skip });
+  }
+
+  @Query(() => [GraphQLJSON])
+  async internalLabelTemplates(@Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.operations.internalLabelTemplates();
+  }
+
+  @Query(() => GraphQLJSON)
+  async internalLabelPrintRun(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.operations.internalLabelPrintRun(id);
   }
 
   @Query(() => GraphQLJSON)
@@ -377,6 +401,28 @@ export class OperationsResolver {
   async printInternalLabelJob(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
     return this.operations.printInternalLabelJob(id, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async prepareInternalLabelPrintRun(@Args('input') input: InternalLabelPrintRunInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.operations.prepareInternalLabelPrintRun(input as any, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async confirmInternalLabelPrintRun(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.operations.confirmInternalLabelPrintRun(id, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async cancelInternalLabelPrintRun(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.operations.cancelInternalLabelPrintRun(id, reason, user.id);
   }
 
   @Mutation(() => GraphQLJSON)

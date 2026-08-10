@@ -220,6 +220,14 @@ class UpdateDisplaySampleInput {
   @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
 }
 
+@InputType()
+class ProductAliasInput {
+  @Field(() => ID) productId!: string;
+  @Field() type!: string;
+  @Field() value!: string;
+  @Field({ nullable: true }) isPrimary?: boolean;
+}
+
 @Resolver()
 export class ProductsResolver {
   constructor(
@@ -292,6 +300,28 @@ export class ProductsResolver {
   async tileDesignStats(@Context() ctx: GraphqlRequestContext) {
     await requireSession(this.prisma, ctx);
     return this.products.tileDesignStats();
+  }
+
+  @Query(() => [GraphQLJSON])
+  async productAliases(@Args('productId', { type: () => ID }) productId: string, @Context() ctx: GraphqlRequestContext) {
+    await requireSession(this.prisma, ctx);
+    return this.products.productAliases(productId);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async saveProductAlias(@Args('input') input: ProductAliasInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.saveProductAlias(input, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async archiveProductAlias(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.archiveProductAlias(id, reason, user.id);
   }
 
   @Mutation(() => GraphQLJSON)

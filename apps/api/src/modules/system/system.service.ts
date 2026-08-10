@@ -297,6 +297,8 @@ export class SystemService {
     const code = String(input.code || '').trim().toUpperCase();
     if (!name) throw new Error('Tile size name is required');
     if (!code) throw new Error('Tile size code is required');
+    const duplicateCode = await (this.prisma as any).tileSize.findFirst({ where: { code, ...(input.id ? { id: { not: input.id } } : {}) } });
+    if (duplicateCode) throw new Error(`Tile size code ${code} is already used by ${duplicateCode.name}`);
     const uom = String(input.uom || 'BOX').trim().toUpperCase() === 'PC' ? 'PC' : 'BOX';
     const data = {
       name,
