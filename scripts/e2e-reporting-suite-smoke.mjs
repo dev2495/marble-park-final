@@ -40,6 +40,7 @@ try {
     'audit.quality': 'Audit event register',
   };
   const results = {};
+  const reportByBook = {};
   for (const [bookId, title] of Object.entries(titleForBook)) {
     const definition = ownerCatalog.find((row) => row.title === title);
     assert(definition, `Catalog is missing ${title}`);
@@ -52,7 +53,10 @@ try {
     assert(report.rows.total >= report.rows.items.length);
     assert(!JSON.stringify(report).includes('NaN'), `${title} returned NaN`);
     results[bookId] = { summaries: report.summary.length, rows: report.rows.total, coverage: report.meta.coverage };
+    reportByBook[bookId] = report;
   }
+
+  assert(reportByBook['fulfilment.pipeline'].rows.items.every((row) => !row.href || row.href === '/dashboard/orders'), 'Fulfilment drill-through points at an unsupported route');
 
   const bookings = results['owner.pulse'];
   assert(bookings.summaries >= 5, 'Owner pulse is too shallow');
