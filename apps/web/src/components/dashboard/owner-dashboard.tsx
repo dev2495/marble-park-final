@@ -82,8 +82,8 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
     });
   }, [leads]);
 
-  // ── Derived: revenue trend (last 30 days) ─────────────────────────
-  const revenueTrend = useMemo(() => {
+  // Quote-value movement is commercial pipeline, not recognised revenue.
+  const quoteValueTrend = useMemo(() => {
     const buckets = new Map<string, number>();
     const today = new Date();
     for (let i = 29; i >= 0; i -= 1) {
@@ -125,15 +125,15 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
 
   const totalLeadsValue = leads.reduce((s, l) => s + Number(l.expectedValue || 0), 0);
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
-    { label: 'Revenue · this month', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} orders · avg ${moneyShort((orderStats.totalValue || 0) / Math.max(orderStats.totalOrders || 1, 1))}`, icon: IndianRupee, tone: 'success', href: '/dashboard/orders', numeric: true, format: moneyShort },
-    { label: 'Pipeline value', value: Number(stats.totalQuoteValue || totalLeadsValue || 0), caption: `${stats.totalQuotes || 0} quotes · ${stats.quoteConversionRate || 0}% conversion`, icon: TrendingUp, tone: 'brand', href: '/dashboard/quotes', numeric: true, format: moneyShort },
+    { label: 'Order bookings · this month', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} orders · avg ${moneyShort((orderStats.totalValue || 0) / Math.max(orderStats.totalOrders || 1, 1))}`, icon: IndianRupee, tone: 'success', href: '/dashboard/orders', numeric: true, format: moneyShort },
+    { label: 'Pipeline value', value: Number(stats.totalQuoteValue || totalLeadsValue || 0), caption: `${stats.totalQuotes || 0} quotes · ${stats.quoteConversionRate || 0}% confirmed share`, icon: TrendingUp, tone: 'brand', href: '/dashboard/quotes', numeric: true, format: moneyShort },
     { label: 'Approvals waiting', value: approvalsQueue.length, caption: approvalsQueue.length ? 'Quotes need your sign-off' : 'Inbox zero', icon: ClipboardCheck, tone: approvalsQueue.length ? 'warning' : 'neutral', href: '/dashboard/approvals', numeric: true },
     { label: 'Dispatch backlog', value: stats.pendingDispatchJobs || 0, caption: `${stats.activeDispatchJobs || 0} active jobs · ${followups.length} follow-ups today`, icon: Truck, tone: (stats.pendingDispatchJobs || 0) > 5 ? 'warning' : 'neutral', href: '/dashboard/dispatch', numeric: true },
   ];
 
   const secondary: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean }> = [
     { label: 'Active leads', value: leads.length, caption: `${pipelineByStage.find((s) => s.stage === 'new')?.count || 0} new this period`, icon: PackageSearch, tone: 'brand', href: '/dashboard/leads', numeric: true },
-    { label: 'Won this month', value: orderStats.totalOrders || 0, caption: `${moneyShort(orderStats.cashValue || 0)} cash · ${moneyShort(orderStats.creditValue || 0)} credit`, icon: CheckCircle2, tone: 'success', href: '/dashboard/orders', numeric: true },
+    { label: 'Orders booked', value: orderStats.totalOrders || 0, caption: `${moneyShort(orderStats.cashValue || 0)} cash-mode · ${moneyShort(orderStats.creditValue || 0)} credit-mode`, icon: CheckCircle2, tone: 'success', href: '/dashboard/orders', numeric: true },
     { label: 'Customers', value: stats.totalCustomers || 0, caption: `${stats.totalUsers || 0} team members`, icon: Users, tone: 'violet', href: '/dashboard/customers', numeric: true },
     { label: 'Low-stock SKUs', value: lowStock.length, caption: lowStock.length ? 'Need re-ordering' : 'Inventory healthy', icon: AlertTriangle, tone: lowStock.length ? 'danger' : 'neutral', href: '/dashboard/inventory/stock-alerts', numeric: true },
   ];
@@ -168,7 +168,7 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
         <Panel title="Quote value · last 30 days" subtitle="Daily sum of new quote line totals" tone="brand">
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart data={quoteValueTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="mp-rev" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#2563eb" stopOpacity={0.22} />

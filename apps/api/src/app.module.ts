@@ -23,6 +23,7 @@ import { OperationsModule } from './modules/operations/operations.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { IntentsModule } from './modules/intents/intents.module';
 import { ReceivablesModule } from './modules/receivables/receivables.module';
+import { ReportingModule } from './modules/reporting/reporting.module';
 import { HealthController } from './health.controller';
 
 import { SearchModule } from './modules/search/search.module';
@@ -96,6 +97,7 @@ import { AssetsModule } from './modules/assets/assets.module';
     AuditModule,
     IntentsModule,
     ReceivablesModule,
+    ReportingModule,
   ],
   controllers: [HealthController],
 })

@@ -140,7 +140,7 @@ export class StoredImageService {
     const reader = response.body.getReader();
     const chunks: Buffer[] = [];
     let bytes = 0;
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       const chunk = Buffer.from(value);

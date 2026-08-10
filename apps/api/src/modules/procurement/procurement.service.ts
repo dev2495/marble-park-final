@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
-import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
+import { syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { reserveAvailableLotsTx } from '../common/lot-allocation';
 import { pricePoLines } from '../common/po-pricing';

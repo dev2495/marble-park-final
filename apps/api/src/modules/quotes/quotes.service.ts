@@ -4,7 +4,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { releaseReservedLotsTx, reserveAvailableLotsTx } from '../common/lot-allocation';
-import { commercialTotalsFromLines, priceQuoteLines } from '../common/pricing';
+import { priceQuoteLines } from '../common/pricing';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
 import { StoredImageService } from '../assets/stored-image.service';
@@ -195,7 +195,7 @@ export class QuotesService {
             leadId = lead.id;
           }
 
-          let supersedesId = data.supersedesQuoteId || null;
+          const supersedesId = data.supersedesQuoteId || null;
           let versionNumber = 1;
           if (supersedesId) {
             const parent = await tx.quote.findUnique({ where: { id: supersedesId } });

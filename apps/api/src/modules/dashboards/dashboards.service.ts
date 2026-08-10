@@ -199,9 +199,10 @@ export class DashboardsService {
   }
 
   async getInventoryDashboard(): Promise<any> {
-    const balances = await this.prisma.inventoryBalance.findMany({
-      include: { product: true },
-    } as any) as any[];
+    const [balances, lotBalances] = await Promise.all([
+      this.prisma.inventoryBalance.findMany({ include: { product: true } } as any) as any,
+      (this.prisma as any).inventoryLotBalance.findMany({ include: { lot: true } }),
+    ]) as [any[], any[]];
 
     const summary = {
       totalQuantity: 0,
@@ -219,8 +220,11 @@ export class DashboardsService {
       const threshold = balance.reorderPoint ?? balance.lowStockThreshold ?? 5;
       if (Number(threshold) > 0 && balance.available <= Number(threshold)) summary.lowStock++;
       if (balance.available === 0) summary.outOfStock++;
-      summary.totalValue += balance.available * (balance.product.sellPrice || 0);
     }
+
+    // Financial inventory value is current lot on-hand × received lot cost.
+    // Sell price is a commercial price and must never be used as stock value.
+    summary.totalValue = lotBalances.reduce((total, balance) => total + Number(balance.onHand || 0) * Number(balance.lot?.unitCost || 0), 0);
 
     return { stats: summary, summary };
   }

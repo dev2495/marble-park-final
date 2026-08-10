@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
-import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
+import { syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { consumeExactReservedLotTx, consumeReservedLotsTx } from '../common/lot-allocation';
 import { ulid } from 'ulid';
 
@@ -707,7 +707,7 @@ export class DispatchService {
     }
     const requestedLines = this.normalizeLines(data.lines) || [];
     const requestedByPickLine = new Map(requestedLines.map((line: any) => [String(line.pickLineId || ''), Math.trunc(Number(line.dispatchQty || line.quantity || 0))]));
-    let challanLines = pickList.lines.map((line: any) => {
+    const challanLines = pickList.lines.map((line: any) => {
       const availablePacked = Math.max(0, Number(line.packedQuantity || 0) - Number(priorByPickLine.get(line.id) || 0));
       const dispatchQty = requestedLines.length ? Number(requestedByPickLine.get(line.id) || 0) : availablePacked;
       if (dispatchQty > availablePacked) throw new BadRequestException(`${line.product.sku} has only ${availablePacked} packed units left on ${pickList.pickNumber}`);

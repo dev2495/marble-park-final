@@ -107,14 +107,14 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
     { label: 'Active users', value: activeUsers.length, caption: `${users.length} total · ${inactiveUsers.length} disabled`, icon: Users, tone: 'success', href: '/dashboard/users', numeric: true },
     { label: 'Approvals across all teams', value: totalApprovals, caption: `${approvalQuotes.length} quote exceptions`, icon: ClipboardCheck, tone: totalApprovals ? 'warning' : 'neutral', href: '/dashboard/approvals', numeric: true },
     { label: 'New users · 30d', value: recentUsers.length, caption: recentUsers.length ? 'Recent joiners' : 'No new joiners', icon: UserCheck, tone: 'brand', href: '/dashboard/users', numeric: true },
-    { label: 'Business revenue · MTD', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} orders · admin view`, icon: IndianRupee, tone: 'violet', href: '/dashboard/orders', numeric: true, format: moneyShort },
+    { label: 'Order bookings · MTD', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} commercial orders`, icon: IndianRupee, tone: 'violet', href: '/dashboard/orders', numeric: true, format: moneyShort },
   ];
 
   const secondary: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean }> = [
     { label: 'Disabled accounts', value: inactiveUsers.length, caption: inactiveUsers.length ? 'Review or restore' : 'None disabled', icon: UserX, tone: inactiveUsers.length ? 'warning' : 'neutral', href: '/dashboard/users', numeric: true },
     { label: 'Customers on file', value: customers.length, caption: 'Master records', icon: Users, tone: 'brand', href: '/dashboard/customers', numeric: true },
     { label: 'Catalogue SKUs', value: Number(ownerStats.totalProducts || 0), caption: 'Active product master', icon: Boxes, tone: 'sky', href: '/dashboard/products', numeric: true },
-    { label: 'System integrations', value: 'Healthy', caption: 'Postgres · Apollo · PDF render', icon: ServerCog, tone: 'success', href: '/dashboard/settings' },
+    { label: 'System checks', value: 'Verify live', caption: 'Open health endpoints and logs', icon: ServerCog, tone: 'neutral', href: '/dashboard/settings' },
   ];
 
   return (

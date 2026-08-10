@@ -15,6 +15,14 @@ export type PermissionKey =
   | 'returns.manage'
   | 'payments.manage'
   | 'reports.view'
+  | 'reports.executive'
+  | 'reports.sales'
+  | 'reports.inventory'
+  | 'reports.procurement'
+  | 'reports.finance'
+  | 'reports.fulfilment'
+  | 'reports.audit'
+  | 'reports.export'
   | 'documents.view'
   | 'documents.manage'
   | 'customers.force_create';
@@ -36,6 +44,14 @@ export const PERMISSION_KEYS: PermissionKey[] = [
   'returns.manage',
   'payments.manage',
   'reports.view',
+  'reports.executive',
+  'reports.sales',
+  'reports.inventory',
+  'reports.procurement',
+  'reports.finance',
+  'reports.fulfilment',
+  'reports.audit',
+  'reports.export',
   'documents.view',
   'documents.manage',
   'customers.force_create',
@@ -50,11 +66,14 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     'approvals.manage',
     'payments.manage',
     'reports.view',
+    'reports.sales',
+    'reports.finance',
+    'reports.export',
     'customers.force_create',
     'documents.view',
     'documents.manage',
   ],
-  sales: ['documents.view', 'documents.manage'],
+  sales: ['documents.view', 'documents.manage', 'reports.sales'],
   inventory_manager: [
     'products.manage',
     'master_data.manage',
@@ -65,16 +84,22 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     'procurement.manage',
     'goods_receipts.manage',
     'reports.view',
+    'reports.inventory',
+    'reports.procurement',
+    'reports.export',
     'documents.view',
   ],
   dispatch_ops: [
     'dispatch.manage',
     'returns.manage',
+    'reports.fulfilment',
     'documents.view',
   ],
   office_staff: [
     'procurement.manage',
     'goods_receipts.manage',
+    'reports.procurement',
+    'reports.fulfilment',
     'documents.view',
     'documents.manage',
   ],

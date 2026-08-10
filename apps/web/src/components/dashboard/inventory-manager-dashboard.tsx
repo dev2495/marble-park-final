@@ -8,14 +8,14 @@ import {
   PieChart, Pie,
 } from 'recharts';
 import {
-  AlertTriangle, ArrowRight, Boxes, IndianRupee, PackageCheck, PackagePlus, Plus,
+  AlertTriangle, ArrowRight, Boxes, PackageCheck, PackagePlus, Plus,
   ShieldCheck, TrendingDown, Warehouse,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import {
   KpiTile, MotionGrid, MotionItem, Panel, EmptyState, GreetingStrip,
-  moneyShort, moneyExact, type Tone,
+  moneyShort, type Tone,
 } from './primitives';
 
 const INV_DASH = gql`
@@ -40,37 +40,37 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
   const lowStock = useMemo<any[]>(() => data?.lowStockBalances || [], [data?.lowStockBalances]);
   const balances = useMemo<any[]>(() => data?.inventoryBalances || [], [data?.inventoryBalances]);
 
-  // ── By category breakdown (value)
+  // Quantity composition is safe on the legacy balance query. Lot-cost value
+  // lives in the governed reporting suite where lot coverage is explicit.
   const byCategory = useMemo(() => {
     const m = new Map<string, { name: string; value: number; qty: number }>();
     for (const b of balances) {
       const c = b.product?.category || 'Uncategorised';
       const cur = m.get(c) || { name: c, value: 0, qty: 0 };
-      cur.value += Number(b.available || 0) * Number(b.product?.sellPrice || 0);
+      cur.value += Number(b.available || 0);
       cur.qty += Number(b.available || 0);
       m.set(c, cur);
     }
     return Array.from(m.values()).sort((a, b) => b.value - a.value).slice(0, 8);
   }, [balances]);
 
-  // ── Top brands by value
+  // ── Top brands by available quantity
   const byBrand = useMemo(() => {
     const m = new Map<string, number>();
     for (const b of balances) {
-      const v = Number(b.available || 0) * Number(b.product?.sellPrice || 0);
+      const v = Number(b.available || 0);
       const key = b.product?.brand || 'Other';
       m.set(key, (m.get(key) || 0) + v);
     }
     return Array.from(m.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 6);
   }, [balances]);
 
-  const totalValue = useMemo(() => byCategory.reduce((s, c) => s + c.value, 0), [byCategory]);
   const totalAvailable = useMemo(() => byCategory.reduce((s, c) => s + c.qty, 0), [byCategory]);
   const reservedQty = useMemo(() => balances.reduce((s, b) => s + Number(b.reserved || 0), 0), [balances]);
   const damagedQty = useMemo(() => balances.reduce((s, b) => s + Number(b.damaged || 0), 0), [balances]);
 
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
-    { label: 'Stock valuation', value: totalValue, caption: `${balances.length} SKUs tracked`, icon: IndianRupee, tone: 'success', href: '/dashboard/inventory', numeric: true, format: moneyShort },
+    { label: 'Tracked stock SKUs', value: balances.length, caption: 'Lot-cost valuation is in Reports', icon: Warehouse, tone: 'success', href: '/dashboard/reports', numeric: true },
     { label: 'Available qty', value: totalAvailable, caption: `${reservedQty.toLocaleString('en-IN')} reserved`, icon: Boxes, tone: 'brand', href: '/dashboard/inventory', numeric: true },
     { label: 'Low-stock SKUs', value: lowStock.length, caption: lowStock.length ? 'Below threshold — re-order' : 'All above threshold', icon: AlertTriangle, tone: lowStock.length ? 'danger' : 'success', href: '/dashboard/inventory', numeric: true },
     { label: 'Damaged qty', value: damagedQty, caption: 'Removed from sellable stock', icon: TrendingDown, tone: damagedQty > 0 ? 'warning' : 'neutral', href: '/dashboard/inventory', numeric: true },
@@ -100,14 +100,14 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
       </MotionGrid>
 
       <section className="grid gap-3 xl:grid-cols-[1.4fr_1fr]">
-        <Panel title="Stock value by category" subtitle="Available qty × sell price" tone="brand">
+        <Panel title="Available quantity by category" subtitle="Current sellable quantity; not a financial valuation" tone="brand">
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={byCategory} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid stroke="rgba(113,113,122,0.10)" vertical={false} />
                 <XAxis dataKey="name" tick={{ fill: '#71717a', fontSize: 11 }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fill: '#71717a', fontSize: 11 }} tickLine={false} axisLine={false} width={60} tickFormatter={(v) => moneyShort(Number(v))} />
-                <Tooltip formatter={(v: any) => moneyExact(Number(v))} cursor={{ fill: 'rgba(37,99,235,0.04)' }} />
+                <YAxis tick={{ fill: '#71717a', fontSize: 11 }} tickLine={false} axisLine={false} width={60} />
+                <Tooltip formatter={(v: any) => Number(v).toLocaleString('en-IN')} cursor={{ fill: 'rgba(37,99,235,0.04)' }} />
                 <Bar dataKey="value" radius={[4, 4, 0, 0]} animationDuration={900}>
                   {byCategory.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Bar>
@@ -116,14 +116,14 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
           </div>
         </Panel>
 
-        <Panel title="Top brands by value" subtitle="Where the money sits" tone="violet">
+        <Panel title="Top brands by available quantity" subtitle="Quantity composition; lot-cost value is in Reports" tone="violet">
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={byBrand} dataKey="value" nameKey="name" innerRadius={50} outerRadius={92} paddingAngle={2} stroke="white" strokeWidth={2} animationDuration={900}>
                   {byBrand.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Pie>
-                <Tooltip formatter={(v: any) => moneyExact(Number(v))} />
+                <Tooltip formatter={(v: any) => Number(v).toLocaleString('en-IN')} />
               </PieChart>
             </ResponsiveContainer>
             <div className="-mt-4 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">

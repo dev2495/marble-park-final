@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import * as QRCode from 'qrcode';
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
-import { applyStockPostingTx } from '../common/stock-posting';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReceivablesService } from '../receivables/receivables.service';

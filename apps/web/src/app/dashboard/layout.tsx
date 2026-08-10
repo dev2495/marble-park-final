@@ -54,14 +54,14 @@ const MARK_NOTIFICATION_READ = gql`
 
 const LOGOUT_MUTATION = gql`mutation Logout { logout }`;
 
-const navSections: Array<{ title: string; items: Array<{ name: string; href: string; icon: any; roles: string[]; permission?: string }> }> = [
+const navSections: Array<{ title: string; items: Array<{ name: string; href: string; icon: any; roles: string[]; permission?: string; permissions?: string[] }> }> = [
   {
     title: 'Operate',
     items: [
       { name: 'Command Center', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
       { name: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck, roles: ['admin', 'owner'], permission: 'approvals.manage' },
       { name: 'Sales Desk', href: '/dashboard/sales', icon: Briefcase, roles: ['admin', 'owner', 'sales_manager', 'sales'] },
-      { name: 'Reports', href: '/dashboard/reports', icon: BarChart3, roles: ['admin', 'owner', 'sales_manager'], permission: 'reports.view' },
+      { name: 'Reports', href: '/dashboard/reports', icon: BarChart3, roles: [], permissions: ['reports.executive', 'reports.sales', 'reports.inventory', 'reports.procurement', 'reports.finance', 'reports.fulfilment', 'reports.audit'] },
     ],
   },
   {
@@ -222,7 +222,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const effectivePermissions = previewingRole ? [] : (me?.effectivePermissions || user?.effectivePermissions || []);
   const can = (permission: string) => effectivePermissions.includes(permission);
   const visibleSections = navSections
-    .map((section) => ({ ...section, items: section.items.filter((item) => item.roles.includes(effectiveRole) || (item.permission && can(item.permission))) }))
+    .map((section) => ({ ...section, items: section.items.filter((item) => item.roles.includes(effectiveRole) || (item.permission && can(item.permission)) || item.permissions?.some(can)) }))
     .filter((section) => section.items.length > 0);
   const isNavActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard';

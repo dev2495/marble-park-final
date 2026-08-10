@@ -85,15 +85,13 @@ export function SalesRepDashboard({ effectiveRole, user }: { effectiveRole: stri
     return Object.entries(c).map(([stage, count]) => ({ stage: STAGE_LABEL[stage] || stage, count }));
   }, [leads]);
 
-  // ── Monthly target gauge (assume 1 Lakh target if not set elsewhere)
-  const TARGET = 100000;
-  const targetPct = Math.min(100, (wonRevenue / TARGET) * 100);
+  const confirmedShare = Math.min(100, conversion);
 
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
     { label: 'My pipeline value', value: pipelineValue, caption: `${leads.length} open leads`, icon: TrendingUp, tone: 'brand', href: '/dashboard/leads', numeric: true, format: moneyShort },
     { label: 'Quotes pending response', value: myQuotes.filter((q) => q.status === 'sent').length, caption: `${quotesSent} sent total`, icon: FileSpreadsheet, tone: 'sky', href: '/dashboard/quotes', numeric: true },
     { label: 'Follow-ups today', value: todayFollowups.length, caption: todayFollowups.length ? 'Action required' : 'All caught up', icon: CalendarClock, tone: todayFollowups.length ? 'warning' : 'success', href: '/dashboard/sales', numeric: true },
-    { label: 'Won this month', value: wonRevenue, caption: `${wonQuotes.length} confirmed quotes`, icon: IndianRupee, tone: 'success', href: '/dashboard/orders', numeric: true, format: moneyShort },
+    { label: 'Confirmed quote value', value: wonRevenue, caption: `${wonQuotes.length} confirmed quotes · not invoiced sales`, icon: IndianRupee, tone: 'success', href: '/dashboard/quotes', numeric: true, format: moneyShort },
   ];
 
   return (
@@ -139,18 +137,18 @@ export function SalesRepDashboard({ effectiveRole, user }: { effectiveRole: stri
           </div>
         </Panel>
 
-        <Panel title="Monthly target" subtitle={`${moneyShort(wonRevenue)} of ${moneyShort(TARGET)}`} tone="success">
+        <Panel title="Confirmed share of sent quotes" subtitle="Register share; not a cohort conversion KPI" tone="success">
           <div className="h-60 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <RadialBarChart innerRadius="70%" outerRadius="100%" startAngle={210} endAngle={-30} data={[{ name: 'won', value: targetPct, fill: '#059669' }]}>
+              <RadialBarChart innerRadius="70%" outerRadius="100%" startAngle={210} endAngle={-30} data={[{ name: 'confirmed', value: confirmedShare, fill: '#059669' }]}>
                 <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
                 <RadialBar dataKey="value" cornerRadius={20} background={{ fill: '#f4f4f5' } as any} angleAxisId={0} animationDuration={900} />
               </RadialBarChart>
             </ResponsiveContainer>
             <div className="-mt-32 flex flex-col items-center text-center">
-              <div className="font-display text-3xl font-bold tabular-nums text-[#18181b]">{Math.round(targetPct)}%</div>
-              <p className="mt-1 text-xs text-[#71717a]">to target</p>
-              <p className="mt-1 text-[11px] text-[#52525b]">{conversion.toFixed(1)}% conversion</p>
+              <div className="font-display text-3xl font-bold tabular-nums text-[#18181b]">{Math.round(confirmedShare)}%</div>
+              <p className="mt-1 text-xs text-[#71717a]">confirmed / sent register</p>
+              <p className="mt-1 text-[11px] text-[#52525b]">Targets require a governed target master</p>
             </div>
           </div>
         </Panel>

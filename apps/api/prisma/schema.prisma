@@ -2065,6 +2065,28 @@ model User {
   followUps           FollowUpTask[]
   dispatchJobs        DispatchJob[]
   salesOrders         SalesOrder[]
+  reportPresets       ReportPreset[]
+}
+
+/// A validated presentation preset for a report. `config` contains only
+/// report-registry keys (filters, comparison, dimensions, columns and sort),
+/// never SQL or arbitrary Prisma field names.
+model ReportPreset {
+  id            String   @id
+  owner         User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId       String
+  reportId      String
+  name          String
+  sharedRole    String?
+  isDefault     Boolean  @default(false)
+  schemaVersion Int      @default(1)
+  config        Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([ownerId, reportId, name])
+  @@index([ownerId, reportId, updatedAt(sort: Desc)])
+  @@index([sharedRole, reportId])
 }
 
 model Vendor {

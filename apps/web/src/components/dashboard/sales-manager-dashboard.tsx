@@ -27,10 +27,6 @@ const SM_DASH = gql`
   }
 `;
 
-const STAGE_WEIGHTS: Record<string, number> = {
-  new: 0.05, contacted: 0.10, qualified: 0.25, proposal: 0.40, quoted: 0.55, negotiation: 0.75, won: 1,
-};
-
 export function SalesManagerDashboard({ effectiveRole, user }: { effectiveRole: string; user: any }) {
   const { data, loading, error, refetch } = useQuery(SM_DASH);
 
@@ -40,15 +36,7 @@ export function SalesManagerDashboard({ effectiveRole, user }: { effectiveRole: 
   const leads = useMemo<any[]>(() => data?.leads || [], [data?.leads]);
   const orderStats = data?.salesOrderStats || {};
 
-  // ── Weighted forecast: each open lead's expected value × stage weight.
-  const weightedForecast = useMemo(() => {
-    let total = 0;
-    for (const l of leads) {
-      const w = STAGE_WEIGHTS[l.stage] ?? 0.1;
-      total += Number(l.expectedValue || 0) * w;
-    }
-    return total;
-  }, [leads]);
+  const openPipelineValue = useMemo(() => leads.filter((lead) => !['won', 'lost'].includes(String(lead.stage))).reduce((total, lead) => total + Number(lead.expectedValue || 0), 0), [leads]);
 
   // ── Quotes sent vs confirmed last 30 days
   const conversionTrend = useMemo(() => {
@@ -90,9 +78,9 @@ export function SalesManagerDashboard({ effectiveRole, user }: { effectiveRole: 
   }, [team]);
 
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
-    { label: 'Team revenue · MTD', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} orders this month`, icon: IndianRupee, tone: 'success', href: '/dashboard/orders', numeric: true, format: moneyShort },
-    { label: 'Weighted forecast', value: weightedForecast, caption: `Based on ${leads.length} open leads × stage weight`, icon: Target, tone: 'brand', href: '/dashboard/leads', numeric: true, format: moneyShort },
-    { label: 'Conversion rate', value: Number(stats.quoteConversionRate || 0), caption: `${stats.confirmedQuotes || 0} confirmed of ${stats.totalQuotes || 0} quotes`, icon: TrendingUp, tone: 'violet', href: '/dashboard/quotes', numeric: true, format: (v) => `${Math.round(v)}%` },
+    { label: 'Team order bookings · MTD', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} commercial orders`, icon: IndianRupee, tone: 'success', href: '/dashboard/orders', numeric: true, format: moneyShort },
+    { label: 'Open pipeline value', value: openPipelineValue, caption: `${leads.filter((lead) => !['won', 'lost'].includes(String(lead.stage))).length} open leads · no forecast weighting`, icon: Target, tone: 'brand', href: '/dashboard/leads', numeric: true, format: moneyShort },
+    { label: 'Confirmed quote share', value: Number(stats.quoteConversionRate || 0), caption: `${stats.confirmedQuotes || 0} confirmed of ${stats.totalQuotes || 0} register quotes`, icon: TrendingUp, tone: 'violet', href: '/dashboard/quotes', numeric: true, format: (v) => `${Math.round(v)}%` },
     { label: 'Stale leads', value: staleLeads.length, caption: staleLeads.length ? '> 7 days without action' : 'Pipeline is fresh', icon: AlertCircle, tone: staleLeads.length ? 'warning' : 'neutral', href: '/dashboard/leads', numeric: true },
   ];
 
