@@ -10,7 +10,7 @@
 
 ## Post-release acceptance
 
-- Confirm `/healthz`, `/api/health`, and `/readyz` over HTTPS.
+- Confirm `/healthz` and `/readyz` over HTTPS.
 - Confirm the deployed Git commit and the running image creation time.
 - Perform a safe authenticated read-only smoke: sign in, session status = 900 seconds, role-appropriate dashboard/reports, paged list, source drill, Help/PDF, and logout. Do not create or modify commercial records merely to test.
 - Confirm production GraphQL introspection is unavailable, cross-origin unsafe requests are rejected, cookie flags are correct, and a server session cannot be used after expiry/logout.

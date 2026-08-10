@@ -19,9 +19,15 @@
 
 ## Public edge and host
 
-- Public application traffic terminates at Caddy on HTTPS. PostgreSQL and the API/Web container ports are internal-only. Security headers include HSTS, MIME sniffing protection, frame restriction, referrer policy, and permissions policy; the upstream framework signature is removed.
+- Public application traffic terminates at Caddy on HTTPS. PostgreSQL and the API/Web container ports are internal-only. Security headers include a same-origin content security policy, HSTS, MIME sniffing protection, frame restriction, cross-origin isolation controls, referrer policy, and permissions policy; the upstream framework signature is removed.
 - The cloud security group must allow public `80/443` and restrict `22` to approved administrator IPs. This provider-side rule is an infrastructure-owner acceptance item; an inactive host firewall does not prove the cloud rule is correct.
-- `/healthz` confirms edge availability, `/api/health` confirms API liveness, and `/readyz` confirms application and database readiness.
+- `/healthz` confirms API liveness through the public edge, and `/readyz` confirms application and database readiness.
+
+## Credential-recovery safeguard
+
+- If a release credential regression is suspected, first restore the selected pre-regression backup into a temporary database. Never replace the current production database merely to recover one login.
+- `scripts/production-restore-owner-credential-state.mjs` copies only the approved owner's password hash and password-change timestamp, revokes that owner's sessions, writes `auth.credential.recovery`, and prints no credential material. It requires an exact source database and backup identifier and refuses a non-owner/non-admin identity.
+- After recovery, rerun the create-only seed and the script's `CREDENTIAL_RESTORE_MODE=verify` check. Drop only the explicitly named temporary recovery database after verification.
 
 ## Audit and reversal safeguards
 
