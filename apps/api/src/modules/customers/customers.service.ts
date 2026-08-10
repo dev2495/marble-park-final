@@ -85,7 +85,7 @@ export interface DuplicateCandidate {
 export class CustomersService {
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
-  async findAll(args?: { search?: string }): Promise<any[]> {
+  async findAll(args?: { search?: string; take?: number; skip?: number }): Promise<any[]> {
     const where = args?.search
       ? {
           OR: [
@@ -99,6 +99,8 @@ export class CustomersService {
     const customers = await this.prisma.customer.findMany({
       where,
       orderBy: { name: 'asc' },
+      take: Math.min(Math.max(Number(args?.take) || 50, 1), 101),
+      skip: Math.max(Number(args?.skip) || 0, 0),
     });
     return customers.map((customer) => this.toApiCustomer(customer));
   }

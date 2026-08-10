@@ -239,8 +239,8 @@ export default function UsersPage() {
   async function submitCreate(event: React.FormEvent) {
     event.preventDefault();
     setMessage('');
-    if (!createForm.password || createForm.password.length < 8) {
-      setMessage('Enter or generate a password of at least 8 characters.');
+    if (!createForm.password || createForm.password.length < 12) {
+      setMessage('Enter or generate a password of at least 12 characters.');
       return;
     }
     const { data: result } = await createUser({ variables: { input: { ...createForm, email: createForm.email.trim().toLowerCase() } } });
@@ -348,7 +348,7 @@ export default function UsersPage() {
             />
             <Field label="Temporary password">
               <div className="flex gap-2">
-                <Input required minLength={8} type="text" value={createForm.password} onChange={(event) => setCreateForm({ ...createForm, password: event.target.value })} placeholder="Enter or generate password" />
+                <Input required minLength={12} type="text" value={createForm.password} onChange={(event) => setCreateForm({ ...createForm, password: event.target.value })} placeholder="Enter or generate password" />
                 <Button type="button" variant="outline" onClick={() => setCreateForm({ ...createForm, password: generatePassword() })}>Generate</Button>
               </div>
             </Field>
@@ -448,9 +448,9 @@ export default function UsersPage() {
                     <div className="flex items-center gap-3"><KeyRound className="h-5 w-5 text-[var(--warning)]" /><h4 className="font-semibold text-[var(--ink)]">Reset password</h4></div>
                     <p className="mt-1 text-sm text-[var(--ink-4)]">Admin/owner reset only. The new password must be shared securely with the user.</p>
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                      <Input value={resetPassword} minLength={8} onChange={(event) => setResetPassword(event.target.value)} placeholder="New password" />
+                      <Input value={resetPassword} minLength={12} onChange={(event) => setResetPassword(event.target.value)} placeholder="New password (12+ characters)" />
                       <Button type="button" variant="outline" onClick={() => setResetPassword(generatePassword())}>Generate</Button>
-                      <Button type="button" disabled={!resetPassword || resetPassword.length < 8 || updating} onClick={submitResetPassword}>Apply</Button>
+                      <Button type="button" disabled={!resetPassword || resetPassword.length < 12 || updating} onClick={submitResetPassword}>Apply</Button>
                       {resetPassword ? <Button type="button" variant="ghost" title="Copy password" onClick={() => navigator.clipboard?.writeText(resetPassword)}><Copy className="h-4 w-4" /></Button> : null}
                     </div>
                   </div>

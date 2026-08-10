@@ -225,7 +225,7 @@ export class DocumentsService {
     }
   }
 
-  async listVaultAssets(filters: { search?: string; category?: string; mediaKind?: string; status?: string; take?: number }) {
+  async listVaultAssets(filters: { search?: string; category?: string; mediaKind?: string; status?: string; take?: number; skip?: number }) {
     const status = filters.status === 'archived' ? 'archived' : 'active';
     const search = cleanText(filters.search, 120);
     const where: any = {
@@ -243,7 +243,8 @@ export class DocumentsService {
       where,
       include: { shares: { orderBy: { createdAt: 'desc' }, take: 12 } },
       orderBy: { createdAt: 'desc' },
-      take: Math.min(Math.max(Number(filters.take) || 200, 1), 500),
+      take: Math.min(Math.max(Math.trunc(Number(filters.take) || 49), 1), 101),
+      skip: Math.max(Math.trunc(Number(filters.skip) || 0), 0),
     });
     const uploaderIds = Array.from(new Set(assets.map((asset) => asset.uploadedBy)));
     const uploaders = uploaderIds.length ? await this.prisma.user.findMany({ where: { id: { in: uploaderIds } }, select: { id: true, name: true, email: true } }) : [];
@@ -321,12 +322,10 @@ export class DocumentsService {
     if (!asset || asset.status !== 'active') throw new NotFoundException('Active vault file not found');
     const activeShares = await this.prisma.vaultShare.count({ where: { assetId, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] } });
     if (activeShares >= 30) throw new BadRequestException('This file already has 30 active share links. Revoke an old link first.');
-    let expiresAt: Date | null = null;
-    if (input?.expiresAt) {
-      expiresAt = new Date(input.expiresAt);
-      if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date()) throw new BadRequestException('Share expiry must be in the future');
-      if (expiresAt > new Date(Date.now() + 366 * 24 * 60 * 60 * 1000)) throw new BadRequestException('Share expiry cannot exceed one year');
-    }
+    if (!input?.expiresAt) throw new BadRequestException('Public share links require an expiry date');
+    const expiresAt = new Date(input.expiresAt);
+    if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date()) throw new BadRequestException('Share expiry must be in the future');
+    if (expiresAt > new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)) throw new BadRequestException('Share expiry cannot exceed 90 days');
     const share = await this.prisma.vaultShare.create({
       data: { id: ulid(), token: randomBytes(32).toString('base64url'), assetId, createdBy: actorUserId, allowDownload: input?.allowDownload !== false, expiresAt },
     });

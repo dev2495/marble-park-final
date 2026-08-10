@@ -299,9 +299,11 @@ export class QuotesResolver {
     @Args('ownerId', { nullable: true }) ownerId?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('architectId', { nullable: true }) architectId?: string,
+    @Args('take', { type: () => Number, nullable: true }) take?: number,
+    @Args('skip', { type: () => Number, nullable: true }) skip?: number,
   ) {
     return requireSession(this.prisma, ctx).then((user) =>
-      this.quotes.findAll({ leadId, customerId, ownerId: isPrivileged(user) ? ownerId : user.id, status, architectId }),
+      this.quotes.findAll({ leadId, customerId, ownerId: isPrivileged(user) ? ownerId : user.id, status, architectId, take, skip }),
     );
   }
 

@@ -104,8 +104,11 @@ export class SystemService {
   }
 
   async resetClientWorkspace(confirm: string, _actorUserId: string) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new BadRequestException('Workspace reset is disabled in production. Use the documented backup and restore procedure instead.');
+    }
     if (confirm !== 'RESET_CLIENT_WORKSPACE') {
-      throw new Error('Invalid reset confirmation');
+      throw new BadRequestException('Invalid reset confirmation');
     }
 
     await (this.prisma as any).customerAllocation.deleteMany().catch(() => null);
@@ -164,7 +167,11 @@ export class SystemService {
     await this.prisma.passwordResetToken.deleteMany();
     await this.prisma.session.deleteMany();
 
-    const passwordHash = await bcrypt.hash(process.env.CLIENT_RESET_ADMIN_PASSWORD || 'password123', 10);
+    const resetAdminPassword = String(process.env.CLIENT_RESET_ADMIN_PASSWORD || '');
+    if (resetAdminPassword.length < 12) {
+      throw new BadRequestException('CLIENT_RESET_ADMIN_PASSWORD must be configured with at least 12 characters for a disposable test reset');
+    }
+    const passwordHash = await bcrypt.hash(resetAdminPassword, 12);
     await this.prisma.user.deleteMany({ where: { email: { not: 'admin@marblepark.com' } } });
     await this.prisma.user.upsert({
       where: { email: 'admin@marblepark.com' },

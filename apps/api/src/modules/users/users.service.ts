@@ -69,7 +69,7 @@ export class UsersService {
   async create(data: CreateUserInput): Promise<any> {
     if (!data.name?.trim()) throw new BadRequestException('Name is required');
     if (!data.email?.trim()) throw new BadRequestException('Email is required');
-    if (!data.password || data.password.length < 8) throw new BadRequestException('Password must be at least 8 characters');
+    if (!data.password || data.password.length < 12) throw new BadRequestException('Password must be at least 12 characters');
     if (!this.allowedRoles.has(data.role)) throw new BadRequestException('Invalid role');
     const email = data.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
@@ -120,7 +120,7 @@ export class UsersService {
       patch.email = email;
     }
     if (typeof data.password === 'string' && data.password.length > 0) {
-      if (data.password.length < 8) throw new BadRequestException('Password must be at least 8 characters');
+      if (data.password.length < 12) throw new BadRequestException('Password must be at least 12 characters');
       patch.passwordHash = await bcrypt.hash(data.password, 12);
       patch.passwordChangedAt = new Date();
     }
@@ -129,6 +129,9 @@ export class UsersService {
       where: { id },
       data: patch,
     });
+    if (patch.passwordHash || patch.active === false) {
+      await this.prisma.session.deleteMany({ where: { userId: id } });
+    }
     // Detect role / active changes specifically — they're the high-impact ones.
     const roleChanged = data.role && data.role !== before.role;
     const activeChanged = typeof data.active === 'boolean' && data.active !== before.active;
@@ -184,6 +187,7 @@ export class UsersService {
         permissionOverrides: {},
       } as any,
     });
+    await this.prisma.session.deleteMany({ where: { userId: id } });
     await this.audit.record({
       actorUserId: 'system',
       action: 'user.delete',
@@ -228,13 +232,13 @@ export class UsersService {
    * `passwordChangedAt` so the profile page can show "last changed N days
    * ago" without depending on AuditEvent.
    */
-  async changeMyPassword(userId: string, input: ChangeMyPasswordInput) {
+  async changeMyPassword(userId: string, input: ChangeMyPasswordInput, currentSessionToken = '') {
     const user = await this.findById(userId);
     if (!input.currentPassword || !input.newPassword) {
       throw new BadRequestException('Current and new password are required');
     }
-    if (input.newPassword.length < 8) {
-      throw new BadRequestException('New password must be at least 8 characters');
+    if (input.newPassword.length < 12) {
+      throw new BadRequestException('New password must be at least 12 characters');
     }
     const ok = await this.verifyPassword(user, input.currentPassword);
     if (!ok) throw new UnauthorizedException('Current password is incorrect');
@@ -252,12 +256,11 @@ export class UsersService {
       entityId: userId,
       summary: `${user.name || user.email} changed their password`,
     });
-    // Invalidate every existing session for this user except — to keep the
-    // current request usable — we don't delete the session bound to the
-    // caller's token. The auth layer is the only place that knows the
-    // active token, so this is a best-effort cleanup of *other* devices.
+    // Invalidate every other browser/device immediately. The session making
+    // the verified password-change request remains active and is still bound
+    // by the 15-minute idle policy.
     await this.prisma.session.deleteMany({
-      where: { userId, expiresAt: { lt: new Date(Date.now() + 1000 * 60 * 5) } },
+      where: { userId, ...(currentSessionToken ? { token: { not: currentSessionToken } } : {}) },
     }).catch(() => null);
     return { ok: true, passwordChangedAt: new Date() };
   }

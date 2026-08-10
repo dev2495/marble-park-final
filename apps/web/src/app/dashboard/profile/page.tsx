@@ -136,8 +136,8 @@ export default function ProfilePage() {
       setPasswordValidationError('New password and confirmation do not match.');
       return;
     }
-    if (pwd.newPassword.length < 8) {
-      setPasswordValidationError('New password must be at least 8 characters.');
+    if (pwd.newPassword.length < 12) {
+      setPasswordValidationError('New password must be at least 12 characters.');
       return;
     }
     try {
@@ -248,12 +248,12 @@ export default function ProfilePage() {
             </label>
             <label className="block space-y-1.5">
               <span className="text-xs font-medium text-[#52525b]">New password</span>
-              <Input value={pwd.newPassword} onChange={(e) => setPwd({ ...pwd, newPassword: e.target.value })} type="password" required minLength={8} />
-              <p className="text-[10px] text-[#a1a1aa]">At least 8 characters. Use letters, numbers and a symbol for best strength.</p>
+              <Input value={pwd.newPassword} onChange={(e) => setPwd({ ...pwd, newPassword: e.target.value })} type="password" required minLength={12} />
+              <p className="text-[10px] text-[#a1a1aa]">At least 12 characters. Use a long, unique phrase with numbers and a symbol.</p>
             </label>
             <label className="block space-y-1.5">
               <span className="text-xs font-medium text-[#52525b]">Confirm new password</span>
-              <Input value={pwd.confirm} onChange={(e) => setPwd({ ...pwd, confirm: e.target.value })} type="password" required minLength={8} />
+              <Input value={pwd.confirm} onChange={(e) => setPwd({ ...pwd, confirm: e.target.value })} type="password" required minLength={12} />
             </label>
             {passwordValidationError ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-xs font-medium text-red-700">{passwordValidationError}</p> : null}
             {passwordError ? <QueryErrorBanner error={passwordError} /> : null}

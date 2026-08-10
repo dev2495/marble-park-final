@@ -10,7 +10,7 @@ import { ReceivablesService } from '../receivables/receivables.service';
 export class OperationsService {
   constructor(private prisma: PrismaService, private receivables: ReceivablesService) {}
 
-  async documentJobs(args?: { entityType?: string; entityId?: string; status?: string; take?: number }) {
+  async documentJobs(args?: { entityType?: string; entityId?: string; status?: string; take?: number; skip?: number }) {
     const where: any = {};
     if (args?.entityType) where.entityType = args.entityType;
     if (args?.entityId) where.entityId = args.entityId;
@@ -19,6 +19,7 @@ export class OperationsService {
       where,
       orderBy: { createdAt: 'desc' },
       take: this.limit(args?.take, 120),
+      skip: Math.max(0, Math.floor(Number(args?.skip || 0))),
     });
   }
 
@@ -205,7 +206,7 @@ export class OperationsService {
     });
   }
 
-  async stockLedgerEntries(args?: { productId?: string; referenceId?: string; take?: number }) {
+  async stockLedgerEntries(args?: { productId?: string; referenceId?: string; take?: number; skip?: number }) {
     const where: any = {};
     if (args?.productId) where.productId = args.productId;
     if (args?.referenceId) where.referenceId = args.referenceId;
@@ -213,6 +214,7 @@ export class OperationsService {
       where,
       orderBy: { createdAt: 'desc' },
       take: this.limit(args?.take, 200),
+      skip: Math.max(Number(args?.skip) || 0, 0),
     });
     const productIds = Array.from(new Set(rows.map((row: any) => row.productId).filter(Boolean)));
     const products = productIds.length ? await this.prisma.product.findMany({ where: { id: { in: productIds as string[] } } }) : [];

@@ -4,6 +4,14 @@ import { ulid } from 'ulid';
 
 const prisma = new PrismaClient();
 
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('Refusing to reset client test data in production.');
+}
+
+if (process.env.CONFIRM_CLIENT_DATA_RESET !== 'RESET-NON-PRODUCTION-DATA') {
+  throw new Error('Set CONFIRM_CLIENT_DATA_RESET=RESET-NON-PRODUCTION-DATA to confirm this destructive non-production reset.');
+}
+
 async function optionalDelete(modelName) {
   if (!prisma[modelName]) return;
   await prisma[modelName].deleteMany().catch(() => null);
@@ -23,7 +31,11 @@ async function clearBusinessData() {
 }
 
 async function ensureAdmin() {
-  const passwordHash = await bcrypt.hash(process.env.CLIENT_RESET_ADMIN_PASSWORD || 'password123', 10);
+  const password = String(process.env.CLIENT_RESET_ADMIN_PASSWORD || '');
+  if (password.length < 12) {
+    throw new Error('CLIENT_RESET_ADMIN_PASSWORD must contain at least 12 characters.');
+  }
+  const passwordHash = await bcrypt.hash(password, 12);
   await prisma.user.deleteMany({ where: { email: { not: 'admin@marblepark.com' } } });
   await prisma.user.upsert({
     where: { email: 'admin@marblepark.com' },

@@ -138,9 +138,14 @@ export class CustomersResolver {
   ) {}
 
   @Query(() => [CustomerOutput], { name: 'customers' })
-  async getCustomers(@Args('search', { type: () => String, nullable: true }) search: string | undefined, @Context() ctx: GraphqlRequestContext) {
+  async getCustomers(
+    @Args('search', { type: () => String, nullable: true }) search: string | undefined,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('take', { type: () => Number, nullable: true }) take?: number,
+    @Args('skip', { type: () => Number, nullable: true }) skip?: number,
+  ) {
     await requireSession(this.prisma, ctx);
-    return this.customers.findAll({ search });
+    return this.customers.findAll({ search, take, skip });
   }
 
   @Query(() => CustomerOutput)

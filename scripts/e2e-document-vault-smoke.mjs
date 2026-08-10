@@ -61,7 +61,10 @@ async function main() {
     assert(asset.mediaKind === 'pdf' && asset.category === 'Catalogues' && asset.checksum?.length === 64, 'upload must persist validated PDF metadata and checksum');
 
     const internal = await fetch(`${HTTP}/api/document-vault/files/${asset.id}/content`, { headers: { authorization: `Bearer ${token}` } });
-    assert(internal.status === 200 && internal.headers.get('content-type')?.includes('application/pdf'), 'authenticated PDF preview must stream inline');
+    assert(
+      internal.status === 200 && internal.headers.get('content-type')?.includes('application/pdf'),
+      `authenticated PDF preview must stream inline (status=${internal.status}, content-type=${internal.headers.get('content-type') || 'missing'})`,
+    );
     assert(internal.headers.get('content-disposition')?.startsWith('inline'), 'PDF preview must use inline disposition');
 
     const updated = (await gql(`mutation($assetId: ID!, $input: JSON!) { updateVaultAsset(assetId: $assetId, input: $input) }`, { assetId: asset.id, input: { title: `Showroom catalogue ${suffix}`, category: 'Showroom samples', description: 'Updated during smoke verification' } }, token)).updateVaultAsset;
@@ -83,7 +86,10 @@ async function main() {
     await gql(`mutation($shareId: ID!) { revokeVaultShare(shareId: $shareId) }`, { shareId: viewOnly.id }, token);
     assert((await fetch(`${HTTP}/api/document-vault/public/${viewOnly.token}/meta`)).status === 404, 'revoked share must stop working immediately');
 
-    const downloadable = (await gql(`mutation($assetId: ID!, $input: JSON!) { createVaultShare(assetId: $assetId, input: $input) }`, { assetId: asset.id, input: { allowDownload: true } }, token)).createVaultShare;
+    const downloadable = (await gql(`mutation($assetId: ID!, $input: JSON!) { createVaultShare(assetId: $assetId, input: $input) }`, {
+      assetId: asset.id,
+      input: { allowDownload: true, expiresAt: new Date(Date.now() + 86400000).toISOString() },
+    }, token)).createVaultShare;
     const download = await fetch(`${HTTP}/api/document-vault/public/${downloadable.token}/content?download=1`);
     assert(download.status === 200 && download.headers.get('content-disposition')?.startsWith('attachment'), 'download-enabled share must return attachment content');
 

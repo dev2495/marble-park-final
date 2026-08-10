@@ -20,10 +20,14 @@ const errorLink = onError(({ graphQLErrors, networkError, operation }) => {
       console.error(`[GraphQL error] ${operationName}: ${message} (code=${code})`);
       const isAuthError =
         code === 'UNAUTHENTICATED' ||
-        /session expired|invalid session|not authenticated|authentication required/i.test(message);
+        /session expired|invalid session|not authenticated|authentication required|login required|account is disabled or missing/i.test(message);
       if (isAuthError && typeof window !== 'undefined') {
         if (!window.location.pathname.startsWith('/login')) {
-          window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
+          localStorage.removeItem('user');
+          localStorage.removeItem('role_override');
+          localStorage.setItem('mp_session_event', JSON.stringify({ type: 'logout', at: Date.now() }));
+          const redirect = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
+          window.location.assign(`/login?reason=session&redirect=${redirect}`);
         }
       }
     }

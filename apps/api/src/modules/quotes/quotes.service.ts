@@ -100,7 +100,7 @@ export class QuotesService {
    * the resolver can fan relations through DataLoader and avoid the classic
    * 1 + 2N (`customer`, `owner` per row) hit pattern when listing 100s of quotes.
    */
-  async findAll(args?: { leadId?: string; customerId?: string; ownerId?: string; status?: string; architectId?: string }): Promise<any[]> {
+  async findAll(args?: { leadId?: string; customerId?: string; ownerId?: string; status?: string; architectId?: string; take?: number; skip?: number }): Promise<any[]> {
     const where: any = {};
     if (args?.leadId) where.leadId = args.leadId;
     if (args?.customerId) where.customerId = args.customerId;
@@ -111,6 +111,8 @@ export class QuotesService {
     return this.prisma.quote.findMany({
       where,
       orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(Number(args?.take) || 50, 1), 101),
+      skip: Math.max(Number(args?.skip) || 0, 0),
     } as any) as any;
   }
 

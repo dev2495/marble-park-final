@@ -4,10 +4,11 @@ import Link from 'next/link';
 import { gql, useQuery } from '@apollo/client';
 import { BadgeCheck, BellRing, ClipboardList, FileText, PackageCheck, ShieldCheck, Truck } from 'lucide-react';
 import { QueryErrorBanner } from '@/components/query-state';
+import { Button } from '@/components/ui/button';
 
 const AUDIT_QUERY = gql`
-  query SystemAudit {
-    auditEvents(take: 120) {
+  query SystemAudit($auditCursor: String) {
+    auditEvents(take: 50, cursor: $auditCursor) {
       events {
         id
         action
@@ -16,6 +17,8 @@ const AUDIT_QUERY = gql`
         summary
         createdAt
       }
+      nextCursor
+      total
     }
     salesOrderStats(range: "today")
     salesOrders(range: "today")
@@ -72,8 +75,10 @@ function fmt(value: string) {
 }
 
 export default function SystemAuditPage() {
-  const { data, loading, error, refetch } = useQuery(AUDIT_QUERY, { fetchPolicy: 'cache-and-network' });
+  const { data, loading, error, refetch, fetchMore } = useQuery(AUDIT_QUERY, { variables: { auditCursor: null }, fetchPolicy: 'cache-and-network' });
   const audits = data?.auditEvents?.events || [];
+  const auditNextCursor = data?.auditEvents?.nextCursor;
+  const auditTotal = Number(data?.auditEvents?.total || 0);
   const orders = data?.salesOrders || [];
   const quotes = data?.quotes || [];
   const balances = data?.inventoryBalances || [];
@@ -225,7 +230,7 @@ export default function SystemAuditPage() {
       </section>
 
       <section className="mp-card rounded-r5 p-5">
-        <h2 className="text-xl font-black tracking-tight text-[#18181b] dark:text-[#f8fafc]">Audit trail</h2>
+        <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-black tracking-tight text-[#18181b] dark:text-[#f8fafc]">Audit trail</h2><span className="text-xs font-bold text-[#71717a]">{audits.length} of {auditTotal}</span></div>
         <div className="mt-5 overflow-hidden rounded-3xl border border-[#e2e8f0] dark:border-white/10">
           <div className="hidden grid-cols-[0.8fr_0.7fr_1.2fr_1fr] gap-4 bg-[#eff6ff]/80 px-4 py-3 text-xs font-black uppercase tracking-widest text-[#52525b] dark:bg-white/5 dark:text-[#94a3b8] lg:grid">
             <div>When</div>
@@ -245,6 +250,7 @@ export default function SystemAuditPage() {
             {!audits.length && <p className="p-6 text-sm font-bold text-[#52525b] dark:text-[#94a3b8]">No audit events yet.</p>}
           </div>
         </div>
+        {auditNextCursor ? <Button type="button" variant="outline" className="mt-4 w-full" disabled={loading} onClick={() => fetchMore({ variables: { auditCursor: auditNextCursor }, updateQuery: (previous, { fetchMoreResult }) => fetchMoreResult ? { ...fetchMoreResult, auditEvents: { ...fetchMoreResult.auditEvents, events: [...(previous.auditEvents?.events || []), ...(fetchMoreResult.auditEvents?.events || [])] }, salesOrderStats: previous.salesOrderStats, salesOrders: previous.salesOrders, quotes: previous.quotes, inventoryBalances: previous.inventoryBalances, pendingInwardItems: previous.pendingInwardItems, dispatchJobs: previous.dispatchJobs, dispatchChallans: previous.dispatchChallans, notifications: previous.notifications, stockAlertPolicies: previous.stockAlertPolicies } : previous })}>Load older audit events</Button> : null}
       </section>
     </div>
   );

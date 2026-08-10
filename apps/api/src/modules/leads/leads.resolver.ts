@@ -161,10 +161,12 @@ export class LeadsResolver {
     @Args('ownerId', { nullable: true }) ownerId?: string,
     @Args('stage', { nullable: true }) stage?: string,
     @Args('search', { nullable: true }) search?: string,
+    @Args('take', { type: () => Number, nullable: true }) take?: number,
+    @Args('skip', { type: () => Number, nullable: true }) skip?: number,
   ) {
     const user = await requireSession(this.prisma, ctx);
     const canSeeAll = isPrivileged(user) || user.role === 'office_staff';
-    return this.leads.findAll({ ownerId: canSeeAll ? ownerId : user.id, stage, search });
+    return this.leads.findAll({ ownerId: canSeeAll ? ownerId : user.id, stage, search, take, skip });
   }
 
   @Query(() => LeadOutput)

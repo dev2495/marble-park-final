@@ -3,8 +3,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
-  AlertTriangle, Building2, CheckCircle2, FileText, Globe2,
-  ImagePlus, Landmark, LifeBuoy, Loader2, MapPin, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, SlidersHorizontal,
+  Building2, CheckCircle2, FileText, Globe2,
+  ImagePlus, Landmark, LifeBuoy, Loader2, MapPin, Pencil, PlusCircle, Save, ShieldCheck, SlidersHorizontal,
   Upload, Warehouse, BellRing,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -36,12 +36,6 @@ const UPLOAD_COMPANY_LOGO = gql`
 const SAVE_PRODUCT_BRAND = gql`
   mutation SaveProductBrandFromSettings($input: ProductBrandInput!) {
     saveProductBrand(input: $input) { data }
-  }
-`;
-
-const RESET_WORKSPACE = gql`
-  mutation ResetClientWorkspace($confirm: String!) {
-    resetClientWorkspace(confirm: $confirm) { data }
   }
 `;
 
@@ -129,14 +123,11 @@ export default function SettingsPage() {
   const [save, { loading, error: saveError }] = useMutation(SAVE_SETTINGS, { onCompleted: () => { setSaved(true); refetch(); } });
   const [uploadCompanyLogo] = useMutation(UPLOAD_COMPANY_LOGO);
   const [saveProductBrand, { error: brandSaveError }] = useMutation(SAVE_PRODUCT_BRAND);
-  const [resetWorkspace, { loading: resetting, error: resetError }] = useMutation(RESET_WORKSPACE, { onCompleted: (result) => setResetMessage(`Workspace reset complete. Products: ${result?.resetClientWorkspace?.data?.counts?.products ?? 0}, users: ${result?.resetClientWorkspace?.data?.counts?.users ?? 0}.`) });
   const [createLocation, { loading: creatingLocation, error: createLocationError }] = useMutation(CREATE_STOCK_LOCATION, { onCompleted: () => { setPlantForm(emptyPlant); setPlantMessage('Plant created and stock scope updated.'); refetch(); } });
   const [updateLocation, { loading: updatingLocation, error: updateLocationError }] = useMutation(UPDATE_STOCK_LOCATION, { onCompleted: () => { setPlantForm(emptyPlant); setPlantMessage('Plant saved.'); refetch(); } });
   const [form, setForm] = useState<any>(defaults);
   const [plantForm, setPlantForm] = useState<any>(emptyPlant);
   const [saved, setSaved] = useState(false);
-  const [confirmReset, setConfirmReset] = useState('');
-  const [resetMessage, setResetMessage] = useState('');
   const [plantMessage, setPlantMessage] = useState('');
   const [browserOrigin, setBrowserOrigin] = useState('');
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -204,14 +195,6 @@ export default function SettingsPage() {
     } finally {
       setUploadingLogo(false);
     }
-  }
-
-  async function submitReset() {
-    if (confirmReset !== 'RESET_CLIENT_WORKSPACE') return;
-    if (!window.confirm('This clears client test products, customers, leads, quotes, orders, product images and inventory. Admin user remains. Continue?')) return;
-    setResetMessage('');
-    await resetWorkspace({ variables: { confirm: confirmReset } });
-    setConfirmReset('');
   }
 
   async function saveBrandPresentation(brand: any, patch: any) {
@@ -307,11 +290,9 @@ export default function SettingsPage() {
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {saveError ? <QueryErrorBanner error={saveError} /> : null}
       {brandSaveError ? <QueryErrorBanner error={brandSaveError} /> : null}
-      {resetError ? <QueryErrorBanner error={resetError} /> : null}
       {createLocationError ? <QueryErrorBanner error={createLocationError} /> : null}
       {updateLocationError ? <QueryErrorBanner error={updateLocationError} /> : null}
       {saved ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800"><CheckCircle2 className="mr-2 inline h-4 w-4" /> Settings saved.</div> : null}
-      {resetMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{resetMessage}</div> : null}
       {plantMessage ? <div className="rounded-r4 border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{plantMessage}</div> : null}
       {logoMessage ? <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--ink-2)]">{logoMessage}</div> : null}
       {brandMessage ? <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--ink-2)]">{brandMessage}</div> : null}
@@ -523,7 +504,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+      <section>
         <div className="mp-panel p-5 lg:p-6">
           <div className="flex items-start gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-r3 bg-emerald-50 text-emerald-700"><ShieldCheck className="h-5 w-5" /></div>
@@ -537,21 +518,8 @@ export default function SettingsPage() {
             <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Users are managed by authorised access managers with audit trail.</li>
             <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Document prefixes are configurable before client testing.</li>
             <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Theme preference is saved per browser.</li>
+            <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Destructive workspace reset is disabled in production.</li>
           </ul>
-        </div>
-
-        <div className="mp-panel border-red-200/70 p-5 lg:p-6">
-          <div className="flex items-start gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-r3 bg-red-50 text-red-700"><AlertTriangle className="h-5 w-5" /></div>
-            <div>
-              <h2 className="text-xl font-semibold text-[var(--ink)]">Client test reset</h2>
-              <p className="mt-1 text-sm text-[var(--ink-4)]">Admin-only reset for a clean Railway demo. Keeps the admin account and clears client test business data and catalogue images.</p>
-            </div>
-          </div>
-          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-            <Input value={confirmReset} onChange={(e) => setConfirmReset(e.target.value)} placeholder="Type RESET_CLIENT_WORKSPACE" />
-            <Button type="button" variant="destructive" disabled={resetting || confirmReset !== 'RESET_CLIENT_WORKSPACE'} onClick={submitReset}><RotateCcw className="mr-2 h-4 w-4" /> {resetting ? 'Resetting…' : 'Reset'}</Button>
-          </div>
         </div>
       </section>
     </div>

@@ -1,6 +1,8 @@
-import { Resolver, Mutation, Args, Context, InputType, Field, ObjectType } from '@nestjs/graphql';
+import { Resolver, Mutation, Query, Args, Context, InputType, Field, ObjectType, Int } from '@nestjs/graphql';
 import { AuthService } from './auth.service';
 import { GraphqlRequestContext, sessionToken } from './session-context';
+import { UnauthorizedException } from '@nestjs/common';
+import { sessionIdleTimeoutMs } from './session-policy';
 
 import { IsEmail, IsString, IsNotEmpty } from 'class-validator';
 
@@ -43,6 +45,21 @@ export class AuthResult {
   authenticated!: boolean;
 }
 
+@ObjectType()
+export class SessionStatus {
+  @Field()
+  expiresAt!: string;
+
+  @Field()
+  serverTime!: string;
+
+  @Field(() => Int)
+  idleTimeoutSeconds!: number;
+
+  @Field(() => Int)
+  warningSeconds!: number;
+}
+
 @Resolver()
 export class AuthResolver {
   constructor(private auth: AuthService) {}
@@ -61,18 +78,43 @@ export class AuthResolver {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: sessionIdleTimeoutMs(),
       path: '/',
     });
     return result;
   }
 
   @Mutation(() => Boolean)
-  async logout(@Context() ctx: GraphqlRequestContext) {
+  async logout(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('reason', { nullable: true, defaultValue: 'user' }) reason?: string,
+  ) {
     const token = sessionToken(ctx);
-    if (token) await this.auth.logoutByToken(token);
+    if (token) await this.auth.logoutByToken(token, reason === 'idle' ? 'idle' : 'user');
     ctx.res?.clearCookie?.('mp_session', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' });
     return true;
+  }
+
+  @Query(() => SessionStatus)
+  async sessionStatus(@Context() ctx: GraphqlRequestContext) {
+    const token = sessionToken(ctx);
+    if (!token) throw new UnauthorizedException('Login required');
+    return this.auth.sessionStatus(token);
+  }
+
+  @Mutation(() => SessionStatus)
+  async keepSessionAlive(@Context() ctx: GraphqlRequestContext) {
+    const token = sessionToken(ctx);
+    if (!token) throw new UnauthorizedException('Login required');
+    const status = await this.auth.keepSessionAlive(token);
+    ctx.res?.cookie?.('mp_session', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: sessionIdleTimeoutMs(),
+      path: '/',
+    });
+    return status;
   }
 
   @Mutation(() => Boolean)

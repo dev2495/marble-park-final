@@ -21,6 +21,7 @@ import {
 import { ThemeToggle } from '@/components/theme-toggle';
 import { guideForRoute } from '@/lib/help-content';
 import { CompanyLogo } from '@/components/company-logo';
+import { SessionTimeoutGuard } from '@/components/session-timeout-guard';
 
 const ME_QUERY = gql`
   query LayoutMe {
@@ -247,6 +248,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const handleLogout = async () => {
     await logout().catch(() => null);
+    localStorage.setItem('mp_session_event', JSON.stringify({ type: 'logout', at: Date.now() }));
     localStorage.removeItem('user');
     localStorage.removeItem('role_override');
     window.location.href = '/login';
@@ -259,6 +261,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="mp-app-shell min-h-screen w-full text-[var(--ink-2)]">
+      <SessionTimeoutGuard />
       {/* ─── Sidebar — auto-hiding icon rail, opens on hover/focus ───────── */}
       <aside
         aria-label="Primary workspace navigation"

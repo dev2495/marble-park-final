@@ -138,9 +138,10 @@ export class OperationsResolver {
     @Args('entityId', { nullable: true }) entityId?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
   ) {
     await requireSession(this.prisma, ctx);
-    return this.operations.documentJobs({ entityType, entityId, status, take });
+    return this.operations.documentJobs({ entityType, entityId, status, take, skip });
   }
 
   @Query(() => [GraphQLJSON])
@@ -215,9 +216,10 @@ export class OperationsResolver {
     @Args('productId', { nullable: true }) productId?: string,
     @Args('referenceId', { nullable: true }) referenceId?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
   ) {
     await requireSession(this.prisma, ctx);
-    return this.operations.stockLedgerEntries({ productId, referenceId, take });
+    return this.operations.stockLedgerEntries({ productId, referenceId, take, skip });
   }
 
   @Query(() => [GraphQLJSON])

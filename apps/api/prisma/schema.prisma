@@ -794,11 +794,12 @@ model Reservation {
 }
 
 model Session {
-  id        String   @id
-  token     String   @unique
-  userId    String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id             String   @id
+  token          String   @unique
+  userId         String
+  expiresAt      DateTime
+  lastActivityAt DateTime @default(now())
+  createdAt      DateTime @default(now())
 
   @@index([userId])
   @@index([expiresAt])

@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 
 const QUOTES = gql`
-  query QuotesRegister($ownerId: String, $architectId: String) {
-    quotes(ownerId: $ownerId, architectId: $architectId) {
+  query QuotesRegister($ownerId: String, $architectId: String, $status: String, $skip: Float, $take: Float) {
+    quotes(ownerId: $ownerId, architectId: $architectId, status: $status, skip: $skip, take: $take) {
       id
       quoteNumber
       title
@@ -55,6 +55,8 @@ export default function QuotesRegisterPage() {
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState('all');
   const [architectId, setArchitectId] = useState('all');
+  const [page, setPage] = useState(0);
+  const pageSize = 30;
 
   useEffect(() => {
     try {
@@ -66,28 +68,26 @@ export default function QuotesRegisterPage() {
 
   const ownerId = user?.role === 'sales' ? user.id : undefined;
   const { data, loading, error, refetch } = useQuery(QUOTES, {
-    variables: { ownerId, architectId: architectId === 'all' ? undefined : architectId },
+    variables: { ownerId, architectId: architectId === 'all' ? undefined : architectId, status: status === 'all' ? undefined : status, skip: page * pageSize, take: pageSize + 1 },
     skip: !ready,
   });
   const [sendQuote, { loading: sending, error: sendError }] = useMutation(SEND_QUOTE, { onCompleted: () => refetch() });
 
-  const quotes = useMemo(() => {
-    const rows = data?.quotes || [];
-    if (status === 'all') return rows;
-    return rows.filter((quote: any) => quote.status === status);
-  }, [data, status]);
+  const quotePage = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
+  const quotes = quotePage.slice(0, pageSize);
+  const hasNext = quotePage.length > pageSize;
 
   const architects = useMemo(() => data?.architects || [], [data?.architects]);
 
   const totals = useMemo(() => {
-    const all = data?.quotes || [];
+    const all = quotes;
     return {
       count: all.length,
       sent: all.filter((quote: any) => quote.status === 'sent').length,
       confirmed: all.filter((quote: any) => quote.status === 'confirmed').length,
       value: all.reduce((sum: number, quote: any) => sum + quoteTotal(quote.lines), 0),
     };
-  }, [data]);
+  }, [quotes]);
 
   return (
     <div className="space-y-6 pb-10">
@@ -108,7 +108,7 @@ export default function QuotesRegisterPage() {
 
         <div className="grid grid-cols-2 gap-4">
           {[
-            ['Quotes', totals.count],
+            ['Visible quotes', totals.count],
             ['Sent', totals.sent],
             ['Confirmed', totals.confirmed],
             ['Pipeline value', money(totals.value)],
@@ -126,13 +126,13 @@ export default function QuotesRegisterPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {['all', 'draft', 'sent', 'confirmed', 'lost'].map((item) => (
-              <button key={item} onClick={() => setStatus(item)} className={`rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-wider ${status === item ? 'bg-[#18181b] text-white' : 'bg-white/75 text-[#27272a]'}`}>{item}</button>
+              <button key={item} onClick={() => { setStatus(item); setPage(0); }} className={`rounded-2xl px-4 py-2 text-xs font-black uppercase tracking-wider ${status === item ? 'bg-[#18181b] text-white' : 'bg-white/75 text-[#27272a]'}`}>{item}</button>
             ))}
             <label className="ml-1 flex items-center gap-2 rounded-2xl border border-[#e4e4e7] bg-white px-3 py-1.5 text-xs font-black uppercase tracking-wider text-[#52525b]">
               Architect
               <select
                 value={architectId}
-                onChange={(e) => setArchitectId(e.target.value)}
+                onChange={(e) => { setArchitectId(e.target.value); setPage(0); }}
                 className="max-w-[14rem] bg-transparent text-xs font-black normal-case tracking-normal text-[#18181b] outline-none"
               >
                 <option value="all">All architects</option>
@@ -189,6 +189,7 @@ export default function QuotesRegisterPage() {
           })}
         </div>
       </section>
+      <div className="flex items-center justify-between"><Button variant="outline" disabled={page === 0 || loading} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</Button><span className="text-xs font-bold uppercase tracking-wider text-[#71717a]">Quote page {page + 1}</span><Button variant="outline" disabled={!hasNext || loading} onClick={() => setPage((value) => value + 1)}>Next</Button></div>
     </div>
   );
 }

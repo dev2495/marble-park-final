@@ -38,10 +38,10 @@ export class LeadsService {
    * DataLoader so listing 100 leads triggers 1 findMany + 1 batched
    * Customer/User load instead of 1 + 100 + 100 selects.
    */
-  async findAll(args?: { ownerId?: string; stage?: string; search?: string }): Promise<any[]> {
+  async findAll(args?: { ownerId?: string; stage?: string; search?: string; take?: number; skip?: number }): Promise<any[]> {
     const where: any = {};
     if (args?.ownerId) where.ownerId = args.ownerId;
-    if (args?.stage) where.stage = args.stage;
+    if (args?.stage) where.stage = args.stage === 'proposal' ? { in: ['proposal', 'quoted'] } : args.stage;
     if (args?.search) {
       where.OR = [
         { title: { contains: args.search, mode: 'insensitive' } },
@@ -51,6 +51,8 @@ export class LeadsService {
     return this.prisma.lead.findMany({
       where,
       orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(Number(args?.take) || 50, 1), 101),
+      skip: Math.max(Number(args?.skip) || 0, 0),
     } as any) as any;
   }
 

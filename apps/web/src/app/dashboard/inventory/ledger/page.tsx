@@ -1,20 +1,25 @@
 'use client';
 
 import { gql, useQuery } from '@apollo/client';
+import { useState } from 'react';
 import { MapPinned, Warehouse } from 'lucide-react';
 import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
 
 const DATA = gql`
-  query StockLedgerPage {
+  query StockLedgerPage($skip: Int, $take: Int) {
     stockLocations
-    stockLedgerEntries(take: 200)
+    stockLedgerEntries(skip: $skip, take: $take)
   }
 `;
 
 export default function StockLedgerPage() {
-  const { data, loading, error, refetch } = useQuery(DATA, { fetchPolicy: 'cache-and-network' });
+  const [page, setPage] = useState(0);
+  const pageSize = 100;
+  const { data, loading, error, refetch } = useQuery(DATA, { variables: { skip: page * pageSize, take: pageSize + 1 }, fetchPolicy: 'cache-and-network' });
   const locations: any[] = data?.stockLocations || [];
-  const ledger: any[] = data?.stockLedgerEntries || [];
+  const ledgerPage: any[] = data?.stockLedgerEntries || [];
+  const ledger = ledgerPage.slice(0, pageSize);
+  const hasNext = ledgerPage.length > pageSize;
 
   return (
     <div className="space-y-6 pb-10">
@@ -22,6 +27,7 @@ export default function StockLedgerPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Stock ledger</p>
         <h1 className="mt-2 font-display text-3xl font-bold tracking-[-0.02em] text-[var(--ink)]">Every GRN, dispatch, return and count variance lands in one movement trail.</h1>
       </section>
+      <div className="flex items-center justify-between"><button type="button" disabled={page === 0 || loading} onClick={() => setPage((value) => Math.max(0, value - 1))} className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-sm font-bold disabled:opacity-40">Previous</button><span className="text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Ledger page {page + 1}</span><button type="button" disabled={!hasNext || loading} onClick={() => setPage((value) => value + 1)} className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-sm font-bold disabled:opacity-40">Next</button></div>
 
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {loading && !ledger.length ? <QueryLoading label="Loading stock ledger..." /> : null}

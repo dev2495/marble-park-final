@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 
 const GET_CUSTOMERS = gql`
-  query Customers($search: String) {
-    customers(search: $search) { id name email phone mobile city state architect siteAddress }
+  query Customers($search: String, $skip: Float, $take: Float) {
+    customers(search: $search, skip: $skip, take: $take) { id name email phone mobile city state architect siteAddress }
   }
 `;
 
@@ -31,11 +31,15 @@ export default function CustomersPage() {
   const [formData, setFormData] = useState({ name: '', email: '', phone: '', city: '', gstNo: '' });
   const [forceCreate, setForceCreate] = useState(false);
   const [role, setRole] = useState<string>('');
-  const { data, loading, error, refetch } = useQuery(GET_CUSTOMERS, { variables: { search } });
+  const [page, setPage] = useState(0);
+  const pageSize = 24;
+  const { data, loading, error, refetch } = useQuery(GET_CUSTOMERS, { variables: { search: search || undefined, skip: page * pageSize, take: pageSize + 1 }, fetchPolicy: 'cache-and-network' });
   const [createCustomer, { loading: creating, error: createError }] = useMutation(CREATE_CUSTOMER);
   const [submitError, setSubmitError] = useState<Error | null>(null);
   const [probeDuplicates, { data: dupData }] = useLazyQuery(DUPLICATE_CANDIDATES, { fetchPolicy: 'network-only' });
-  const customers = data?.customers || [];
+  const customerPage = data?.customers || [];
+  const customers = customerPage.slice(0, pageSize);
+  const hasNext = customerPage.length > pageSize;
 
   useEffect(() => {
     try {
@@ -107,8 +111,8 @@ export default function CustomersPage() {
 
       <section className="mp-card rounded-r5 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by customer, city, mobile..." className="h-[3.25rem] max-w-xl" />
-          <p className="text-sm font-bold text-[#52525b]">{customers.length} visible customers</p>
+          <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search by customer, city, mobile..." className="h-[3.25rem] max-w-xl" />
+          <p className="text-sm font-bold text-[#52525b]">Page {page + 1} · {customers.length} visible customers</p>
         </div>
 
         {showForm && (
@@ -177,6 +181,11 @@ export default function CustomersPage() {
           </article>
         ))}
       </section>
+      <div className="flex items-center justify-between">
+        <Button type="button" variant="outline" disabled={page === 0 || loading} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</Button>
+        <span className="text-xs font-bold uppercase tracking-wider text-[#71717a]">Customer page {page + 1}</span>
+        <Button type="button" variant="outline" disabled={!hasNext || loading} onClick={() => setPage((value) => value + 1)}>Next</Button>
+      </div>
     </div>
   );
 }

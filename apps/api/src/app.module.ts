@@ -38,7 +38,10 @@ import { AssetsModule } from './modules/assets/assets.module';
       inject: [PrismaService],
       useFactory: (prisma: PrismaService) => ({
         autoSchemaFile: true,
-        graphiql: process.env.NODE_ENV !== 'production' || process.env.GRAPHQL_PLAYGROUND === 'true',
+        // The production API is browser-cookie authenticated. Keep schema
+        // discovery and the interactive IDE unavailable on the public edge.
+        graphiql: process.env.NODE_ENV !== 'production',
+        introspection: process.env.NODE_ENV !== 'production',
         // Per-request DataLoaders prevent N+1 hits on hot relations
         // (Quote.customer, Quote.owner, Quote.lead, Lead.customer, Lead.owner).
         // Loaders are constructed fresh for each request so cached rows never

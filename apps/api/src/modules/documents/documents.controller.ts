@@ -31,8 +31,13 @@ function sendStoredFile(res: any, asset: any, filePath: string, asDownload: bool
   res.setHeader('Content-Disposition', safeDisposition(asset.originalName, asDownload || !inlineKinds.has(asset.mediaKind) ? 'attachment' : 'inline'));
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  return res.sendFile(filePath, (error: any) => {
-    if (error && !res.headersSent) res.status(error.statusCode || 500).json({ error: 'The stored file could not be read.' });
+  // Use an explicit root so Express resolves and contains the stored filename
+  // without depending on URL-encoding an absolute workspace path.
+  return res.sendFile(path.basename(filePath), { root: path.dirname(filePath), dotfiles: 'deny', cacheControl: false }, (error: any) => {
+    if (error && !res.headersSent) {
+      console.error('Vault file stream failed', { code: error.code || 'unknown', statusCode: error.statusCode || 500 });
+      res.status(error.statusCode || 500).json({ error: 'The stored file could not be read.' });
+    }
   });
 }
 

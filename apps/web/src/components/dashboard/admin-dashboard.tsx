@@ -39,7 +39,6 @@ const ADMIN_DASH = gql`
     quotes(status: "pending_approval") {
       id quoteNumber lines customer owner createdAt
     }
-    customers(search: "") { id }
     salesOrderStats(range: "month")
   }
 `;
@@ -63,7 +62,6 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
 
   const users = useMemo<any[]>(() => data?.users || [], [data?.users]);
   const approvalQuotes = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
-  const customers = useMemo<any[]>(() => data?.customers || [], [data?.customers]);
   const ownerStats = useMemo(() => data?.ownerDashboard?.stats || {}, [data?.ownerDashboard?.stats]);
   const orderStats = data?.salesOrderStats || {};
 
@@ -98,10 +96,10 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
   const hygiene = useMemo(() => {
     const items: Array<{ label: string; count: number; tone: Tone; href: string }> = [];
     items.push({ label: 'Product image coverage', count: Number(ownerStats.catalogueImageCoverage || 0), tone: (ownerStats.catalogueImageCoverage || 0) > 80 ? 'success' : 'warning', href: '/dashboard/master-data/products' });
-    items.push({ label: 'Total customers', count: customers.length, tone: 'neutral', href: '/dashboard/customers' });
+    items.push({ label: 'Total customers', count: Number(ownerStats.totalCustomers || 0), tone: 'neutral', href: '/dashboard/customers' });
     items.push({ label: 'Total catalogue SKUs', count: Number(ownerStats.totalProducts || 0), tone: 'neutral', href: '/dashboard/products' });
     return items;
-  }, [ownerStats, customers]);
+  }, [ownerStats]);
 
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
     { label: 'Active users', value: activeUsers.length, caption: `${users.length} total · ${inactiveUsers.length} disabled`, icon: Users, tone: 'success', href: '/dashboard/users', numeric: true },
@@ -112,7 +110,7 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
 
   const secondary: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean }> = [
     { label: 'Disabled accounts', value: inactiveUsers.length, caption: inactiveUsers.length ? 'Review or restore' : 'None disabled', icon: UserX, tone: inactiveUsers.length ? 'warning' : 'neutral', href: '/dashboard/users', numeric: true },
-    { label: 'Customers on file', value: customers.length, caption: 'Master records', icon: Users, tone: 'brand', href: '/dashboard/customers', numeric: true },
+    { label: 'Customers on file', value: Number(ownerStats.totalCustomers || 0), caption: 'Master records', icon: Users, tone: 'brand', href: '/dashboard/customers', numeric: true },
     { label: 'Catalogue SKUs', value: Number(ownerStats.totalProducts || 0), caption: 'Active product master', icon: Boxes, tone: 'sky', href: '/dashboard/products', numeric: true },
     { label: 'System checks', value: 'Verify live', caption: 'Open health endpoints and logs', icon: ServerCog, tone: 'neutral', href: '/dashboard/settings' },
   ];

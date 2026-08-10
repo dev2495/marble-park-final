@@ -64,14 +64,23 @@ async function bootstrapProduction() {
     throw new Error('BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD are required. Use SEED_MODE=demo only for disposable demo data.');
   }
   if (password.length < 12) throw new Error('BOOTSTRAP_OWNER_PASSWORD must be at least 12 characters.');
-  const passwordHash = await bcrypt.hash(password, 12);
-  const owner = await prisma.user.upsert({
-    where: { email },
-    create: { id: ulid(), email, passwordHash, name, role: 'owner', phone, active: true },
-    update: { passwordHash, name, role: 'owner', phone, active: true, updatedAt: new Date() },
+  const existingOwner = await prisma.user.findUnique({ where: { email } });
+  const owner = existingOwner || await prisma.user.create({
+    data: {
+      id: ulid(),
+      email,
+      passwordHash: await bcrypt.hash(password, 12),
+      name,
+      role: 'owner',
+      phone,
+      active: true,
+      passwordChangedAt: new Date(),
+    },
   });
   await ensureProductionProductMasters();
-  console.log(`Production owner ready: ${owner.email}`);
+  console.log(existingOwner
+    ? `Production owner already exists; preserved user-managed credentials and profile for ${owner.email}`
+    : `Production owner created: ${owner.email}`);
   console.log('Production Product Master categories, finishes and tile sizes ready.');
 }
 

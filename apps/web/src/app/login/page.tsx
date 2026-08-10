@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, gql } from '@apollo/client';
 import { ArrowRight, Bath, Boxes, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck, Users } from 'lucide-react';
@@ -21,7 +21,6 @@ const LOGIN_MUTATION = gql`
   mutation Login($input: LoginInput!) {
     login(input: $input) {
       authenticated
-      token
       user { id name email role }
     }
   }
@@ -33,8 +32,16 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState('');
   const submittingRef = useRef(false);
   const [login] = useMutation(LOGIN_MUTATION);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const reason = params.get('reason');
+    if (reason === 'inactive') setSessionNotice('You were signed out after 15 minutes without activity. Sign in to continue safely.');
+    if (reason === 'session') setSessionNotice('Your session is no longer active. Sign in again to continue.');
+  }, []);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -46,9 +53,12 @@ export default function LoginPage() {
       const { data, errors } = await login({ variables: { input: { email: email.trim(), password } } });
       if (data?.login?.authenticated && data?.login?.user) {
         localStorage.setItem('user', JSON.stringify(data.login.user));
+        localStorage.removeItem('mp_session_event');
+        const requested = new URLSearchParams(window.location.search).get('redirect') || '';
+        const redirect = requested.startsWith('/dashboard') && !requested.startsWith('//') ? requested : '/dashboard';
         // A document navigation lets Safari commit the HttpOnly Set-Cookie
         // response before the dashboard's session query starts.
-        window.location.replace('/dashboard');
+        window.location.replace(redirect);
         return;
       } else {
         setError(errors?.[0]?.message || 'Login did not establish a session.');
@@ -137,6 +147,11 @@ export default function LoginPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              {sessionNotice ? (
+                <div role="status" className="rounded-md border border-amber-300/25 bg-amber-400/10 p-3 text-sm font-medium leading-5 text-amber-100">
+                  {sessionNotice}
+                </div>
+              ) : null}
               {error ? (
                 <div role="alert" className="rounded-md border border-red-400/25 bg-red-500/10 p-3 text-sm font-semibold text-red-100">
                   {error}

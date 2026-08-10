@@ -45,8 +45,9 @@ domain later; no application code change is required.
    ./deploy.sh
    ```
 
-   Production seeding is idempotent and creates or updates only the configured
-   owner. Never set `SEED_MODE=demo` on this stack.
+   Production seeding is idempotent and creates the configured owner only when
+   that account is absent. It never overwrites an existing owner's password,
+   role, profile, or permissions. Never set `SEED_MODE=demo` on this stack.
 
 7. Install the backup timer:
 

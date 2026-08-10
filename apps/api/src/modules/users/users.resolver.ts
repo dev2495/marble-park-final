@@ -1,7 +1,7 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context, ResolveField, Parent } from '@nestjs/graphql';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession, sessionToken } from '../auth/session-context';
 import { GraphQLJSON } from 'graphql-scalars';
 import { effectivePermissionsForUser } from '../auth/rbac';
 
@@ -219,6 +219,6 @@ export class UsersResolver {
     @Context() ctx: GraphqlRequestContext,
   ) {
     const session = await requireSession(this.prisma, ctx);
-    return this.users.changeMyPassword(session.id, input);
+    return this.users.changeMyPassword(session.id, input, sessionToken(ctx));
   }
 }

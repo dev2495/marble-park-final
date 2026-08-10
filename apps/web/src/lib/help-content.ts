@@ -119,12 +119,20 @@ export const HELP_GUIDES: HelpGuide[] = [
     related: ['reports-audit', 'setup-master-data', 'procurement-inward'],
   },
   {
+    id: 'account-security', title: 'Sign in and protect your session', duration: '4 min', href: '/dashboard/profile', roles: ['Owner', 'Sales', 'Sales Manager', 'Office', 'Inventory', 'Dispatch'],
+    summary: 'Use your own account, understand the 15-minute inactivity safeguard, and recover cleanly when a session ends.',
+    flow: ['Named login', 'Meaningful work', 'Expiry warning', 'Stay signed in / Sign out', 'Safe login return'],
+    steps: ['Sign in with your assigned email and password; never share the owner account.', 'Marble Park ends every authenticated session after exactly 15 minutes without real keyboard, pointer, touch, input or scroll activity.', 'Background refreshes, charts and polling do not keep a session alive.', 'When the warning appears, choose Stay signed in only if you are still at the device, or Sign out now before leaving.', 'Signing out in one browser tab signs out the other open Marble Park tabs too.', 'After an inactivity sign-out, sign in again and use the safe return link to reopen the protected page.', 'Change a suspected or exposed password immediately from Profile; administrators can issue a temporary reset and all older sessions are revoked.'],
+    checks: ['Do not leave unsaved form entries during the expiry warning.', 'Closed or stale tabs cannot continue requests after the server deadline.', 'The browser does not store the login token in local storage.', 'A deactivated account and every expired or revoked session are rejected by the server.'],
+    related: ['users-settings', 'reports-audit'],
+  },
+  {
     id: 'users-settings', title: 'Manage users, roles and settings', duration: '6 min', href: '/dashboard/users', roles: ['Owner'],
     summary: 'Issue named user accounts, apply least-privilege roles, test access, and maintain company/document settings.',
     flow: ['Company identity', 'Document defaults', 'Create user', 'Assign role', 'Permission check', 'Audit'],
-    steps: ['In Settings, maintain the company logo, address, GSTIN, phone, email, quotation title, default terms, bank details and footer.', 'Choose Light, Dark or System appearance; System follows the device preference.', 'Create one named account per staff member.', 'Assign Sales, Office, Inventory, Dispatch, Manager or Owner role.', 'Apply an override only when the standard role needs a documented exception.', 'Test the user’s navigation and one allowed action.', 'Deactivate departed users instead of reusing accounts.'],
-    checks: ['Never share the owner login.', 'Users cannot grant permissions they do not control.', 'Password and role changes are auditable.'],
-    related: ['reports-audit', 'crm-quote', 'dispatch-return'],
+    steps: ['In Settings, maintain the company logo, address, GSTIN, phone, email, quotation title, default terms, bank details and footer.', 'Choose Light, Dark or System appearance; System follows the device preference.', 'Create one named account per staff member with a temporary password of at least 12 characters.', 'Assign Sales, Office, Inventory, Dispatch, Manager or Owner role.', 'Apply an override only when the standard role needs a documented exception.', 'Test the user’s navigation and one allowed action.', 'Deactivate departed users instead of reusing accounts; deactivation revokes their active sessions.'],
+    checks: ['Never share the owner login.', 'Users cannot grant permissions they do not control.', 'Password resets, password changes, role changes and deactivation are auditable.', 'All sessions use the same 15-minute server-enforced inactivity limit.'],
+    related: ['account-security', 'reports-audit', 'crm-quote', 'dispatch-return'],
   },
 ];
 
@@ -136,7 +144,7 @@ export const HELP_ROUTE_MAP: Array<[string, string]> = [
   ['/dashboard/inventory/labels', 'labels-lots'], ['/dashboard/dispatch', 'dispatch-return'], ['/dashboard/returns', 'dispatch-return'],
   ['/dashboard/payments', 'payments-documents'], ['/dashboard/documents', 'file-vault'],
   ['/dashboard/inventory', 'inventory-control'], ['/dashboard/reports/setup', 'reporting-readiness'], ['/dashboard/reports', 'reports-audit'], ['/dashboard/audit', 'reports-audit'], ['/dashboard/approvals', 'reports-audit'],
-  ['/dashboard/users', 'users-settings'], ['/dashboard/settings', 'users-settings'],
+  ['/dashboard/profile', 'account-security'], ['/dashboard/users', 'users-settings'], ['/dashboard/settings', 'users-settings'],
 ];
 
 export function guideForRoute(pathname: string) {

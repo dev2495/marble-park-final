@@ -60,6 +60,7 @@ export async function getSessionUser(prisma: PrismaService, ctx: GraphqlRequestC
 
   const user = await prisma.user.findUnique({ where: { id: session.userId } });
   if (!user || !user.active) {
+    await prisma.session.delete({ where: { id: session.id } }).catch(() => {});
     throw new UnauthorizedException('Account is disabled or missing');
   }
 

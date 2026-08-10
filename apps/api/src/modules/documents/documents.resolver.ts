@@ -67,9 +67,10 @@ export class DocumentsResolver {
     @Args('mediaKind', { nullable: true }) mediaKind?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { nullable: true }) take?: number,
+    @Args('skip', { nullable: true }) skip?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'documents.view');
-    return this.documents.listVaultAssets({ search, category, mediaKind, status, take });
+    return this.documents.listVaultAssets({ search, category, mediaKind, status, take, skip });
   }
 
   @Query(() => GraphQLJSON)

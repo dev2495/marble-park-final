@@ -15,11 +15,11 @@ import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
 import { cn } from '@/lib/utils';
 
 const DATA = gql`
-  query DocumentVault($search: String, $category: String, $mediaKind: String, $status: String) {
+  query DocumentVault($search: String, $category: String, $mediaKind: String, $status: String, $take: Float, $skip: Float, $jobTake: Int, $jobSkip: Int) {
     me { id role effectivePermissions }
-    vaultAssets(search: $search, category: $category, mediaKind: $mediaKind, status: $status, take: 500)
+    vaultAssets(search: $search, category: $category, mediaKind: $mediaKind, status: $status, take: $take, skip: $skip)
     vaultSummary
-    documentJobs(take: 160)
+    documentJobs(take: $jobTake, skip: $jobSkip)
     productionReadinessSummary
   }
 `;
@@ -70,12 +70,15 @@ function tone(status?: string) {
 }
 
 export default function DocumentCenterPage() {
+  const pageSize = 48;
   const [tab, setTab] = useState<'vault' | 'generated'>('vault');
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search.trim());
   const [category, setCategory] = useState('all');
   const [kind, setKind] = useState('all');
   const [status, setStatus] = useState('active');
+  const [page, setPage] = useState(0);
+  const [jobPage, setJobPage] = useState(0);
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [selectedId, setSelectedId] = useState<string>('');
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -91,15 +94,28 @@ export default function DocumentCenterPage() {
   const [allowDownload, setAllowDownload] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const variables = { search: deferredSearch || undefined, category, mediaKind: kind, status };
+  const variables = {
+    search: deferredSearch || undefined,
+    category,
+    mediaKind: kind,
+    status,
+    take: pageSize + 1,
+    skip: page * pageSize,
+    jobTake: pageSize + 1,
+    jobSkip: jobPage * pageSize,
+  };
   const { data, loading, error, refetch } = useQuery(DATA, { variables, fetchPolicy: 'cache-and-network' });
   const [updateAsset, updateState] = useMutation(UPDATE);
   const [archiveAsset, archiveState] = useMutation(ARCHIVE);
   const [createShare, shareState] = useMutation(SHARE);
   const [revokeShare, revokeState] = useMutation(REVOKE);
   const [purgeAsset, purgeState] = useMutation(PURGE);
-  const assets: any[] = data?.vaultAssets || [];
-  const jobs: any[] = data?.documentJobs || [];
+  const assetRows: any[] = data?.vaultAssets || [];
+  const hasNextPage = assetRows.length > pageSize;
+  const assets = assetRows.slice(0, pageSize);
+  const jobRows: any[] = data?.documentJobs || [];
+  const hasNextJobPage = jobRows.length > pageSize;
+  const jobs = jobRows.slice(0, pageSize);
   const summary: any = data?.vaultSummary || {};
   const readiness: any = data?.productionReadinessSummary || {};
   const permissions: string[] = data?.me?.effectivePermissions || [];
@@ -114,6 +130,9 @@ export default function DocumentCenterPage() {
   useEffect(() => {
     if (selectedId && !selected && !loading) setSelectedId('');
   }, [selectedId, selected, loading]);
+  useEffect(() => {
+    setPage(0);
+  }, [deferredSearch, category, kind, status]);
 
   function addFiles(files: FileList | File[]) {
     const next = Array.from(files).filter((file) => file.size > 0);
@@ -199,7 +218,7 @@ export default function DocumentCenterPage() {
 
   async function makeShare() {
     if (!selected) return;
-    const expiresAt = expiry === 'never' ? null : new Date(Date.now() + Number(expiry) * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + Number(expiry) * 24 * 60 * 60 * 1000).toISOString();
     setMessage(null);
     try {
       const result = await createShare({ variables: { assetId: selected.id, input: { expiresAt, allowDownload } } });
@@ -312,6 +331,7 @@ export default function DocumentCenterPage() {
                 </button>;
               })}
             </div> : !loading ? <div className="flex min-h-64 flex-col items-center justify-center border-y border-[var(--line)] text-center"><FolderOpen className="h-10 w-10 text-[var(--ink-5)]" /><p className="mt-3 text-sm font-bold text-[var(--ink)]">No files match this view</p><p className="mt-1 text-xs text-[var(--ink-4)]">Change the filters or add the first file.</p></div> : null}
+            {assets.length ? <div className="mt-4 flex items-center justify-between border-t border-[var(--line)] pt-4"><p className="text-xs font-semibold text-[var(--ink-4)]">Page {page + 1} · up to {pageSize} files</p><div className="flex gap-2"><Button type="button" size="sm" variant="outline" disabled={page === 0 || loading} onClick={() => { setSelectedId(''); setPage((current) => Math.max(0, current - 1)); }}>Previous</Button><Button type="button" size="sm" variant="outline" disabled={!hasNextPage || loading} onClick={() => { setSelectedId(''); setPage((current) => current + 1); }}>Next</Button></div></div> : null}
           </section>
 
           {selected ? <aside className="fixed inset-0 z-50 min-w-0 overflow-y-auto bg-[var(--surface)] p-4 lg:sticky lg:top-20 lg:z-auto lg:max-h-[calc(100vh-7rem)] lg:border-l lg:border-[var(--line)] lg:bg-transparent lg:p-0 lg:pl-5">
@@ -327,7 +347,7 @@ export default function DocumentCenterPage() {
 
             {canManage ? <>
               <div className="mt-6 border-t border-[var(--line)] pt-5"><div className="flex items-center gap-2"><Pencil className="h-4 w-4 text-[var(--brand-700)]" /><h3 className="text-sm font-bold text-[var(--ink)]">File details</h3></div><div className="mt-3 space-y-3"><label className="block text-xs font-semibold text-[var(--ink-4)]">Title<Input className="mt-1" value={edit.title} onChange={(event) => setEdit({ ...edit, title: event.target.value })} /></label><label className="block text-xs font-semibold text-[var(--ink-4)]">Category<Input className="mt-1" list="edit-vault-categories" value={edit.category} onChange={(event) => setEdit({ ...edit, category: event.target.value })} /><datalist id="edit-vault-categories">{categories.map((item) => <option value={item} key={item} />)}</datalist></label><label className="block text-xs font-semibold text-[var(--ink-4)]">Description<Textarea className="mt-1 min-h-20" value={edit.description} onChange={(event) => setEdit({ ...edit, description: event.target.value })} /></label><Button className="w-full" onClick={saveMetadata} disabled={!edit.title.trim() || updateState.loading}><Check className="mr-2 h-4 w-4" /> Save details</Button></div></div>
-              {selected.status === 'active' ? <div className="mt-6 border-t border-[var(--line)] pt-5"><div className="flex items-center gap-2"><Link2 className="h-4 w-4 text-[var(--brand-700)]" /><h3 className="text-sm font-bold text-[var(--ink)]">Public presentation link</h3></div><p className="mt-1 text-xs leading-5 text-[var(--ink-4)]">Anyone with an active link can view this file without signing in.</p><div className="mt-3 grid grid-cols-2 gap-2"><select value={expiry} onChange={(event) => setExpiry(event.target.value)} className="h-9 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold"><option value="1">Expires in 1 day</option><option value="7">Expires in 7 days</option><option value="30">Expires in 30 days</option><option value="never">Never expires</option></select><label className="flex h-9 items-center gap-2 rounded-md border border-[var(--line)] px-3 text-xs font-semibold"><input type="checkbox" checked={allowDownload} onChange={(event) => setAllowDownload(event.target.checked)} /> Show download button</label></div><p className="mt-2 text-[11px] leading-4 text-[var(--ink-5)]">Hiding the button discourages casual downloading, but any media visible in a browser can still be saved.</p><Button className="mt-2 w-full" onClick={makeShare} disabled={shareState.loading}><Link2 className="mr-2 h-4 w-4" /> Create and copy link</Button><div className="mt-3 space-y-2">{(selected.shares || []).filter(activeShare).map((share: any) => <div key={share.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded-md bg-[var(--bg-soft)] p-2 text-xs"><span className="min-w-0 truncate text-[var(--ink-3)]">{share.expiresAt ? `Expires ${formatDate(share.expiresAt)}` : 'No expiry'} · {share.viewCount} views</span><button onClick={() => copyShare(share.token)} title="Copy link"><Copy className="h-4 w-4" /></button><button onClick={() => revoke(share.id)} disabled={revokeState.loading} title="Revoke link"><X className="h-4 w-4 text-red-600" /></button></div>)}</div></div> : null}
+              {selected.status === 'active' ? <div className="mt-6 border-t border-[var(--line)] pt-5"><div className="flex items-center gap-2"><Link2 className="h-4 w-4 text-[var(--brand-700)]" /><h3 className="text-sm font-bold text-[var(--ink)]">Public presentation link</h3></div><p className="mt-1 text-xs leading-5 text-[var(--ink-4)]">Anyone with an active link can view this file without signing in. Every new link must expire.</p><div className="mt-3 grid grid-cols-2 gap-2"><select value={expiry} onChange={(event) => setExpiry(event.target.value)} className="h-9 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold"><option value="1">Expires in 1 day</option><option value="7">Expires in 7 days</option><option value="30">Expires in 30 days</option><option value="90">Expires in 90 days</option></select><label className="flex h-9 items-center gap-2 rounded-md border border-[var(--line)] px-3 text-xs font-semibold"><input type="checkbox" checked={allowDownload} onChange={(event) => setAllowDownload(event.target.checked)} /> Show download button</label></div><p className="mt-2 text-[11px] leading-4 text-[var(--ink-5)]">Hiding the button discourages casual downloading, but any media visible in a browser can still be saved.</p><Button className="mt-2 w-full" onClick={makeShare} disabled={shareState.loading}><Link2 className="mr-2 h-4 w-4" /> Create and copy link</Button><div className="mt-3 space-y-2">{(selected.shares || []).filter(activeShare).map((share: any) => <div key={share.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded-md bg-[var(--bg-soft)] p-2 text-xs"><span className="min-w-0 truncate text-[var(--ink-3)]">{share.expiresAt ? `Expires ${formatDate(share.expiresAt)}` : 'Legacy link · no expiry'} · {share.viewCount} views</span><button onClick={() => copyShare(share.token)} title="Copy link"><Copy className="h-4 w-4" /></button><button onClick={() => revoke(share.id)} disabled={revokeState.loading} title="Revoke link"><X className="h-4 w-4 text-red-600" /></button></div>)}</div></div> : null}
               <div className="mt-6 space-y-2 border-t border-[var(--line)] pt-5">{selected.status === 'active' ? <Button variant="outline" className="w-full text-red-700" onClick={() => setArchived(true)} disabled={archiveState.loading}><Archive className="mr-2 h-4 w-4" /> Archive file</Button> : <><Button variant="outline" className="w-full" onClick={() => setArchived(false)} disabled={archiveState.loading}><ArchiveRestore className="mr-2 h-4 w-4" /> Restore file</Button>{canPurge ? <Button variant="destructive" className="w-full" onClick={purge} disabled={purgeState.loading}><X className="mr-2 h-4 w-4" /> Delete permanently</Button> : null}</>}</div>
             </> : <div className="mt-5 flex items-start gap-2 rounded-lg bg-[var(--bg-soft)] p-3 text-xs leading-5 text-[var(--ink-4)]"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" /> You have view-only access. Ask an owner or document manager to upload, edit or share files.</div>}
           </aside> : null}
@@ -336,7 +356,7 @@ export default function DocumentCenterPage() {
         <section className="grid gap-px overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--line)] md:grid-cols-4">{[
           ['Readiness score', `${readiness.score || 0}%`], ['Document jobs', readiness.documents?.documentJobs || jobs.length], ['Payment receipts', readiness.payments?.paymentReceipts || 0], ['Dispatch records', (readiness.dispatch?.dispatchLines || 0) + (readiness.dispatch?.shipments || 0)],
         ].map(([label, value]) => <div key={label} className="bg-[var(--surface)] p-4"><p className="text-xs font-semibold uppercase text-[var(--ink-4)]">{label}</p><p className="mt-1 text-xl font-bold text-[var(--ink)]">{value}</p></div>)}</section>
-        <section className="overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)]"><div className="flex items-center gap-2 border-b border-[var(--line)] p-4"><FileText className="h-5 w-5 text-[var(--brand-700)]" /><h2 className="font-bold text-[var(--ink)]">Quote, order and dispatch records</h2></div><div className="divide-y divide-[var(--line)]">{jobs.map((job) => <div key={job.id} className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"><div><p className="text-sm font-bold text-[var(--ink)]">{job.documentType} · {job.entityType}</p><p className="mt-1 text-xs text-[var(--ink-4)]">{job.entityId} · {formatDate(job.updatedAt || job.createdAt)}</p></div><div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ring-1 ${tone(job.status)}`}>{job.status}</span>{job.url ? <Button asChild size="sm" variant="outline"><Link href={job.url} target="_blank">Open PDF</Link></Button> : null}</div></div>)}{!jobs.length && !loading ? <div className="p-10 text-center"><ShieldCheck className="mx-auto h-9 w-9 text-emerald-600" /><p className="mt-3 text-sm font-semibold text-[var(--ink-3)]">No generated document jobs yet.</p></div> : null}</div></section>
+        <section className="overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)]"><div className="flex items-center gap-2 border-b border-[var(--line)] p-4"><FileText className="h-5 w-5 text-[var(--brand-700)]" /><h2 className="font-bold text-[var(--ink)]">Quote, order and dispatch records</h2></div><div className="divide-y divide-[var(--line)]">{jobs.map((job) => <div key={job.id} className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"><div><p className="text-sm font-bold text-[var(--ink)]">{job.documentType} · {job.entityType}</p><p className="mt-1 text-xs text-[var(--ink-4)]">{job.entityId} · {formatDate(job.updatedAt || job.createdAt)}</p></div><div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ring-1 ${tone(job.status)}`}>{job.status}</span>{job.url ? <Button asChild size="sm" variant="outline"><Link href={job.url} target="_blank">Open PDF</Link></Button> : null}</div></div>)}{!jobs.length && !loading ? <div className="p-10 text-center"><ShieldCheck className="mx-auto h-9 w-9 text-emerald-600" /><p className="mt-3 text-sm font-semibold text-[var(--ink-3)]">No generated document jobs yet.</p></div> : null}</div>{jobs.length || jobPage > 0 ? <div className="flex items-center justify-between border-t border-[var(--line)] p-4"><p className="text-xs font-semibold text-[var(--ink-4)]">Page {jobPage + 1}</p><div className="flex gap-2"><Button variant="outline" size="sm" disabled={jobPage === 0 || loading} onClick={() => setJobPage((current) => Math.max(0, current - 1))}>Previous</Button><Button variant="outline" size="sm" disabled={!hasNextJobPage || loading} onClick={() => setJobPage((current) => current + 1)}>Next</Button></div></div> : null}</section>
       </>}
     </div>
   );
