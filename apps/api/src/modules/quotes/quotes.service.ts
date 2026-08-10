@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
@@ -2173,12 +2174,13 @@ export class QuotesService {
 
   private async getAvailabilityIssues(lines: any[]) {
     const issues: any[] = [];
-    for (const line of this.normalizeLines(lines)) {
+    const normalized = this.normalizeLines(lines);
+    const truth = await inventoryTruthByProduct(this.prisma, normalized.map((line: any) => String(line.productId || '')).filter(Boolean));
+    for (const line of normalized) {
       const productId = line.productId;
       const quantity = Number(line.qty || line.quantity || 0);
       if (!productId || quantity <= 0) continue;
-      const balance = await this.prisma.inventoryBalance.findUnique({ where: { productId } });
-      const available = Number(balance?.available || 0);
+      const available = (truth.get(productId) || zeroInventoryTruth(productId)).available;
       if (available < quantity) {
         issues.push({
           productId,

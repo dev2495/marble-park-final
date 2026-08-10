@@ -7,6 +7,8 @@
 - Keep-alive is sent only after trusted user input and is rate-limited in the browser. Background polling does not extend a session. Logout/expiry synchronizes across tabs.
 - Login failures are recorded and account-plus-source throttling starts after repeated failures. Error text does not reveal whether an account exists.
 - Password reset tokens are cryptographically random, single-use, one-hour records. Successful reset changes `passwordChangedAt`, revokes all sessions, and writes an audit event. Production needs an approved delivery provider before self-service reset can be offered as complete.
+- Until approved email delivery is configured, an authorised host operator can run `scripts/production-create-password-reset-link.mjs` for a named active account and hand the resulting HTTPS link directly to that user. The token is placed in the URL fragment, removed from browser history on page load, never written to application logs, and must not be pasted into chat or tickets.
+- The public reset-request mutation remains enumeration-safe but does not create or replace a token unless `PASSWORD_RESET_DELIVERY_ENABLED=true` is deliberately configured with an approved delivery implementation. This prevents anonymous requests from invalidating an operator-issued recovery link.
 - GraphQL IDE and schema introspection are disabled in production. Unsafe cookie-authenticated requests require a same-origin `Origin`/Fetch-Metadata signal; automation using bearer sessions is not treated as a browser cookie request.
 - Role permissions are enforced in resolvers/services, not only hidden in navigation. Disabled/deleted users lose active sessions immediately.
 
@@ -24,6 +26,9 @@
 - `/healthz` confirms API liveness through the public edge, and `/readyz` confirms application and database readiness.
 
 ## Credential-recovery safeguard
+
+- Treat an `Invalid credentials` response as a failed sign-in, not an expired session. Check the request ID in Caddy/API logs, active account state, throttling, and password-hash/config consistency before changing any credential. Safari or another password manager may submit an older saved password after a release.
+- Prefer an audited one-time reset link for a confirmed lockout. The backup credential-copy procedure below is an emergency recovery control, not a normal password reset.
 
 - If a release credential regression is suspected, first restore the selected pre-regression backup into a temporary database. Never replace the current production database merely to recover one login.
 - `scripts/production-restore-owner-credential-state.mjs` copies only the approved owner's password hash and password-change timestamp, revokes that owner's sessions, writes `auth.credential.recovery`, and prints no credential material. It requires an exact source database and backup identifier and refuses a non-owner/non-admin identity.

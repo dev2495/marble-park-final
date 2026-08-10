@@ -245,6 +245,17 @@ export class OperationsResolver {
     return this.operations.inventoryLots({ productId, locationId, status, search, take });
   }
 
+  @Mutation(() => GraphQLJSON)
+  async correctMissingInventoryLotCost(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('unitCost') unitCost: number,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.operations.correctMissingInventoryLotCost(id, unitCost, reason, user.id);
+  }
+
   @Query(() => [GraphQLJSON])
   async openingStockSessions(
     @Context() ctx: GraphqlRequestContext,

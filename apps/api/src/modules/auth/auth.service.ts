@@ -221,6 +221,13 @@ export class AuthService {
   }
 
   async requestPasswordReset(email: string) {
+    // Until an approved delivery channel is configured, keep this public
+    // enumeration-safe endpoint inert. Otherwise an anonymous caller could
+    // continuously replace an operator-issued recovery token without ever
+    // receiving the newly generated link.
+    if (process.env.PASSWORD_RESET_DELIVERY_ENABLED !== 'true') {
+      return { success: true };
+    }
     const user = await this.users.findByEmail(email);
     if (!user) {
       return { success: true };

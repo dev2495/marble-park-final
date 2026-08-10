@@ -41,6 +41,7 @@ export default function LoginPage() {
     const reason = params.get('reason');
     if (reason === 'inactive') setSessionNotice('You were signed out after 15 minutes without activity. Sign in to continue safely.');
     if (reason === 'session') setSessionNotice('Your session is no longer active. Sign in again to continue.');
+    if (reason === 'password-reset') setSessionNotice('Password updated. Sign in with your new password.');
   }, []);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -212,6 +213,7 @@ export default function LoginPage() {
 
             <div className="mt-8 border-t border-white/10 pt-6 text-center text-xs leading-5 text-slate-400">
               <p>Credentials are issued from User Management by an authorised admin or owner.</p>
+              <p className="mt-2">Locked out? Ask an authorised administrator for a one-time reset link.</p>
             </div>
           </div>
         </section>

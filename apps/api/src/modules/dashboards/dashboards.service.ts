@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -199,10 +200,8 @@ export class DashboardsService {
   }
 
   async getInventoryDashboard(): Promise<any> {
-    const [balances, lotBalances] = await Promise.all([
-      this.prisma.inventoryBalance.findMany({ include: { product: true } } as any) as any,
-      (this.prisma as any).inventoryLotBalance.findMany({ include: { lot: true } }),
-    ]) as [any[], any[]];
+    const balances = await this.prisma.inventoryBalance.findMany({ include: { product: true } } as any) as any[];
+    const truth = await inventoryTruthByProduct(this.prisma, balances.map((row) => row.productId));
 
     const summary = {
       totalQuantity: 0,
@@ -214,17 +213,15 @@ export class DashboardsService {
     };
 
     for (const balance of balances) {
-      summary.totalQuantity += balance.onHand;
-      summary.totalAvailable += balance.available;
-      summary.totalReserved += balance.reserved;
+      const stock = truth.get(balance.productId) || zeroInventoryTruth(balance.productId);
+      summary.totalQuantity += stock.onHand;
+      summary.totalAvailable += stock.available;
+      summary.totalReserved += stock.reserved;
       const threshold = balance.reorderPoint ?? balance.lowStockThreshold ?? 5;
-      if (Number(threshold) > 0 && balance.available <= Number(threshold)) summary.lowStock++;
-      if (balance.available === 0) summary.outOfStock++;
+      if (Number(threshold) > 0 && stock.available <= Number(threshold)) summary.lowStock++;
+      if (stock.available === 0) summary.outOfStock++;
+      summary.totalValue += stock.onHandValue;
     }
-
-    // Financial inventory value is current lot on-hand × received lot cost.
-    // Sell price is a commercial price and must never be used as stock value.
-    summary.totalValue = lotBalances.reduce((total, balance) => total + Number(balance.onHand || 0) * Number(balance.lot?.unitCost || 0), 0);
 
     return { stats: summary, summary };
   }

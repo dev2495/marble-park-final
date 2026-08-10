@@ -4,6 +4,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { consumeExactReservedLotTx, consumeReservedLotsTx } from '../common/lot-allocation';
+import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 import { ulid } from 'ulid';
 
 export interface CreateDispatchJobInput {
@@ -93,7 +94,11 @@ export class DispatchService {
       this.prisma.salesOrder.findMany({ where: { OR: [{ id: { in: directOrderIds } }, { quoteId: { in: quoteIds } }] } }),
     ]);
 
-    const balanceMap = new Map((balances as any[]).map((balance) => [balance.productId, balance]));
+    const inventoryTruth = await inventoryTruthByProduct(this.prisma, productIds);
+    const balanceMap = new Map((balances as any[]).map((balance) => [
+      balance.productId,
+      { ...balance, ...(inventoryTruth.get(balance.productId) || zeroInventoryTruth(balance.productId)) },
+    ]));
     const orderById = new Map((orders as any[]).map((order) => [order.id, order]));
     const ordersByQuote = new Map<string, any[]>();
     for (const order of orders as any[]) {
@@ -1387,64 +1392,4 @@ export class DispatchService {
     return `tile:${orderId}:${String(line.tileCode || line.sku || index).trim()}:${index}`;
   }
 
-  private async ensureDefaultLocationTx(tx: any) {
-    const locations = await tx.stockLocation.findMany({
-      where: { status: 'active' },
-      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    }).catch(() => []);
-    const flagged = locations.find((location: any) => location.metadata?.defaultStockScope);
-    if (flagged) return flagged;
-    const activePlant = locations.find((location: any) => location.type === 'plant');
-    if (activePlant) return activePlant;
-    const existing = locations.find((location: any) => location.code === 'MAIN') || await tx.stockLocation.findFirst({ where: { code: 'MAIN' } }).catch(() => null);
-    if (existing) return existing;
-    return tx.stockLocation.create({
-      data: {
-        id: ulid(),
-        code: 'MAIN',
-        name: 'Main Plant / Godown',
-        type: 'plant',
-        status: 'active',
-        sortOrder: 1,
-        metadata: { defaultStockScope: true },
-        updatedAt: new Date(),
-      },
-    });
-  }
-
-  private async defaultLocationIdTx(tx: any) {
-    const location = await this.ensureDefaultLocationTx(tx);
-    return location.id;
-  }
-
-  private async applyDefaultLocationDispatchTx(
-    tx: any,
-    args: { productId: string; quantity: number; previousOnHand: number; previousReserved: number },
-  ) {
-    const location = await this.ensureDefaultLocationTx(tx);
-    const existing = await tx.stockBalanceByLocation.findUnique({
-      where: { productId_locationId: { productId: args.productId, locationId: location.id } },
-    }).catch(() => null);
-    const nextOnHand = Math.max(0, Number(existing?.onHand ?? args.previousOnHand) - args.quantity);
-    const nextReserved = Math.max(0, Number(existing?.reserved ?? args.previousReserved) - args.quantity);
-    if (existing) {
-      await tx.stockBalanceByLocation.update({
-        where: { productId_locationId: { productId: args.productId, locationId: location.id } },
-        data: { onHand: nextOnHand, reserved: nextReserved, updatedAt: new Date() },
-      });
-      return;
-    }
-    await tx.stockBalanceByLocation.create({
-      data: {
-        id: ulid(),
-        productId: args.productId,
-        locationId: location.id,
-        onHand: nextOnHand,
-        reserved: nextReserved,
-        damaged: 0,
-        hold: 0,
-        updatedAt: new Date(),
-      },
-    });
-  }
 }

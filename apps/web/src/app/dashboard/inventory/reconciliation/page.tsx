@@ -22,7 +22,7 @@ function statusTone(status: string) {
 }
 
 export default function StockReconciliationPage() {
-  const { data, loading, error, refetch } = useQuery(RECONCILIATION, { variables: { take: 300 }, fetchPolicy: 'cache-and-network' });
+  const { data, loading, error, refetch } = useQuery(RECONCILIATION, { variables: { take: 5000 }, fetchPolicy: 'cache-and-network' });
   const report = data?.stockReconciliation || {};
   const summary = report.summary || {};
   const rows: any[] = report.rows || [];
@@ -69,8 +69,8 @@ export default function StockReconciliationPage() {
       <section className="mp-card overflow-hidden rounded-r5 border border-[var(--line)]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] p-5">
           <div>
-            <h2 className="text-2xl font-semibold text-[var(--ink-1)]">Reconciliation rows</h2>
-            <p className="mt-1 text-sm font-bold text-[var(--ink-4)]">Generated {report.generatedAt ? new Date(report.generatedAt).toLocaleString() : 'now'}</p>
+            <h2 className="text-2xl font-semibold text-[var(--ink-1)]">{summary.mismatched ? 'Exception rows' : 'Clean sample'}</h2>
+            <p className="mt-1 text-sm font-bold text-[var(--ink-4)]">Checked {number(summary.productsChecked)} products · showing {number(summary.returnedRows)} · generated {report.generatedAt ? new Date(report.generatedAt).toLocaleString() : 'now'}</p>
           </div>
           <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase tracking-widest ${summary.critical ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
             {summary.critical ? 'Action needed' : 'Stock clean'}

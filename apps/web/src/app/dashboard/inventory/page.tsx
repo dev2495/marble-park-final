@@ -2,7 +2,7 @@
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { gql, useQuery } from '@apollo/client';
+import { gql, useMutation, useQuery } from '@apollo/client';
 import { AlertTriangle, Bookmark, Boxes, ChevronDown, CircleDollarSign, Download, PackageCheck, PackageOpen, PackagePlus, RotateCcw, Search, SlidersHorizontal, Warehouse } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
@@ -44,12 +44,19 @@ const GET_LOW_STOCK = gql`
   }
 `;
 
+const CORRECT_MISSING_LOT_COST = gql`
+  mutation CorrectMissingInventoryLotCost($id: ID!, $unitCost: Float!, $reason: String!) {
+    correctMissingInventoryLotCost(id: $id, unitCost: $unitCost, reason: $reason)
+  }
+`;
+
 const stockFilters = [
   ['', 'All stock'],
   ['available', 'Available'],
   ['reserved', 'Reserved'],
   ['low_stock', 'Low stock'],
   ['out_of_stock', 'Out of stock'],
+  ['data_exception', 'Data exceptions'],
 ];
 
 function money(value: number) {
@@ -88,10 +95,13 @@ export default function InventoryPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [cursor, setCursor] = useState('');
   const [rows, setRows] = useState<any[]>([]);
+  const [costEditorLotId, setCostEditorLotId] = useState('');
+  const [costCorrection, setCostCorrection] = useState({ unitCost: '', reason: '' });
   const deferredSearch = useDeferredValue(search.trim());
 
   const { data: meData } = useQuery(ME);
   const canConfigureAlerts = meData?.me?.role === 'admin' || meData?.me?.role === 'owner';
+  const canCorrectCost = ['admin', 'owner', 'inventory_manager'].includes(meData?.me?.role || '');
 
   const { data, loading, error, refetch, fetchMore } = useQuery(INVENTORY_CONTROL_TOWER, {
     variables: {
@@ -108,6 +118,9 @@ export default function InventoryPage() {
   });
   const { data: filterData, error: filterError } = useQuery(GET_FILTERS);
   const { data: lowStockData, error: lowStockError } = useQuery(GET_LOW_STOCK, { variables: { take: 24 } });
+  const [correctMissingCost, costCorrectionState] = useMutation(CORRECT_MISSING_LOT_COST, {
+    onCompleted: async () => { setCostEditorLotId(''); setCostCorrection({ unitCost: '', reason: '' }); setCursor(''); setRows([]); await refetch(); },
+  });
 
   const tower = data?.inventoryControlTower || { items: [], summary: {}, total: 0 };
   const summary = tower.summary || {};
@@ -174,10 +187,10 @@ export default function InventoryPage() {
     [PackageOpen, 'Out of stock', qty(summary.outOfStock), 'balances needing action', 'text-amber-700', 'out_of_stock'],
     [AlertTriangle, 'Low-stock SKUs', qty(summary.lowStock), 'at or below threshold', 'text-red-700', 'low_stock'],
     [PackageCheck, 'Retail value', money(summary.retailValue), 'available list-rate basis', 'text-indigo-700', ''],
-    [AlertTriangle, 'Data exceptions', qty(Number(summary.zeroSellPrice || 0) + Number(summary.zeroCostOnHand || 0)), 'missing list rate or cost', 'text-rose-700', ''],
+    [AlertTriangle, 'Data exceptions', qty(Number(summary.zeroSellPrice || 0) + Number(summary.zeroCostOnHand || 0)), 'missing list rate or lot cost', 'text-rose-700', 'data_exception'],
   ] as const;
 
-  const compositeError = error || filterError || lowStockError;
+  const compositeError = error || filterError || lowStockError || costCorrectionState.error;
   return (
     <div className="space-y-6 pb-10">
       {compositeError ? <QueryErrorBanner error={compositeError} onRetry={() => refetch()} /> : null}
@@ -276,7 +289,7 @@ export default function InventoryPage() {
               <div className="flex flex-wrap gap-2">{(row.completenessCodes || []).map((code: string) => <span key={code} className="rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-900">{label(code)}</span>)}</div>
               <button type="button" aria-expanded={Boolean(expanded[row.id])} onClick={() => setExpanded((current) => ({ ...current, [row.id]: !current[row.id] }))} className="inline-flex items-center text-xs font-black uppercase text-[var(--brand-700)]">{row.lots?.length || 0} lot(s)<ChevronDown className={`ml-1 h-4 w-4 transition ${expanded[row.id] ? 'rotate-180' : ''}`} /></button>
             </div>
-            {expanded[row.id] ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{(row.lots || []).map((lot: any) => <div key={lot.id} className="rounded-xl border border-[var(--line)] bg-[var(--muted)] p-3"><div className="flex justify-between gap-2"><p className="text-xs font-black text-[var(--ink)]">{lot.lotNumber}</p><span className="text-[10px] font-black uppercase text-[var(--ink-4)]">{lot.qualityStatus}</span></div><p className="mt-1 text-[10px] font-semibold text-[var(--ink-5)]">Received {lot.receivedAt ? new Date(lot.receivedAt).toLocaleDateString('en-IN') : '—'} · Cost {money(lot.unitCost)}</p>{(lot.locations || []).map((place: any) => <div key={place.id} className="mt-2 flex justify-between border-t border-[var(--line)] pt-2 text-xs"><span className="font-bold">{place.locationName || place.locationCode}</span><span className="font-black">{qty(place.available)} available · {qty(place.reserved)} reserved</span></div>)}</div>)}</div> : null}
+            {expanded[row.id] ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{(row.lots || []).map((lot: any) => <div key={lot.id} className="rounded-xl border border-[var(--line)] bg-[var(--muted)] p-3"><div className="flex justify-between gap-2"><p className="text-xs font-black text-[var(--ink)]">{lot.lotNumber}</p><span className="text-[10px] font-black uppercase text-[var(--ink-4)]">{lot.qualityStatus}</span></div><p className="mt-1 text-[10px] font-semibold text-[var(--ink-5)]">Received {lot.receivedAt ? new Date(lot.receivedAt).toLocaleDateString('en-IN') : '—'} · Cost {money(lot.unitCost)}</p>{(lot.locations || []).map((place: any) => <div key={place.id} className="mt-2 flex justify-between border-t border-[var(--line)] pt-2 text-xs"><span className="font-bold">{place.locationName || place.locationCode}</span><span className="font-black">{qty(place.available)} available · {qty(place.reserved)} reserved</span></div>)}{Number(lot.unitCost || 0) <= 0 && canCorrectCost ? (costEditorLotId === lot.id ? <div className="mt-3 space-y-2 border-t border-amber-200 pt-3"><input aria-label="Corrected unit cost" type="number" min="0.01" step="0.01" value={costCorrection.unitCost} onChange={(event) => setCostCorrection({ ...costCorrection, unitCost: event.target.value })} placeholder="Verified unit cost" className="h-9 w-full rounded-lg border border-amber-300 bg-white px-3 text-xs"/><input aria-label="Cost correction reason" value={costCorrection.reason} onChange={(event) => setCostCorrection({ ...costCorrection, reason: event.target.value })} placeholder="Source document / correction reason" className="h-9 w-full rounded-lg border border-amber-300 bg-white px-3 text-xs"/><div className="flex gap-2"><button type="button" disabled={costCorrectionState.loading || Number(costCorrection.unitCost) <= 0 || costCorrection.reason.trim().length < 8} onClick={() => correctMissingCost({ variables: { id: lot.id, unitCost: Number(costCorrection.unitCost), reason: costCorrection.reason.trim() } })} className="rounded-lg bg-amber-800 px-3 py-2 text-[10px] font-black uppercase text-white disabled:opacity-40">Save verified cost</button><button type="button" onClick={() => setCostEditorLotId('')} className="text-[10px] font-black uppercase text-[var(--ink-4)]">Cancel</button></div></div> : <button type="button" onClick={() => { setCostEditorLotId(lot.id); setCostCorrection({ unitCost: '', reason: '' }); }} className="mt-3 text-[10px] font-black uppercase text-amber-800 underline">Record missing cost</button>) : null}</div>)}</div> : null}
           </article>)}
         </div>
         {tower.nextCursor ? <div className="border-t border-[var(--line)] p-4 text-center"><button type="button" disabled={loading} onClick={loadMore} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)] disabled:opacity-50">{loading ? 'Loading...' : 'Load more balances'}</button></div> : null}

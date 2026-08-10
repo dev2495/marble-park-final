@@ -10,6 +10,8 @@
 
 The normal sign-out button immediately revokes the server session. Changing your password revokes other browser/device sessions. An administrator password reset or account disable revokes all of that user's sessions.
 
+If the page says **Invalid credentials**, replace any Safari AutoFill value and try the password you were actually issued. If the password is not known, stop retrying and ask an authorised administrator for a one-hour, one-time reset link. The reset page removes the token from the address bar and signs out all old sessions after the password changes.
+
 ## Roles
 
 - **Owner / administrator:** full operational access, user and permission management, report setup, exports, audit, and configuration.
@@ -26,6 +28,7 @@ Owner/administrator can add or remove explicit permission overrides from **Users
 - Create and maintain product facts in **Products**. Tile-only sizes and design aliases belong in **Tiles Master** and **Tile Size Master**.
 - Record commercial progression through **Leads → Quotes → Orders → Dispatch / Invoice / Collection**. Do not infer invoice revenue from an order or quote.
 - Receive stock through purchase/GRN or approved opening stock, and move it through the lot ledger. Never type a balance correction outside the stock count/adjustment workflow.
+- The inventory control tower values stock from active lot quantity × that lot's governed unit cost. A **LOT COST MISSING** exception means quantity is usable but valuation is incomplete. An owner, administrator, or inventory manager may expand the lot and record a verified missing cost with the source document/reason; the change is audited and cannot overwrite an already-governed positive cost.
 - Cancel or void with a reason. Do not delete commercial records to fix history.
 - Use **Labels** for product, lot, display, shelf/carton, and supported physical subjects. Reprints and voids preserve their audit trail.
 - Use **Reports** through the five suites: Owner, Sales, Finance, Inventory, and Operations. Open a source row to confirm the underlying transaction.

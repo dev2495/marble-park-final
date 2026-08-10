@@ -31,6 +31,17 @@ export function describeApolloError(error: any, operation?: string): ApolloDiagn
     const field = primary.extensions?.field;
     const lineKey = primary.extensions?.lineKey;
     const remediation = primary.extensions?.remediation;
+    if (codes.includes('UNAUTHENTICATED') && operation === 'Login') {
+      return {
+        title: 'Sign-in failed',
+        message,
+        hint: 'Check the email and password. If Safari filled an older saved password, replace it or use an administrator-issued one-time reset link.',
+        code,
+        requestId,
+        operation,
+        path,
+      };
+    }
     if (codes.includes('UNAUTHENTICATED')) return { title: 'Session expired', message, hint: 'Sign in again, then retry your last action.', code, requestId, operation, path };
     if (codes.includes('FORBIDDEN')) return { title: 'Permission required', message, hint: 'Ask an owner to grant the required role or permission.', code, requestId, operation, path };
     if (/commercial lines are frozen|order exists.*quote revision/i.test(message)) {

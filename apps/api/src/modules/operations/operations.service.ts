@@ -456,6 +456,36 @@ export class OperationsService {
     });
   }
 
+  async correctMissingInventoryLotCost(id: string, unitCost: number, reason: string, actorUserId: string) {
+    const nextCost = Number(unitCost);
+    const correctionReason = String(reason || '').trim();
+    if (!Number.isFinite(nextCost) || nextCost <= 0) throw new BadRequestException('Corrected lot cost must be greater than zero');
+    if (correctionReason.length < 8) throw new BadRequestException('Enter a specific correction reason (at least 8 characters)');
+    return this.prisma.$transaction(async (tx: any) => {
+      const lot = await tx.inventoryLot.findUnique({ where: { id }, include: { product: true } });
+      if (!lot) throw new NotFoundException('Inventory lot not found');
+      if (Number(lot.unitCost || 0) > 0) throw new BadRequestException('This lot already has a governed cost. Use a reviewed accounting correction instead of overwriting it here.');
+      const correctedAt = new Date();
+      const updated = await tx.inventoryLot.update({
+        where: { id },
+        data: {
+          unitCost: nextCost,
+          metadata: { ...(lot.metadata || {}), costCorrection: { previousUnitCost: Number(lot.unitCost || 0), correctedUnitCost: nextCost, reason: correctionReason, correctedAt: correctedAt.toISOString(), correctedBy: actorUserId } },
+          updatedAt: correctedAt,
+        },
+        include: { product: true, balances: { include: { location: true } } },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: 'inventory_lot.cost_missing.correct', entityType: 'InventoryLot', entityId: id,
+          summary: `Recorded missing lot cost for ${lot.lotNumber}`,
+          metadata: { productId: lot.productId, lotNumber: lot.lotNumber, previousUnitCost: Number(lot.unitCost || 0), correctedUnitCost: nextCost, reason: correctionReason },
+        },
+      });
+      return updated;
+    }, { isolationLevel: 'Serializable', timeout: 15000 });
+  }
+
   async openingStockSessions(args?: { status?: string; take?: number }) {
     const where: any = {};
     if (args?.status && args.status !== 'all') where.status = args.status;
@@ -980,7 +1010,7 @@ export class OperationsService {
       where,
       include: { product: true } as any,
       orderBy: { updatedAt: 'desc' },
-      take: this.limit(args?.take, 300),
+      take: Math.max(1, Math.min(5000, Number(args?.take) || 5000)),
     } as any) as any[];
     const productIds = balances.map((balance) => balance.productId).filter(Boolean);
 
@@ -990,26 +1020,23 @@ export class OperationsService {
         where: { lot: { productId: { in: productIds } } },
         include: { lot: { select: { productId: true } } },
       }).catch(() => []) : [],
-      productIds.length ? this.prisma.reservation.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
-      productIds.length ? (this.prisma as any).salesOrderLine.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
-      productIds.length ? (this.prisma as any).stockLedgerEntry.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
-      productIds.length ? (this.prisma as any).inventoryLotLedgerEntry.findMany({ where: { productId: { in: productIds } } }).catch(() => []) : [],
+      productIds.length ? (this.prisma.reservation as any).groupBy({ by: ['productId', 'status'], where: { productId: { in: productIds } }, _sum: { quantity: true } }).catch(() => []) : [],
+      productIds.length ? (this.prisma as any).salesOrderLine.groupBy({ by: ['productId'], where: { productId: { in: productIds } }, _sum: { reservedQuantity: true, backorderedQuantity: true } }).catch(() => []) : [],
+      productIds.length ? (this.prisma as any).stockLedgerEntry.groupBy({ by: ['productId'], where: { productId: { in: productIds } }, _count: { _all: true } }).catch(() => []) : [],
+      productIds.length ? (this.prisma as any).inventoryLotLedgerEntry.groupBy({ by: ['productId'], where: { productId: { in: productIds } }, _count: { _all: true } }).catch(() => []) : [],
     ]);
 
     const locationByProduct = this.sumLocationBuckets(locationRows as any[]);
     const lotByProduct = this.sumLotBuckets(lotBalanceRows as any[]);
-    const reservedByProduct = this.sumReservationBuckets(reservations as any[], 'reserved');
-    const backorderedByProduct = this.sumReservationBuckets(reservations as any[], 'backordered');
-    const orderReservedByProduct = this.sumOrderLineBucket(orderLines as any[], 'reservedQuantity');
-    const orderBackorderedByProduct = this.sumOrderLineBucket(orderLines as any[], 'backorderedQuantity');
+    const reservedByProduct = new Map((reservations as any[]).filter((row) => row.status === 'reserved').map((row) => [row.productId, Number(row._sum?.quantity || 0)]));
+    const backorderedByProduct = new Map((reservations as any[]).filter((row) => row.status === 'backordered').map((row) => [row.productId, Number(row._sum?.quantity || 0)]));
+    const orderReservedByProduct = new Map((orderLines as any[]).map((row) => [row.productId, Number(row._sum?.reservedQuantity || 0)]));
+    const orderBackorderedByProduct = new Map((orderLines as any[]).map((row) => [row.productId, Number(row._sum?.backorderedQuantity || 0)]));
     const ledgerCountByProduct = new Map<string, number>();
-    for (const entry of ledgerRows as any[]) {
-      if (!entry.productId) continue;
-      ledgerCountByProduct.set(entry.productId, (ledgerCountByProduct.get(entry.productId) || 0) + 1);
-    }
+    for (const entry of ledgerRows as any[]) if (entry.productId) ledgerCountByProduct.set(entry.productId, Number(entry._count?._all || 0));
     const lotLedgerCountByProduct = new Map<string, number>();
     for (const entry of lotLedgerRows as any[]) {
-      lotLedgerCountByProduct.set(entry.productId, (lotLedgerCountByProduct.get(entry.productId) || 0) + 1);
+      lotLedgerCountByProduct.set(entry.productId, Number(entry._count?._all || 0));
     }
 
     const rows = balances.map((balance) => {
@@ -1100,7 +1127,12 @@ export class OperationsService {
       critical: rows.filter((row) => row.status === 'critical').length,
       mismatched: rows.filter((row) => row.status !== 'ok').length,
     };
-    return { generatedAt: new Date().toISOString(), summary, rows };
+    const exceptions = rows.filter((row) => row.status !== 'ok');
+    return {
+      generatedAt: new Date().toISOString(),
+      summary: { ...summary, returnedRows: exceptions.length || Math.min(rows.length, 50), completeScan: balances.length < 5000 || Boolean(args?.productId) },
+      rows: exceptions.length ? exceptions : rows.slice(0, 50),
+    };
   }
 
   async productionReadinessSummary() {
@@ -1791,24 +1823,6 @@ export class OperationsService {
         available: current.available + Number(row.available || 0),
         rowCount: current.rowCount + 1,
       });
-    }
-    return grouped;
-  }
-
-  private sumReservationBuckets(rows: any[], status: string) {
-    const grouped = new Map<string, number>();
-    for (const row of rows || []) {
-      if (row.status !== status || !row.productId) continue;
-      grouped.set(row.productId, (grouped.get(row.productId) || 0) + Number(row.quantity || 0));
-    }
-    return grouped;
-  }
-
-  private sumOrderLineBucket(rows: any[], field: string) {
-    const grouped = new Map<string, number>();
-    for (const row of rows || []) {
-      if (!row.productId) continue;
-      grouped.set(row.productId, (grouped.get(row.productId) || 0) + Number(row[field] || 0));
     }
     return grouped;
   }

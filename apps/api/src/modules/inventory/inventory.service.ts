@@ -5,6 +5,7 @@ import { ulid } from 'ulid';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { Prisma } from '@prisma/client';
 import { computeStockAlertState, evaluateStockAlertTransitionsTx, isAlertingState, normalizeThreshold } from './stock-alerts';
+import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 
 export interface CreateInventoryInput {
   productId: string;
@@ -43,12 +44,13 @@ export class InventoryService {
       };
     }
     
-    return this.prisma.inventoryBalance.findMany({
+    const rows = await this.prisma.inventoryBalance.findMany({
       where,
       include: { product: true },
       orderBy: { updatedAt: 'desc' },
       take: args?.take || 150,
-    } as any) as any;
+    } as any) as any[];
+    return this.withInventoryTruth(rows);
   }
 
   async controlTower(args?: {
@@ -84,52 +86,38 @@ export class InventoryService {
     else if (args?.locationId && args?.lotState === 'damaged') locationBalanceWhere.damaged = { gt: 0 };
     if (locationBalanceWhere) productWhere.inventoryLots = { some: { status: 'active', balances: { some: locationBalanceWhere } } };
     const where: any = Object.keys(productWhere).length ? { product: productWhere } : {};
-    if (!args?.locationId && stockState === 'out_of_stock') where.available = 0;
-    else if (!args?.locationId && stockState === 'reserved') where.reserved = { gt: 0 };
-    else if (!args?.locationId && stockState === 'available') where.available = { gt: 0 };
-    else if (stockState === 'low_stock' || stockState === 'warning' || stockState === 'critical') {
-      const lowIds = args?.locationId
-        ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
-            SELECT policy."id"
-            FROM "InventoryLotBalance" lb
-            INNER JOIN "InventoryLot" lot ON lot."id" = lb."lotId" AND lot."status" = 'active'
-            INNER JOIN "InventoryBalance" policy ON policy."productId" = lot."productId"
-            WHERE lb."locationId" = ${args.locationId}
-            GROUP BY policy."id", policy."criticalStockThreshold", policy."lowStockThreshold"
-            HAVING
-              CASE
-                WHEN ${stockState} = 'critical' THEN COALESCE(policy."criticalStockThreshold", 0) > 0
-                  AND SUM(lb."available") <= COALESCE(policy."criticalStockThreshold", 0)
-                WHEN ${stockState} = 'warning' THEN policy."lowStockThreshold" > 0
-                  AND SUM(lb."available") <= policy."lowStockThreshold"
-                  AND NOT (COALESCE(policy."criticalStockThreshold", 0) > 0 AND SUM(lb."available") <= COALESCE(policy."criticalStockThreshold", 0))
-                ELSE (
-                  (COALESCE(policy."criticalStockThreshold", 0) > 0 AND SUM(lb."available") <= COALESCE(policy."criticalStockThreshold", 0))
-                  OR (policy."lowStockThreshold" > 0 AND SUM(lb."available") <= policy."lowStockThreshold")
-                )
-              END
-          `)
-        : await (this.prisma as any).$queryRawUnsafe(
-            `SELECT "id" FROM "InventoryBalance"
-             WHERE
-               CASE
-                 WHEN $1 = 'critical' THEN COALESCE("criticalStockThreshold", 0) > 0
-                   AND "available" <= COALESCE("criticalStockThreshold", 0)
-                 WHEN $1 = 'warning' THEN "lowStockThreshold" > 0
-                   AND "available" <= "lowStockThreshold"
-                   AND NOT (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))
-                 ELSE (
-                   (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))
-                   OR ("lowStockThreshold" > 0 AND "available" <= "lowStockThreshold")
-                 )
-               END`,
-            stockState,
-          ) as any[];
-      where.id = { in: lowIds.map((row: any) => row.id) };
-      if (!lowIds.length) return { items: [], nextCursor: null, total: 0, summary: await this.getFilteredStockSummary({ search, category: args?.category, brand: args?.brand, stockState, locationId: args?.locationId, lotState: args?.lotState }) };
+    if (stockState || args?.lotState) {
+      const truthIds = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        WITH truth AS (
+          SELECT policy."id",
+            COALESCE(SUM(lb."available"), 0)::double precision AS "available",
+            COALESCE(SUM(lb."reserved"), 0)::double precision AS "reserved",
+            COALESCE(SUM(lb."hold"), 0)::double precision AS "hold",
+            COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged",
+            COALESCE(SUM(CASE WHEN lot."unitCost" <= 0 THEN lb."onHand" ELSE 0 END), 0)::double precision AS "missingCostQuantity",
+            MAX(product."sellPrice")::double precision AS "sellPrice",
+            policy."lowStockThreshold", policy."criticalStockThreshold"
+          FROM "InventoryBalance" policy
+          INNER JOIN "Product" product ON product."id" = policy."productId"
+          LEFT JOIN "InventoryLot" lot ON lot."productId" = policy."productId" AND lot."status" = 'active'
+          LEFT JOIN "InventoryLotBalance" lb ON lb."lotId" = lot."id"
+            AND (${args?.locationId || null}::text IS NULL OR lb."locationId" = ${args?.locationId || null})
+          GROUP BY policy."id", policy."lowStockThreshold", policy."criticalStockThreshold"
+        )
+        SELECT "id" FROM truth WHERE
+          (${stockState || null}::text IS NULL OR
+            (${stockState} = 'out_of_stock' AND "available" = 0) OR
+            (${stockState} = 'reserved' AND "reserved" > 0) OR
+            (${stockState} = 'available' AND "available" > 0) OR
+            (${stockState} = 'data_exception' AND ("missingCostQuantity" > 0 OR "sellPrice" <= 0)) OR
+            (${stockState} IN ('low_stock', 'critical') AND COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0)) OR
+            (${stockState} IN ('low_stock', 'warning') AND "lowStockThreshold" > 0 AND "available" <= "lowStockThreshold"
+              AND NOT (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))))
+          AND (${args?.lotState || null}::text IS NULL OR (${args?.lotState} = 'hold' AND "hold" > 0) OR (${args?.lotState} = 'damaged' AND "damaged" > 0))
+      `);
+      where.id = { in: truthIds.map((row: any) => row.id) };
+      if (!truthIds.length) return { items: [], nextCursor: null, total: 0, summary: await this.getFilteredStockSummary({ search, category: args?.category, brand: args?.brand, stockState, locationId: args?.locationId, lotState: args?.lotState }) };
     }
-    if (!args?.locationId && args?.lotState === 'hold') where.hold = { gt: 0 };
-    else if (!args?.locationId && args?.lotState === 'damaged') where.damaged = { gt: 0 };
     const sortMap: Record<string, any[]> = {
       available_asc: [{ available: 'asc' }, { id: 'asc' }],
       available_desc: [{ available: 'desc' }, { id: 'asc' }],
@@ -163,23 +151,27 @@ export class InventoryService {
     } as any) : [];
     const lotsByProduct = new Map<string, any[]>();
     for (const lot of lots as any[]) lotsByProduct.set(lot.productId, [...(lotsByProduct.get(lot.productId) || []), lot]);
-    const locationTotals = args?.locationId && productIds.length
+    const locationTotals = productIds.length
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT lot."productId",
             COALESCE(SUM(lb."onHand"), 0)::double precision AS "onHand",
             COALESCE(SUM(lb."available"), 0)::double precision AS "available",
             COALESCE(SUM(lb."reserved"), 0)::double precision AS "reserved",
             COALESCE(SUM(lb."hold"), 0)::double precision AS "hold",
-            COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged"
+            COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged",
+            COALESCE(SUM(lb."onHand" * lot."unitCost"), 0)::double precision AS "onHandValue",
+            COALESCE(SUM(lb."available" * lot."unitCost"), 0)::double precision AS "availableValue",
+            COALESCE(SUM(CASE WHEN lot."unitCost" <= 0 THEN lb."onHand" ELSE 0 END), 0)::double precision AS "missingCostQuantity"
           FROM "InventoryLotBalance" lb INNER JOIN "InventoryLot" lot ON lot."id" = lb."lotId"
-          WHERE lb."locationId" = ${args.locationId} AND lot."status" = 'active' AND lot."productId" IN (${Prisma.join(productIds)})
+          WHERE (${args?.locationId || null}::text IS NULL OR lb."locationId" = ${args?.locationId || null})
+            AND lot."status" = 'active' AND lot."productId" IN (${Prisma.join(productIds)})
           GROUP BY lot."productId"
         `)
       : [];
     const locationTotalByProduct = new Map(locationTotals.map((row: any) => [row.productId, row]));
     return {
       items: page.map((row) => {
-        const scoped = args?.locationId ? (locationTotalByProduct.get(row.productId) || { onHand: 0, available: 0, reserved: 0, hold: 0, damaged: 0 }) : row;
+        const scoped = locationTotalByProduct.get(row.productId) || { onHand: 0, available: 0, reserved: 0, hold: 0, damaged: 0, onHandValue: 0, availableValue: 0, missingCostQuantity: 0 };
         const onHand = Number(scoped.onHand || 0);
         const available = Number(scoped.available || 0);
         const reserved = Number(scoped.reserved || 0);
@@ -188,10 +180,10 @@ export class InventoryService {
         ...row, onHand, available, reserved, hold: Number(scoped.hold || 0), damaged: Number(scoped.damaged || 0),
         alertState,
         stockState: available === 0 ? 'out_of_stock' : isAlertingState(alertState) ? 'low_stock' : reserved > 0 ? 'reserved' : 'available',
-        onHandValue: onHand * Number(row.product?.costPrice || 0),
-        availableValue: available * Number(row.product?.costPrice || 0),
+        onHandValue: Number(scoped.onHandValue || 0),
+        availableValue: Number(scoped.availableValue || 0),
         retailValue: available * Number(row.product?.sellPrice || 0),
-        completenessCodes: [Number(row.product?.sellPrice || 0) <= 0 ? 'LIST_RATE_MISSING' : null, onHand > 0 && Number(row.product?.costPrice || 0) <= 0 ? 'COST_MISSING' : null].filter(Boolean),
+        completenessCodes: [Number(row.product?.sellPrice || 0) <= 0 ? 'LIST_RATE_MISSING' : null, Number(scoped.missingCostQuantity || 0) > 0 ? 'LOT_COST_MISSING' : null].filter(Boolean),
         lots: (lotsByProduct.get(row.productId) || []).slice(0, 10).map((lot: any) => ({
           id: lot.id, lotNumber: lot.lotNumber, sourceType: lot.sourceType, sourceId: lot.sourceId,
           qualityStatus: lot.qualityStatus, receivedAt: lot.receivedAt, unitCost: Number(lot.unitCost || 0),
@@ -229,27 +221,28 @@ export class InventoryService {
     else if (args.stockState === 'warning') conditions.push(Prisma.sql`b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold"
       AND NOT (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0))`);
     else if (args.stockState === 'critical') conditions.push(Prisma.sql`COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0)`);
+    else if (args.stockState === 'data_exception') conditions.push(Prisma.sql`(b."missingCostQuantity" > 0 OR COALESCE(p."sellPrice", 0) <= 0)`);
     if (args.lotState === 'hold') conditions.push(Prisma.sql`b."hold" > 0`);
     else if (args.lotState === 'damaged') conditions.push(Prisma.sql`b."damaged" > 0`);
     const where = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
-    const source = args.locationId
-      ? Prisma.sql`FROM (
-          SELECT lot."productId",
+    const source = Prisma.sql`FROM (
+          SELECT policy."productId",
             COALESCE(SUM(lb."onHand"), 0)::double precision AS "onHand",
             COALESCE(SUM(lb."available"), 0)::double precision AS "available",
             COALESCE(SUM(lb."reserved"), 0)::double precision AS "reserved",
             COALESCE(SUM(lb."hold"), 0)::double precision AS "hold",
             COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged",
+            COALESCE(SUM(lb."onHand" * lot."unitCost"), 0)::double precision AS "onHandValue",
+            COALESCE(SUM(CASE WHEN lot."unitCost" <= 0 THEN lb."onHand" ELSE 0 END), 0)::double precision AS "missingCostQuantity",
             MAX(policy."lowStockThreshold") AS "lowStockThreshold",
             MAX(policy."criticalStockThreshold") AS "criticalStockThreshold",
             MAX(policy."reorderPoint") AS "reorderPoint"
-          FROM "InventoryLotBalance" lb
-          INNER JOIN "InventoryLot" lot ON lot."id" = lb."lotId" AND lot."status" = 'active'
-          INNER JOIN "InventoryBalance" policy ON policy."productId" = lot."productId"
-          WHERE lb."locationId" = ${args.locationId}
-          GROUP BY lot."productId"
-        ) b INNER JOIN "Product" p ON p."id" = b."productId"`
-      : Prisma.sql`FROM "InventoryBalance" b INNER JOIN "Product" p ON p."id" = b."productId"`;
+          FROM "InventoryBalance" policy
+          LEFT JOIN "InventoryLot" lot ON lot."productId" = policy."productId" AND lot."status" = 'active'
+          LEFT JOIN "InventoryLotBalance" lb ON lb."lotId" = lot."id"
+            AND (${args.locationId || null}::text IS NULL OR lb."locationId" = ${args.locationId || null})
+          GROUP BY policy."productId"
+        ) b INNER JOIN "Product" p ON p."id" = b."productId"`;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         COUNT(*)::int AS "productCount",
@@ -266,10 +259,10 @@ export class InventoryService {
         COUNT(*) FILTER (WHERE b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold"
           AND NOT (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0)))::int AS "warningStock",
         COUNT(*) FILTER (WHERE b."available" = 0)::int AS "outOfStock",
-        COALESCE(SUM(b."onHand" * COALESCE(p."costPrice", 0)), 0)::double precision AS "onHandValue",
+        COALESCE(SUM(b."onHandValue"), 0)::double precision AS "onHandValue",
         COALESCE(SUM(b."available" * COALESCE(p."sellPrice", 0)), 0)::double precision AS "retailValue",
         COUNT(*) FILTER (WHERE COALESCE(p."sellPrice", 0) <= 0)::int AS "zeroSellPrice",
-        COUNT(*) FILTER (WHERE b."onHand" > 0 AND COALESCE(p."costPrice", 0) <= 0)::int AS "zeroCostOnHand",
+        COUNT(*) FILTER (WHERE b."missingCostQuantity" > 0)::int AS "zeroCostOnHand",
         COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM "InventoryLot" lot WHERE lot."productId" = p."id" AND lot."status" = 'active' AND lot."receivedAt" < NOW() - INTERVAL '180 days'))::int AS "staleStock"
       ${source} ${where}
     `);
@@ -292,14 +285,20 @@ export class InventoryService {
       include: { product: true },
     } as any) as any;
     if (!balance) throw new NotFoundException('Inventory not found');
-    return balance;
+    return (await this.withInventoryTruth([balance]))[0];
   }
 
   async findByProductId(productId: string): Promise<any[]> {
-    return this.prisma.inventoryBalance.findMany({
+    const rows = await this.prisma.inventoryBalance.findMany({
       where: { productId },
       include: { product: true },
-    } as any) as any;
+    } as any) as any[];
+    return this.withInventoryTruth(rows);
+  }
+
+  private async withInventoryTruth(rows: any[]) {
+    const truth = await inventoryTruthByProduct(this.prisma, rows.map((row) => row.productId));
+    return rows.map((row) => ({ ...row, ...(truth.get(row.productId) || zeroInventoryTruth(row.productId)) }));
   }
 
   /**
@@ -328,7 +327,8 @@ export class InventoryService {
     const productIds = Array.from(new Set(rows.map((r) => r.productId)));
     const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
     const byId = new Map(products.map((p) => [p.id, p] as const));
-    return rows.map((row) => ({
+    const truthfulRows = await this.withInventoryTruth(rows);
+    return truthfulRows.map((row) => ({
       ...row,
       product: byId.get(row.productId) || null,
       alertState: computeStockAlertState(row.available, row.lowStockThreshold, row.criticalStockThreshold),
@@ -492,7 +492,7 @@ export class InventoryService {
             action: 'stock_alert.policy_update',
             entityType: 'InventoryBalance',
             entityId: id,
-            summary: `Updated stock alert policy for ${updated.product?.sku || updated.productId}`,
+            summary: `Updated stock alert policy for ${next.product?.sku || next.productId}`,
             metadata: policyData,
           },
         }).catch(() => null);
@@ -559,10 +559,21 @@ export class InventoryService {
   }
 
   async getStockSummary() {
-    // Keep dashboard KPI reads bounded as the master grows. The previous
-    // implementation hydrated every Product relation into Node just to sum
-    // balances, which made the inventory page degrade with catalogue size.
     const rows = await (this.prisma as any).$queryRawUnsafe(`
+      WITH truth AS (
+        SELECT policy."productId", policy."lowStockThreshold", policy."criticalStockThreshold",
+          COALESCE(SUM(lb."onHand"), 0)::double precision AS "onHand",
+          COALESCE(SUM(lb."available"), 0)::double precision AS "available",
+          COALESCE(SUM(lb."reserved"), 0)::double precision AS "reserved",
+          COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged",
+          COALESCE(SUM(lb."onHand" * lot."unitCost"), 0)::double precision AS "onHandValue",
+          COALESCE(SUM(lb."available" * lot."unitCost"), 0)::double precision AS "availableValue",
+          COALESCE(SUM(CASE WHEN lot."unitCost" <= 0 THEN lb."onHand" ELSE 0 END), 0)::double precision AS "missingCostQuantity"
+        FROM "InventoryBalance" policy
+        LEFT JOIN "InventoryLot" lot ON lot."productId" = policy."productId" AND lot."status" = 'active'
+        LEFT JOIN "InventoryLotBalance" lb ON lb."lotId" = lot."id"
+        GROUP BY policy."productId", policy."lowStockThreshold", policy."criticalStockThreshold"
+      )
       SELECT
         COUNT(*)::int AS "productCount",
         COALESCE(SUM(b."onHand"), 0)::double precision AS "total",
@@ -574,13 +585,13 @@ export class InventoryService {
             OR (b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold")
         )::int AS "lowStock",
         COUNT(*) FILTER (WHERE b."available" = 0)::int AS "outOfStock",
-        COALESCE(SUM(b."onHand" * COALESCE(p."costPrice", 0)), 0)::double precision AS "onHandValue",
-        COALESCE(SUM(b."available" * COALESCE(p."costPrice", 0)), 0)::double precision AS "availableValue",
+        COALESCE(SUM(b."onHandValue"), 0)::double precision AS "onHandValue",
+        COALESCE(SUM(b."availableValue"), 0)::double precision AS "availableValue",
         COALESCE(SUM(b."available" * COALESCE(p."sellPrice", 0)), 0)::double precision AS "retailValue",
         COUNT(*) FILTER (WHERE COALESCE(p."sellPrice", 0) <= 0)::int AS "zeroSellPrice",
-        COUNT(*) FILTER (WHERE b."onHand" > 0 AND COALESCE(p."costPrice", 0) <= 0)::int AS "zeroCostOnHand",
+        COUNT(*) FILTER (WHERE b."missingCostQuantity" > 0)::int AS "zeroCostOnHand",
         COUNT(*) FILTER (WHERE COALESCE(p."sellPrice", 0) > 0)::int AS "priceCompleteProducts"
-      FROM "InventoryBalance" b
+      FROM truth b
       INNER JOIN "Product" p ON p."id" = b."productId"
     `) as any[];
     const row = rows[0] || {};
