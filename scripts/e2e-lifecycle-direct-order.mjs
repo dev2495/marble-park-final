@@ -25,6 +25,7 @@ async function gql(query, variables = {}, token) {
 }
 
 async function pdf(path, token, label) {
+  if (process.env.SKIP_PDF === '1') return;
   const response = await fetch(`${WEB}${path}`, { headers: { authorization: `Bearer ${token}` } });
   const body = Buffer.from(await response.arrayBuffer());
   assert(response.ok && (response.headers.get('content-type') || '').includes('application/pdf'), `${label} PDF must return successfully`);
@@ -39,7 +40,7 @@ async function main() {
   const sku = `DIRECT-${stamp}`;
 
   const product = (await gql(`mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku name } }`, {
-    input: { sku, internalCode: sku, name: 'Direct order lifecycle mixer', category: 'Faucets', brand: 'Lifecycle Gate', finish: 'Chrome', unit: 'PC', sellPrice: 1000, floorPrice: 800, taxClass: 'GST_18' },
+    input: { sku, internalCode: sku, name: 'Direct order lifecycle mixer', category: 'Faucets', brand: 'Lifecycle Gate', finish: 'Chrome', unit: 'PC', sellPrice: 1000, floorPrice: 800, costPrice: 700, taxClass: 'GST_18' },
   }, token)).createProduct;
   cleanup.productIds.push(product.id);
   const location = await prisma.stockLocation.findFirst({ where: { status: 'active' } });
@@ -90,6 +91,7 @@ async function main() {
   const orderLine = await prisma.salesOrderLine.findFirst({ where: { salesOrderId: direct.id } });
   const reservation = await prisma.reservation.findFirst({ where: { salesOrderId: direct.id } });
   assert(orderLine?.id && reservation?.salesOrderLineId === orderLine.id && Number(orderLine.reservedQuantity) === 2, 'Direct reservation must remain linked to its order line');
+  assert(Number(orderLine.costSnapshot) === 700 && orderLine.costSnapshotSource === 'Product.costPrice' && orderLine.costSnapshotAt, 'Direct order line must preserve the governed Product Master cost snapshot');
 
   const receipt = (await gql(`mutation($input: CustomerPaymentInput!) { recordCustomerPayment(input: $input) }`, { input: { customerId: customer.id, salesOrderId: direct.id, paymentMode: 'upi', amount: 1860, autoAllocate: true, idempotencyKey: `${sku}-PAY` } }, token)).recordCustomerPayment;
   assert(Number(receipt.unappliedAmount) === 1860, 'Pre-invoice order payment must remain available customer credit');
@@ -112,6 +114,8 @@ async function main() {
   assert(dispatchedLine?.status === 'dispatched' && Number(dispatchedLine.dispatchedQuantity) === 2, 'Direct order dispatch must consume its two reserved units');
   const invoice = (await gql(`mutation($input: IssueSalesInvoiceInput!) { issueSalesInvoice(input: $input) }`, { input: { salesOrderId: direct.id, dispatchLineIds: [dispatchedLine.id], idempotencyKey: `${sku}-INV` } }, token)).issueSalesInvoice;
   assert(invoice.quoteId === null && invoice.status === 'paid' && Number(invoice.openAmount) === 0, 'Direct invoice must auto-allocate existing receipts and settle in full');
+  const invoiceLine = await prisma.salesInvoiceLine.findFirst({ where: { salesInvoiceId: invoice.id } });
+  assert(Number(invoiceLine?.costSnapshot) === 700 && invoiceLine?.costSnapshotSource === 'InventoryLot.unitCost' && invoiceLine?.costSnapshotAt, 'Invoice line must preserve the dispatched lot cost snapshot');
   const account = (await gql(`query($id: ID!) { customerAccount(customerId: $id) }`, { id: customer.id }, token)).customerAccount;
   assert(Number(account.summary.balance) === 0 && Number(account.summary.unallocatedCredit) === 0, 'Settled direct order must leave no receivable or free customer credit');
   await pdf(`/api/pdf/order/${direct.id}`, token, 'Direct sales order');
@@ -123,6 +127,8 @@ async function main() {
   const draftQuote = (await gql(`mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id status leadId } }`, { input: { customerId: customer.id, ownerId: owners[0].id, title: `Cancellation ${stamp}`, lines: JSON.stringify([{ productId: product.id, sku, name: product.name, category: 'Faucets', brand: 'Lifecycle Gate', unit: 'PC', qty: 1, listPrice: 1000, mrp: 1180, mrpRateBasis: 'PIECE', specialRate: 1000, taxRate: 18 }]) } }, token)).createQuote;
   cleanup.quoteIds.push(draftQuote.id);
   if (draftQuote.leadId) cleanup.leadIds.push(draftQuote.leadId);
+  const quotedCostLine = await prisma.quoteLine.findFirst({ where: { quoteId: draftQuote.id } });
+  assert(Number(quotedCostLine?.costSnapshot) === 700 && quotedCostLine?.costSnapshotSource === 'Product.costPrice' && quotedCostLine?.costSnapshotAt, 'Quote line must preserve the governed Product Master cost snapshot');
   const fulfillment = (await gql(`query($id: ID!) { quoteFulfillment(quoteId: $id) }`, { id: draftQuote.id }, token)).quoteFulfillment;
   const converted = (await gql(`mutation($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`, { input: { quoteId: draftQuote.id, paymentMode: 'credit', lines: JSON.stringify([{ quoteLineId: fulfillment.lines[0].id, quantity: 1 }]), idempotencyKey: `${sku}-CANCEL-SO` } }, token)).createSalesOrderFromQuote;
   const preCancelReservation = await prisma.reservation.findFirst({ where: { salesOrderId: converted.id } });

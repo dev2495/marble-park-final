@@ -865,6 +865,9 @@ export class QuotesService {
                 mrpSource: line.mrpSource || 'direct_order', mrpConfirmedAt: new Date(), mrpConfirmedById: actorUserId,
                 unitPrice: Number(line.unitRate || 0), discountPercent: Number(line.discountPercent || 0), taxRate: Number(line.taxRate || 0),
                 taxableValue: Number(line.taxableValue || 0), taxAmount: Number(line.taxAmount || 0), grossLineTotal: Number(line.grossLineTotal || line.total || 0),
+                costSnapshot: Number(line.sourceCostPrice || 0) > 0 ? Number(line.sourceCostPrice) : null,
+                costSnapshotSource: Number(line.sourceCostPrice || 0) > 0 ? 'Product.costPrice' : null,
+                costSnapshotAt: Number(line.sourceCostPrice || 0) > 0 ? new Date() : null,
                 lineTotal: Number(line.grossLineTotal || line.total || 0), status: 'open', isTileSpecial: this.isTileLine(line) && !line.productId,
                 metadata: { snapshot: line, source: 'direct_order' }, updatedAt: new Date(),
               },
@@ -903,6 +906,8 @@ export class QuotesService {
       const taxableValue = Number(line.taxableValue ?? quantity * unitPrice);
       const taxAmount = Number(line.taxAmount ?? 0);
       const grossLineTotal = Number(line.grossLineTotal ?? line.total ?? taxableValue + taxAmount);
+      const sourceCostPrice = Number(line.sourceCostPrice ?? line.costSnapshot ?? 0);
+      const hasCostSnapshot = Number.isFinite(sourceCostPrice) && sourceCostPrice > 0;
       const pricing = { listPrice, unitPrice, discountPercent, taxRate, taxableValue, taxAmount, grossLineTotal };
       await tx.quoteLine.upsert({
         where: { quoteId_lineKey: { quoteId: quote.id, lineKey: key } },
@@ -962,6 +967,9 @@ export class QuotesService {
           taxAmount,
           grossLineTotal,
           lineTotal: grossLineTotal,
+          costSnapshot: hasCostSnapshot ? sourceCostPrice : null,
+          costSnapshotSource: hasCostSnapshot ? 'Product.costPrice' : null,
+          costSnapshotAt: hasCostSnapshot ? new Date() : null,
           status: 'quoted',
           isTileSpecial: this.isTileLine(line) && !String(line.productId || '').trim(),
           metadata: { snapshot: line },
@@ -1878,6 +1886,7 @@ export class QuotesService {
           floorPrice, media: line.media || product.media || {},
           inventoryUom, pricingUom, rateBasis, sourceSalesUom: productSalesUom,
           sourceSellPrice: Number(product.sellPrice || 0),
+          sourceCostPrice: Number(product.costPrice || 0),
           piecesPerPack: product.piecesPerPack, coveragePerPack: product.coveragePerPack,
         }, index);
       }
@@ -1914,6 +1923,7 @@ export class QuotesService {
         discountPercent: Number(line.discountPercent ?? line.discount ?? 0),
         taxRate: Number(line.taxRate ?? 18),
         floorPrice: Number(product.floorPrice || 0),
+        sourceCostPrice: Number(product.costPrice || 0),
         media,
         area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
         quoteImage: line.quoteImage || line.customImageUrl || '',

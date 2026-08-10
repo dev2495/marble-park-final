@@ -394,6 +394,10 @@ export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
       const taxableValue = Number(line.taxableValue ?? orderedQuantity * unitPrice);
       const taxAmount = Number(line.taxAmount ?? 0);
       const grossLineTotal = Number(line.grossLineTotal ?? line.total ?? taxableValue + taxAmount);
+      const sourceCostPrice = Number(line.sourceCostPrice ?? line.costSnapshot ?? 0);
+      const costSnapshot = Number(quoteLine?.costSnapshot || 0) > 0
+        ? Number(quoteLine.costSnapshot)
+        : Number.isFinite(sourceCostPrice) && sourceCostPrice > 0 ? sourceCostPrice : null;
       const existing = await tx.salesOrderLine.findUnique({
         where: { salesOrderId_lineKey: { salesOrderId: salesOrder.id, lineKey: key } },
       }).catch(() => null);
@@ -423,6 +427,9 @@ export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
         mrpSource: line.mrpSource || 'quote_entry',
         mrpConfirmedAt: line.mrpConfirmedAt ? new Date(line.mrpConfirmedAt) : quoteLine?.mrpConfirmedAt || null,
         mrpConfirmedById: line.mrpConfirmedById || quoteLine?.mrpConfirmedById || null,
+        costSnapshot,
+        costSnapshotSource: costSnapshot ? quoteLine?.costSnapshotSource || 'Product.costPrice' : null,
+        costSnapshotAt: costSnapshot ? quoteLine?.costSnapshotAt || new Date() : null,
         lineTotal: grossLineTotal,
         status,
         isTileSpecial: isTileSelectionLine(line) && !productId,

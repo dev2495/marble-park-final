@@ -254,7 +254,7 @@ export class ReceivablesService {
         dispatchedQuantity: { gt: 0 },
       };
       if (input.dispatchLineIds?.length) dispatchWhere.id = { in: input.dispatchLineIds };
-      const dispatchLines = await tx.dispatchLine.findMany({ where: dispatchWhere });
+      const dispatchLines = await tx.dispatchLine.findMany({ where: dispatchWhere, include: { lot: { select: { unitCost: true, lotNumber: true } } } });
       if (!dispatchLines.length) throw new BadRequestException('There are no dispatched lines available to invoice. Dispatch goods first.');
       if (input.dispatchLineIds?.length && dispatchLines.length !== new Set(input.dispatchLineIds).size) {
         throw new BadRequestException('One or more selected lines are not dispatched for this sales order.');
@@ -275,12 +275,20 @@ export class ReceivablesService {
         const taxableValue = roundMoney(Number(orderLine?.taxableValue ?? fallback.taxableValue ?? 0) * quantity / orderedQuantity);
         const taxAmount = roundMoney(Number(orderLine?.taxAmount ?? fallback.taxAmount ?? 0) * quantity / orderedQuantity);
         const grossLineTotal = roundMoney(Number(orderLine?.grossLineTotal ?? fallback.grossLineTotal ?? fallback.lineTotal ?? 0) * quantity / orderedQuantity);
+        const lotUnitCost = Number(dispatchLine.lot?.unitCost || 0);
+        const costSnapshot = Number.isFinite(lotUnitCost) && lotUnitCost > 0
+          ? lotUnitCost
+          : Number(orderLine?.costSnapshot || 0) > 0 ? Number(orderLine.costSnapshot) : null;
+        const costSnapshotSource = Number.isFinite(lotUnitCost) && lotUnitCost > 0
+          ? 'InventoryLot.unitCost'
+          : costSnapshot ? orderLine?.costSnapshotSource || 'Product.costPrice' : null;
         return {
           dispatchLineId: dispatchLine.id, salesOrderLineId: dispatchLine.salesOrderLineId || null, productId: dispatchLine.productId || orderLine?.productId || fallback.productId || null,
           sku: dispatchLine.sku, name: dispatchLine.name, brand: orderLine?.brand || fallback.brand || '', finish: orderLine?.finish || fallback.finish || null,
           unit: orderLine?.unit || fallback.unit || 'PC', quantity,
           unitPrice: roundMoney(grossLineTotal / quantity), taxRate: Number(orderLine?.taxRate ?? fallback.taxRate ?? 0), taxableValue, taxAmount, grossLineTotal,
-          metadata: { dispatchChallanId: dispatchLine.challanId || null, dispatchStatus: dispatchLine.status },
+          costSnapshot, costSnapshotSource, costSnapshotAt: costSnapshot ? now : null,
+          metadata: { dispatchChallanId: dispatchLine.challanId || null, dispatchStatus: dispatchLine.status, lotId: dispatchLine.lotId || null, lotNumber: dispatchLine.lot?.lotNumber || null },
         };
       });
       const taxableValue = roundMoney(computed.reduce((sum: number, row: any) => sum + row.taxableValue, 0));

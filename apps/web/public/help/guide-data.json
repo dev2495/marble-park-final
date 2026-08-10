@@ -401,7 +401,7 @@
         "Owner",
         "Sales Manager"
       ],
-      "summary": "Monitor pipeline, orders, inventory and exceptions while retaining a searchable record of sensitive actions.",
+      "summary": "Use the five report suites, follow every metric to its source, and resolve readiness or operating exceptions without editing facts inside a report.",
       "flow": [
         "Operational event",
         "Approval / audit",
@@ -409,21 +409,66 @@
         "Exception action"
       ],
       "steps": [
-        "Use Command Center for role-specific work queues.",
-        "Open Approvals for below-floor quotes and controlled changes.",
-        "Use Reports for sales, order, payment and stock summaries.",
-        "Open System Audit to inspect who changed what and when.",
-        "Follow exception links back to the operational record and resolve there."
+        "Start with Owner, Sales, Finance, Inventory or Operations according to the decision you need.",
+        "Choose one of the four primary report tabs; additional specialist views stay behind Show more.",
+        "Set the business-date range and applicable owner, location or vendor filter.",
+        "Open Sources & definition to verify date basis, freshness, source tables and coverage.",
+        "Use a register row to open the authoritative customer, product, order, invoice, lot or audit record.",
+        "If a view says Needs setup, follow its action to Report Data Readiness instead of entering an estimate.",
+        "Save a personal view only after filters, metrics and columns match the repeat decision.",
+        "Use isolated Print or governed CSV export for a point-in-time copy."
       ],
       "checks": [
         "Reports are decision surfaces, not stock-editing tools.",
-        "Role permissions determine visible and allowed actions.",
+        "Zero means an eligible governed value of zero; unavailable means the required source is absent.",
+        "Role permissions determine visible suites, data scope and allowed export.",
+        "Coverage warnings remain visible when historical facts cannot be reconstructed.",
         "Audit records are append-only evidence."
       ],
       "related": [
+        "reporting-readiness",
         "payments-documents",
-        "inventory-control",
-        "crm-quote"
+        "inventory-control"
+      ]
+    },
+    {
+      "id": "reporting-readiness",
+      "title": "Set up missing report data safely",
+      "duration": "10 min",
+      "href": "/dashboard/reports/setup",
+      "roles": [
+        "Owner"
+      ],
+      "summary": "Identify whether a missing metric already has an operating source, needs a governed Marble Park workflow, or must come from accounting—without creating a generic financial shortcut.",
+      "flow": [
+        "Needs setup",
+        "Classify source",
+        "Use authoritative workflow",
+        "Verify coverage",
+        "Report becomes usable"
+      ],
+      "steps": [
+        "Open Data readiness from Reports; only owners and administrators can manage this page.",
+        "For Targets, select the governed metric and month, enter the approved amount and retain an approval or planning note.",
+        "Saving the same metric and month creates a new version and supersedes the old one; use Void only with a clear reason.",
+        "For product and tile exceptions, follow Correct Product Master and update the authoritative category, brand, finish, UOM, HSN, cost, size or pack fields.",
+        "Do not backfill historical quote or invoice cost using today’s cost. New quote lines snapshot Product Master cost and new invoice lines snapshot the dispatched lot cost automatically.",
+        "Treat purchase orders and GRNs as commitments and receipts—not supplier bills or payments.",
+        "Connect a governed accounting source or implement a dedicated AP/GL subledger before enabling supplier aging, P&L, cash flow or balance sheet.",
+        "Return to the report and review its coverage label; uncovered historical rows remain explicit."
+      ],
+      "checks": [
+        "Targets are positive, company-level, monthly and versioned.",
+        "Target revisions and voids appear in System Audit.",
+        "Product corrections happen only in Product, Tile and Size masters.",
+        "Supplier AP requires invoices, payments and allocation lineage.",
+        "Accounting statements require chart of accounts, journals, expenses and opening balances.",
+        "No report displays an estimate as an accounting fact."
+      ],
+      "related": [
+        "reports-audit",
+        "setup-master-data",
+        "procurement-inward"
       ]
     },
     {

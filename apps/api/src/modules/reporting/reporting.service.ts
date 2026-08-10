@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { ulid } from 'ulid';
 import type { SessionUser } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
-import { REPORT_CATALOG, findReportDefinition, type ReportDefinition } from './reporting.catalog';
+import { REPORT_CATALOG, REPORTING_SETUP_GUIDANCE, findReportDefinition, type ReportDefinition } from './reporting.catalog';
 import { REPORT_TIMEZONE, ageDays, indiaDay, reportRange } from './reporting-time';
 
 type ReportArgs = {
@@ -41,6 +41,67 @@ export class ReportingService {
       (this.prisma as any).vendor.findMany({ where: { status: 'active' }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     ]);
     return { owners, locations, categories, vendors };
+  }
+
+  async readiness() {
+    const [targetCount, quoteLines, invoiceLines, products] = await Promise.all([
+      (this.prisma as any).reportingTarget.count({ where: { status: 'active' } }),
+      (this.prisma as any).quoteLine.findMany({ select: { costSnapshot: true } }),
+      (this.prisma as any).salesInvoiceLine.findMany({ select: { costSnapshot: true } }),
+      this.prisma.product.findMany({ select: { id: true, sku: true, name: true, status: true, categoryId: true, brandId: true, finishId: true, unit: true, hsnCode: true, costPrice: true, tileSizeId: true, piecesPerPack: true, category: true } }),
+    ]);
+    const activeProducts = products.filter((row: any) => row.status === 'active');
+    const incompleteProducts = activeProducts.filter((row: any) => !row.sku || !row.name || !row.categoryId || !row.brandId || !row.finishId || !row.unit || !row.hsnCode || n(row.costPrice) <= 0 || (/tile/i.test(row.category) && (!row.tileSizeId || n(row.piecesPerPack) <= 0)));
+    const coverage = (rows: any[]) => rows.length ? round(rows.filter((row) => n(row.costSnapshot) > 0).length / rows.length * 100, 1) : 100;
+    return [
+      { id: 'targets', ...REPORTING_SETUP_GUIDANCE.targets, status: targetCount ? 'ready' : 'action_required', sourceStatus: targetCount ? `${targetCount} active target${targetCount === 1 ? '' : 's'}` : 'No active targets', counts: { active: targetCount } },
+      { id: 'quoted_margin', ...REPORTING_SETUP_GUIDANCE.quoted_margin, status: !quoteLines.length ? 'awaiting_activity' : coverage(quoteLines) < 100 ? 'capturing_forward' : 'ready', sourceStatus: quoteLines.length ? `${coverage(quoteLines)}% of ${quoteLines.length} quote lines costed` : 'No quote lines yet; capture starts automatically on the next quote', counts: { total: quoteLines.length, covered: quoteLines.filter((row) => n(row.costSnapshot) > 0).length } },
+      { id: 'realised_margin', ...REPORTING_SETUP_GUIDANCE.realised_margin, status: !invoiceLines.length ? 'awaiting_activity' : coverage(invoiceLines) < 100 ? 'capturing_forward' : 'ready', sourceStatus: invoiceLines.length ? `${coverage(invoiceLines)}% of ${invoiceLines.length} invoice lines costed` : 'No invoice lines yet; lot-cost capture starts automatically on the next invoice', counts: { total: invoiceLines.length, covered: invoiceLines.filter((row) => n(row.costSnapshot) > 0).length } },
+      { id: 'master_data', ...REPORTING_SETUP_GUIDANCE.master_data, status: incompleteProducts.length ? 'action_required' : 'ready', sourceStatus: `${incompleteProducts.length} of ${activeProducts.length} active products need attention`, counts: { total: activeProducts.length, incomplete: incompleteProducts.length } },
+      { id: 'supplier_ap', ...REPORTING_SETUP_GUIDANCE.supplier_ap, status: 'external_required', sourceStatus: 'Supplier invoice, payment and allocation source not present', counts: {} },
+      { id: 'accounting', ...REPORTING_SETUP_GUIDANCE.accounting, status: 'external_required', sourceStatus: 'General ledger, chart of accounts and expenses not present', counts: {} },
+    ];
+  }
+
+  targets() {
+    return (this.prisma as any).reportingTarget.findMany({ orderBy: [{ periodStart: 'desc' }, { metricKey: 'asc' }, { version: 'desc' }], take: 240 });
+  }
+
+  async saveTarget(user: SessionUser, input: any) {
+    const metricKey = String(input?.metricKey || '').trim();
+    if (!['net_invoiced_sales', 'order_bookings', 'collections'].includes(metricKey)) throw new BadRequestException('Choose a supported governed target metric');
+    const month = String(input?.month || '').trim();
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new BadRequestException('Target month must use YYYY-MM');
+    const amount = Number(input?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('Target amount must be greater than zero');
+    const notes = String(input?.notes || '').trim().slice(0, 500);
+    const [year, monthNumber] = month.split('-').map(Number);
+    const nextYear = monthNumber === 12 ? year + 1 : year;
+    const nextMonth = monthNumber === 12 ? 1 : monthNumber + 1;
+    const periodStart = new Date(`${month}-01T00:00:00.000+05:30`);
+    const periodEnd = new Date(new Date(`${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00.000+05:30`).getTime() - 1);
+    const targetKey = `company:${metricKey}:${month}`;
+    const id = ulid();
+    const row = await this.prisma.$transaction(async (tx: any) => {
+      const latest = await tx.reportingTarget.findFirst({ where: { targetKey }, orderBy: { version: 'desc' } });
+      const version = n(latest?.version) + 1;
+      if (latest?.status === 'active') await tx.reportingTarget.update({ where: { id: latest.id }, data: { status: 'superseded', supersededById: id } });
+      const created = await tx.reportingTarget.create({ data: { id, targetKey, version, metricKey, periodStart, periodEnd, amount: currency(amount), notes, createdBy: user.id, metadata: { source: 'reporting_setup', timezone: REPORT_TIMEZONE } } });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId: user.id, action: latest ? 'reporting_target.revise' : 'reporting_target.create', entityType: 'ReportingTarget', entityId: id, summary: `${latest ? 'Revised' : 'Created'} ${metricKey} target for ${month}`, metadata: { targetKey, version, amount: currency(amount), supersedes: latest?.id || null } } });
+      return created;
+    });
+    return row;
+  }
+
+  async voidTarget(user: SessionUser, id: string, reason: string) {
+    const cleanReason = String(reason || '').trim();
+    if (cleanReason.length < 5) throw new BadRequestException('A clear void reason of at least 5 characters is required');
+    const existing = await (this.prisma as any).reportingTarget.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Reporting target not found');
+    if (existing.status !== 'active') throw new BadRequestException('Only an active target can be voided');
+    const row = await (this.prisma as any).reportingTarget.update({ where: { id }, data: { status: 'void', voidedAt: new Date(), voidedBy: user.id, voidReason: cleanReason.slice(0, 500) } });
+    await this.prisma.auditEvent.create({ data: { id: ulid(), actorUserId: user.id, action: 'reporting_target.void', entityType: 'ReportingTarget', entityId: id, summary: `Voided ${existing.metricKey} target for ${indiaDay(existing.periodStart)}`, metadata: { reason: cleanReason, version: existing.version } } });
+    return row;
   }
 
   presets(user: SessionUser, reportId?: string) {
@@ -89,6 +150,10 @@ export class ReportingService {
     if (range.durationDays > 366) throw new BadRequestException('Interactive reports are limited to 366 days; use an export for a longer period');
     if (definition.readiness === 'needs_setup') return this.unavailable(definition, range);
     const base = { args, definition, range, user };
+    if (definition.title === 'Target versus actual') return this.targetActual(base);
+    if (definition.title === 'Historical quoted margin') return this.quotedMargin(base);
+    if (definition.title === 'Realised gross margin') return this.realisedMargin(base);
+    if (definition.title === 'Master-data readiness') return this.masterDataReadiness(base);
     switch (definition.bookId) {
       case 'owner.pulse': return this.ownerPulse(base);
       case 'sales.product': return this.salesProduct(base);
@@ -132,13 +197,18 @@ export class ReportingService {
   }
 
   private unavailable(definition: ReportDefinition, range: any, reason?: string) {
+    const guidance = definition.title === 'Supplier payables aging'
+      ? REPORTING_SETUP_GUIDANCE.supplier_ap
+      : definition.title === 'P&L / cash flow / balance sheet'
+        ? REPORTING_SETUP_GUIDANCE.accounting
+        : null;
     return {
       meta: this.meta(definition, { coverage: 0, warning: reason || 'The required governed source is not captured in Marble Park yet' }),
       range: range.labels,
       filters: {},
       summary: [], trend: [], breakdowns: [],
       rows: { items: [], total: 0, page: 1, pageSize: 50, columns: [] },
-      unavailable: { code: 'NEEDS_SETUP', message: reason || definition.description, requiredSources: definition.sources },
+      unavailable: { code: 'NEEDS_SETUP', requiredSources: definition.sources, ...(guidance || {}), message: reason || guidance?.message || definition.description },
     };
   }
 
@@ -173,6 +243,66 @@ export class ReportingService {
     if (raw.filters && typeof raw.filters === 'object' && !Array.isArray(raw.filters)) config.filters = this.normalizeArgs({ reportId: 'preset', filters: raw.filters as any }).filters;
     if (raw.pageSize != null) config.pageSize = Math.min(200, Math.max(10, Math.floor(n(raw.pageSize) || 50)));
     return config;
+  }
+
+  private async targetActual({ args, definition, range }: any) {
+    const targets = await (this.prisma as any).reportingTarget.findMany({
+      where: { status: 'active', periodStart: { lte: range.to }, periodEnd: { gte: range.from } },
+      orderBy: [{ periodStart: 'asc' }, { metricKey: 'asc' }],
+    });
+    if (!targets.length) {
+      const response: any = this.unavailable(definition, range, REPORTING_SETUP_GUIDANCE.targets.message);
+      response.unavailable = { ...response.unavailable, ...REPORTING_SETUP_GUIDANCE.targets, setupKey: 'targets' };
+      return response;
+    }
+    const from = new Date(Math.min(...targets.map((row: any) => new Date(row.periodStart).getTime())));
+    const to = new Date(Math.max(...targets.map((row: any) => new Date(row.periodEnd).getTime())));
+    const [invoices, credits, orders, payments] = await Promise.all([
+      (this.prisma as any).salesInvoice.findMany({ where: { status: { not: 'void' }, issueDate: { gte: from, lte: to } }, select: { issueDate: true, totalAmount: true } }),
+      (this.prisma as any).creditNote.findMany({ where: { status: 'issued', issuedAt: { gte: from, lte: to } }, select: { issuedAt: true, amount: true } }),
+      this.prisma.salesOrder.findMany({ where: { status: { not: 'cancelled' }, createdAt: { gte: from, lte: to } }, select: { createdAt: true, totalAmount: true } }),
+      (this.prisma as any).customerPayment.findMany({ where: { status: 'posted', receivedAt: { gte: from, lte: to } }, select: { receivedAt: true, amount: true } }),
+    ]);
+    const inside = (date: Date, row: any) => date >= row.periodStart && date <= row.periodEnd;
+    const actualFor = (target: any) => {
+      if (target.metricKey === 'net_invoiced_sales') return invoices.filter((row: any) => inside(row.issueDate, target)).reduce((total: number, row: any) => total + n(row.totalAmount), 0) - credits.filter((row: any) => inside(row.issuedAt, target)).reduce((total: number, row: any) => total + n(row.amount), 0);
+      if (target.metricKey === 'order_bookings') return orders.filter((row: any) => inside(row.createdAt, target)).reduce((total: number, row: any) => total + n(row.totalAmount), 0);
+      return payments.filter((row: any) => inside(row.receivedAt, target)).reduce((total: number, row: any) => total + n(row.amount), 0);
+    };
+    const labels: Record<string, string> = { net_invoiced_sales: 'Net invoiced sales', order_bookings: 'Order bookings', collections: 'Collections' };
+    const rows = targets.map((target: any) => { const actual = currency(actualFor(target)); const amount = currency(n(target.amount)); return { id: target.id, metricKey: target.metricKey, month: indiaDay(target.periodStart).slice(0, 7), metric: labels[target.metricKey] || target.metricKey, target: amount, actual, variance: currency(actual - amount), attainment: amount ? round(actual / amount * 100, 1) : null, version: target.version, notes: target.notes || '', href: '/dashboard/reports/setup#targets' }; });
+    const byMetric = (key: string) => rows.filter((row: any) => row.metricKey === key);
+    const metricSummary = (key: string) => { const selected = byMetric(key); const target = selected.reduce((total: number, row: any) => total + row.target, 0); const actual = selected.reduce((total: number, row: any) => total + row.actual, 0); return this.summary(key, labels[key], actual, target, 'currency', `Actual compared with active versioned ${labels[key].toLowerCase()} targets; prior is the target amount.`, 'governed_calculation'); };
+    return { meta: this.meta(definition, { coverage: 100, coverageLabel: 'Active targets with governed actual source', warnings: [] }), range: range.labels, filters: args.filters, summary: ['net_invoiced_sales', 'order_bookings', 'collections'].filter((key) => byMetric(key).length).map(metricSummary), trend: rows.map((row: any) => ({ date: `${row.month}-01`, target: row.target, actual: row.actual, variance: row.variance })), breakdowns: [{ id: 'attainment', title: 'Target attainment by month and metric', kind: 'ranking', rows: rows.map((row: any) => ({ label: `${row.month} · ${row.metric}`, value: row.attainment || 0 })) }], rows: this.paginate(rows, args, [{ key: 'month', label: 'Month' }, { key: 'metric', label: 'Metric' }, { key: 'target', label: 'Target', format: 'currency' }, { key: 'actual', label: 'Actual', format: 'currency' }, { key: 'variance', label: 'Variance', format: 'currency' }, { key: 'attainment', label: 'Attainment', format: 'percent' }, { key: 'version', label: 'Version', format: 'number' }, { key: 'notes', label: 'Notes' }], ['month', 'metric', 'target', 'actual', 'variance', 'attainment']) };
+  }
+
+  private async quotedMargin({ args, definition, range }: any) {
+    const quotes = await this.prisma.quote.findMany({ where: { createdAt: { gte: range.from, lte: range.to } }, select: { id: true, quoteNumber: true, createdAt: true, status: true } });
+    const quoteMap = new Map(quotes.map((row: any) => [row.id, row]));
+    const lines = quotes.length ? await (this.prisma as any).quoteLine.findMany({ where: { quoteId: { in: quotes.map((row: any) => row.id) } }, orderBy: { createdAt: 'desc' } }) : [];
+    const eligible = lines.filter((row: any) => n(row.quantity) > 0);
+    const covered = eligible.filter((row: any) => n(row.costSnapshot) > 0);
+    const taxable = eligible.reduce((total: number, row: any) => total + n(row.taxableValue), 0);
+    const cost = covered.reduce((total: number, row: any) => total + n(row.costSnapshot) * n(row.quantity), 0);
+    const rows = eligible.map((row: any) => { const quote: any = quoteMap.get(row.quoteId); const lineCost = n(row.costSnapshot) > 0 ? n(row.costSnapshot) * n(row.quantity) : null; return { id: row.id, quote: quote?.quoteNumber || row.quoteId, date: quote ? indiaDay(quote.createdAt) : indiaDay(row.createdAt), sku: row.sku, product: row.name, quantity: n(row.quantity), quotedValue: currency(n(row.taxableValue)), capturedCost: lineCost == null ? null : currency(lineCost), margin: lineCost == null ? null : currency(n(row.taxableValue) - lineCost), source: row.costSnapshotSource || 'Not captured', coverage: lineCost == null ? 'Uncovered' : 'Covered', href: '/dashboard/quotes' }; });
+    return { meta: this.meta(definition, { coverage: eligible.length ? round(covered.length / eligible.length * 100, 1) : 100, coverageLabel: 'Quote lines with immutable cost snapshot', warnings: eligible.length > covered.length ? ['Historical lines without a saved cost remain uncovered; current Product Master cost is never backfilled as historical fact.'] : [] }), range: range.labels, filters: args.filters, summary: [this.summary('quoted_value', 'Quoted taxable value', taxable, null, 'currency', 'Tax-exclusive quoted value for eligible lines.'), this.summary('covered_cost', 'Captured line cost', cost, null, 'currency', 'Cost snapshot multiplied by quote quantity for covered lines only.', 'governed_calculation'), this.summary('covered_margin', 'Covered quoted margin', taxable && covered.length === eligible.length ? taxable - cost : covered.reduce((total: number, row: any) => total + n(row.taxableValue) - n(row.costSnapshot) * n(row.quantity), 0), null, 'currency', 'Quoted taxable value less immutable line cost for covered lines only.', 'governed_calculation')], trend: rows.filter((row: any) => row.capturedCost != null).map((row: any) => ({ date: row.date, quotedValue: row.quotedValue, capturedCost: row.capturedCost, margin: row.margin })), breakdowns: [{ id: 'coverage', title: 'Historical cost coverage', kind: 'composition', rows: [{ label: 'Covered', value: covered.length }, { label: 'Uncovered', value: eligible.length - covered.length }] }], rows: this.paginate(rows, args, [{ key: 'quote', label: 'Quote' }, { key: 'date', label: 'Date' }, { key: 'sku', label: 'SKU' }, { key: 'product', label: 'Product' }, { key: 'quantity', label: 'Qty', format: 'number' }, { key: 'quotedValue', label: 'Quoted value', format: 'currency' }, { key: 'capturedCost', label: 'Captured cost', format: 'currency' }, { key: 'margin', label: 'Margin', format: 'currency' }, { key: 'source', label: 'Cost source' }, { key: 'coverage', label: 'Coverage' }], ['date', 'quotedValue', 'capturedCost', 'margin', 'sku']) };
+  }
+
+  private async realisedMargin({ args, definition, range }: any) {
+    const invoices = await (this.prisma as any).salesInvoice.findMany({ where: { status: { not: 'void' }, issueDate: { gte: range.from, lte: range.to } }, select: { id: true, invoiceNumber: true, issueDate: true } });
+    const invoiceMap = new Map(invoices.map((row: any) => [row.id, row]));
+    const lines = invoices.length ? await (this.prisma as any).salesInvoiceLine.findMany({ where: { salesInvoiceId: { in: invoices.map((row: any) => row.id) } } }) : [];
+    const eligible = lines.filter((row: any) => n(row.quantity) > 0); const covered = eligible.filter((row: any) => n(row.costSnapshot) > 0);
+    const coveredRevenue = covered.reduce((total: number, row: any) => total + n(row.taxableValue), 0); const coveredCost = covered.reduce((total: number, row: any) => total + n(row.costSnapshot) * n(row.quantity), 0);
+    const rows = eligible.map((row: any) => { const invoice: any = invoiceMap.get(row.salesInvoiceId); const lineCost = n(row.costSnapshot) > 0 ? n(row.costSnapshot) * n(row.quantity) : null; return { id: row.id, invoice: invoice?.invoiceNumber || row.salesInvoiceId, date: invoice ? indiaDay(invoice.issueDate) : '', sku: row.sku, product: row.name, quantity: n(row.quantity), taxableValue: currency(n(row.taxableValue)), capturedCost: lineCost == null ? null : currency(lineCost), grossMargin: lineCost == null ? null : currency(n(row.taxableValue) - lineCost), marginPercent: lineCost == null || !n(row.taxableValue) ? null : round((n(row.taxableValue) - lineCost) / n(row.taxableValue) * 100, 1), source: row.costSnapshotSource || 'Not captured', href: '/dashboard/payments' }; });
+    return { meta: this.meta(definition, { coverage: eligible.length ? round(covered.length / eligible.length * 100, 1) : 100, coverageLabel: 'Invoice lines with captured cost provenance', warnings: eligible.length > covered.length ? ['Margin totals include covered invoice lines only; uncovered historical lines are not estimated.'] : [] }), range: range.labels, filters: args.filters, summary: [this.summary('covered_revenue', 'Covered taxable sales', coveredRevenue, null, 'currency', 'Tax-exclusive sales for invoice lines with captured cost.'), this.summary('covered_cost', 'Captured cost', coveredCost, null, 'currency', 'Immutable invoice-line cost snapshot multiplied by quantity.', 'governed_calculation'), this.summary('gross_margin', 'Realised gross margin', coveredRevenue - coveredCost, null, 'currency', 'Covered taxable sales less captured cost; excludes tax and uncovered lines.', 'governed_calculation')], trend: rows.filter((row: any) => row.capturedCost != null).map((row: any) => ({ date: row.date, taxableValue: row.taxableValue, capturedCost: row.capturedCost, grossMargin: row.grossMargin })), breakdowns: [{ id: 'coverage', title: 'Invoice cost coverage', kind: 'composition', rows: [{ label: 'Covered', value: covered.length }, { label: 'Uncovered', value: eligible.length - covered.length }] }], rows: this.paginate(rows, args, [{ key: 'invoice', label: 'Invoice' }, { key: 'date', label: 'Date' }, { key: 'sku', label: 'SKU' }, { key: 'product', label: 'Product' }, { key: 'quantity', label: 'Qty', format: 'number' }, { key: 'taxableValue', label: 'Taxable sales', format: 'currency' }, { key: 'capturedCost', label: 'Captured cost', format: 'currency' }, { key: 'grossMargin', label: 'Gross margin', format: 'currency' }, { key: 'marginPercent', label: 'Margin %', format: 'percent' }, { key: 'source', label: 'Cost source' }], ['date', 'taxableValue', 'capturedCost', 'grossMargin', 'marginPercent', 'sku']) };
+  }
+
+  private async masterDataReadiness({ args, definition, range }: any) {
+    const products = await this.prisma.product.findMany({ where: { status: 'active' }, orderBy: { updatedAt: 'desc' }, select: { id: true, sku: true, name: true, category: true, categoryId: true, brandId: true, finishId: true, unit: true, hsnCode: true, costPrice: true, tileSizeId: true, piecesPerPack: true, internalCode: true, updatedAt: true } });
+    const rows = products.map((row: any) => { const missing = [!row.categoryId && 'category master', !row.brandId && 'brand master', !row.finishId && 'finish master', !row.unit && 'unit', !row.hsnCode && 'HSN', n(row.costPrice) <= 0 && 'cost', /tile/i.test(row.category) && !row.tileSizeId && 'tile size', /tile/i.test(row.category) && n(row.piecesPerPack) <= 0 && 'pack quantity'].filter(Boolean); return { id: row.id, sku: row.sku, internalCode: row.internalCode || '', product: row.name, category: row.category, missing: missing.join(', '), exceptionCount: missing.length, updatedAt: row.updatedAt.toISOString(), href: `/dashboard/products?search=${encodeURIComponent(row.sku)}` }; });
+    const exceptions = rows.filter((row: any) => row.exceptionCount > 0);
+    return { meta: this.meta(definition, { coverage: products.length ? round((products.length - exceptions.length) / products.length * 100, 1) : 100, coverageLabel: 'Active products meeting current governed requirements', warnings: exceptions.length ? ['Correct the authoritative product, tile and size masters; reporting does not provide a bypass entry form.'] : [] }), range: range.labels, filters: args.filters, summary: [this.summary('products', 'Active products', products.length, null, 'number', 'Products in active status.'), this.summary('exceptions', 'Products needing attention', exceptions.length, null, 'number', 'Active products missing one or more current required source fields.'), this.summary('cost_missing', 'Missing cost source', rows.filter((row: any) => row.missing.includes('cost')).length, null, 'number', 'Active products without positive Product Master cost.'), this.summary('tile_setup', 'Tile setup exceptions', rows.filter((row: any) => row.missing.includes('tile size') || row.missing.includes('pack quantity')).length, null, 'number', 'Tile products missing Size Master or pack quantity.')], trend: [], breakdowns: [{ id: 'exception_type', title: 'Readiness exceptions by source', kind: 'ranking', rows: ['category master', 'brand master', 'finish master', 'unit', 'HSN', 'cost', 'tile size', 'pack quantity'].map((label) => ({ label, value: rows.filter((row: any) => row.missing.includes(label)).length })).filter((row) => row.value > 0) }], rows: this.paginate(exceptions, args, [{ key: 'sku', label: 'SKU' }, { key: 'internalCode', label: 'Internal code' }, { key: 'product', label: 'Product' }, { key: 'category', label: 'Category' }, { key: 'missing', label: 'Missing source fields' }, { key: 'exceptionCount', label: 'Exceptions', format: 'number' }, { key: 'updatedAt', label: 'Last updated' }], ['exceptionCount', 'updatedAt', 'sku', 'product']) };
   }
 
   private async ownerPulse({ args, definition, range }: any) {
@@ -320,7 +450,7 @@ export class ReportingService {
     const relationshipView = definition.domain === 'Architect & customer'; const ownerView = definition.domain === 'Sales';
     const rows = relationshipView ? (definition.title.toLowerCase().includes('architect') ? architectRows : customerRows) : ownerView ? ownerRows : productRows;
     const columns = relationshipView ? (definition.title.toLowerCase().includes('architect') ? [{key:'architect',label:'Architect'},{key:'firm',label:'Firm'},{key:'city',label:'City'},{key:'quotes',label:'Quotes',format:'number'},{key:'orders',label:'Orders',format:'number'},{key:'customers',label:'Customers',format:'number'},{key:'invoiced',label:'Invoiced',format:'currency'}] : [{key:'customer',label:'Customer'},{key:'city',label:'City'},{key:'state',label:'State'},{key:'orders',label:'Orders',format:'number'},{key:'invoices',label:'Invoices',format:'number'},{key:'bookings',label:'Bookings',format:'currency'},{key:'netInvoiced',label:'Net invoiced',format:'currency'},{key:'returnedQuantity',label:'Returned',format:'number'}]) : ownerView ? [{key:'owner',label:'Owner'},{key:'leads',label:'Leads',format:'number'},{key:'quotes',label:'Quotes',format:'number'},{key:'orders',label:'Orders',format:'number'},{key:'customers',label:'Customers',format:'number'},{key:'bookings',label:'Bookings',format:'currency'},{key:'netInvoiced',label:'Net invoiced',format:'currency'},{key:'returnedQuantity',label:'Returned',format:'number'}] : [{key:'sku',label:'SKU'},{key:'product',label:'Product'},{key:'category',label:'Category'},{key:'brand',label:'Brand'},{key:'finish',label:'Finish'},{key:'invoicedQuantity',label:'Invoiced qty',format:'number'},{key:'returnedQuantity',label:'Returned qty',format:'number'},{key:'availableStock',label:'Available stock',format:'number'},{key:'taxableValue',label:'Taxable value',format:'currency'},{key:'tax',label:'Tax',format:'currency'},{key:'invoicedValue',label:'Gross invoiced',format:'currency'},{key:'contribution',label:'Contribution %',format:'percent'}];
-    const warnings: string[] = []; if (!weightedBase) warnings.push('Weighted discount is unavailable where order-line list price is missing.'); if (activeOrders.length && mappedArchitects < activeOrders.length) warnings.push('Architect attribution is shown only where the quote is linked to an architect master.'); warnings.push('Gross margin is not shown because invoice lines do not preserve a governed lot-cost allocation snapshot.');
+    const warnings: string[] = []; if (!weightedBase) warnings.push('Weighted discount is unavailable where order-line list price is missing.'); if (activeOrders.length && mappedArchitects < activeOrders.length) warnings.push('Architect attribution is shown only where the quote is linked to an architect master.'); warnings.push('Gross margin is isolated in the Realised gross margin view, where uncovered historical lines remain explicit instead of being estimated.');
     return { meta: this.meta(definition, { coverage: activeOrders.length ? round((mappedArchitects / activeOrders.length) * 100, 1) : 100, coverageLabel: 'Current non-cancelled orders with architect-master attribution', warnings }), range: range.labels, filters: { ...args.filters, ...(user.role === 'sales' ? { ownerId: user.id, rowScope: 'self' } : {}) }, summary: [this.summary('net_sales','Net invoiced sales',netSales,priorNetSales,'currency','Posted invoice total less issued credit notes in the selected period.'),this.summary('bookings','Order bookings',bookings,priorBookings,'currency','Non-cancelled orders created in period; this is not revenue.'),this.summary('collections','Collections',collections,priorCollections,'currency','Posted customer payments for customers in the permitted sales scope.'),this.summary('tax','Invoice tax',invoiceTax,priorInvoiceTax,'currency','Tax amount on posted invoices in the selected period.'),this.summary('discount','Weighted discount',avgDiscount,priorAvgDiscount,'percent','List-price value less invoice-line taxable value divided by eligible list-price value.','governed_calculation'),this.summary('orders','Orders created',activeOrders.length,priorActiveOrders.length,'number','Non-cancelled sales orders created in period.'),this.summary('cancelled','Cancelled orders',currentOrders.length-activeOrders.length,priorCurrentOrders.length-priorActiveOrders.length,'number','Orders with cancelled status created in period.'),this.summary('quotes','Quotes sent',currentQuotes.filter((row:any)=>row.sentAt&&!row.supersededByQuoteId).length,priorQuotes.filter((row:any)=>row.sentAt&&!row.supersededByQuoteId).length,'number','Non-superseded quotes sent from the selected creation cohort.'),this.summary('customers','Active customers',new Set(activeOrders.map((row:any)=>row.customerId)).size,new Set(priorActiveOrders.map((row:any)=>row.customerId)).size,'number','Distinct customers with a non-cancelled order created in period.'),this.summary('returns','Accepted return quantity',returned,priorReturned,'number','Accepted return-line quantity created in period.'),this.summary('units','Invoiced quantity',quantity,priorQuantity,'number','Posted invoice-line quantity in the selected period.')], trend: invoices.map((row: any) => ({ date: indiaDay(row.issueDate), invoiced: n(row.totalAmount), taxable: n(row.taxableValue), tax: n(row.taxAmount), document: row.invoiceNumber })), breakdowns: relationshipView ? relationshipBreakdowns : ownerView ? ownerBreakdowns : productBreakdowns, rows: this.paginate(rows,args,columns,['netInvoiced','invoicedValue','bookings','invoiced','orders','quantity','contribution','sku','owner','customer','architect']) };
   }
 

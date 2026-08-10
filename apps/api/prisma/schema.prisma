@@ -871,6 +871,9 @@ model QuoteLine {
   taxAmount         Float     @default(0)
   grossLineTotal    Float     @default(0)
   lineTotal         Float     @default(0)
+  costSnapshot      Float?
+  costSnapshotSource String?
+  costSnapshotAt    DateTime?
   status            String    @default("quoted")
   isTileSpecial     Boolean   @default(false)
   metadata          Json      @default("{}")
@@ -922,6 +925,9 @@ model SalesOrderLine {
   taxAmount           Float            @default(0)
   grossLineTotal      Float            @default(0)
   lineTotal           Float            @default(0)
+  costSnapshot        Float?
+  costSnapshotSource  String?
+  costSnapshotAt      DateTime?
   status              String           @default("open")
   isTileSpecial       Boolean          @default(false)
   metadata            Json             @default("{}")
@@ -1101,6 +1107,9 @@ model SalesInvoiceLine {
   taxableValue     Float        @default(0)
   taxAmount        Float        @default(0)
   grossLineTotal   Float        @default(0)
+  costSnapshot     Float?
+  costSnapshotSource String?
+  costSnapshotAt  DateTime?
   createdAt        DateTime     @default(now())
   metadata         Json         @default("{}")
 
@@ -2087,6 +2096,35 @@ model ReportPreset {
   @@unique([ownerId, reportId, name])
   @@index([ownerId, reportId, updatedAt(sort: Desc)])
   @@index([sharedRole, reportId])
+}
+
+/// Versioned company targets used by governed target-versus-actual reports.
+/// Revisions supersede prior rows and voids preserve the full commercial audit trail.
+model ReportingTarget {
+  id             String   @id
+  targetKey      String
+  version        Int      @default(1)
+  metricKey      String
+  periodStart    DateTime
+  periodEnd      DateTime
+  scopeType      String   @default("company")
+  scopeId        String?
+  amount         Float
+  status         String   @default("active")
+  notes          String   @default("")
+  createdBy      String
+  supersededById String?
+  voidedAt       DateTime?
+  voidedBy       String?
+  voidReason     String?
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([targetKey, version])
+  @@index([metricKey, periodStart, status])
+  @@index([scopeType, scopeId, periodStart])
+  @@index([status, updatedAt(sort: Desc)])
 }
 
 model Vendor {

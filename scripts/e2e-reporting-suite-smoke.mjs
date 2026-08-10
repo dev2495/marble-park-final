@@ -82,7 +82,7 @@ try {
     assert(salesReport.summary.some((row) => row.id === metricId), `Sales report is missing ${metricId}`);
   }
   assert.deepEqual(salesReport.breakdowns.map((row) => row.id), ['product_pareto', 'category_mix', 'brand_mix']);
-  assert(salesReport.meta.warnings.some((warning) => warning.includes('Gross margin is not shown')), 'Sales report must expose the governed margin boundary');
+  assert(salesReport.meta.warnings.some((warning) => warning.includes('Realised gross margin')), 'Sales report must direct users to governed margin coverage');
   const operatorDefinition = ownerCatalog.find((row) => row.title === 'Sales by owner');
   const operatorReport = await service.report(owner, { reportId: operatorDefinition.id, from, to, pageSize: 10 });
   assert(operatorReport.rows.columns.some((column) => column.key === 'owner'));
@@ -96,6 +96,41 @@ try {
   const futureReport = await service.report(owner, { reportId: future.id, from, to });
   assert.equal(futureReport.unavailable.code, 'NEEDS_SETUP');
   assert.equal(futureReport.summary.length, 0, 'Unsupported AP must not fabricate a summary');
+  assert.equal(futureReport.unavailable.classification, 'external_or_module');
+  assert.equal(futureReport.unavailable.actionHref, '/dashboard/reports/setup#supplier-ap');
+
+  const readiness = await service.readiness();
+  assert.deepEqual(readiness.map((row) => row.id), ['targets', 'quoted_margin', 'realised_margin', 'master_data', 'supplier_ap', 'accounting']);
+  assert.equal(readiness.find((row) => row.id === 'supplier_ap').status, 'external_required');
+  assert.equal(readiness.find((row) => row.id === 'accounting').classification, 'external_integration');
+  const previousTarget = await prisma.reportingTarget.findFirst({ where: { targetKey: 'company:collections:2099-01' }, orderBy: { version: 'desc' } });
+  const previousVersion = Number(previousTarget?.version || 0);
+  const firstTarget = await service.saveTarget(owner, { metricKey: 'collections', month: '2099-01', amount: 1000, notes: 'Reporting lifecycle smoke' });
+  const revisedTarget = await service.saveTarget(owner, { metricKey: 'collections', month: '2099-01', amount: 1250, notes: 'Approved test revision' });
+  assert.equal(firstTarget.version, previousVersion + 1);
+  assert.equal(revisedTarget.version, previousVersion + 2);
+  assert.equal((await prisma.reportingTarget.findUnique({ where: { id: firstTarget.id } })).status, 'superseded');
+  const targetDefinition = ownerCatalog.find((row) => row.title === 'Target versus actual');
+  const targetReport = await service.report(owner, { reportId: targetDefinition.id, from: '2099-01-01', to: '2099-01-31' });
+  assert.equal(targetReport.unavailable, undefined);
+  assert.equal(targetReport.rows.items.length, 1);
+  assert.equal(targetReport.rows.items[0].target, 1250);
+  assert.equal(targetReport.rows.items[0].actual, 0);
+  const voidedTarget = await service.voidTarget(owner, revisedTarget.id, 'Lifecycle smoke completed');
+  assert.equal(voidedTarget.status, 'void');
+
+  const quotedMarginDefinition = ownerCatalog.find((row) => row.title === 'Historical quoted margin');
+  const quotedMarginReport = await service.report(owner, { reportId: quotedMarginDefinition.id, from, to, pageSize: 10 });
+  assert(quotedMarginReport.rows.columns.some((column) => column.key === 'capturedCost'));
+  assert.equal(quotedMarginReport.meta.coverageLabel, 'Quote lines with immutable cost snapshot');
+  const realisedMarginDefinition = ownerCatalog.find((row) => row.title === 'Realised gross margin');
+  const realisedMarginReport = await service.report(owner, { reportId: realisedMarginDefinition.id, from, to, pageSize: 10 });
+  assert(realisedMarginReport.rows.columns.some((column) => column.key === 'grossMargin'));
+  assert.equal(realisedMarginReport.meta.coverageLabel, 'Invoice lines with captured cost provenance');
+  const masterReadinessDefinition = ownerCatalog.find((row) => row.title === 'Master-data readiness');
+  const masterReadinessReport = await service.report(owner, { reportId: masterReadinessDefinition.id, from, to, pageSize: 10 });
+  assert.equal(masterReadinessReport.meta.coverageLabel, 'Active products meeting current governed requirements');
+  assert(masterReadinessReport.rows.columns.some((column) => column.key === 'missing'));
 
   const preset = await service.savePreset(owner, { reportId: salesDefinition.id, name: `Reporting smoke ${Date.now()}`, config: { datePreset: 'last_30_days', columns: ['sku', 'netValue'], metrics: ['net_sales'], filters: { ownerId: owner.id }, pageSize: 25 } });
   assert.equal(preset.ownerId, owner.id);
