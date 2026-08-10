@@ -1,6 +1,6 @@
 'use client';
 
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
@@ -84,6 +84,7 @@ export default function ReportsPage() {
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]); const [visibleMetrics, setVisibleMetrics] = useState<string[]>([]);
   const [showSave, setShowSave] = useState(false); const [presetName, setPresetName] = useState('');
   const [definitionOpen, setDefinitionOpen] = useState(false);
+  const configuredReportId = useRef('');
   const { data: boot, loading: bootLoading, error: bootError } = useQuery(BOOT, { fetchPolicy: 'cache-and-network' });
   const catalog: CatalogItem[] = useMemo(() => boot?.reportCatalog || [], [boot?.reportCatalog]); const options = boot?.reportingFilterOptions || {};
   const availableSuites = useMemo(() => SUITES.filter(suite => (suite.id!=='overview'||['owner','admin'].includes(boot?.me?.role)) && (suite.reports.some(report => catalog.some(item => item.title===report.title)) || suite.domains.some(domain => catalog.some(item => item.domain===domain)))), [boot?.me?.role,catalog]);
@@ -99,8 +100,16 @@ export default function ReportsPage() {
   const [savePreset, { loading:savingPreset }] = useMutation(SAVE_PRESET); const [deletePreset] = useMutation(DELETE_PRESET); const [exportCsv,{loading:exporting}] = useMutation(EXPORT);
   const selected = catalog.find(item => item.id === selectedId);
   const filteredLibrary = useMemo(() => suiteCatalog.filter(item=>`${item.title} ${item.description} ${item.domain}`.toLowerCase().includes(librarySearch.toLowerCase())), [librarySearch,suiteCatalog]);
-  useEffect(() => { setPage(1); setSortBy(''); setRowSearch(''); setFilters({}); setVisibleColumns([]); setVisibleMetrics([]); }, [selectedId]);
-  useEffect(() => { if (report?.rows?.columns?.length && !visibleColumns.length) setVisibleColumns(report.rows.columns.map((column:Column)=>column.key)); if (report?.summary?.length && !visibleMetrics.length) setVisibleMetrics(report.summary.map((metric:any)=>metric.id)); }, [report, visibleColumns.length, visibleMetrics.length]);
+  useEffect(() => { configuredReportId.current=''; setPage(1); setSortBy(''); setRowSearch(''); setFilters({}); setVisibleColumns([]); setVisibleMetrics([]); }, [selectedId]);
+  useEffect(() => {
+    // Apollo keeps the previous query result while the next report loads. Only
+    // initialise display controls once the payload belongs to the active view;
+    // otherwise old metric IDs can hide every KPI after a suite switch.
+    if (report?.meta?.id !== selectedId || configuredReportId.current===selectedId) return;
+    configuredReportId.current=selectedId;
+    setVisibleColumns((report.rows?.columns||[]).map((column:Column)=>column.key));
+    setVisibleMetrics((report.summary||[]).map((metric:any)=>metric.id));
+  }, [report, selectedId]);
   const columns:Column[] = (report?.rows?.columns||[]).filter((column:Column)=>visibleColumns.includes(column.key));
   const metrics = (report?.summary||[]).filter((metric:any)=>visibleMetrics.includes(metric.id)).sort((a:any,b:any)=>visibleMetrics.indexOf(a.id)-visibleMetrics.indexOf(b.id));
 
