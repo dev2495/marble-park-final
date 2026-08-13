@@ -40,6 +40,7 @@
     "smoke:import-scale": "node scripts/e2e-product-import-scale-smoke.mjs",
     "smoke:pricing-matrix": "node scripts/quote-pricing-matrix-smoke.cjs",
     "smoke:control-tower-scale": "node scripts/control-tower-scale-gate.mjs",
+    "smoke:catalogue-scale": "node scripts/catalogue-scale-gate.mjs",
     "smoke:inventory-location": "node scripts/inventory-location-scope-smoke.mjs",
     "smoke:inventory-truth": "node scripts/e2e-inventory-truth-cost-smoke.mjs",
     "smoke:shared-labels-tiles": "node scripts/e2e-shared-label-tile-master-smoke.mjs",

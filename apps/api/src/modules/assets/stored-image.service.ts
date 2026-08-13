@@ -30,10 +30,18 @@ export class StoredImageService {
           method: 'GET',
           redirect: 'manual',
           signal: controller.signal,
-          headers: { Accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.2', 'User-Agent': 'MarbleParkERP/1.0' },
+          headers: {
+            // Ask for formats the catalogue renderer and server-side validators
+            // can both verify. Some supplier CDNs otherwise negotiate AVIF.
+            Accept: 'image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.1',
+            // A number of manufacturer CDNs reject non-browser hotlinks even
+            // though the same public asset is usable from their own catalogue.
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36',
+            Referer: `${url.protocol}//${url.host}/`,
+          },
         } as any);
       } catch (error: any) {
-        throw new BadRequestException(`Could not download quote image: ${error?.name === 'AbortError' ? 'the image server timed out' : 'the image server could not be reached'}`);
+        throw new BadRequestException(`Could not download product image: ${error?.name === 'AbortError' ? 'the image server timed out' : 'the image server could not be reached'}`);
       } finally {
         clearTimeout(timeout);
       }
@@ -43,12 +51,12 @@ export class StoredImageService {
       url = this.parseRemoteUrl(new URL(location, url).toString());
     }
 
-    if (!response?.ok) throw new BadRequestException(`Quote image server returned HTTP ${response?.status || 'error'}`);
+    if (!response?.ok) throw new BadRequestException(`Product image server returned HTTP ${response?.status || 'error'}`);
     const contentLength = Number(response.headers.get('content-length') || 0);
-    if (contentLength > MAX_IMAGE_BYTES) throw new BadRequestException('Quote images must be 5 MB or smaller');
+    if (contentLength > MAX_IMAGE_BYTES) throw new BadRequestException('Product images must be 5 MB or smaller');
     const content = await this.readBoundedBody(response);
     const extension = this.detectExtension(content);
-    if (!extension) throw new BadRequestException('Quote image URL must return a valid JPG, PNG, or WebP image');
+    if (!extension) throw new BadRequestException('Product image URL must return a valid JPG, PNG, or WebP image');
 
     const digest = createHash('sha256').update(content).digest('hex');
     const fileName = `remote-${digest.slice(0, 32)}${extension}`;
@@ -86,8 +94,7 @@ export class StoredImageService {
   }
 
   private publicUrl(fileName: string) {
-    const base = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '');
-    return `${base}/catalogue-images/manual/${fileName}`;
+    return `/catalogue-images/manual/${fileName}`;
   }
 
   private isTrustedBundledPath(value: string) {
@@ -100,10 +107,10 @@ export class StoredImageService {
     try {
       parsed = new URL(value);
     } catch {
-      throw new BadRequestException('Quote image must be a valid HTTPS URL or an uploaded Marble Park image');
+      throw new BadRequestException('Product image must be a valid HTTPS URL or an uploaded Marble Park image');
     }
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
-      throw new BadRequestException('Quote image URLs must use HTTPS and cannot contain credentials');
+      throw new BadRequestException('Product image URLs must use HTTPS and cannot contain credentials');
     }
     return parsed;
   }
@@ -147,7 +154,7 @@ export class StoredImageService {
       bytes += chunk.length;
       if (bytes > MAX_IMAGE_BYTES) {
         await reader.cancel();
-        throw new BadRequestException('Quote images must be 5 MB or smaller');
+        throw new BadRequestException('Product images must be 5 MB or smaller');
       }
       chunks.push(chunk);
     }

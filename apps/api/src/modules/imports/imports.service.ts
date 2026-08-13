@@ -4,6 +4,7 @@ import { ulid } from 'ulid';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHmac } from 'crypto';
+import { StoredImageService } from '../assets/stored-image.service';
 
 type ImportMode = 'preview' | 'apply';
 
@@ -92,7 +93,7 @@ const MAX_EMBEDDED_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024;
 
 @Injectable()
 export class ImportsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private storedImages: StoredImageService) {}
 
   async productImportReadiness() {
     const masters = await this.masterSnapshot();
@@ -304,6 +305,7 @@ export class ImportsService {
 
     let appliedProducts: any[] = [];
     try {
+      await this.persistExternalProductImages(plan.rows);
       appliedProducts = await this.prisma.$transaction(async (tx) => {
         const rows = plan.rows.map((row: any) => ({ id: ulid(), sku: row.normalized.sku, action: row.action, normalized: row.normalized }));
         for (let offset = 0; offset < rows.length; offset += 400) {
@@ -343,6 +345,25 @@ export class ImportsService {
     if (!/\.xlsx$/i.test(filePath || '')) {
       throw new BadRequestException('Only .xlsx catalogue imports are supported. PDF extraction has been removed because vendor catalogues are not reliable enough for automated SKU creation.');
     }
+  }
+
+  private async persistExternalProductImages(rows: any[]) {
+    const candidates = rows.filter((row: any) => /^https:\/\//i.test(String(row.normalized?.imageUrl || '')));
+    const concurrency = 8;
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(concurrency, candidates.length) }, async () => {
+      for (;;) {
+        const index = cursor++;
+        if (index >= candidates.length) return;
+        const row = candidates[index];
+        try {
+          row.normalized.imageUrl = await this.storedImages.persistRemoteImage(row.normalized.imageUrl);
+        } catch (error: any) {
+          throw new BadRequestException(`SKU ${row.normalized.sku}: ${error?.message || 'product image could not be stored'}`);
+        }
+      }
+    });
+    await Promise.all(workers);
   }
 
   private async readExcelRows(filePath: string, mode: ImportMode, reviewRows: ProductImportReviewRow[] = []) {
@@ -1036,7 +1057,6 @@ export class ImportsService {
     const root = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images');
     const directory = path.join(root, 'manual');
     if (persist) fs.mkdirSync(directory, { recursive: true });
-    const publicBase = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '');
 
     let totalBytes = 0;
     for (const image of images) {
@@ -1074,7 +1094,7 @@ export class ImportsService {
       const filePath = path.join(directory, fileName);
       fs.writeFileSync(filePath, buffer, { mode: 0o640 });
       persistedFiles.push(filePath);
-      byRow.set(rowNumber, `${publicBase}/catalogue-images/manual/${fileName}`);
+      byRow.set(rowNumber, `/catalogue-images/manual/${fileName}`);
     }
 
     return { byRow, errors, persistedFiles };

@@ -57,6 +57,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: https://${APP_HOST}/graphql
+        NEXT_PUBLIC_CATALOGUE_IMAGE_ORIGIN: http://api:4000
     restart: unless-stopped
     environment:
       NODE_ENV: production

@@ -11,7 +11,9 @@ RUN npm ci --legacy-peer-deps --workspace=apps/web --include-workspace-root
 COPY apps/web ./apps/web
 COPY scripts ./scripts
 ARG NEXT_PUBLIC_API_URL=https://api-production-bc49.up.railway.app/graphql
+ARG NEXT_PUBLIC_CATALOGUE_IMAGE_ORIGIN
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_CATALOGUE_IMAGE_ORIGIN=${NEXT_PUBLIC_CATALOGUE_IMAGE_ORIGIN}
 RUN npm run build:web
 
 ENV NODE_ENV=production

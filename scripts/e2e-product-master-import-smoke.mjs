@@ -127,7 +127,7 @@ async function main() {
     assert(/changed|revalidate/i.test(unconfirmedError), 'Apply must reject review edits that differ from the server-signed preview');
 
     const applied = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $confirmationToken: String!, $reviewRows: JSON) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, confirmationToken: $confirmationToken, reviewRows: $reviewRows) { result } }`, { uploadId, filename, kind: 'excel', confirmationToken: preview.confirmationToken, reviewRows }, token)).applyUploadedImport.result;
-    assert(applied.status === 'applied' && applied.created === 1 && applied.updated === 0 && applied.failed === 0, 'Confirmed workbook must create new SKUs atomically without updates');
+    assert(applied.status === 'applied' && applied.created === 1 && applied.updated === 0 && applied.failed === 0, `Confirmed workbook must create new SKUs atomically without updates: ${JSON.stringify(applied)}`);
 
     const tile = await prisma.product.findUnique({ where: { sku }, include: { balances: true } });
     assert(tile?.internalCode === `BT-${suffix}` && tile.purchaseUom === 'BOX' && tile.salesUom === 'BOX' && tile.baseUom === 'PC' && tile.piecesPerPack === 1 && tile.coveragePerPack === 0 && Number(tile.sellPrice) === 0, 'Imported tile must use safe defaults when optional unit, box conversion and price fields are blank');

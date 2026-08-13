@@ -84,8 +84,7 @@ function assertManagedImportPath(filePath: string) {
 }
 
 function cataloguePublicUrl(fileName: string) {
-  const baseUrl = String(process.env.PUBLIC_CATALOGUE_IMAGE_BASE_URL || '').replace(/\/+$/, '');
-  return `${baseUrl}/catalogue-images/manual/${fileName}`;
+  return `/catalogue-images/manual/${fileName}`;
 }
 
 function cleanupExpiredImportUploads() {

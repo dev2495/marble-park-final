@@ -1,7 +1,7 @@
 {$APP_HOST} {
 	encode zstd gzip
 
-	@api path /graphql /healthz /readyz /catalogue-images/* /api/document-vault/*
+	@api path /graphql /healthz /readyz /catalogue-images/manual/* /api/document-vault/*
 	@login path / /login /reset-password
 	reverse_proxy @api api:4000
 	reverse_proxy web:3000

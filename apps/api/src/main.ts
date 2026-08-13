@@ -28,7 +28,9 @@ async function bootstrap() {
   const catalogueImageRoot = process.env.CATALOGUE_IMAGE_STORAGE_DIR || path.resolve(process.cwd(), '../../apps/web/public/catalogue-images');
   const manualImageDir = path.join(catalogueImageRoot, 'manual');
   fs.mkdirSync(manualImageDir, { recursive: true });
-  app.use('/catalogue-images/manual', express.static(manualImageDir));
+  // Asset names are immutable ULIDs or content hashes. Long-lived caching keeps
+  // catalogue scrolling fast without risking stale replacements.
+  app.use('/catalogue-images/manual', express.static(manualImageDir, { maxAge: '30d', immutable: true, etag: true }));
 
   const configuredOrigins = process.env.CORS_ORIGIN?.split(',')
     .map((origin) => origin.trim())

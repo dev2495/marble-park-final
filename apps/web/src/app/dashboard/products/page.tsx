@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useQuery, gql } from '@apollo/client';
@@ -97,11 +97,16 @@ export default function ProductsPage() {
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [portalReady, setPortalReady] = useState(false);
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
-  const { data, loading, error, refetch } = useQuery(GET_PRODUCTS, { variables: { search: debouncedSearch || undefined, category: category || undefined, take: pageSize + 1, skip: page * pageSize } });
+  const catalogueResultsRef = useRef<HTMLElement | null>(null);
+  const { data, previousData, loading, error, refetch } = useQuery(GET_PRODUCTS, {
+    variables: { search: debouncedSearch || undefined, category: category || undefined, take: pageSize + 1, skip: page * pageSize },
+    notifyOnNetworkStatusChange: true,
+  });
   const { data: categoriesData, error: categoriesError } = useQuery(GET_CATEGORIES);
   const { data: statsData, error: statsError } = useQuery(GET_PRODUCT_STATS);
 
-  const productPage = useMemo<any[]>(() => data?.products || [], [data?.products]);
+  const visibleData = data || previousData;
+  const productPage = useMemo<any[]>(() => visibleData?.products || [], [visibleData?.products]);
   const products = useMemo<any[]>(() => productPage.slice(0, pageSize), [productPage]);
   const hasNextPage = productPage.length > pageSize;
   const stats = statsData?.productStats;
@@ -112,6 +117,11 @@ export default function ProductsPage() {
   const SelectedIcon = look.icon;
 
   const compositeError = error || categoriesError || statsError;
+  const initialLoading = loading && !visibleData;
+  const changePage = (nextPage: number) => {
+    setPage(Math.max(0, nextPage));
+    requestAnimationFrame(() => catalogueResultsRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' }));
+  };
   return (
     <div className="space-y-8 pb-10">
       {compositeError ? <QueryErrorBanner error={compositeError} onRetry={() => refetch()} /> : null}
@@ -275,14 +285,15 @@ export default function ProductsPage() {
         </div>
       </section>
 
-      {loading ? (
+      <section ref={catalogueResultsRef} className="scroll-mt-4" aria-busy={loading}>
+      {initialLoading ? (
         <div className="mp-panel flex h-72 items-center justify-center rounded-r5">
-          <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-stone-900" />
+          <div className="text-center"><div className="mx-auto h-10 w-10 animate-spin rounded-full border-b-2 border-stone-900 motion-reduce:animate-none" /><p className="mt-3 text-xs font-bold text-[var(--ink-4)]">Loading catalogue…</p></div>
         </div>
       ) : products.length === 0 ? (
         <div className="rounded-r5 border border-dashed border-[var(--line)] bg-[var(--surface)]/70 p-16 text-center text-[var(--ink-4)]">No products found.</div>
       ) : (
-        <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="relative"><section className={`grid grid-cols-1 gap-5 transition-opacity duration-150 motion-reduce:transition-none md:grid-cols-2 xl:grid-cols-3 ${loading ? 'opacity-60' : 'opacity-100'}`}>
           {products.map((product: any) => {
             const productLook = getLook(product.category);
             const ProductIcon = productLook.icon;
@@ -291,7 +302,7 @@ export default function ProductsPage() {
               <article
                 key={product.id}
                 onClick={() => { setSelectedId(product.id); if (galleryFor(product).length > 0) { setGalleryProduct(product); setGalleryIndex(0); } }}
-                className="mp-card group overflow-hidden rounded-r5 text-left transition-all hover:-translate-y-1 hover:shadow-2xl"
+                className="mp-card group overflow-hidden rounded-r5 text-left [contain-intrinsic-size:620px] [content-visibility:auto] transition-[transform,box-shadow] duration-150 motion-reduce:transition-none hover:-translate-y-0.5 hover:shadow-xl motion-reduce:hover:translate-y-0"
               >
                 {galleryFor(product).length ? (
                   <ProductImageFrame
@@ -333,9 +344,10 @@ export default function ProductsPage() {
               </article>
             );
           })}
-        </section>
+        </section>{loading ? <div className="pointer-events-none sticky bottom-4 mx-auto mt-[-3.5rem] w-fit rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-bold text-[var(--surface)] shadow-xl">Updating catalogue…</div> : null}</div>
       )}
-      {!loading && (page > 0 || hasNextPage) ? <nav aria-label="Catalogue pages" className="mp-panel flex items-center justify-between rounded-r4 p-3"><Button variant="outline" disabled={page === 0} onClick={() => { setPage((current) => Math.max(0, current - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}><ChevronLeft className="mr-2 h-4 w-4" />Previous</Button><span className="text-sm font-semibold text-[var(--ink-4)]">Page {page + 1}</span><Button variant="outline" disabled={!hasNextPage} onClick={() => { setPage((current) => current + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Next<ChevronRight className="ml-2 h-4 w-4" /></Button></nav> : null}
+      {!initialLoading && (page > 0 || hasNextPage) ? <nav aria-label="Catalogue pages" className="mp-panel mt-5 flex items-center justify-between rounded-r4 p-3"><Button variant="outline" disabled={page === 0 || loading} onClick={() => changePage(page - 1)}><ChevronLeft className="mr-2 h-4 w-4" />Previous</Button><span aria-live="polite" className="text-sm font-semibold text-[var(--ink-4)]">Page {page + 1}{loading ? ' · Loading' : ''}</span><Button variant="outline" disabled={!hasNextPage || loading} onClick={() => changePage(page + 1)}>Next<ChevronRight className="ml-2 h-4 w-4" /></Button></nav> : null}
+      </section>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
+import { StoredImageService } from '../assets/stored-image.service';
 
 export interface CreateProductInput {
   sku: string;
@@ -65,7 +66,7 @@ export interface UpdateProductInput {
 
 @Injectable()
 export class ProductsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private storedImages: StoredImageService) {}
 
   async findAll(args?: { search?: string; category?: string; take?: number; skip?: number; includeInactive?: boolean }) {
     const where: any = args?.includeInactive ? {} : { status: 'active' };
@@ -140,6 +141,7 @@ export class ProductsService {
     const coveragePerPack = this.numberAtLeastZero(data.coveragePerPack || 0, 'Coverage per pack');
     const validUoms = await this.prisma.unitOfMeasure.count({ where: { code: { in: Array.from(new Set(uoms)) }, status: 'active' } });
     if (validUoms !== new Set(uoms).size) throw new BadRequestException('Base, purchase and sales UOM must use active UOM masters');
+    const normalizedMedia = await this.normalizeMedia(data.media);
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
@@ -162,7 +164,7 @@ export class ProductsService {
           mrpVerifiedById: mrp === null ? null : actorUserId || 'system',
           taxClass: data.taxClass || 'GST_18',
           status,
-          media: this.normalizeMedia(data.media),
+          media: normalizedMedia,
           sourceRefs: {},
           description: data.description || '',
           internalCode,
@@ -258,7 +260,7 @@ export class ProductsService {
     if (effectiveSellPrice > 0 && effectiveFloorPrice > effectiveSellPrice) {
       throw new BadRequestException('Floor price cannot exceed the sell price');
     }
-    if (data.media !== undefined) update.media = this.normalizeMedia(data.media);
+    if (data.media !== undefined) update.media = await this.normalizeMedia(data.media);
     if (update.category) update.categoryId = (await this.ensureCategory(update.category))?.id || null;
     if (update.brand) update.brandId = (await this.ensureBrand(update.brand))?.id || null;
     if (update.finish) update.finishId = (await this.ensureFinish(update.finish))?.id || null;
@@ -591,7 +593,7 @@ export class ProductsService {
     return numberValue;
   }
 
-  private normalizeMedia(media: any) {
+  private async normalizeMedia(media: any) {
     if (!media) return {};
     let candidate = media;
     if (typeof candidate === 'string') {
@@ -606,19 +608,22 @@ export class ProductsService {
     }
     const entries = Array.isArray(candidate.gallery) ? candidate.gallery : Array.isArray(candidate.images) ? candidate.images : [];
     if (entries.length > 8) throw new BadRequestException('A product can have at most 8 images');
-    const gallery = entries.map((entry: any) => {
+    const galleryInput = entries.map((entry: any) => {
       const url = typeof entry === 'string' ? entry : entry?.url;
       if (!this.isSafeMediaUrl(url)) throw new BadRequestException('Product images must use an approved uploaded image URL');
       return typeof entry === 'string' ? { url } : { url, alt: String(entry.alt || '').slice(0, 180) };
     });
+    const persisted = await Promise.all(galleryInput.map((entry: any) => this.storedImages.persistRemoteImage(entry.url)));
+    const gallery = galleryInput.map((entry: any, index: number) => ({ ...entry, url: persisted[index] }));
     const urls = new Set<string>();
     for (const image of gallery) {
       if (urls.has(image.url)) throw new BadRequestException('Product image URLs must be unique');
       urls.add(image.url);
     }
-    const primaryUrl = candidate.primaryUrl || candidate.primaryImage || gallery[0]?.url || null;
-    if (primaryUrl && !urls.has(primaryUrl)) throw new BadRequestException('The primary product image must be part of the gallery');
-    return { gallery, primaryUrl };
+    const primaryInput = candidate.primaryUrl || candidate.primaryImage || galleryInput[0]?.url || null;
+    const primaryIndex = primaryInput ? galleryInput.findIndex((entry: any) => entry.url === primaryInput) : -1;
+    if (primaryInput && primaryIndex < 0) throw new BadRequestException('The primary product image must be part of the gallery');
+    return { gallery, primaryUrl: primaryIndex >= 0 ? gallery[primaryIndex].url : gallery[0]?.url || null };
   }
 
   private isSafeMediaUrl(value: unknown) {
