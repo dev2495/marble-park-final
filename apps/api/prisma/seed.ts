@@ -33,25 +33,50 @@ const productionTileSizes = [
 async function ensureProductionProductMasters() {
   const now = new Date();
   for (const [code, name] of productionCategories) {
-    await prisma.productCategory.upsert({
-      where: { name },
-      update: { code, status: 'active', updatedAt: now },
-      create: { id: ulid(), code, name, description: 'Retail product category', status: 'active', sortOrder: 100, metadata: { source: 'production-baseline' }, updatedAt: now },
-    });
+    const existing = await prisma.productCategory.findUnique({ where: { code } })
+      || await prisma.productCategory.findUnique({ where: { name } });
+    if (existing) {
+      await prisma.productCategory.update({ where: { id: existing.id }, data: { code: existing.code || code, status: 'active', updatedAt: now } });
+    } else {
+      await prisma.productCategory.create({ data: { id: ulid(), code, name, description: 'Retail product category', status: 'active', sortOrder: 100, metadata: { source: 'production-baseline' }, updatedAt: now } });
+    }
   }
   for (const [code, name] of productionFinishes) {
-    await prisma.productFinish.upsert({
-      where: { name },
-      update: { code, status: 'active', updatedAt: now },
-      create: { id: ulid(), code, name, description: 'Retail product finish', status: 'active', sortOrder: 100, metadata: { source: 'production-baseline' }, updatedAt: now },
-    });
+    const existing = await prisma.productFinish.findFirst({ where: { code } })
+      || await prisma.productFinish.findUnique({ where: { name } });
+    if (existing) {
+      await prisma.productFinish.update({ where: { id: existing.id }, data: { code: existing.code || code, status: 'active', updatedAt: now } });
+    } else {
+      await prisma.productFinish.create({ data: { id: ulid(), code, name, description: 'Retail product finish', status: 'active', sortOrder: 100, metadata: { source: 'production-baseline' }, updatedAt: now } });
+    }
   }
   for (const [code, name, pcsPerBox] of productionTileSizes) {
-    await prisma.tileSize.upsert({
-      where: { name: String(name) },
-      update: { code: String(code), uom: 'BOX', pcsPerBox: Number(pcsPerBox), status: 'active', updatedAt: now },
-      create: { id: ulid(), code: String(code), name: String(name), uom: 'BOX', pcsPerBox: Number(pcsPerBox), description: 'Common tile size; adjust pack conversion per SKU where required', status: 'active', sortOrder: 100, metadata: { source: 'production-baseline' }, updatedAt: now },
-    });
+    const [widthMm, heightMm] = String(code).split('X').map(Number);
+    const effectivePieces = Number(pcsPerBox);
+    const areaPerPieceSqM = widthMm * heightMm / 1_000_000;
+    const areaPerPieceSqFt = areaPerPieceSqM * 10.7639104167;
+    const existing = await prisma.tileSize.findUnique({ where: { code: String(code) } })
+      || await prisma.tileSize.findUnique({ where: { name: String(name) } });
+    if (existing) {
+      const existingPieces = Number(existing.pcsPerBox || 0) || effectivePieces;
+      await prisma.tileSize.update({ where: { id: existing.id }, data: {
+        code: existing.code || String(code), uom: existing.uom || 'BOX', pcsPerBox: existingPieces,
+        widthMm: existing.widthMm ?? widthMm, heightMm: existing.heightMm ?? heightMm,
+        areaPerPieceSqM: existing.areaPerPieceSqM ?? areaPerPieceSqM,
+        areaPerPieceSqFt: existing.areaPerPieceSqFt ?? areaPerPieceSqFt,
+        areaPerBoxSqM: existing.areaPerBoxSqM ?? areaPerPieceSqM * existingPieces,
+        areaPerBoxSqFt: existing.areaPerBoxSqFt ?? areaPerPieceSqFt * existingPieces,
+        status: 'active', updatedAt: now,
+      } });
+    } else {
+      await prisma.tileSize.create({ data: {
+        id: ulid(), code: String(code), name: String(name), uom: 'BOX', pcsPerBox: effectivePieces,
+        widthMm, heightMm, areaPerPieceSqM, areaPerPieceSqFt,
+        areaPerBoxSqM: areaPerPieceSqM * effectivePieces, areaPerBoxSqFt: areaPerPieceSqFt * effectivePieces,
+        description: 'Common tile size; adjust pack conversion per SKU where required', status: 'active', sortOrder: 100,
+        metadata: { source: 'production-baseline' }, updatedAt: now,
+      } });
+    }
   }
 }
 
