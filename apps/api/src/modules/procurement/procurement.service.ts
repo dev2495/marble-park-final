@@ -1116,7 +1116,23 @@ export class ProcurementService {
   private async decorateGrns(notes: any[]) {
     const grnIds = notes.map((note) => note.id);
     const lines = grnIds.length ? await (this.prisma as any).goodsReceiptLine.findMany({ where: { goodsReceiptNoteId: { in: grnIds } } }) : [];
-    const byGrn = this.groupBy(lines, 'goodsReceiptNoteId');
+    const productIds = Array.from(new Set(lines.map((line: any) => line.productId).filter(Boolean))) as string[];
+    const lotIds = Array.from(new Set(lines.map((line: any) => line.lotId).filter(Boolean))) as string[];
+    const [products, lots] = await Promise.all([
+      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [],
+      lotIds.length ? (this.prisma as any).inventoryLot.findMany({
+        where: { id: { in: lotIds } },
+        include: { balances: { include: { location: true }, orderBy: { updatedAt: 'desc' } } },
+      }) : [],
+    ]);
+    const productMap = new Map(products.map((product: any) => [product.id, product] as const));
+    const lotMap = new Map(lots.map((lot: any) => [lot.id, lot] as const));
+    const decoratedLines = lines.map((line: any) => ({
+      ...line,
+      product: line.productId ? productMap.get(line.productId) || null : null,
+      lot: line.lotId ? lotMap.get(line.lotId) || null : null,
+    }));
+    const byGrn = this.groupBy(decoratedLines, 'goodsReceiptNoteId');
     return notes.map((note) => ({ ...note, lines: byGrn.get(note.id) || [] }));
   }
 

@@ -46,6 +46,7 @@
     "smoke:inventory-truth": "node scripts/e2e-inventory-truth-cost-smoke.mjs",
     "smoke:shared-labels-tiles": "node scripts/e2e-shared-label-tile-master-smoke.mjs",
     "smoke:procurement-tiles-display": "node scripts/e2e-procurement-tile-display-release-gate.mjs",
+    "smoke:branded-label-qr": "tsx scripts/verify-branded-label-qr.ts",
     "smoke:reporting-suite": "node scripts/e2e-reporting-suite-smoke.mjs",
     "smoke:session-inactivity": "node scripts/e2e-session-inactivity-smoke.mjs",
     "smoke:auth-hardening": "node scripts/e2e-auth-hardening-smoke.mjs",
@@ -62,6 +63,7 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
+    "jsqr": "^1.4.0",
     "typescript": "^5.3.3"
   },
   "overrides": {

@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import * as QRCode from 'qrcode';
 import { ulid } from 'ulid';
+import { brandedLabelQrDataUrl } from '../common/branded-label-qr';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1274,6 +1274,10 @@ export class OperationsService {
       },
     });
     if (!job) throw new NotFoundException('Internal label job not found');
+    const sourceLot = job.instances.find((instance: any) => instance.lot)?.lot;
+    const sourceReceipt = sourceLot && ['grn', 'manual_grn'].includes(String(sourceLot.sourceType || ''))
+      ? await (this.prisma as any).goodsReceiptNote.findUnique({ where: { id: sourceLot.sourceId }, select: { grnNumber: true, vendorName: true, supplierChallan: true } })
+      : null;
     const selection = new Set((selectedIds || []).map(String));
     const printable = job.instances.filter((instance: any) => instance.status === 'active' && (!selection.size || selection.has(instance.id)));
     if (!printable.length) throw new BadRequestException('No active labels were selected');
@@ -1292,6 +1296,11 @@ export class OperationsService {
         lotNumber: instance.lot?.lotNumber || null,
         supplierBatch: instance.lot?.supplierBatch || null,
         receivedAt: instance.lot?.receivedAt || null,
+        sourceDocument: sourceReceipt?.grnNumber || null,
+        vendorName: sourceReceipt?.vendorName || null,
+        supplierChallan: sourceReceipt?.supplierChallan || null,
+        locations: instance.lot?.balances?.filter((row: any) => Number(row.onHand || 0) > 0).map((row: any) => row.location?.code || row.location?.name).filter(Boolean) || [],
+        availableQuantity: instance.lot?.balances?.reduce((sum: number, row: any) => sum + Number(row.available || 0), 0) ?? null,
         displaySample: instance.displaySample?.sampleNumber || null,
       };
       return {
@@ -1299,7 +1308,7 @@ export class OperationsService {
         copyIndex,
         payload,
         qrValue: `MP-LABEL:${instance.labelCode}`,
-        qrDataUrl: await QRCode.toDataURL(`MP-LABEL:${instance.labelCode}`, { errorCorrectionLevel: 'M', margin: 1, width: 240 }),
+        qrDataUrl: await brandedLabelQrDataUrl(`MP-LABEL:${instance.labelCode}`),
       };
     }));
     return { ...job, instances: labels, labels };

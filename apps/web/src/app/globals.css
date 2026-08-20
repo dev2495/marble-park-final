@@ -571,3 +571,14 @@
 :root.dark .icon-pop-danger  { background: rgba(239,68,68,0.22);  color: #fca5a5; box-shadow: 0 0 0 1px rgba(239,68,68,0.35); }
 :root.dark .icon-pop-violet  { background: rgba(13,116,112,0.24); color: #8bd2ce; box-shadow: 0 0 0 1px rgba(13,116,112,0.35); }
 :root.dark .icon-pop-sky     { background: rgba(56,189,248,0.22); color: #7dd3fc; box-shadow: 0 0 0 1px rgba(56,189,248,0.35); }
+
+/* A deliberately paper-like surface used by the physical print register.
+   It stays legible when the surrounding operator workspace follows dark mode. */
+.label-light-surface {
+  --bg-soft: #f8f5f3;
+  --surface: #ffffff;
+  --ink: #211b19;
+  --ink-3: #5e514d;
+  --ink-4: #776761;
+  --line: #e8dcd7;
+}
