@@ -1405,9 +1405,18 @@ export class OperationsService {
     return this.prisma.$transaction(async (tx: any) => {
       const instance = await tx.internalLabelInstance.findUnique({
         where: { labelCode: normalizedCode },
-        include: { product: true, lot: true, displaySample: true, labelJob: true },
+        include: {
+          product: { include: { tileDesignMaster: true, tileSizeMaster: true, aliases: { where: { status: 'active' }, orderBy: { isPrimary: 'desc' } } } },
+          lot: { include: { balances: { include: { location: true } } } },
+          displaySample: true,
+          labelJob: true,
+        },
       });
-      const result = instance?.status === 'active' ? 'success' : instance ? 'inactive' : 'not_found';
+      const subjectActive = instance?.status === 'active'
+        && instance.product?.status === 'active'
+        && (!instance.lot || instance.lot.status === 'active')
+        && (!instance.displaySample || instance.displaySample.status === 'active');
+      const result = subjectActive ? 'success' : instance ? 'inactive' : 'not_found';
       const event = await tx.internalScanEvent.create({
         data: {
           id: ulid(), labelInstanceId: instance?.id || null, labelCode: normalizedCode,

@@ -137,6 +137,8 @@ async function main() {
     prisma.displaySampleEvent.findMany({ where: { displaySampleId: display.id } }),
   ]);
   assert(Number(lotBalance.available) === manualQuantity && returnedDisplay.status === 'removed' && Number(returnedDisplay.issuedQuantity) === 0 && displayEvents.some((event) => event.action === 'return_to_stock'), 'Display return must restore the exact lot once and close the asset');
+  const inactiveScan = (await gql('mutation($code:String!){scanInternalLabel(labelCode:$code)}', { code: printData.labels[0].qrValue }, token)).scanInternalLabel;
+  assert(inactiveScan.result === 'inactive', 'A removed display must never scan as an active physical asset even when its historic label record is retained');
 
   const [aggregate, lots, reconciliation, designPage, variantPage] = await Promise.all([
     prisma.inventoryBalance.findUnique({ where: { productId: variant.id } }),
@@ -153,7 +155,7 @@ async function main() {
     ok: true, designCode: design.designCode, warehouseSku: variant.sku, sizeCode: size.code, importedDesignVariants: importedDesign.variants.length,
     poNumber: po.poNumber, poStatus: poRead.status, poBasePieces: piecesPerPack * 3,
     manualGrn: manual.grnNumber, manualBasePieces: manualQuantity, displayCode: display.internalCode,
-    displayIssueAndReturn: true, scannerPayload: true, cancelledPrintCount: cancelledInstance.printCount,
+    displayIssueAndReturn: true, scannerPayload: true, removedDisplayScan: inactiveScan.result, cancelledPrintCount: cancelledInstance.printCount,
     stock: { onHand: aggregate.onHand, available: aggregate.available, lotOnHand: lots._sum.onHand, lotAvailable: lots._sum.available },
     criticalReconciliation: reconciliation.stockReconciliation.summary.critical,
   }, null, 2));

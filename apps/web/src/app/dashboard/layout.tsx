@@ -9,7 +9,7 @@ import {
   KeyRound, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
   Truck, UserCircle2, Users, UserCog, UserCheck, BadgeCheck, CreditCard, FileText, MapPinned, RotateCcw, PackagePlus,
   Menu, X,
-  ArrowLeftRight, QrCode, Scale, BarChart3, HelpCircle, BellRing,
+  ArrowLeftRight, QrCode, Scale, BarChart3, HelpCircle, BellRing, Store,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -86,6 +86,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
       { name: 'Procurement', href: '/dashboard/procurement', icon: ClipboardList, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'procurement.manage' },
       { name: 'Opening Stock', href: '/dashboard/inventory/opening-stock', icon: PackagePlus, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
       { name: 'Transfers', href: '/dashboard/inventory/transfers', icon: ArrowLeftRight, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
+      { name: 'Display Assets', href: '/dashboard/inventory/display-assets', icon: Store, roles: ['admin', 'owner', 'inventory_manager'], permission: 'inventory.manage' },
       { name: 'Labels & Scan', href: '/dashboard/inventory/labels', icon: QrCode, roles: ['admin', 'owner', 'inventory_manager', 'dispatch_ops'], permission: 'inventory.manage' },
       { name: 'Inventory Control', href: '/dashboard/inventory/control', icon: Scale, roles: ['admin', 'owner', 'inventory_manager'], permission: 'stock_counts.manage' },
       { name: 'Stock Count', href: '/dashboard/inventory/stock-count', icon: ClipboardCheck, roles: ['admin', 'owner', 'inventory_manager'], permission: 'stock_counts.manage' },
@@ -132,6 +133,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/inventory/inwards': 'GRN Receiving',
   '/dashboard/inventory/opening-stock': 'Opening Stock',
   '/dashboard/inventory/transfers': 'Stock Transfers',
+  '/dashboard/inventory/display-assets': 'Display Assets',
   '/dashboard/inventory/labels': 'Labels & Scan',
   '/dashboard/inventory/control': 'Inventory Control',
   '/dashboard/inventory/adjustments': 'Stock Adjustments',

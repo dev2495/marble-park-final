@@ -17,12 +17,17 @@ const GET_PRODUCTS = gql`
     products(search: $search, category: $category, take: $take, skip: $skip) {
       id
       sku
+      internalCode
       name
       category
       brand
       finish
       dimensions
       unit
+      purchaseUom
+      salesUom
+      piecesPerPack
+      coveragePerPack
       sellPrice
       floorPrice
       taxClass
@@ -44,6 +49,7 @@ const GET_PRODUCT_STATS = gql`
     productStats
   }
 `;
+const GET_PRODUCT = gql`query CatalogueProduct($id:ID!){product(id:$id){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice floorPrice taxClass status media description}}`;
 
 
 const emptyPreview = {
@@ -93,6 +99,7 @@ export default function ProductsPage() {
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [requestedProductId, setRequestedProductId] = useState('');
   const [galleryProduct, setGalleryProduct] = useState<any>(null);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [portalReady, setPortalReady] = useState(false);
@@ -104,6 +111,7 @@ export default function ProductsPage() {
   });
   const { data: categoriesData, error: categoriesError } = useQuery(GET_CATEGORIES);
   const { data: statsData, error: statsError } = useQuery(GET_PRODUCT_STATS);
+  const { data: requestedData, error: requestedError } = useQuery(GET_PRODUCT, { variables: { id: requestedProductId }, skip: !requestedProductId });
 
   const visibleData = data || previousData;
   const productPage = useMemo<any[]>(() => visibleData?.products || [], [visibleData?.products]);
@@ -111,12 +119,12 @@ export default function ProductsPage() {
   const hasNextPage = productPage.length > pageSize;
   const stats = statsData?.productStats;
   const categories = useMemo<any[]>(() => categoriesData?.productCategories || [], [categoriesData?.productCategories]);
-  const selected = useMemo(() => products.find((p: any) => p.id === selectedId) || products[0] || emptyPreview, [products, selectedId]);
-  useEffect(() => setPortalReady(true), []);
+  const selected = useMemo(() => requestedData?.product || products.find((p: any) => p.id === selectedId) || products[0] || emptyPreview, [products, requestedData?.product, selectedId]);
+  useEffect(() => { setPortalReady(true); const id=new URLSearchParams(window.location.search).get('product')||''; setRequestedProductId(id); if(id)setSelectedId(id); }, []);
   const look = getLook(selected?.category);
   const SelectedIcon = look.icon;
 
-  const compositeError = error || categoriesError || statsError;
+  const compositeError = error || categoriesError || statsError || requestedError;
   const initialLoading = loading && !visibleData;
   const changePage = (nextPage: number) => {
     setPage(Math.max(0, nextPage));

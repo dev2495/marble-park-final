@@ -25,6 +25,7 @@ const GET_QUOTE_SETUP = gql`
 const SEARCH_PRODUCTS = gql`
   query SearchProducts($query: String!) { globalSearch(query: $query) { products } }
 `;
+const PRELOAD_PRODUCT = gql`query QuotePreloadProduct($id:ID!){product(id:$id){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice floorPrice mrp mrpRateBasis media}}`;
 
 const CREATE_QUOTE = gql`
   mutation CreateQuote($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber architectId architectName } }
@@ -152,6 +153,9 @@ export default function QuoteBuilderPage() {
   const { data: searchData, loading: searching, error: searchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: searchQuery }, skip: searchQuery.length < 2 });
   const [createQuote, { loading: saving, error: saveError }] = useMutation(CREATE_QUOTE);
   const [validationError, setValidationError] = useState<string>('');
+  const [preloadProductId,setPreloadProductId]=useState('');
+  const preloadApplied=useRef(false);
+  const {data:preloadData,error:preloadError}=useQuery(PRELOAD_PRODUCT,{variables:{id:preloadProductId},skip:!preloadProductId});
   const documentSettings = customerData?.documentSettings?.data || {};
   const brands = useMemo<any[]>(() => (customerData?.masterProductBrands || []).filter((brand: any) => brand.metadata?.quoteEnabled !== false), [customerData?.masterProductBrands]);
   const brandDefaultsApplied = useRef(false);
@@ -172,6 +176,8 @@ export default function QuoteBuilderPage() {
     setSelectedOwnerId(match?.id || customerData.salesAssignees[0].id);
   }, [customerData?.salesAssignees, selectedOwnerId]);
 
+  useEffect(()=>{setPreloadProductId(new URLSearchParams(window.location.search).get('product')||'');},[]);
+
   const addProduct = (product: any) => {
     const isTile = String(product.category || '').toLowerCase() === 'tiles';
     const pricingUom = product.salesUom || product.unit || 'PC';
@@ -189,6 +195,9 @@ export default function QuoteBuilderPage() {
     if (matchedBrand) setSelectedBrandIds((current) => current.includes(String(matchedBrand.id)) ? current : [...current, String(matchedBrand.id)]);
     setSearchQuery('');
   };
+  // The preload is intentionally one-shot; addProduct is a render-local builder.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(()=>{if(!preloadData?.product||preloadApplied.current)return;preloadApplied.current=true;addProduct(preloadData.product);setSuccess(`${preloadData.product.internalCode||preloadData.product.sku} added from the scanned label. Select the customer and verify quantity, MRP and rate before saving.`);},[preloadData?.product]);
   const updateQty = (id: string, qty: number) => setLines((current) => current.map((line) => line.id === id ? { ...line, qty } : line));
   const updateLine = (id: string, patch: any) => setLines((current) => current.map((line) => {
     if (line.id !== id) return line;
@@ -344,7 +353,7 @@ export default function QuoteBuilderPage() {
     }
   };
 
-  const queryError = customerError || searchError;
+  const queryError = customerError || searchError || preloadError;
   return (
     <div className="grid gap-4 pb-24 xl:h-[calc(100vh-10rem)] xl:overflow-hidden xl:pb-4 xl:grid-cols-[1fr_0.52fr]">
       {queryError ? <div className="xl:col-span-2"><QueryErrorBanner error={queryError} /></div> : null}

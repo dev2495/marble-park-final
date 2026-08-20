@@ -6,7 +6,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
+  Camera,
   Check,
+  CheckCircle2,
   Hammer,
   Lock,
   Save,
@@ -20,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
+import { PhysicalQrScanner } from "@/components/physical-qr-scanner";
 
 const INTENT = gql`
   query Intent($id: ID!) {
@@ -80,6 +83,7 @@ const GENERATE = gql`
     )
   }
 `;
+const SCAN_LABEL = gql`mutation IntentScanLabel($labelCode:String!,$input:InternalLabelScanInput){scanInternalLabel(labelCode:$labelCode,input:$input)}`;
 
 type Row = {
   productId?: string;
@@ -253,6 +257,9 @@ export default function IntentDetailPage() {
   // Product search panel for adding rows
   const [searchTerm, setSearchTerm] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanMessage, setScanMessage] = useState("");
+  const [scanLabel, scanState] = useMutation(SCAN_LABEL);
   const { data: searchData, loading: searching } = useQuery(PRODUCT_SEARCH, {
     variables: { query: searchTerm },
     skip: searchTerm.trim().length < 2,
@@ -376,6 +383,18 @@ export default function IntentDetailPage() {
     setDirty(true);
     setSearchTerm("");
     setSearchOpen(false);
+  };
+  const addFromScan = async (payload: string) => {
+    setScanMessage("");
+    const response = await scanLabel({ variables: { labelCode: payload, input: { action: "intent_row_add", entityType: "Intent", entityId: id, metadata: { surface: "intent_detail" } } } });
+    const result = response.data?.scanInternalLabel;
+    if (result?.result !== "success" || !result?.label?.product) {
+      setScanMessage("No active governed label matched this scan. The intent was not changed.");
+      return;
+    }
+    addFromProduct(result.label.product);
+    setScanMessage(`${result.label.product.internalCode || result.label.product.sku} added to this intent. Save or submit to persist it.`);
+    setScanOpen(false);
   };
 
   const saveDraft = () => {
@@ -568,7 +587,13 @@ export default function IntentDetailPage() {
                 </div>
               ) : null}
             </div>
+            <Button type="button" variant="outline" onClick={() => setScanOpen((value) => !value)}>
+              <Camera className="mr-2 h-4 w-4" />{scanOpen ? "Close scanner" : "Scan showroom item"}
+            </Button>
           </div>
+          {scanOpen ? <div className="mt-3 rounded-r4 border border-emerald-200 bg-emerald-50 p-3"><PhysicalQrScanner compact busy={scanState.loading} onDetected={addFromScan}/></div> : null}
+          {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-r4 p-3 text-xs font-semibold ${scanMessage.startsWith("No active") ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}><CheckCircle2 className="h-4 w-4" />{scanMessage}</div> : null}
+          {scanState.error ? <div className="mt-3"><QueryErrorBanner error={scanState.error}/></div> : null}
         </section>
       ) : null}
 

@@ -1,32 +1,47 @@
 import * as QRCode from 'qrcode';
 
 /**
- * A standards-valid QR with a small protected brand mark in the redundant
- * centre area. Error correction H is deliberate: scanners still recover the
- * complete MP-LABEL payload when the visual mark obscures centre modules.
+ * Generates a standards-valid, high-contrast MP identity QR. The data modules
+ * are rounded for the Marble Park visual language while the three finder eyes
+ * retain the exact QR geometry scanners expect. A protected MP mark occupies
+ * only the error-correctable centre of an H-level symbol.
  */
 export async function brandedLabelQrDataUrl(value: string) {
-  const svg = await QRCode.toString(value, {
-    type: 'svg',
-    errorCorrectionLevel: 'H',
-    margin: 2,
-    width: 360,
-    color: { dark: '#111111', light: '#ffffff' },
-  });
-  const viewBox = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
-  const modules = Number(viewBox?.[1] || 37);
-  const outer = modules * 0.18;
-  const outerX = (modules - outer) / 2;
-  const inner = outer * 0.82;
-  const innerX = (modules - inner) / 2;
-  const fixed = (value: number) => value.toFixed(3);
+  const qr = QRCode.create(value, { errorCorrectionLevel: 'H' });
+  const size = qr.modules.size;
+  const margin = 3;
+  const canvas = size + margin * 2;
+  const inFinder = (row: number, col: number) => (
+    (row < 7 && col < 7) ||
+    (row < 7 && col >= size - 7) ||
+    (row >= size - 7 && col < 7)
+  );
+  const dots: string[] = [];
+  for (let row = 0; row < size; row += 1) {
+    for (let col = 0; col < size; col += 1) {
+      if (!qr.modules.get(row, col) || inFinder(row, col)) continue;
+      const x = margin + col + 0.025;
+      const y = margin + row + 0.025;
+      dots.push(`<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width=".95" height=".95" rx=".13" fill="#111111"/>`);
+    }
+  }
+  const eye = (x: number, y: number) => [
+    `<rect x="${x}" y="${y}" width="7" height="7" rx=".55" fill="#111111"/>`,
+    `<rect x="${x + 1}" y="${y + 1}" width="5" height="5" rx=".28" fill="#ffffff"/>`,
+    `<rect x="${x + 2}" y="${y + 2}" width="3" height="3" rx=".22" fill="#9f302a"/>`,
+  ].join('');
+  const markSize = Math.max(5.2, size * 0.18);
+  const markX = margin + (size - markSize) / 2;
+  const inner = markSize * 0.82;
+  const innerX = margin + (size - inner) / 2;
+  const fixed = (number: number) => number.toFixed(3);
   const mark = [
-    '<g aria-label="Marble Park MP mark">',
-    `<rect x="${fixed(outerX)}" y="${fixed(outerX)}" width="${fixed(outer)}" height="${fixed(outer)}" rx="${fixed(outer * 0.18)}" fill="#ffffff"/>`,
-    `<rect x="${fixed(innerX)}" y="${fixed(innerX)}" width="${fixed(inner)}" height="${fixed(inner)}" rx="${fixed(inner * 0.18)}" fill="#a92f28"/>`,
-    `<text x="${fixed(modules / 2)}" y="${fixed(modules / 2 + outer * 0.15)}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${fixed(outer * 0.4)}" font-weight="900" letter-spacing="-.12" fill="#ffffff">MP</text>`,
+    '<g aria-label="Marble Park MP brand mark">',
+    `<rect x="${fixed(markX)}" y="${fixed(markX)}" width="${fixed(markSize)}" height="${fixed(markSize)}" rx="${fixed(markSize * 0.2)}" fill="#ffffff"/>`,
+    `<rect x="${fixed(innerX)}" y="${fixed(innerX)}" width="${fixed(inner)}" height="${fixed(inner)}" rx="${fixed(inner * 0.2)}" fill="#9f302a"/>`,
+    `<text x="${fixed(canvas / 2)}" y="${fixed(canvas / 2 + markSize * 0.14)}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${fixed(markSize * 0.4)}" font-weight="900" letter-spacing="-.12" fill="#ffffff">MP</text>`,
     '</g>',
   ].join('');
-  const branded = svg.replace('</svg>', `${mark}</svg>`);
-  return `data:image/svg+xml;base64,${Buffer.from(branded).toString('base64')}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${canvas} ${canvas}" width="360" height="360" shape-rendering="geometricPrecision" role="img" aria-label="Marble Park scannable identity QR"><rect width="${canvas}" height="${canvas}" fill="#ffffff"/>${dots.join('')}${eye(margin, margin)}${eye(margin + size - 7, margin)}${eye(margin, margin + size - 7)}${mark}</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }

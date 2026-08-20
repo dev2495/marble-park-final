@@ -709,6 +709,12 @@ export class ProductsService {
   async createDisplaySample(input: any, actorUserId: string) {
     const product = await this.findById(String(input.productId || ''));
     const internalCode = this.normalizeInternalCode(input.internalCode || product.internalCode || product.sku);
+    const locationId = String(input.locationId || '').trim();
+    const displayZone = String(input.displayZone || '').trim();
+    const displayPosition = String(input.displayPosition || '').trim();
+    if (!locationId || !displayZone || !displayPosition) throw new BadRequestException('Display location, zone and position are required so the physical asset can be found');
+    const location = await this.prisma.stockLocation.findFirst({ where: { id: locationId, status: 'active' }, select: { id: true } });
+    if (!location) throw new BadRequestException('Choose an active governed stock/showroom location');
     if (await this.prisma.displaySample.findUnique({ where: { internalCode } })) throw new BadRequestException('This display code is already registered');
     await this.assertCodeAvailable(internalCode, product.id);
     const issuedQuantity = Math.max(0, Math.trunc(Number(input.issuedQuantity || 0)));
@@ -720,8 +726,8 @@ export class ProductsService {
         existingNumbers: async (prefixForYear) => (await tx.displaySample.findMany({ where: { sampleNumber: { startsWith: prefixForYear } }, select: { sampleNumber: true } })).map((row: any) => row.sampleNumber),
       });
       const sample = await tx.displaySample.create({ data: {
-        id: ulid(), sampleNumber, productId: product.id, internalCode, locationId: input.locationId || null,
-        displayZone: input.displayZone || null, displayPosition: input.displayPosition || null,
+        id: ulid(), sampleNumber, productId: product.id, internalCode, locationId,
+        displayZone, displayPosition,
         imageUrl: input.imageUrl || (product.media as any)?.primaryUrl || null, status: 'active', sellable: false,
         sourceLotId: input.sourceLotId || null, issuedQuantity, condition: String(input.condition || 'good').trim().toLowerCase(),
         installedAt: input.installedAt ? new Date(input.installedAt) : new Date(), nextInspectionAt: input.nextInspectionAt ? new Date(input.nextInspectionAt) : null,
@@ -729,9 +735,10 @@ export class ProductsService {
       } });
       if (input.sourceLotId && issuedQuantity > 0) {
         const lot = await tx.inventoryLot.findUnique({ where: { id: input.sourceLotId } });
-        if (!lot || lot.productId !== product.id) throw new BadRequestException('Display source lot must belong to the selected tile variant');
+        if (!lot || lot.productId !== product.id) throw new BadRequestException('Display source lot must belong to the selected product or tile variant');
         const balances = await tx.inventoryLotBalance.findMany({ where: { lotId: lot.id, available: { gt: 0 } }, orderBy: { available: 'desc' } });
-        const balance = (input.locationId && balances.find((row: any) => row.locationId === input.locationId)) || balances[0];
+        const balance = balances.find((row: any) => row.locationId === locationId);
+        if (!balance) throw new BadRequestException('The selected lot has no available stock at the chosen display location');
         if (!balance || Number(balance.available || 0) < issuedQuantity) throw new BadRequestException('Selected lot does not have enough available stock for this display');
         await applyLotStockPostingTx(tx, {
           productId: product.id, lotId: lot.id, locationId: balance.locationId,

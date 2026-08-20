@@ -9,12 +9,22 @@ async function main() {
     'MP-LABEL:DISPLAY-WALL-MT1NGCBP-0001',
   ];
 
+  let decodeChecks = 0;
   for (const value of values) {
     const dataUrl = await brandedLabelQrDataUrl(value);
     const svg = Buffer.from(dataUrl.split(',')[1], 'base64');
-    const { data, info } = await sharp(svg).png().ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-    const decoded = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: 'dontInvert' });
-    if (decoded?.data !== value) throw new Error(`Branded QR failed round-trip: expected ${value}, decoded ${decoded?.data || 'nothing'}`);
+    const variants = [
+      sharp(svg).png(),
+      sharp(svg).resize(180, 180, { kernel: 'lanczos3' }).png(),
+      sharp(svg).rotate(2, { background: '#ffffff' }).png(),
+      sharp(svg).resize(320, 320).jpeg({ quality: 76 }),
+    ];
+    for (const variant of variants) {
+      const { data, info } = await variant.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const decoded = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: 'dontInvert' });
+      if (decoded?.data !== value) throw new Error(`Branded QR failed round-trip: expected ${value}, decoded ${decoded?.data || 'nothing'}`);
+      decodeChecks += 1;
+    }
   }
 
   if (process.env.QR_SAMPLE_OUTPUT) {
@@ -23,7 +33,7 @@ async function main() {
     await sharp(svg).png().resize(720, 720, { kernel: 'nearest' }).toFile(process.env.QR_SAMPLE_OUTPUT);
   }
 
-  console.log(JSON.stringify({ ok: true, decodedPayloads: values.length, sample: process.env.QR_SAMPLE_OUTPUT || null }, null, 2));
+  console.log(JSON.stringify({ ok: true, decodedPayloads: values.length, decodeChecks, sample: process.env.QR_SAMPLE_OUTPUT || null }, null, 2));
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });
