@@ -10,6 +10,7 @@ This pack is the operational handover for the canonical AWS release. It is writt
 - [Backup, rollback, and support instructions](backup-rollback-support.md)
 - [Production-readiness evidence](production-readiness-evidence-2026-08-10.md)
 - [Login and inventory hardening evidence — 2026-08-11](production-readiness-evidence-2026-08-11.md)
+- [Tile, inward, display and showroom-scan handover](showroom-scan-tile-display-workflows.md)
 
 ## System boundary
 

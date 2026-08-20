@@ -33,6 +33,7 @@ Owner/administrator can add or remove explicit permission overrides from **Users
 - The inventory control tower values stock from active lot quantity × that lot's governed unit cost. A **LOT COST MISSING** exception means quantity is usable but valuation is incomplete. An owner, administrator, or inventory manager may expand the lot and record a verified missing cost with the source document/reason; the change is audited and cannot overwrite an already-governed positive cost.
 - Cancel or void with a reason. Do not delete commercial records to fix history.
 - Use **Labels** for product, lot, display, shelf/carton, and supported physical subjects. Reprints and voids preserve their audit trail.
+- Sales users can scan an active MP label directly while creating a lead or editing an intent. Verify the linked Product Master row, room/use and quantity, then save or submit the intent; scanning itself never moves or reserves stock. See the [tile, inward, display and showroom-scan handover](showroom-scan-tile-display-workflows.md) for worked examples.
 - Use **Reports** through the five suites: Owner, Sales, Finance, Inventory, and Operations. Open a source row to confirm the underlying transaction.
 
 ## Reports and missing data
