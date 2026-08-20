@@ -305,6 +305,7 @@ model PurchaseOrder {
   metadata        Json      @default("{}")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime
+  lines           PurchaseOrderLine[]
 
   @@index([vendorId])
   @@index([vendorName])
@@ -316,6 +317,7 @@ model PurchaseOrder {
 model PurchaseOrderLine {
   id                String   @id
   purchaseOrderId   String
+  purchaseOrder     PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
   purchaseDemandId  String?
   productId         String?
   sku               String
@@ -360,6 +362,7 @@ model GoodsReceiptNote {
   attachments     Json     @default("[]")
   createdAt       DateTime @default(now())
   updatedAt       DateTime
+  lines           GoodsReceiptLine[]
 
   @@index([purchaseOrderId])
   @@index([vendorName])
@@ -370,6 +373,7 @@ model GoodsReceiptNote {
 model GoodsReceiptLine {
   id                  String        @id
   goodsReceiptNoteId  String
+  goodsReceiptNote    GoodsReceiptNote @relation(fields: [goodsReceiptNoteId], references: [id], onDelete: Restrict)
   purchaseOrderLineId String?
   productId           String?
   lot                 InventoryLot? @relation(fields: [lotId], references: [id])
@@ -482,7 +486,7 @@ model PasswordResetToken {
 model ProductCategory {
   id          String    @id
   name        String    @unique
-  code        String?
+  code        String?   @unique
   description String?
   status      String    @default("active")
   sortOrder   Int       @default(0)
@@ -521,7 +525,7 @@ model ProductFinish {
 model ProductMaterial {
   id          String    @id
   name        String    @unique
-  code        String?   @unique
+  code        String?
   description String?
   status      String    @default("active")
   sortOrder   Int       @default(0)
@@ -569,9 +573,16 @@ model TaxCode {
 model TileSize {
   id          String    @id
   name        String    @unique
-  code        String?
+  code        String?   @unique
   uom         String    @default("BOX")
   pcsPerBox   Int       @default(0)
+  widthMm     Float?
+  heightMm    Float?
+  thicknessMm Float?
+  areaPerPieceSqM  Float?
+  areaPerPieceSqFt Float?
+  areaPerBoxSqM    Float?
+  areaPerBoxSqFt   Float?
   description String?
   status      String    @default("active")
   sortOrder   Int       @default(0)
@@ -579,6 +590,36 @@ model TileSize {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime
   products    Product[] @relation("ProductTileSizeMaster")
+
+  @@index([status, sortOrder])
+}
+
+model TileDesign {
+  id          String    @id
+  designCode  String    @unique
+  name        String
+  brand       String    @default("")
+  collection  String?
+  material    String?
+  surface     String?
+  style       String?
+  colour      String?
+  pattern     String?
+  usage       Json      @default("[]")
+  origin      String?
+  description String    @default("")
+  media       Json      @default("{}")
+  tags        Json      @default("[]")
+  status      String    @default("active")
+  metadata    Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+  variants    Product[] @relation("ProductTileDesignMaster")
+
+  @@index([name])
+  @@index([brand])
+  @@index([surface])
+  @@index([status, updatedAt(sort: Desc)])
 }
 
 model Product {
@@ -610,6 +651,7 @@ model Product {
   finishId            String?
   materialId          String?
   tileSizeId          String?
+  tileDesignId        String?
   baseUom             String                    @default("PC")
   purchaseUom         String                    @default("PC")
   salesUom            String                    @default("PC")
@@ -623,6 +665,7 @@ model Product {
   finishMaster        ProductFinish?            @relation("ProductFinishMaster", fields: [finishId], references: [id])
   materialMaster      ProductMaterial?          @relation("ProductMaterialMaster", fields: [materialId], references: [id])
   tileSizeMaster      TileSize?                 @relation("ProductTileSizeMaster", fields: [tileSizeId], references: [id])
+  tileDesignMaster    TileDesign?               @relation("ProductTileDesignMaster", fields: [tileDesignId], references: [id])
   createdAt           DateTime                  @default(now())
   updatedAt           DateTime
   balances            InventoryBalance?
@@ -650,6 +693,7 @@ model Product {
   @@index([finishId])
   @@index([materialId])
   @@index([tileSizeId])
+  @@index([tileDesignId, tileSizeId, status])
   @@index([mrp])
   @@index([mrpRateBasis])
 }
@@ -682,6 +726,12 @@ model DisplaySample {
   displayZone     String?
   displayPosition String?
   imageUrl        String?
+  sourceLotId     String?
+  issuedQuantity Int                     @default(0)
+  condition       String                  @default("good")
+  lastInspectedAt DateTime?
+  nextInspectionAt DateTime?
+  removalReason   String?
   status          String                  @default("active")
   sellable        Boolean                 @default(false)
   installedAt     DateTime?
@@ -694,6 +744,24 @@ model DisplaySample {
   @@index([productId])
   @@index([locationId])
   @@index([status])
+  @@index([sourceLotId])
+  @@index([nextInspectionAt])
+}
+
+model DisplaySampleEvent {
+  id              String   @id
+  displaySampleId String
+  action          String
+  fromStatus      String?
+  toStatus        String?
+  quantity        Int      @default(0)
+  reason          String
+  createdBy       String
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([displaySampleId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
 }
 
 model Quote {

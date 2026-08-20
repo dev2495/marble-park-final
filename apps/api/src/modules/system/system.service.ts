@@ -307,11 +307,31 @@ export class SystemService {
     const duplicateCode = await (this.prisma as any).tileSize.findFirst({ where: { code, ...(input.id ? { id: { not: input.id } } : {}) } });
     if (duplicateCode) throw new Error(`Tile size code ${code} is already used by ${duplicateCode.name}`);
     const uom = String(input.uom || 'BOX').trim().toUpperCase() === 'PC' ? 'PC' : 'BOX';
+    const positive = (value: any, label: string) => {
+      if (value === undefined || value === null || value === '') return null;
+      const number = Number(value);
+      if (!Number.isFinite(number) || number <= 0) throw new BadRequestException(`${label} must be greater than zero`);
+      return number;
+    };
+    const widthMm = positive(input.widthMm, 'Width');
+    const heightMm = positive(input.heightMm, 'Height');
+    const thicknessMm = positive(input.thicknessMm, 'Thickness');
+    const derivedSqM = widthMm && heightMm ? (widthMm * heightMm) / 1_000_000 : null;
+    const areaPerPieceSqM = positive(input.areaPerPieceSqM, 'Area per piece') || derivedSqM;
+    const areaPerPieceSqFt = positive(input.areaPerPieceSqFt, 'Area per piece in square feet') || (areaPerPieceSqM ? areaPerPieceSqM * 10.7639104167 : null);
+    const pcsPerBox = Math.max(0, Math.trunc(Number(input.pcsPerBox || 0)));
     const data = {
       name,
       code,
       uom,
-      pcsPerBox: Math.max(0, Math.trunc(Number(input.pcsPerBox || 0))),
+      pcsPerBox,
+      widthMm,
+      heightMm,
+      thicknessMm,
+      areaPerPieceSqM,
+      areaPerPieceSqFt,
+      areaPerBoxSqM: areaPerPieceSqM && pcsPerBox ? areaPerPieceSqM * pcsPerBox : null,
+      areaPerBoxSqFt: areaPerPieceSqFt && pcsPerBox ? areaPerPieceSqFt * pcsPerBox : null,
       description: input.description || '',
       status: input.status || 'active',
       sortOrder: Number(input.sortOrder || 0),

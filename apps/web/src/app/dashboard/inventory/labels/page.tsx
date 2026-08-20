@@ -43,7 +43,7 @@ export default function LabelDeskPage() {
   const pageSize = 25;
   const { data: sourceData, error: sourceError } = useQuery(SOURCES, { variables: { search: debouncedSource || undefined }, fetchPolicy: 'cache-and-network' });
   const { data, error, refetch } = useQuery(JOBS, { variables: { search: debouncedRegister || undefined, skip: page * pageSize, take: pageSize + 1 }, fetchPolicy: 'cache-and-network' });
-  const [create, createState] = useMutation(CREATE, { onCompleted: () => { setSourceId(''); setQuantity('1'); refetch(); } });
+  const [create, createState] = useMutation(CREATE, { onCompleted: () => { setSourceId(''); setSourceSearch(''); setQuantity('1'); setPurpose(mode === 'lot' ? 'stock_pack' : mode === 'display' ? 'display_sample' : 'shelf'); refetch(); } });
   const [prepare, prepareState] = useMutation(PREPARE);
   const [scan, scanState] = useMutation(SCAN, { onCompleted: (response) => setScanResult(response.scanInternalLabel) });
   const [voidLabel, voidState] = useMutation(VOID, { onCompleted: () => refetch() });

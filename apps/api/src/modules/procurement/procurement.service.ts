@@ -6,6 +6,7 @@ import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { reserveAvailableLotsTx } from '../common/lot-allocation';
 import { pricePoLines } from '../common/po-pricing';
 import { PrismaService } from '../prisma/prisma.service';
+import { indiaDay, reportRange } from '../reporting/reporting-time';
 
 export interface CreatePurchaseOrderInput {
   demandIds?: string[];
@@ -96,6 +97,97 @@ export class ProcurementService {
     return notes.map((note: any) => ({ ...note, lines: byGrn.get(note.id) || [] }));
   }
 
+  async purchaseDemandPage(args?: { search?: string; status?: string; sort?: string; skip?: number; take?: number }) {
+    await this.ensureDemandsForOpenOrders();
+    const where: any = {};
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    const search = String(args?.search || '').trim();
+    if (search) where.OR = [
+      { sku: { contains: search, mode: 'insensitive' } },
+      { name: { contains: search, mode: 'insensitive' } },
+      { brand: { contains: search, mode: 'insensitive' } },
+      { vendorName: { contains: search, mode: 'insensitive' } },
+      { sourceLineKey: { contains: search, mode: 'insensitive' } },
+    ];
+    const take = this.limit(args?.take, 40);
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const orderBy: any = args?.sort === 'oldest' ? [{ createdAt: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'sku_asc' ? [{ sku: 'asc' }, { createdAt: 'asc' }]
+      : args?.sort === 'shortage_desc' ? [{ quantity: 'desc' }, { createdAt: 'asc' }]
+      : args?.sort === 'eta_asc' ? [{ expectedDate: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }]
+      : [{ priority: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }];
+    const [rows, total] = await Promise.all([
+      (this.prisma as any).purchaseDemand.findMany({ where, orderBy, skip, take }),
+      (this.prisma as any).purchaseDemand.count({ where }),
+    ]);
+    const items = await this.decorateDemands(rows);
+    return { items, total, skip, take, hasNext: skip + items.length < total };
+  }
+
+  async purchaseOrderPage(args?: { search?: string; status?: string; sort?: string; dateFrom?: string; dateTo?: string; skip?: number; take?: number }) {
+    const where: any = {};
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    const search = String(args?.search || '').trim();
+    if (search) where.OR = [
+      { poNumber: { contains: search, mode: 'insensitive' } },
+      { vendorName: { contains: search, mode: 'insensitive' } },
+      { notes: { contains: search, mode: 'insensitive' } },
+      { lines: { some: { OR: [
+        { sku: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { brand: { contains: search, mode: 'insensitive' } },
+      ] } } },
+    ];
+    const date = this.dateWindow(args?.dateFrom, args?.dateTo);
+    if (date) where.createdAt = date;
+    const take = this.limit(args?.take, 30);
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const orderBy: any = args?.sort === 'oldest' ? [{ createdAt: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'po_asc' ? [{ poNumber: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'vendor_asc' ? [{ vendorName: 'asc' }, { createdAt: 'desc' }]
+      : args?.sort === 'value_desc' ? [{ grandTotal: 'desc' }, { createdAt: 'desc' }]
+      : args?.sort === 'eta_asc' ? [{ expectedDate: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }]
+      : [{ createdAt: 'desc' }, { id: 'desc' }];
+    const [rows, total] = await Promise.all([
+      (this.prisma as any).purchaseOrder.findMany({ where, orderBy, skip, take }),
+      (this.prisma as any).purchaseOrder.count({ where }),
+    ]);
+    const items = await this.attachPoLines(rows);
+    return { items, total, skip, take, hasNext: skip + items.length < total };
+  }
+
+  async goodsReceiptPage(args?: { search?: string; source?: string; sort?: string; dateFrom?: string; dateTo?: string; skip?: number; take?: number }) {
+    const where: any = {};
+    if (args?.source === 'po') where.purchaseOrderId = { not: null };
+    if (args?.source === 'manual') where.purchaseOrderId = null;
+    const search = String(args?.search || '').trim();
+    if (search) where.OR = [
+      { grnNumber: { contains: search, mode: 'insensitive' } },
+      { vendorName: { contains: search, mode: 'insensitive' } },
+      { supplierChallan: { contains: search, mode: 'insensitive' } },
+      { supplierBill: { contains: search, mode: 'insensitive' } },
+      { lines: { some: { OR: [
+        { sku: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { lotId: { contains: search, mode: 'insensitive' } },
+      ] } } },
+    ];
+    const date = this.dateWindow(args?.dateFrom, args?.dateTo);
+    if (date) where.receivedDate = date;
+    const take = this.limit(args?.take, 30);
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const orderBy: any = args?.sort === 'oldest' ? [{ receivedDate: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'grn_asc' ? [{ grnNumber: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'vendor_asc' ? [{ vendorName: 'asc' }, { receivedDate: 'desc' }]
+      : [{ receivedDate: 'desc' }, { id: 'desc' }];
+    const [rows, total] = await Promise.all([
+      (this.prisma as any).goodsReceiptNote.findMany({ where, orderBy, skip, take }),
+      (this.prisma as any).goodsReceiptNote.count({ where }),
+    ]);
+    const items = await this.decorateGrns(rows);
+    return { items, total, skip, take, hasNext: skip + items.length < total };
+  }
+
   async createPurchaseOrder(input: CreatePurchaseOrderInput, actorUserId: string) {
     const demandIds = Array.from(new Set((input.demandIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
     const lineInputs = this.normalizeLines(input.lines);
@@ -129,10 +221,10 @@ export class ProcurementService {
     const directLines = directInputs.map((line: any, index: number) => {
       const product: any = productById.get(String(line.productId || ''));
       if (!product) throw new BadRequestException(`Direct PO line ${index + 1} is not an active Product Master SKU`);
-      const orderedQuantity = this.whole(line.quantity ?? line.orderedQuantity, `${product.sku} quantity`);
+      const orderedQuantity = this.baseQuantity(line, product, `${product.sku} quantity`);
       const unitCost = Number(line.unitCost || 0);
       if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${product.sku} unit cost must be zero or greater`);
-      return { product, orderedQuantity, unitCost, unit: String(line.unit || product.purchaseUom || product.unit || 'PC'), note: String(line.note || '').trim() };
+      return { product, orderedQuantity, unitCost, unit: 'PC', note: String(line.note || '').trim(), orderedInput: this.uomSnapshot(line, product) };
     });
 
     const vendor = input.vendorId
@@ -160,6 +252,7 @@ export class ProcurementService {
       finish: string | null;
       productId: string | null;
       purchaseDemandId?: string;
+      orderedInput?: any;
     }> = [
       ...demandLines.map(({ demand, unitCost }) => ({
         kind: 'demand' as const,
@@ -182,6 +275,7 @@ export class ProcurementService {
         unitCost: row.unitCost,
         unit: row.unit,
         note: row.note,
+        orderedInput: row.orderedInput,
         sku: row.product.sku,
         name: row.product.name,
         category: row.product.category,
@@ -345,6 +439,7 @@ export class ProcurementService {
               source: 'direct_product_master',
               internalCode: product.internalCode || null,
               note: draft.note || null,
+              orderedInput: (draft as any).orderedInput || null,
               costStatus: commercial.unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn',
               lineGross: commercial.lineGross,
               lineDiscount: commercial.lineDiscount,
@@ -506,15 +601,9 @@ export class ProcurementService {
     const products = productIds.length ? await this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
     const productMap = new Map(products.map((product: any) => [product.id, product]));
     const lineInputs = this.normalizeLines(input.lines);
-    const selected = lineInputs.length
-      ? lineInputs
-      : poLines
-          .map((line: any) => ({
-            purchaseOrderLineId: line.id,
-            receivedQuantity: Math.max(0, Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0)),
-            damagedQuantity: 0,
-          }))
-          .filter((line: any) => line.receivedQuantity > 0);
+    // Never infer a full receipt. A browser refresh or an empty form must not
+    // silently inward every outstanding line on the purchase order.
+    const selected = lineInputs;
     if (!selected.length) throw new BadRequestException('Enter at least one received quantity');
 
     const grnNumber = await this.generateGrnNumber();
@@ -545,7 +634,8 @@ export class ProcurementService {
       for (const [lineIndex, row] of selected.entries()) {
         const line = lineMap.get(String(row.purchaseOrderLineId || '')) as any;
         if (!line) throw new BadRequestException('One GRN line does not belong to this purchase order');
-        const received = this.whole(row.receivedQuantity, `${line.sku} received quantity`);
+        const product = line.productId ? productMap.get(line.productId) as any : null;
+        const received = this.baseQuantity(row, product, `${line.sku} received quantity`);
         const damaged = Math.max(0, Math.trunc(Number(row.damagedQuantity || 0)));
         if (damaged > received) throw new BadRequestException(`${line.sku} damaged quantity cannot exceed received quantity`);
         const accepted = received - damaged;
@@ -555,7 +645,6 @@ export class ProcurementService {
         if (received > remaining) {
           throw new BadRequestException(`${line.sku} receipt ${received} exceeds remaining PO quantity ${remaining}`);
         }
-        const product = line.productId ? productMap.get(line.productId) as any : null;
         const receiptCost = this.resolveReceiptCost(row.unitCost, line.unitCost, product?.costPrice);
 
         const receiptLine = await tx.goodsReceiptLine.create({
@@ -579,6 +668,7 @@ export class ProcurementService {
               costSource: receiptCost.source,
               poUnitCost: Number(line.unitCost || 0),
               skuDefaultCost: Number(product?.costPrice || 0),
+              uomConversion: this.uomSnapshot(row, product),
             },
           },
         });
@@ -591,7 +681,8 @@ export class ProcurementService {
               productId: line.productId, sourceType: 'grn', sourceId: note.id, sourceLineId: receiptLine.id,
               supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
               receivedAt: note.receivedDate, unitCost: receiptCost.unitCost, status: 'active',
-              attributes: row.attributes || {}, metadata: { purchaseOrderId: po.id, purchaseOrderLineId: line.id, costSource: receiptCost.source },
+              attributes: { ...(row.attributes || {}), shade: row.shade || null, caliber: row.caliber || null, grade: row.grade || null },
+              metadata: { purchaseOrderId: po.id, purchaseOrderLineId: line.id, costSource: receiptCost.source, uomConversion: this.uomSnapshot(row, product) },
               createdBy: actorUserId, updatedAt: new Date(),
             },
           });
@@ -700,7 +791,7 @@ export class ProcurementService {
       for (const [lineIndex, row] of lines.entries()) {
         const product = productMap.get(String(row.productId || '')) as any;
         if (!product) throw new BadRequestException('Manual GRN rows must use an existing Product Master SKU');
-        const received = this.whole(row.receivedQuantity || row.quantity, `${product.sku} received quantity`);
+        const received = this.baseQuantity(row, product, `${product.sku} received quantity`);
         const damaged = Math.max(0, Math.trunc(Number(row.damagedQuantity || 0)));
         if (damaged > received) throw new BadRequestException(`${product.sku} damaged quantity cannot exceed received quantity`);
         const accepted = received - damaged;
@@ -719,7 +810,7 @@ export class ProcurementService {
             damagedQuantity: damaged,
             location: row.location || receiptLocation.name,
             unitCost: receiptCost.unitCost,
-            metadata: { manualReason: input.reason || '', locationId: receiptLocation.id, costSource: receiptCost.source, skuDefaultCost: Number(product.costPrice || 0) },
+            metadata: { manualReason: input.reason || '', locationId: receiptLocation.id, costSource: receiptCost.source, skuDefaultCost: Number(product.costPrice || 0), uomConversion: this.uomSnapshot(row, product) },
           },
         });
 
@@ -729,7 +820,8 @@ export class ProcurementService {
             productId: product.id, sourceType: 'manual_grn', sourceId: note.id, sourceLineId: receiptLine.id,
             supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
             receivedAt: note.receivedDate, unitCost: receiptCost.unitCost, status: 'active',
-            attributes: row.attributes || {}, metadata: { manualReason: input.reason || '', costSource: receiptCost.source },
+            attributes: { ...(row.attributes || {}), shade: row.shade || null, caliber: row.caliber || null, grade: row.grade || null },
+            metadata: { manualReason: input.reason || '', costSource: receiptCost.source, uomConversion: this.uomSnapshot(row, product) },
             createdBy: actorUserId, updatedAt: new Date(),
           },
         });
@@ -772,15 +864,113 @@ export class ProcurementService {
 
   async procurementSummary() {
     await this.ensureDemandsForOpenOrders();
-    const [openDemand, orderedDemand, partialDemand, openPo, partialPo, recentGrn] = await Promise.all([
+    const today = indiaDay(new Date());
+    const { from: todayFrom, to: todayTo } = reportRange(today, today);
+    const activePoStatus = ['draft', 'ordered', 'partial_received'];
+    const receivingPoStatus = ['ordered', 'partial_received'];
+    const [
+      openDemand,
+      orderedDemand,
+      partialDemand,
+      draftPo,
+      orderedPo,
+      partialPo,
+      overduePurchaseOrders,
+      dueTodayPurchaseOrders,
+      purchaseOrdersWithoutEta,
+      activePoValue,
+      valuedPurchaseOrders,
+      recentGrn,
+      todayReceipts,
+      expectedOrders,
+    ] = await Promise.all([
       (this.prisma as any).purchaseDemand.count({ where: { status: 'open' } }),
       (this.prisma as any).purchaseDemand.count({ where: { status: 'ordered' } }),
       (this.prisma as any).purchaseDemand.count({ where: { status: 'partial_received' } }),
-      (this.prisma as any).purchaseOrder.count({ where: { status: { in: ['draft', 'ordered'] } } }),
+      (this.prisma as any).purchaseOrder.count({ where: { status: 'draft' } }),
+      (this.prisma as any).purchaseOrder.count({ where: { status: 'ordered' } }),
       (this.prisma as any).purchaseOrder.count({ where: { status: 'partial_received' } }),
+      (this.prisma as any).purchaseOrder.count({ where: { status: { in: receivingPoStatus }, expectedDate: { lt: todayFrom } } }),
+      (this.prisma as any).purchaseOrder.count({ where: { status: { in: receivingPoStatus }, expectedDate: { gte: todayFrom, lte: todayTo } } }),
+      (this.prisma as any).purchaseOrder.count({ where: { status: { in: receivingPoStatus }, expectedDate: null } }),
+      (this.prisma as any).purchaseOrder.aggregate({ where: { status: { in: activePoStatus } }, _sum: { grandTotal: true } }),
+      (this.prisma as any).purchaseOrder.count({ where: { status: { in: activePoStatus }, grandTotal: { gt: 0 } } }),
       (this.prisma as any).goodsReceiptNote.count({ where: { createdAt: { gte: new Date(Date.now() - 86400000 * 7) } } }),
+      (this.prisma as any).goodsReceiptNote.findMany({
+        where: { receivedDate: { gte: todayFrom, lte: todayTo } },
+        select: { id: true, purchaseOrderId: true, supplierChallan: true, supplierBill: true },
+      }),
+      (this.prisma as any).purchaseOrder.findMany({
+        where: { status: { in: receivingPoStatus } },
+        orderBy: [{ expectedDate: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }],
+        take: 6,
+      }),
     ]);
-    return { openDemand, orderedDemand, partialDemand, activePurchaseOrders: openPo + partialPo, recentGrn };
+
+    const todayReceiptIds = todayReceipts.map((receipt: any) => receipt.id);
+    const expectedOrderIds = expectedOrders.map((order: any) => order.id);
+    const [todayQuantity, expectedLines] = await Promise.all([
+      todayReceiptIds.length
+        ? (this.prisma as any).goodsReceiptLine.aggregate({
+            where: { goodsReceiptNoteId: { in: todayReceiptIds } },
+            _sum: { receivedQuantity: true, acceptedQuantity: true, damagedQuantity: true },
+          })
+        : Promise.resolve({ _sum: {} }),
+      expectedOrderIds.length
+        ? (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId: { in: expectedOrderIds } } })
+        : Promise.resolve([]),
+    ]);
+
+    const linesByPo = this.groupBy(expectedLines, 'purchaseOrderId');
+    const expectedReceipts = expectedOrders.map((order: any) => {
+      const lines = linesByPo.get(order.id) || [];
+      return {
+        id: order.id,
+        poNumber: order.poNumber,
+        vendorName: order.vendorName,
+        status: order.status,
+        expectedDate: order.expectedDate,
+        grandTotal: order.grandTotal,
+        lineCount: lines.length,
+        demandLineCount: lines.filter((line: any) => Boolean(line.purchaseDemandId)).length,
+        orderedQuantity: lines.reduce((sum: number, line: any) => sum + Number(line.orderedQuantity || 0), 0),
+        remainingQuantity: lines.reduce(
+          (sum: number, line: any) => sum + Math.max(0, Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0) - Number(line.cancelledQuantity || 0)),
+          0,
+        ),
+      };
+    });
+
+    const manualReceiptsToday = todayReceipts.filter((receipt: any) => !receipt.purchaseOrderId).length;
+    const documentExceptionsToday = todayReceipts.filter(
+      (receipt: any) => !String(receipt.supplierChallan || '').trim() || !String(receipt.supplierBill || '').trim(),
+    ).length;
+
+    return {
+      asOf: new Date().toISOString(),
+      businessDate: today,
+      openDemand,
+      orderedDemand,
+      partialDemand,
+      demandInFlow: openDemand + orderedDemand + partialDemand,
+      draftPurchaseOrders: draftPo,
+      orderedPurchaseOrders: orderedPo,
+      partialPurchaseOrders: partialPo,
+      activePurchaseOrders: draftPo + orderedPo + partialPo,
+      overduePurchaseOrders,
+      dueTodayPurchaseOrders,
+      purchaseOrdersWithoutEta,
+      activePurchaseOrderValue: Number(activePoValue?._sum?.grandTotal || 0),
+      valuedPurchaseOrders,
+      receiptsToday: todayReceipts.length,
+      manualReceiptsToday,
+      receivedUnitsToday: Number(todayQuantity?._sum?.receivedQuantity || 0),
+      acceptedUnitsToday: Number(todayQuantity?._sum?.acceptedQuantity || 0),
+      damagedUnitsToday: Number(todayQuantity?._sum?.damagedQuantity || 0),
+      documentExceptionsToday,
+      recentGrn,
+      expectedReceipts,
+    };
   }
 
   async ensureDemandsForOpenOrders() {
@@ -884,7 +1074,7 @@ export class ProcurementService {
     const productIds = Array.from(new Set(lines.map((line: any) => line.productId).filter(Boolean))) as string[];
     const [demands, products, vendors] = await Promise.all([
       demandIds.length ? (this.prisma as any).purchaseDemand.findMany({ where: { id: { in: demandIds } } }) : [],
-      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, costPrice: true } }) : [],
+      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, costPrice: true, category: true, piecesPerPack: true, allowLoose: true, baseUom: true, purchaseUom: true, salesUom: true, dimensions: true, internalCode: true, tileDesignId: true, tileSizeId: true } }) : [],
       vendorIds.length ? (this.prisma as any).vendor.findMany({ where: { id: { in: vendorIds } } }) : [],
     ]);
     const demandMap = new Map(demands.map((demand: any) => [demand.id, demand] as const));
@@ -899,6 +1089,7 @@ export class ProcurementService {
         ...line,
         skuCost,
         effectiveUnitCost: unitCost > 0 ? unitCost : skuCost,
+        product: line.productId ? productMap.get(line.productId) || null : null,
         lineGross,
         lineDiscount: Number(line.metadata?.lineDiscount ?? 0),
         demand: line.purchaseDemandId ? demandMap.get(line.purchaseDemandId) || null : null,
@@ -1207,6 +1398,36 @@ export class ProcurementService {
     return number;
   }
 
+  private baseQuantity(row: any, product: any, label: string) {
+    const hasPackInput = row?.boxes !== undefined || row?.packs !== undefined || row?.loosePieces !== undefined;
+    if (!hasPackInput) return this.whole(row?.receivedQuantity ?? row?.quantity ?? row?.orderedQuantity, label);
+    const piecesPerPack = Math.max(1, Math.trunc(Number(product?.piecesPerPack || row?.piecesPerPack || 1)));
+    const boxes = Math.max(0, Math.trunc(Number(row?.boxes ?? row?.packs ?? 0)));
+    const loosePieces = Math.max(0, Math.trunc(Number(row?.loosePieces || 0)));
+    if (loosePieces > 0 && product && product.allowLoose === false) throw new BadRequestException(`${product.sku} does not allow loose-piece inward`);
+    const quantity = boxes * piecesPerPack + loosePieces;
+    if (quantity <= 0) throw new BadRequestException(`${label} must be greater than zero`);
+    return quantity;
+  }
+
+  private uomSnapshot(row: any, product: any) {
+    const piecesPerPack = Math.max(1, Math.trunc(Number(product?.piecesPerPack || row?.piecesPerPack || 1)));
+    const boxes = row?.boxes === undefined && row?.packs === undefined ? null : Math.max(0, Math.trunc(Number(row?.boxes ?? row?.packs ?? 0)));
+    const loosePieces = row?.loosePieces === undefined ? null : Math.max(0, Math.trunc(Number(row?.loosePieces || 0)));
+    const baseQuantity = boxes === null && loosePieces === null
+      ? Math.max(0, Math.trunc(Number(row?.receivedQuantity ?? row?.quantity ?? row?.orderedQuantity ?? 0)))
+      : Number(boxes || 0) * piecesPerPack + Number(loosePieces || 0);
+    return {
+      baseUom: String(product?.baseUom || 'PC'),
+      purchaseUom: String(product?.purchaseUom || row?.unit || 'PC'),
+      piecesPerPack,
+      boxes,
+      loosePieces,
+      baseQuantity,
+      capturedAt: new Date().toISOString(),
+    };
+  }
+
   private resolveReceiptCost(grnValue: any, poValue?: any, skuValue?: any) {
     const candidates = [
       { value: grnValue, source: 'grn_entered' },
@@ -1224,6 +1445,15 @@ export class ProcurementService {
 
   private limit(value: any, fallback: number) {
     return Math.max(1, Math.min(500, Number(value) || fallback));
+  }
+
+  private dateWindow(dateFrom?: string, dateTo?: string) {
+    const from = dateFrom ? new Date(`${dateFrom}T00:00:00.000Z`) : null;
+    const to = dateTo ? new Date(`${dateTo}T23:59:59.999Z`) : null;
+    if (from && !Number.isFinite(from.getTime())) throw new BadRequestException('Invalid start date');
+    if (to && !Number.isFinite(to.getTime())) throw new BadRequestException('Invalid end date');
+    if (from && to && from > to) throw new BadRequestException('Start date cannot be after end date');
+    return from || to ? { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } : null;
   }
 
   private async generatePoNumber() {

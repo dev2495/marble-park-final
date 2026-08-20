@@ -64,6 +64,7 @@ export class ProductOutput {
   @Field({ nullable: true }) finishId?: string;
   @Field({ nullable: true }) materialId?: string;
   @Field({ nullable: true }) tileSizeId?: string;
+  @Field({ nullable: true }) tileDesignId?: string;
   @Field({ nullable: true }) baseUom?: string;
   @Field({ nullable: true }) purchaseUom?: string;
   @Field({ nullable: true }) salesUom?: string;
@@ -127,6 +128,7 @@ export class CreateProductInput {
   @Field({ nullable: true }) internalCode?: string;
   @Field({ nullable: true }) materialId?: string;
   @Field({ nullable: true }) tileSizeId?: string;
+  @Field({ nullable: true }) tileDesignId?: string;
   @Field({ nullable: true }) baseUom?: string;
   @Field({ nullable: true }) purchaseUom?: string;
   @Field({ nullable: true }) salesUom?: string;
@@ -188,6 +190,7 @@ export class UpdateProductInput {
   @Field({ nullable: true }) internalCode?: string;
   @Field({ nullable: true }) materialId?: string;
   @Field({ nullable: true }) tileSizeId?: string;
+  @Field({ nullable: true }) tileDesignId?: string;
   @Field({ nullable: true }) baseUom?: string;
   @Field({ nullable: true }) purchaseUom?: string;
   @Field({ nullable: true }) salesUom?: string;
@@ -206,6 +209,10 @@ class DisplaySampleInput {
   @Field({ nullable: true }) displayPosition?: string;
   @Field({ nullable: true }) imageUrl?: string;
   @Field({ nullable: true }) installedAt?: string;
+  @Field({ nullable: true }) sourceLotId?: string;
+  @Field(() => Int, { nullable: true }) issuedQuantity?: number;
+  @Field({ nullable: true }) condition?: string;
+  @Field({ nullable: true }) nextInspectionAt?: string;
   @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
 }
 
@@ -217,7 +224,20 @@ class UpdateDisplaySampleInput {
   @Field({ nullable: true }) displayPosition?: string;
   @Field({ nullable: true }) imageUrl?: string;
   @Field({ nullable: true }) status?: string;
+  @Field({ nullable: true }) condition?: string;
+  @Field({ nullable: true }) lastInspectedAt?: string;
+  @Field({ nullable: true }) nextInspectionAt?: string;
+  @Field({ nullable: true }) removalReason?: string;
   @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
+}
+
+@InputType()
+class DisplaySampleTransitionInput {
+  @Field() action!: string;
+  @Field() reason!: string;
+  @Field({ nullable: true }) condition?: string;
+  @Field(() => Int, { nullable: true }) returnQuantity?: number;
+  @Field({ nullable: true }) nextInspectionAt?: string;
 }
 
 @InputType()
@@ -226,6 +246,46 @@ class ProductAliasInput {
   @Field() type!: string;
   @Field() value!: string;
   @Field({ nullable: true }) isPrimary?: boolean;
+}
+
+@InputType()
+class TileDesignInput {
+  @Field({ nullable: true }) id?: string;
+  @Field() designCode!: string;
+  @Field() name!: string;
+  @Field({ nullable: true }) brand?: string;
+  @Field({ nullable: true }) collection?: string;
+  @Field({ nullable: true }) material?: string;
+  @Field({ nullable: true }) surface?: string;
+  @Field({ nullable: true }) style?: string;
+  @Field({ nullable: true }) colour?: string;
+  @Field({ nullable: true }) pattern?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) usage?: any;
+  @Field({ nullable: true }) origin?: string;
+  @Field({ nullable: true }) description?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) media?: any;
+  @Field(() => GraphQLJSON, { nullable: true }) tags?: any;
+  @Field({ nullable: true }) status?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
+}
+
+@InputType()
+class TileVariantInput {
+  @Field({ nullable: true }) id?: string;
+  @Field() tileDesignId!: string;
+  @Field() tileSizeId!: string;
+  @Field({ nullable: true }) sku?: string;
+  @Field({ nullable: true }) internalCode?: string;
+  @Field({ nullable: true }) finish?: string;
+  @Field({ nullable: true }) piecesPerPack?: number;
+  @Field({ nullable: true }) purchaseUom?: string;
+  @Field({ nullable: true }) salesUom?: string;
+  @Field({ nullable: true }) allowLoose?: boolean;
+  @Field({ nullable: true }) hsnCode?: string;
+  @Field({ nullable: true }) sellPrice?: number;
+  @Field({ nullable: true }) floorPrice?: number;
+  @Field({ nullable: true }) costPrice?: number;
+  @Field({ nullable: true }) status?: string;
 }
 
 @Resolver()
@@ -297,9 +357,63 @@ export class ProductsResolver {
   }
 
   @Query(() => GraphQLJSON)
+  async displaySamplesPage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('locationId', { nullable: true }) locationId?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('sort', { nullable: true }) sort?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.products.displaySamplesPage({ search, locationId, status, sort, skip, take });
+  }
+
+  @Query(() => GraphQLJSON)
   async tileDesignStats(@Context() ctx: GraphqlRequestContext) {
     await requireSession(this.prisma, ctx);
     return this.products.tileDesignStats();
+  }
+
+  @Query(() => GraphQLJSON)
+  async tileDesignsPage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('sort', { nullable: true }) sort?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.products.tileDesignsPage({ search, status, sort, skip, take });
+  }
+
+  @Query(() => GraphQLJSON)
+  async tileVariantsPage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('tileDesignId', { nullable: true }) tileDesignId?: string,
+    @Args('tileSizeId', { nullable: true }) tileSizeId?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('sort', { nullable: true }) sort?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.products.tileVariantsPage({ search, tileDesignId, tileSizeId, status, sort, skip, take });
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async saveTileDesign(@Args('input') input: TileDesignInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.saveTileDesign(input, user.id);
+  }
+
+  @Mutation(() => ProductOutput)
+  async saveTileVariant(@Args('input') input: TileVariantInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.saveTileVariant(input, user.id);
   }
 
   @Query(() => [GraphQLJSON])
@@ -338,6 +452,16 @@ export class ProductsResolver {
   ) {
     const user = await requirePermission(this.prisma, ctx, 'products.manage');
     return this.products.updateDisplaySample(id, input, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async transitionDisplaySample(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: DisplaySampleTransitionInput,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.transitionDisplaySample(id, input, user.id);
   }
 
   @Mutation(() => ProductOutput)

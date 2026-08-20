@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
 import { StoredImageService } from '../assets/stored-image.service';
+import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 
 export interface CreateProductInput {
   sku: string;
@@ -25,6 +26,7 @@ export interface CreateProductInput {
   internalCode?: string;
   materialId?: string;
   tileSizeId?: string;
+  tileDesignId?: string;
   baseUom?: string;
   purchaseUom?: string;
   salesUom?: string;
@@ -55,6 +57,7 @@ export interface UpdateProductInput {
   internalCode?: string;
   materialId?: string;
   tileSizeId?: string;
+  tileDesignId?: string;
   baseUom?: string;
   purchaseUom?: string;
   salesUom?: string;
@@ -173,6 +176,7 @@ export class ProductsService {
           finishId: finishMaster?.id || null,
           materialId: data.materialId || null,
           tileSizeId: data.tileSizeId || null,
+          tileDesignId: data.tileDesignId || null,
           baseUom: uoms[0], purchaseUom: uoms[1], salesUom: uoms[2],
           piecesPerPack: Math.max(1, Math.trunc(Number(data.piecesPerPack || 1))),
           coveragePerPack,
@@ -271,7 +275,7 @@ export class ProductsService {
       await this.assertCodeAvailable(internalCode, id);
       update.internalCode = internalCode;
     }
-    for (const key of ['materialId', 'tileSizeId']) if ((data as any)[key] !== undefined) update[key] = (data as any)[key] || null;
+    for (const key of ['materialId', 'tileSizeId', 'tileDesignId']) if ((data as any)[key] !== undefined) update[key] = (data as any)[key] || null;
     for (const key of ['baseUom', 'purchaseUom', 'salesUom']) {
       if ((data as any)[key] !== undefined) update[key] = String((data as any)[key]).trim().toUpperCase();
     }
@@ -433,25 +437,232 @@ export class ProductsService {
     return { categories, brands, finishes, materials, tileSizes, uoms, taxCodes };
   }
 
+  async tileDesignsPage(args?: { search?: string; status?: string; sort?: string; skip?: number; take?: number }) {
+    const where: any = {};
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    const search = String(args?.search || '').trim();
+    if (search) where.OR = [
+      { designCode: { contains: search, mode: 'insensitive' } },
+      { name: { contains: search, mode: 'insensitive' } },
+      { brand: { contains: search, mode: 'insensitive' } },
+      { collection: { contains: search, mode: 'insensitive' } },
+      { surface: { contains: search, mode: 'insensitive' } },
+      { colour: { contains: search, mode: 'insensitive' } },
+      { variants: { some: { OR: [
+        { sku: { contains: search, mode: 'insensitive' } },
+        { internalCode: { contains: search, mode: 'insensitive' } },
+        { aliases: { some: { normalizedValue: { contains: search.toUpperCase() }, status: 'active' } } },
+      ] } } },
+    ];
+    const take = Math.min(100, Math.max(1, Number(args?.take || 30)));
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const orderBy: any = args?.sort === 'code_asc' ? [{ designCode: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'brand_asc' ? [{ brand: 'asc' }, { name: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'oldest' ? [{ createdAt: 'asc' }, { id: 'asc' }]
+      : [{ updatedAt: 'desc' }, { id: 'desc' }];
+    const [items, total] = await Promise.all([
+      (this.prisma as any).tileDesign.findMany({
+        where, orderBy, skip, take,
+        include: {
+          variants: {
+            where: { status: { not: 'archived' } },
+            orderBy: [{ tileSizeMaster: { sortOrder: 'asc' } }, { sku: 'asc' }],
+            include: { tileSizeMaster: true, aliases: { where: { status: 'active' }, orderBy: { createdAt: 'asc' } } },
+          },
+        },
+      }),
+      (this.prisma as any).tileDesign.count({ where }),
+    ]);
+    return { items, total, skip, take, hasNext: skip + items.length < total };
+  }
+
+  async tileVariantsPage(args?: { search?: string; tileDesignId?: string; tileSizeId?: string; status?: string; sort?: string; skip?: number; take?: number }) {
+    const where: any = { category: { equals: 'Tiles', mode: 'insensitive' } };
+    if (args?.tileDesignId) where.tileDesignId = args.tileDesignId;
+    if (args?.tileSizeId) where.tileSizeId = args.tileSizeId;
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    const search = String(args?.search || '').trim();
+    if (search) where.OR = [
+      { sku: { contains: search, mode: 'insensitive' } },
+      { internalCode: { contains: search, mode: 'insensitive' } },
+      { name: { contains: search, mode: 'insensitive' } },
+      { finish: { contains: search, mode: 'insensitive' } },
+      { tileDesignMaster: { is: { designCode: { contains: search, mode: 'insensitive' } } } },
+      { aliases: { some: { normalizedValue: { contains: search.toUpperCase() }, status: 'active' } } },
+    ];
+    const take = Math.min(100, Math.max(1, Number(args?.take || 40)));
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const orderBy: any = args?.sort === 'sku_asc' ? [{ sku: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'size_asc' ? [{ dimensions: 'asc' }, { sku: 'asc' }]
+      : args?.sort === 'oldest' ? [{ createdAt: 'asc' }, { id: 'asc' }]
+      : [{ updatedAt: 'desc' }, { id: 'desc' }];
+    const [items, total] = await Promise.all([
+      this.prisma.product.findMany({
+        where, orderBy, skip, take,
+        include: { tileDesignMaster: true, tileSizeMaster: true, aliases: { where: { status: 'active' }, orderBy: { createdAt: 'asc' } } },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+    return { items, total, skip, take, hasNext: skip + items.length < total };
+  }
+
+  async saveTileDesign(input: any, actorUserId: string) {
+    const designCode = this.normalizeInternalCode(input.designCode);
+    const name = String(input.name || '').trim();
+    if (!designCode) throw new BadRequestException('Design code is required');
+    if (!name) throw new BadRequestException('Design name is required');
+    const status = String(input.status || 'active').trim().toLowerCase();
+    if (!['active', 'inactive', 'archived'].includes(status)) throw new BadRequestException('Design status must be active, inactive, or archived');
+    const existing = input.id ? await (this.prisma as any).tileDesign.findUnique({ where: { id: input.id } }) : null;
+    if (input.id && !existing) throw new NotFoundException('Tile design not found');
+    if (existing && existing.designCode !== designCode) {
+      throw new BadRequestException('Design code is permanent after creation. Add a searchable variant alias for old or supplier codes.');
+    }
+    const duplicate = await (this.prisma as any).tileDesign.findFirst({ where: { designCode, ...(input.id ? { id: { not: input.id } } : {}) } });
+    if (duplicate) throw new BadRequestException(`Design code ${designCode} is already used by ${duplicate.name}`);
+    const media = input.media === undefined && existing ? existing.media : await this.normalizeMedia(input.media || {});
+    const data: any = {
+      designCode, name,
+      brand: String(input.brand || '').trim(),
+      collection: String(input.collection || '').trim() || null,
+      material: String(input.material || '').trim() || null,
+      surface: String(input.surface || '').trim() || null,
+      style: String(input.style || '').trim() || null,
+      colour: String(input.colour || '').trim() || null,
+      pattern: String(input.pattern || '').trim() || null,
+      usage: Array.isArray(input.usage) ? Array.from(new Set(input.usage.map((value: any) => String(value).trim()).filter(Boolean))) : [],
+      origin: String(input.origin || '').trim() || null,
+      description: String(input.description || '').trim(),
+      media,
+      tags: Array.isArray(input.tags) ? Array.from(new Set(input.tags.map((value: any) => String(value).trim()).filter(Boolean))) : [],
+      status,
+      metadata: { ...(existing?.metadata || {}), ...(input.metadata || {}) },
+      updatedAt: new Date(),
+    };
+    return this.prisma.$transaction(async (tx: any) => {
+      const design = existing
+        ? await tx.tileDesign.update({ where: { id: existing.id }, data })
+        : await tx.tileDesign.create({ data: { id: ulid(), ...data } });
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: existing ? 'tile_design.update' : 'tile_design.create', entityType: 'TileDesign', entityId: design.id,
+        summary: `${existing ? 'Updated' : 'Created'} tile design ${design.designCode}`, metadata: { before: existing || null, after: design },
+      } });
+      return design;
+    });
+  }
+
+  async saveTileVariant(input: any, actorUserId: string) {
+    const [design, size] = await Promise.all([
+      (this.prisma as any).tileDesign.findUnique({ where: { id: String(input.tileDesignId || '') } }),
+      this.prisma.tileSize.findUnique({ where: { id: String(input.tileSizeId || '') } }),
+    ]);
+    if (!design || design.status !== 'active') throw new BadRequestException('Select an active tile design');
+    if (!size || size.status !== 'active') throw new BadRequestException('Select an active tile size');
+    const existing = input.id ? await this.findById(input.id) : null;
+    if (existing && String(existing.category || '').toLowerCase() !== 'tiles') throw new BadRequestException('Only tile variants can be edited here');
+    if (existing && existing.tileDesignId && existing.tileDesignId !== design.id) throw new BadRequestException('A variant cannot be moved to another design; archive it and create a new warehouse SKU');
+    if (existing && existing.tileSizeId && existing.tileSizeId !== size.id) throw new BadRequestException('A variant size cannot change after creation; archive it and create a new warehouse SKU');
+    const finish = String(input.finish || design.surface || 'Standard').trim();
+    const piecesPerPack = Math.max(1, Math.trunc(Number(input.piecesPerPack || size.pcsPerBox || 1)));
+    const coveragePerPack = Number(size.areaPerPieceSqFt || 0) > 0 ? Number(size.areaPerPieceSqFt) * piecesPerPack : Number(size.areaPerBoxSqFt || 0);
+    const generatedSku = [design.designCode, size.code || size.name, finish].map((value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')).filter(Boolean).join('-').slice(0, 80);
+    const sku = this.normalizeSku(input.sku || generatedSku);
+    const internalCode = this.normalizeInternalCode(input.internalCode || sku);
+    if (!existing) {
+      const duplicatePair = await this.prisma.product.findFirst({ where: { tileDesignId: design.id, tileSizeId: size.id, finish: { equals: finish, mode: 'insensitive' }, status: { not: 'archived' } } });
+      if (duplicatePair) throw new BadRequestException(`Variant already exists as ${duplicatePair.sku}`);
+      return this.create({
+        sku,
+        internalCode,
+        name: `${design.name} · ${size.name}${finish ? ` · ${finish}` : ''}`,
+        category: 'Tiles',
+        brand: design.brand || '',
+        finish,
+        dimensions: size.name,
+        unit: String(input.purchaseUom || size.uom || 'BOX').toUpperCase(),
+        sellPrice: Number(input.sellPrice || 0), floorPrice: Number(input.floorPrice || 0), costPrice: Number(input.costPrice || 0),
+        status: input.status || 'active',
+        description: design.description || '', media: design.media || {},
+        tileDesignId: design.id, tileSizeId: size.id,
+        baseUom: 'PC', purchaseUom: String(input.purchaseUom || size.uom || 'BOX').toUpperCase(), salesUom: String(input.salesUom || size.uom || 'BOX').toUpperCase(),
+        piecesPerPack, coveragePerPack, allowLoose: input.allowLoose === undefined ? true : Boolean(input.allowLoose), hsnCode: input.hsnCode,
+      }, actorUserId);
+    }
+    return this.update(existing.id, {
+      name: `${design.name} · ${size.name}${finish ? ` · ${finish}` : ''}`,
+      brand: design.brand || existing.brand,
+      finish,
+      dimensions: size.name,
+      tileDesignId: design.id,
+      tileSizeId: size.id,
+      purchaseUom: input.purchaseUom || existing.purchaseUom,
+      salesUom: input.salesUom || existing.salesUom,
+      piecesPerPack,
+      coveragePerPack,
+      allowLoose: input.allowLoose === undefined ? existing.allowLoose : Boolean(input.allowLoose),
+      hsnCode: input.hsnCode === undefined ? existing.hsnCode || undefined : input.hsnCode,
+      sellPrice: input.sellPrice === undefined ? existing.sellPrice : Number(input.sellPrice),
+      floorPrice: input.floorPrice === undefined ? existing.floorPrice : Number(input.floorPrice),
+      costPrice: input.costPrice === undefined ? existing.costPrice : Number(input.costPrice),
+      status: input.status || existing.status,
+    }, actorUserId);
+  }
+
   async displaySamples(args?: { productId?: string; locationId?: string; status?: string; take?: number }) {
     const where: any = {};
     if (args?.productId) where.productId = args.productId;
     if (args?.locationId) where.locationId = args.locationId;
     if (args?.status && args.status !== 'all') where.status = args.status;
-    return this.prisma.displaySample.findMany({ where, include: { product: true }, orderBy: { createdAt: 'desc' }, take: Math.min(300, args?.take || 100) });
+    const rows = await this.prisma.displaySample.findMany({ where, include: { product: true }, orderBy: { createdAt: 'desc' }, take: Math.min(300, args?.take || 100) });
+    const ids = rows.map((row) => row.id);
+    const events = ids.length ? await (this.prisma as any).displaySampleEvent.findMany({ where: { displaySampleId: { in: ids } }, orderBy: { createdAt: 'desc' } }) : [];
+    const bySample = new Map<string, any[]>();
+    for (const event of events) bySample.set(event.displaySampleId, [...(bySample.get(event.displaySampleId) || []), event]);
+    return rows.map((row) => ({ ...row, events: bySample.get(row.id) || [] }));
+  }
+
+  async displaySamplesPage(args?: { search?: string; locationId?: string; status?: string; sort?: string; skip?: number; take?: number }) {
+    const where: any = {};
+    if (args?.locationId) where.locationId = args.locationId;
+    if (args?.status && args.status !== 'all') where.status = args.status;
+    const search = String(args?.search || '').trim();
+    if (search) where.OR = [
+      { internalCode: { contains: search, mode: 'insensitive' } },
+      { sampleNumber: { contains: search, mode: 'insensitive' } },
+      { displayZone: { contains: search, mode: 'insensitive' } },
+      { displayPosition: { contains: search, mode: 'insensitive' } },
+      { product: { is: { OR: [{ sku: { contains: search, mode: 'insensitive' } }, { name: { contains: search, mode: 'insensitive' } }, { internalCode: { contains: search, mode: 'insensitive' } }] } } },
+    ];
+    const take = Math.min(100, Math.max(1, Number(args?.take || 30)));
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const orderBy: any = args?.sort === 'code_asc' ? [{ internalCode: 'asc' }, { id: 'asc' }]
+      : args?.sort === 'inspection_asc' ? [{ nextInspectionAt: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }]
+      : args?.sort === 'oldest' ? [{ createdAt: 'asc' }, { id: 'asc' }]
+      : [{ updatedAt: 'desc' }, { id: 'desc' }];
+    const [items, total] = await Promise.all([
+      this.prisma.displaySample.findMany({ where, include: { product: { include: { tileDesignMaster: true, tileSizeMaster: true } } }, orderBy, skip, take }),
+      this.prisma.displaySample.count({ where }),
+    ]);
+    const ids = items.map((item) => item.id);
+    const events = ids.length ? await (this.prisma as any).displaySampleEvent.findMany({ where: { displaySampleId: { in: ids } }, orderBy: { createdAt: 'desc' } }) : [];
+    const bySample = new Map<string, any[]>();
+    for (const event of events) bySample.set(event.displaySampleId, [...(bySample.get(event.displaySampleId) || []), event]);
+    return { items: items.map((item) => ({ ...item, events: bySample.get(item.id) || [] })), total, skip, take, hasNext: skip + items.length < total };
   }
 
   async tileDesignStats() {
     const tileWhere = { status: 'active', category: { equals: 'Tiles', mode: 'insensitive' as const } };
-    const [products, displaySamples] = await Promise.all([
+    const [designs, products, displaySamples] = await Promise.all([
+      (this.prisma as any).tileDesign.findMany({ where: { status: 'active' }, select: { media: true } }),
       this.prisma.product.findMany({ where: tileWhere, select: { internalCode: true, media: true } }),
       this.prisma.displaySample.count({ where: { status: 'active', product: tileWhere } }),
     ]);
     const hasImage = (media: any) => Boolean(media?.primaryUrl || media?.url || media?.imageUrl || (Array.isArray(media?.images) && media.images.length));
     return {
-      designs: products.length,
+      designs: designs.length,
+      variants: products.length,
       displaySamples,
-      missingImages: products.filter((product) => !hasImage(product.media)).length,
+      missingImages: designs.filter((design: any) => !hasImage(design.media)).length,
       missingInternalCodes: products.filter((product) => !String(product.internalCode || '').trim()).length,
     };
   }
@@ -500,6 +711,10 @@ export class ProductsService {
     const internalCode = this.normalizeInternalCode(input.internalCode || product.internalCode || product.sku);
     if (await this.prisma.displaySample.findUnique({ where: { internalCode } })) throw new BadRequestException('This display code is already registered');
     await this.assertCodeAvailable(internalCode, product.id);
+    const issuedQuantity = Math.max(0, Math.trunc(Number(input.issuedQuantity || 0)));
+    if ((input.sourceLotId && issuedQuantity <= 0) || (!input.sourceLotId && issuedQuantity > 0)) {
+      throw new BadRequestException('Choose both a source lot and issued quantity when a display consumes stock');
+    }
     return this.prisma.$transaction(async (tx: any) => {
       const sampleNumber = await nextDocumentNumber(tx, 'display_sample', 'DS', new Date(), {
         existingNumbers: async (prefixForYear) => (await tx.displaySample.findMany({ where: { sampleNumber: { startsWith: prefixForYear } }, select: { sampleNumber: true } })).map((row: any) => row.sampleNumber),
@@ -508,15 +723,32 @@ export class ProductsService {
         id: ulid(), sampleNumber, productId: product.id, internalCode, locationId: input.locationId || null,
         displayZone: input.displayZone || null, displayPosition: input.displayPosition || null,
         imageUrl: input.imageUrl || (product.media as any)?.primaryUrl || null, status: 'active', sellable: false,
-        installedAt: input.installedAt ? new Date(input.installedAt) : new Date(), metadata: input.metadata || {}, updatedAt: new Date(),
+        sourceLotId: input.sourceLotId || null, issuedQuantity, condition: String(input.condition || 'good').trim().toLowerCase(),
+        installedAt: input.installedAt ? new Date(input.installedAt) : new Date(), nextInspectionAt: input.nextInspectionAt ? new Date(input.nextInspectionAt) : null,
+        metadata: input.metadata || {}, updatedAt: new Date(),
       } });
+      if (input.sourceLotId && issuedQuantity > 0) {
+        const lot = await tx.inventoryLot.findUnique({ where: { id: input.sourceLotId } });
+        if (!lot || lot.productId !== product.id) throw new BadRequestException('Display source lot must belong to the selected tile variant');
+        const balances = await tx.inventoryLotBalance.findMany({ where: { lotId: lot.id, available: { gt: 0 } }, orderBy: { available: 'desc' } });
+        const balance = (input.locationId && balances.find((row: any) => row.locationId === input.locationId)) || balances[0];
+        if (!balance || Number(balance.available || 0) < issuedQuantity) throw new BadRequestException('Selected lot does not have enough available stock for this display');
+        await applyLotStockPostingTx(tx, {
+          productId: product.id, lotId: lot.id, locationId: balance.locationId,
+          idempotencyKey: `display-issue:${sample.id}`, type: 'display_issue', direction: 'out', quantity: issuedQuantity, onHandDelta: -issuedQuantity,
+          reason: `Issued stock to display ${sample.sampleNumber}`, referenceType: 'DisplaySample', referenceId: sample.id,
+          sourceDocumentNo: sample.sampleNumber, createdBy: actorUserId, requireAvailable: true,
+          metadata: { displaySampleId: sample.id, displayCode: internalCode },
+        });
+      }
       await tx.productAlias.upsert({
         where: { type_normalizedValue: { type: 'showroom_code', normalizedValue: internalCode } },
         update: { productId: product.id, value: internalCode, status: 'active', updatedAt: new Date() },
         create: { id: ulid(), productId: product.id, type: 'showroom_code', value: internalCode, normalizedValue: internalCode, status: 'active', isPrimary: false, metadata: { displaySampleId: sample.id }, updatedAt: new Date() },
       });
       await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'display_sample.create', entityType: 'DisplaySample', entityId: sample.id,
-        summary: `Registered display ${internalCode}`, metadata: { productId: product.id, sampleNumber } } });
+        summary: `Registered display ${internalCode}`, metadata: { productId: product.id, sampleNumber, sourceLotId: input.sourceLotId || null, issuedQuantity } } });
+      await tx.displaySampleEvent.create({ data: { id: ulid(), displaySampleId: sample.id, action: issuedQuantity > 0 ? 'issue_to_display' : 'register', toStatus: 'active', quantity: issuedQuantity, reason: issuedQuantity > 0 ? 'Stock issued to showroom display' : 'Non-stock display asset registered', createdBy: actorUserId, metadata: { sourceLotId: input.sourceLotId || null } } });
       return tx.displaySample.findUnique({ where: { id: sample.id }, include: { product: true } });
     });
   }
@@ -539,6 +771,10 @@ export class ProductsService {
           displayPosition: input.displayPosition === undefined ? existing.displayPosition : input.displayPosition || null,
           imageUrl: input.imageUrl === undefined ? existing.imageUrl : input.imageUrl || null,
           status,
+          condition: input.condition === undefined ? existing.condition : String(input.condition || 'good').trim().toLowerCase(),
+          lastInspectedAt: input.lastInspectedAt === undefined ? existing.lastInspectedAt : input.lastInspectedAt ? new Date(input.lastInspectedAt) : null,
+          nextInspectionAt: input.nextInspectionAt === undefined ? existing.nextInspectionAt : input.nextInspectionAt ? new Date(input.nextInspectionAt) : null,
+          removalReason: input.removalReason === undefined ? existing.removalReason : String(input.removalReason || '').trim() || null,
           removedAt: status === 'removed' ? new Date() : null,
           metadata: input.metadata === undefined ? existing.metadata : { ...(existing.metadata as any), ...(input.metadata || {}) },
           updatedAt: new Date(),
@@ -554,6 +790,51 @@ export class ProductsService {
         id: ulid(), actorUserId, action: 'display_sample.update', entityType: 'DisplaySample', entityId: id,
         summary: `Updated display ${internalCode}`, metadata: { status, locationId: sample.locationId },
       } });
+      return sample;
+    });
+  }
+
+  async transitionDisplaySample(id: string, input: any, actorUserId: string) {
+    const existing = await this.prisma.displaySample.findUnique({ where: { id }, include: { product: true } });
+    if (!existing) throw new NotFoundException('Display sample not found');
+    const action = String(input.action || '').trim().toLowerCase();
+    const reason = String(input.reason || '').trim();
+    if (!reason) throw new BadRequestException('A reason is required for every display lifecycle action');
+    if (!['inspect', 'maintenance', 'reactivate', 'remove', 'return_to_stock'].includes(action)) throw new BadRequestException('Unsupported display lifecycle action');
+    if (existing.status === 'removed' && !['inspect'].includes(action)) throw new BadRequestException('Removed displays cannot be reactivated; register a new display asset');
+    const returnQuantity = Math.max(0, Math.trunc(Number(input.returnQuantity || 0)));
+    if (action === 'return_to_stock') {
+      if (!existing.sourceLotId || Number(existing.issuedQuantity || 0) <= 0) throw new BadRequestException('This display was not issued from an inventory lot');
+      if (returnQuantity !== Number(existing.issuedQuantity || 0)) throw new BadRequestException('Return the complete issued display quantity; split or partial stock returns are not allowed for one display asset');
+    }
+    const toStatus = action === 'maintenance' ? 'maintenance' : action === 'reactivate' ? 'active' : ['remove', 'return_to_stock'].includes(action) ? 'removed' : existing.status;
+    return this.prisma.$transaction(async (tx: any) => {
+      if (action === 'return_to_stock') {
+        const balances = await tx.inventoryLotBalance.findMany({ where: { lotId: existing.sourceLotId }, orderBy: { updatedAt: 'desc' } });
+        const balance = (existing.locationId && balances.find((row: any) => row.locationId === existing.locationId)) || balances[0];
+        if (!balance) throw new BadRequestException('The original lot no longer has a valid stock location');
+        await applyLotStockPostingTx(tx, {
+          productId: existing.productId, lotId: String(existing.sourceLotId), locationId: balance.locationId,
+          idempotencyKey: `display-return:${existing.id}`, type: 'display_return', direction: 'in', quantity: returnQuantity, onHandDelta: returnQuantity,
+          reason, referenceType: 'DisplaySample', referenceId: existing.id, sourceDocumentNo: existing.sampleNumber,
+          createdBy: actorUserId, metadata: { displaySampleId: existing.id, displayCode: existing.internalCode, condition: input.condition || existing.condition },
+        });
+      }
+      const sample = await tx.displaySample.update({
+        where: { id },
+        data: {
+          status: toStatus,
+          condition: String(input.condition || existing.condition || 'good').trim().toLowerCase(),
+          lastInspectedAt: action === 'inspect' ? new Date() : existing.lastInspectedAt,
+          nextInspectionAt: input.nextInspectionAt ? new Date(input.nextInspectionAt) : existing.nextInspectionAt,
+          removedAt: ['remove', 'return_to_stock'].includes(action) ? new Date() : existing.removedAt,
+          removalReason: ['remove', 'return_to_stock'].includes(action) ? reason : existing.removalReason,
+          issuedQuantity: action === 'return_to_stock' ? 0 : existing.issuedQuantity,
+          updatedAt: new Date(),
+        }, include: { product: true },
+      });
+      await tx.displaySampleEvent.create({ data: { id: ulid(), displaySampleId: id, action, fromStatus: existing.status, toStatus, quantity: action === 'return_to_stock' ? returnQuantity : 0, reason, createdBy: actorUserId, metadata: { condition: sample.condition, sourceLotId: existing.sourceLotId } } });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: `display_sample.${action}`, entityType: 'DisplaySample', entityId: id, summary: `${action.replaceAll('_', ' ')} for display ${existing.internalCode}`, metadata: { reason, fromStatus: existing.status, toStatus, returnQuantity } } });
       return sample;
     });
   }

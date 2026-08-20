@@ -1,4 +1,4 @@
-import { Args, Context, Field, ID, InputType, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Context, Field, ID, InputType, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
@@ -138,6 +138,49 @@ export class ProcurementResolver {
   async procurementSummary(@Context() ctx: GraphqlRequestContext) {
     await requireSession(this.prisma, ctx);
     return this.procurement.procurementSummary();
+  }
+
+  @Query(() => GraphQLJSON)
+  async purchaseDemandPage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('sort', { nullable: true }) sort?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
+    return this.procurement.purchaseDemandPage({ search, status, sort, skip, take });
+  }
+
+  @Query(() => GraphQLJSON)
+  async purchaseOrderPage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('sort', { nullable: true }) sort?: string,
+    @Args('dateFrom', { nullable: true }) dateFrom?: string,
+    @Args('dateTo', { nullable: true }) dateTo?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
+    return this.procurement.purchaseOrderPage({ search, status, sort, dateFrom, dateTo, skip, take });
+  }
+
+  @Query(() => GraphQLJSON)
+  async goodsReceiptPage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('source', { nullable: true }) source?: string,
+    @Args('sort', { nullable: true }) sort?: string,
+    @Args('dateFrom', { nullable: true }) dateFrom?: string,
+    @Args('dateTo', { nullable: true }) dateTo?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
+    return this.procurement.goodsReceiptPage({ search, source, sort, dateFrom, dateTo, skip, take });
   }
 
   @Mutation(() => GraphQLJSON)

@@ -72,6 +72,11 @@ class TileSizeInput {
   @Field({ nullable: true }) code?: string;
   @Field({ nullable: true }) uom?: string;
   @Field(() => Number, { nullable: true }) pcsPerBox?: number;
+  @Field(() => Number, { nullable: true }) widthMm?: number;
+  @Field(() => Number, { nullable: true }) heightMm?: number;
+  @Field(() => Number, { nullable: true }) thicknessMm?: number;
+  @Field(() => Number, { nullable: true }) areaPerPieceSqM?: number;
+  @Field(() => Number, { nullable: true }) areaPerPieceSqFt?: number;
   @Field({ nullable: true }) description?: string;
   @Field({ nullable: true }) status?: string;
   @Field(() => Number, { nullable: true }) sortOrder?: number;

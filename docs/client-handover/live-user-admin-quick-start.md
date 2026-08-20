@@ -25,7 +25,9 @@ Owner/administrator can add or remove explicit permission overrides from **Users
 
 ## Everyday source-of-truth workflow
 
-- Create and maintain product facts in **Products**. Tile-only sizes and design aliases belong in **Tiles Master** and **Tile Size Master**.
+- Create and maintain generic product facts in **Products**. For tiles, use **Tile Workspace**: Design owns catalogue facts and images, Size Master owns geometry/area, and Variant Registry creates the immutable Product-backed warehouse SKU used by every stock and commercial transaction.
+- In **Procurement**, use Overview → Demand → Purchase Orders → Receiving → History. Overview counts come from the live demand, PO and GRN registers; purchase commitment value includes only POs with captured commercial value and explicitly shows when costs still need entry. PO and manual GRN forms clear after a successful post. Tile receipts accept boxes plus permitted loose pieces and store the pack conversion, batch, shade, caliber and grade on the created lot.
+- Treat a showroom display as a separate asset. Issue from an exact lot only when saleable stock is physically consumed; inspections, maintenance, removal and return-to-lot require a reason and retain an event/audit trail.
 - Record commercial progression through **Leads → Quotes → Orders → Dispatch / Invoice / Collection**. Do not infer invoice revenue from an order or quote.
 - Receive stock through purchase/GRN or approved opening stock, and move it through the lot ledger. Never type a balance correction outside the stock count/adjustment workflow.
 - The inventory control tower values stock from active lot quantity × that lot's governed unit cost. A **LOT COST MISSING** exception means quantity is usable but valuation is incomplete. An owner, administrator, or inventory manager may expand the lot and record a verified missing cost with the source document/reason; the change is audited and cannot overwrite an already-governed positive cost.

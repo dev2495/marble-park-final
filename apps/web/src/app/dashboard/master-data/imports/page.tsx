@@ -203,6 +203,8 @@ function editableRow(row: any) {
     rowNumber: row.rowNumber,
     sku: row.sku || "",
     internalCode: provided.internalCode === false ? "" : row.internalCode || "",
+    designCode: row.designCode || "",
+    designName: row.designName || "",
     name: row.name || "",
     category: row.category || "",
     brand: row.brand || "",
@@ -645,9 +647,9 @@ export default function ImportCenterPage() {
             </h2>
             <p className="mt-2 text-sm leading-6 text-[var(--ink-4)]">
               Required per row: unique SKU and internal code, name, category,
-              brand, finish, and tax code. Grey workbook headers marked Optional
-              may be left blank, including prices, HSN, images, material, tile
-              size, UOM and box conversion details.
+              brand, finish, and tax code. Tile rows also require a stable Tile
+              Design Code, shared by every size and finish variant. Grey workbook
+              headers marked Optional may be left blank for non-tile products.
             </p>
             {templateInfo?.masterCounts ? (
               <p className="mt-3 text-xs font-semibold text-[var(--ink-4)]">
@@ -891,6 +893,32 @@ export default function ImportCenterPage() {
                                     "internalCode",
                                     event.target.value.toUpperCase(),
                                   )
+                                }
+                              />
+                            </Field>
+                            <Field label="Tile design code">
+                              <input
+                                className={inputClass}
+                                value={row.designCode}
+                                required={String(row.category).toLowerCase() === "tiles"}
+                                placeholder={String(row.category).toLowerCase() === "tiles" ? "Required for tiles" : "Not used"}
+                                onChange={(event) =>
+                                  updateRow(
+                                    index,
+                                    "designCode",
+                                    event.target.value.toUpperCase(),
+                                  )
+                                }
+                              />
+                            </Field>
+                            <Field label="Tile design name">
+                              <input
+                                className={inputClass}
+                                value={row.designName}
+                                required={String(row.category).toLowerCase() === "tiles"}
+                                placeholder={String(row.category).toLowerCase() === "tiles" ? "Required for tiles" : "Not used"}
+                                onChange={(event) =>
+                                  updateRow(index, "designName", event.target.value)
                                 }
                               />
                             </Field>

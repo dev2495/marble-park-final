@@ -12,6 +12,10 @@ type NormalizedProductRow = {
   sku: string;
   internalCode: string;
   hasInternalCode: boolean;
+  designCode: string;
+  hasDesignCode: boolean;
+  designName: string;
+  hasDesignName: boolean;
   name: string;
   category: string;
   brand: string;
@@ -75,12 +79,15 @@ type ProductImportReviewRow = {
   range?: unknown;
   imageUrl?: unknown;
   description?: unknown;
+  designCode?: unknown;
+  designName?: unknown;
 };
 
 const PRODUCT_IMPORT_HEADERS = [
   'SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Material', 'Tile Size / Dimensions',
   'Base UOM', 'Purchase UOM', 'Sales UOM', 'Pieces Per Pack', 'Coverage Per Pack', 'Sell Price', 'Floor Price',
   'Default Purchase Cost', 'Tax Code', 'HSN Code', 'Allow Loose', 'Range / Series', 'Image URL', 'Product Image', 'Description',
+  'Tile Design Code', 'Tile Design Name',
 ];
 const PRODUCT_IMPORT_DISPLAY_HEADERS = PRODUCT_IMPORT_HEADERS.map((header) =>
   ['SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Tax Code'].includes(header)
@@ -142,8 +149,8 @@ export class ImportsService {
     sheet.getRow(1).height = 32;
     sheet.getRow(1).alignment = { vertical: 'middle', wrapText: true };
     sheet.views = [{ state: 'frozen', ySplit: 1 }];
-    sheet.autoFilter = { from: 'A1', to: 'W1' };
-    const widths = [18, 18, 32, 20, 20, 18, 20, 24, 13, 15, 13, 15, 18, 14, 14, 20, 14, 13, 13, 20, 34, 18, 38];
+    sheet.autoFilter = { from: 'A1', to: 'Y1' };
+    const widths = [18, 18, 32, 20, 20, 18, 20, 24, 13, 15, 13, 15, 18, 14, 14, 20, 14, 13, 13, 20, 34, 18, 38, 22, 30];
     sheet.columns.forEach((column: any, index: number) => { column.width = widths[index] || 18; });
     sheet.getColumn(1).numFmt = '@';
     sheet.getColumn(2).numFmt = '@';
@@ -171,7 +178,7 @@ export class ImportsService {
     const instructionRows = [
       ['1', 'Use the Product Master tab', 'Enter one new saleable design/SKU per row. Do not rename the sheet or headers.'],
       ['2', 'Read the column labels', 'A red header with * is required. A grey header marked Optional may be left blank. Optional prices default to zero; optional units and box details use safe defaults.'],
-      ['3', 'Choose governed values', 'Dropdowns come from live master data at download time. Category, brand, finish and tax are required for bulk governance; material, tile size and conversion details are optional.'],
+      ['3', 'Choose governed values', 'Dropdowns come from live master data at download time. Category, brand, finish and tax are required. Tile rows also require Tile Design Code so every size/finish SKU links to one governed design.'],
       ['4', 'Add a product image', 'Optional: paste a public HTTPS image URL or use Excel Insert > Pictures > Place over cells. Keep one JPG/PNG/WebP picture inside the Product Image cell on that row. Do not use Place in Cell.'],
       ['5', 'Preview before creation', 'Upload the workbook in Excel Import Center. Nothing is written until every row passes and you explicitly confirm.'],
       ['6', 'Existing SKUs are protected', 'Bulk import creates new SKUs only. Edit existing products individually in Product Master; the SKU code itself remains locked.'],
@@ -308,6 +315,19 @@ export class ImportsService {
       await this.persistExternalProductImages(plan.rows);
       appliedProducts = await this.prisma.$transaction(async (tx) => {
         const rows = plan.rows.map((row: any) => ({ id: ulid(), sku: row.normalized.sku, action: row.action, normalized: row.normalized }));
+        const tileRows = rows.filter((row: any) => this.key(row.normalized.category) === 'tiles');
+        const designCodes = Array.from(new Set(tileRows.map((row: any) => row.normalized.designCode)));
+        const existingDesigns = designCodes.length
+          ? await tx.tileDesign.findMany({ where: { designCode: { in: designCodes } }, select: { id: true, designCode: true } })
+          : [];
+        const designIds = new Map(existingDesigns.map((row: any) => [row.designCode, row.id]));
+        for (const row of tileRows) {
+          if (!designIds.has(row.normalized.designCode)) {
+            const design = await tx.tileDesign.create({ data: this.tileDesignCreateData(row.normalized, uploadedBy) });
+            designIds.set(design.designCode, design.id);
+          }
+          row.normalized.masterIds = { ...row.normalized.masterIds, tileDesignId: designIds.get(row.normalized.designCode) };
+        }
         for (let offset = 0; offset < rows.length; offset += 400) {
           const batch = rows.slice(offset, offset + 400);
           await tx.product.createMany({ data: batch.map((row: any) => this.productCreateData(row.id, row.normalized, uploadedBy)) });
@@ -410,7 +430,7 @@ export class ImportsService {
       sku: 'SKU', internalCode: 'Internal Code', name: 'Product Name', category: 'Category', brand: 'Brand', finish: 'Finish',
       material: 'Material', dimensions: 'Tile Size / Dimensions', baseUom: 'Base UOM', purchaseUom: 'Purchase UOM', salesUom: 'Sales UOM',
       piecesPerPack: 'Pieces Per Pack', coveragePerPack: 'Coverage Per Pack', sellPrice: 'Sell Price', floorPrice: 'Floor Price', costPrice: 'Default Purchase Cost',
-      taxClass: 'Tax Code', hsnCode: 'HSN Code', allowLoose: 'Allow Loose', range: 'Range / Series', imageUrl: 'Image URL', description: 'Description',
+      taxClass: 'Tax Code', hsnCode: 'HSN Code', allowLoose: 'Allow Loose', range: 'Range / Series', imageUrl: 'Image URL', description: 'Description', designCode: 'Tile Design Code', designName: 'Tile Design Name',
     };
     for (const review of reviewed) {
       const row = rawByIdentity.get(`${review.sheet}\0${review.rowNumber}`);
@@ -429,7 +449,7 @@ export class ImportsService {
     if (value.length > MAX_IMPORT_ROWS) throw new BadRequestException(`A review can contain at most ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} rows.`);
     const allowed = new Set([
       'sku', 'internalCode', 'name', 'category', 'brand', 'finish', 'material', 'dimensions', 'baseUom', 'purchaseUom', 'salesUom',
-      'piecesPerPack', 'coveragePerPack', 'sellPrice', 'floorPrice', 'costPrice', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description',
+      'piecesPerPack', 'coveragePerPack', 'sellPrice', 'floorPrice', 'costPrice', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description', 'designCode', 'designName',
     ]);
     const identities = new Set<string>();
     const rows = value.map((input: any) => {
@@ -503,6 +523,7 @@ export class ImportsService {
     const rows: any[] = [];
     const seen = new Set<string>();
     const seenInternalCodes = new Set<string>();
+    const seenTileDesigns = new Map<string, string>();
 
     parsed.forEach((row) => {
       const errors = [...row.errors];
@@ -529,6 +550,12 @@ export class ImportsService {
         seenInternalCodes.add(row.normalized.internalCode);
         const ownerSku = internalCodeOwner.get(row.normalized.internalCode);
         if (ownerSku && ownerSku !== row.normalized.sku) errors.push(`Internal/showroom code is already assigned to ${ownerSku}`);
+      }
+      if (this.key(row.normalized.category) === 'tiles' && row.normalized.designCode) {
+        const fingerprint = [row.normalized.designName, row.normalized.brand, row.normalized.material, row.normalized.range].map((value) => this.key(value)).join('|');
+        const prior = seenTileDesigns.get(row.normalized.designCode);
+        if (prior && prior !== fingerprint) errors.push(`Tile Design Code ${row.normalized.designCode} has conflicting name, brand, material or series in this workbook`);
+        seenTileDesigns.set(row.normalized.designCode, fingerprint);
       }
       for (const uom of [row.normalized.baseUom, row.normalized.purchaseUom, row.normalized.salesUom]) {
         if (!validUoms.has(uom)) errors.push(`Unknown or inactive UOM ${uom}`);
@@ -561,6 +588,8 @@ export class ImportsService {
         rowNumber: row.raw.__rowNumber,
         sku: row.normalized.sku,
         internalCode: row.normalized.internalCode,
+        designCode: row.normalized.designCode,
+        designName: row.normalized.designName,
         name: row.normalized.name,
         category: row.normalized.category,
         brand: row.normalized.brand,
@@ -681,6 +710,8 @@ export class ImportsService {
     if (!row.brand) errors.push('Brand is required. Create it in Brand Master before importing');
     if (!row.finish) errors.push('Finish is required. Create it in Finish Master before importing');
     if (!row.hasTaxClass) errors.push('Tax Code is required');
+    if (this.key(row.category) === 'tiles' && (!row.hasDesignCode || !row.designCode)) errors.push('Tile Design Code is required for Tiles so all size and finish variants share one governed design');
+    if (this.key(row.category) === 'tiles' && (!row.hasDesignName || !row.designName)) errors.push('Tile Design Name is required for Tiles and remains independent of the size/finish variant name');
     if (row.hasSellPrice && (!Number.isFinite(row.sellPrice) || row.sellPrice < 0)) errors.push('Sell Price must be zero or greater');
     if (row.hasFloorPrice && (!Number.isFinite(row.floorPrice) || row.floorPrice < 0)) errors.push('Floor/dealer price must be zero or greater');
     if (row.hasCostPrice && (!Number.isFinite(row.costPrice) || row.costPrice < 0)) errors.push('Default purchase cost must be zero or greater');
@@ -764,11 +795,17 @@ export class ImportsService {
     const baseUom = String(baseUomValue || (purchaseUom === 'BOX' ? 'PC' : purchaseUom)).trim().toUpperCase();
     const sku = this.normalizeSku(pick('SKU', 'sku', 'Code', 'PRODUCT CODE', 'Product Code', 'Item Code', 'Article No', 'Article Number', 'Model No', 'Material Code'));
     const internalCode = pick('Internal Code', 'Showroom Code', 'Display Code', 'Sales Code', 'Internal SKU');
+    const designCode = pick('Tile Design Code', 'Design Code', 'Tile Family Code');
+    const designName = pick('Tile Design Name', 'Design Name', 'Tile Family Name');
     const description = this.cleanText(pick('Long Description', 'Description', 'PRODUCT DESCRIPTION'));
     return {
       sku,
       internalCode: this.normalizeInternalCode(internalCode || sku),
       hasInternalCode: internalCode !== undefined,
+      designCode: this.normalizeInternalCode(designCode || ''),
+      hasDesignCode: designCode !== undefined,
+      designName: this.cleanText(designName),
+      hasDesignName: designName !== undefined,
       name: this.cleanText(pick('Product Name', 'Item Name', 'Name', 'Product', 'PRODUCT DESCRIPTION', 'Item Description', 'Description')),
       category,
       brand,
@@ -834,6 +871,7 @@ export class ImportsService {
         finishId: masters.finish?.id || null,
         materialId: masters.material?.id || null,
         tileSizeId: masters.tileSize?.id || null,
+        tileDesignId: masters.tileDesign?.id || null,
         unit: normalized.purchaseUom,
         baseUom: normalized.baseUom,
         purchaseUom: normalized.purchaseUom,
@@ -887,17 +925,18 @@ export class ImportsService {
 
   private async ensureProductMastersTx(tx: any, normalized: NormalizedProductRow) {
     const { category, brand, finish, material, dimensions } = normalized;
-    const [categoryRow, brandRow, finishRow, materialRow, tileSizeRow] = await Promise.all([
+    const [categoryRow, brandRow, finishRow, materialRow, tileSizeRow, tileDesignRow] = await Promise.all([
       tx.productCategory.findFirst({ where: { name: category, status: 'active' } }),
       brand ? tx.productBrand.findFirst({ where: { name: brand, status: 'active' } }) : null,
       finish ? tx.productFinish.findFirst({ where: { name: finish, status: 'active' } }) : null,
       material ? tx.productMaterial.findFirst({ where: { name: material, status: 'active' } }) : null,
       this.key(category) === 'tiles' && dimensions ? tx.tileSize.findFirst({ where: { name: dimensions, status: 'active' } }) : null,
+      this.key(category) === 'tiles' && normalized.designCode ? tx.tileDesign.findUnique({ where: { designCode: normalized.designCode } }) : null,
     ]);
     if (!categoryRow || (brand && !brandRow) || (finish && !finishRow) || (material && !materialRow) || (this.key(category) === 'tiles' && dimensions && !tileSizeRow)) {
       throw new BadRequestException('A selected master value changed after preview. Download a fresh template and preview again.');
     }
-    return { category: categoryRow, brand: brandRow, finish: finishRow, material: materialRow, tileSize: tileSizeRow };
+    return { category: categoryRow, brand: brandRow, finish: finishRow, material: materialRow, tileSize: tileSizeRow, tileDesign: tileDesignRow };
   }
 
   private normalizeHeader(value: string) {
@@ -997,7 +1036,7 @@ export class ImportsService {
     return {
       id,
       sku: normalized.sku,
-      name: normalized.name,
+      name: normalized.designName,
       category: normalized.category,
       brand: normalized.brand,
       finish: normalized.finish,
@@ -1008,6 +1047,7 @@ export class ImportsService {
       finishId: normalized.masterIds?.finishId || null,
       materialId: normalized.masterIds?.materialId || null,
       tileSizeId: normalized.masterIds?.tileSizeId || null,
+      tileDesignId: normalized.masterIds?.tileDesignId || null,
       unit: normalized.purchaseUom,
       baseUom: normalized.baseUom,
       purchaseUom: normalized.purchaseUom,
@@ -1028,6 +1068,28 @@ export class ImportsService {
       description: normalized.description,
       updatedAt: new Date(),
     } as any;
+  }
+
+  private tileDesignCreateData(normalized: NormalizedProductRow, uploadedBy: string) {
+    const media = normalized.imageUrl && normalized.imageUrl !== '__embedded_excel_image__'
+      ? { primaryUrl: normalized.imageUrl, images: [{ url: normalized.imageUrl }], source: 'excel-import' }
+      : {};
+    return {
+      id: ulid(),
+      designCode: normalized.designCode,
+      name: normalized.name,
+      brand: normalized.brand || '',
+      collection: normalized.range || null,
+      material: normalized.material || null,
+      surface: normalized.finish || null,
+      description: normalized.description || '',
+      media,
+      tags: [],
+      usage: [],
+      status: 'active',
+      metadata: { createdFrom: 'excel-import', uploadedBy },
+      updatedAt: new Date(),
+    };
   }
 
   private async masterSnapshot() {

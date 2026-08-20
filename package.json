@@ -41,9 +41,11 @@
     "smoke:pricing-matrix": "node scripts/quote-pricing-matrix-smoke.cjs",
     "smoke:control-tower-scale": "node scripts/control-tower-scale-gate.mjs",
     "smoke:catalogue-scale": "node scripts/catalogue-scale-gate.mjs",
+    "smoke:tile-registry-scale": "node scripts/tile-registry-scale-gate.mjs",
     "smoke:inventory-location": "node scripts/inventory-location-scope-smoke.mjs",
     "smoke:inventory-truth": "node scripts/e2e-inventory-truth-cost-smoke.mjs",
     "smoke:shared-labels-tiles": "node scripts/e2e-shared-label-tile-master-smoke.mjs",
+    "smoke:procurement-tiles-display": "node scripts/e2e-procurement-tile-display-release-gate.mjs",
     "smoke:reporting-suite": "node scripts/e2e-reporting-suite-smoke.mjs",
     "smoke:session-inactivity": "node scripts/e2e-session-inactivity-smoke.mjs",
     "smoke:auth-hardening": "node scripts/e2e-auth-hardening-smoke.mjs",
@@ -54,7 +56,7 @@
   "dependencies": {
     "@apollo/server": "5.5.1",
     "minimatch": "file:vendor/minimatch-compat",
-    "nanoid": "3.3.17",
+    "nanoid": "3.3.18",
     "postcss": "8.5.25",
     "uuid": "11.1.1"
   },

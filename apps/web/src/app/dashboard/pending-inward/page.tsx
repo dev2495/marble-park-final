@@ -1,132 +1,24 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { gql, useQuery } from '@apollo/client';
-import { Boxes, CheckCircle2, Clock, PackageSearch, Truck } from 'lucide-react';
+import { Boxes, CheckCircle2, ChevronLeft, ChevronRight, Search, Truck } from 'lucide-react';
 import { QueryErrorBanner } from '@/components/query-state';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 
-const PENDING_INWARD = gql`
-  query PendingInward {
-    pendingInwardItems(take: 250)
-  }
-`;
+const DATA=gql`query PendingInwardQueue($search:String,$status:String,$sort:String,$skip:Int){purchaseDemandPage(search:$search,status:$status,sort:$sort,skip:$skip,take:40)}`;
 
-function money(value: number) {
-  return `₹${Number(value || 0).toLocaleString('en-IN')}`;
-}
-
-export default function PendingInwardPage() {
-  const { data, loading, error, refetch } = useQuery(PENDING_INWARD, {
-    pollInterval: 120000,
-    skipPollAttempt: () => typeof document !== 'undefined' && document.hidden,
-    notifyOnNetworkStatusChange: false,
-  });
-  const rows = data?.pendingInwardItems || [];
-  const totalQty = rows.reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
-  const readyQty = rows.reduce((sum: number, row: any) => sum + Number(row.available || 0), 0);
-
-  return (
-    <div className="space-y-6 pb-10">
-      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
-
-      <section className="relative overflow-hidden rounded-r6 border border-[var(--line)] bg-gradient-to-br from-amber-50 via-white to-blue-50 p-6 shadow-sm-soft">
-        <div className="absolute right-8 top-6 h-28 w-28 rounded-full bg-amber-300/30 blur-3xl" />
-        <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ink-4)]">Sales confirmed, stock pending</p>
-            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.03em] text-[var(--ink)]">Pending inward orders.</h1>
-            <p className="mt-3 max-w-3xl text-sm font-medium leading-6 text-[var(--ink-3)]">
-              These rows are already confirmed in sales orders but are blocked until purchase order and GRN receiving completes. Once GRN posts, the system auto-reserves arrived stock and notifies sales plus dispatch.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <div className="rounded-r4 border border-[var(--line)] bg-white/80 p-4 shadow-sm-soft">
-              <p className="text-2xl font-black text-[var(--ink)]">{rows.length}</p>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Open rows</p>
-            </div>
-            <div className="rounded-r4 border border-[var(--line)] bg-white/80 p-4 shadow-sm-soft">
-              <p className="text-2xl font-black text-[var(--ink)]">{totalQty}</p>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Qty ordered</p>
-            </div>
-            <div className="rounded-r4 border border-[var(--line)] bg-white/80 p-4 shadow-sm-soft">
-              <p className="text-2xl font-black text-emerald-700">{readyQty}</p>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Now available</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4">
-        {loading ? (
-          <div className="mp-card rounded-r5 p-8 text-sm font-bold text-[var(--ink-3)]">Loading pending inward rows...</div>
-        ) : rows.length ? (
-          rows.map((row: any) => (
-            <article key={row.reservationId} className="mp-card rounded-r5 p-5">
-              <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-                <div className="flex min-w-0 gap-4">
-                  <div className="grid h-12 w-12 shrink-0 place-items-center rounded-r4 bg-amber-50 text-amber-700">
-                    <PackageSearch className="h-6 w-6" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-lg font-black text-[var(--ink)]">{row.sku} · {row.name}</p>
-                    <p className="mt-1 text-sm font-semibold text-[var(--ink-3)]">
-                      {row.brand || 'Brand'} · {row.category || 'Category'} · {row.finish || 'Standard'}
-                    </p>
-                    <p className="mt-2 text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">
-                      {row.orderNumber || 'Order pending'} · {row.quoteNumber || 'Quote'} · {row.customer?.name || 'Customer'}
-                    </p>
-                    <p className="mt-1 text-xs font-bold text-amber-700">
-                      {row.vendorName || 'Vendor pending'} · {String(row.purchaseStatus || 'demand pending').replaceAll('_', ' ')}{row.expectedDate ? ` · ETA ${new Date(row.expectedDate).toLocaleDateString()}` : ''}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-4 xl:min-w-[38rem]">
-                  <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-3">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Ordered</p>
-                    <p className="mt-1 text-xl font-black text-[var(--ink)]">{row.quantity}</p>
-                  </div>
-                  <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-3">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Available</p>
-                    <p className="mt-1 text-xl font-black text-emerald-700">{row.available}</p>
-                  </div>
-                  <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-3">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Shortage</p>
-                    <p className="mt-1 text-xl font-black text-rose-700">{row.shortage}</p>
-                  </div>
-                  <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-3">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ink-4)]">Value</p>
-                    <p className="mt-1 text-xl font-black text-[var(--ink)]">{money(Number(row.quantity || 0) * Number(row.sellPrice || 0))}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Button asChild size="sm">
-                  <Link href="/dashboard/procurement"><Boxes className="mr-2 h-4 w-4" /> Create PO / receive</Link>
-                </Button>
-                <Button asChild size="sm" variant="secondary">
-                  <Link href="/dashboard/dispatch"><Truck className="mr-2 h-4 w-4" /> Dispatch board</Link>
-                </Button>
-                {row.leadId ? (
-                  <Button asChild size="sm" variant="secondary">
-                    <Link href={`/dashboard/leads/${row.leadId}`}><Clock className="mr-2 h-4 w-4" /> Lead trail</Link>
-                  </Button>
-                ) : null}
-              </div>
-            </article>
-          ))
-        ) : (
-          <div className="mp-card grid min-h-[22rem] place-items-center rounded-r5 p-8 text-center">
-            <div>
-              <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-600" />
-              <h2 className="mt-4 font-display text-2xl font-black text-[var(--ink)]">No pending inward rows.</h2>
-              <p className="mt-2 text-sm font-medium text-[var(--ink-3)]">Confirmed orders are either fully reserved or already dispatched.</p>
-            </div>
-          </div>
-        )}
-      </section>
-    </div>
-  );
+export default function PendingInwardPage(){
+ const[search,setSearch]=useState('');const[status,setStatus]=useState('all');const[sort,setSort]=useState('priority');const[page,setPage]=useState(0);
+ const{data,loading,error,refetch}=useQuery(DATA,{variables:{search:useDebouncedValue(search,250)||undefined,status,sort,skip:page*40},fetchPolicy:'cache-and-network'});
+ const result=data?.purchaseDemandPage||{};const rows=result.items||[];
+ return <div className="space-y-5 pb-10">{error?<QueryErrorBanner error={error} onRetry={()=>refetch()}/>:null}
+  <header className="flex flex-col justify-between gap-5 border-b border-[var(--line)] pb-5 pt-2 xl:flex-row xl:items-end"><div><p className="text-xs font-semibold uppercase tracking-[.14em] text-[var(--ink-4)]">Sales confirmed · supply pending</p><h1 className="mt-1 font-display text-3xl font-bold">Pending inward queue</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">A server-paged shortage queue tied to the same purchase demand, PO, GRN, lot and reservation lifecycle used everywhere else.</p></div><div className="flex gap-3"><div><p className="text-2xl font-semibold">{Number(result.total||0).toLocaleString('en-IN')}</p><p className="text-xs text-[var(--ink-4)]">Matching rows</p></div><Button asChild><Link href="/dashboard/procurement?view=demand"><Boxes className="mr-2 h-4 w-4"/>Create PO</Link></Button></div></header>
+  <section className="mp-panel overflow-hidden"><div className="flex flex-col gap-3 border-b border-[var(--line)] p-4 lg:flex-row"><label className="relative min-w-0 flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]"/><Input className="pl-9" value={search} onChange={(e)=>{setSearch(e.target.value);setPage(0)}} placeholder="Search SKU, item, supplier or source"/></label><select value={status} onChange={(e)=>{setStatus(e.target.value);setPage(0)}} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm"><option value="all">All active</option><option value="open">Open</option><option value="ordered">PO ordered</option><option value="partial_received">Part received</option><option value="received">Received</option><option value="allocated">Allocated</option></select><select value={sort} onChange={(e)=>setSort(e.target.value)} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm"><option value="priority">Priority</option><option value="oldest">Oldest first</option><option value="sku_asc">SKU A–Z</option><option value="shortage_desc">Quantity high–low</option><option value="eta_asc">ETA soonest</option></select></div>
+   <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-sm"><thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-wider text-[var(--ink-4)]"><tr><th className="p-4">SKU / item</th><th>Customer / order</th><th>Needed</th><th>PO / supplier</th><th>ETA</th><th className="pr-4">Action</th></tr></thead><tbody className="divide-y divide-[var(--line)]">{rows.map((row:any)=><tr key={row.id} className="hover:bg-[var(--bg-soft)]"><td className="p-4"><b>{row.sku} · {row.name}</b><p className="text-xs text-[var(--ink-4)]">{row.brand} · {row.finish||'Standard'}</p></td><td>{row.customer?.name||'Replenishment'}<p className="text-xs text-[var(--ink-4)]">{row.salesOrder?.orderNumber||row.sourceLineKey}</p></td><td>{row.quantity} {row.unit}<p className="text-xs text-[var(--ink-4)]">Received {row.receivedQuantity||0}</p></td><td><span className="rounded bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">{String(row.status).replaceAll('_',' ')}</span><p className="mt-1 text-xs">{row.vendorName||'Supplier pending'}</p></td><td>{row.expectedDate?new Date(row.expectedDate).toLocaleDateString('en-IN'):'Not set'}</td><td className="pr-4"><div className="flex gap-2"><Button asChild size="sm"><Link href="/dashboard/procurement?view=demand">Procure</Link></Button><Button asChild size="sm" variant="outline"><Link href="/dashboard/dispatch"><Truck className="mr-2 h-4 w-4"/>Dispatch</Link></Button></div></td></tr>)}{!loading&&!rows.length?<tr><td colSpan={6}><div className="grid min-h-64 place-items-center text-center"><div><CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600"/><p className="mt-3 font-semibold">No pending inward rows match these filters.</p></div></div></td></tr>:null}</tbody></table></div><div className="flex items-center justify-between border-t border-[var(--line)] p-4"><span className="text-xs text-[var(--ink-4)]">Page {page+1} · {rows.length} shown</span><div className="flex gap-2"><Button size="icon" variant="outline" disabled={!page} onClick={()=>setPage(p=>p-1)}><ChevronLeft className="h-4 w-4"/></Button><Button size="icon" variant="outline" disabled={!result.hasNext} onClick={()=>setPage(p=>p+1)}><ChevronRight className="h-4 w-4"/></Button></div></div>
+  </section>
+ </div>
 }
