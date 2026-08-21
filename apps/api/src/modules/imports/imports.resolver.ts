@@ -8,6 +8,7 @@ import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
+import { TileDesignImportService } from './tile-design-import.service';
 
 @ObjectType()
 export class ImportOutput {
@@ -103,7 +104,39 @@ export class ImportsResolver {
   constructor(
     private imports: ImportsService,
     private prisma: PrismaService,
+    private tileDesignImports: TileDesignImportService,
   ) {}
+
+  @Query(() => GraphQLJSON)
+  async tileDesignImportTemplate(@Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'catalogue.import');
+    return this.tileDesignImports.template();
+  }
+
+  @Mutation(() => ImportOutput)
+  async previewTileDesignImport(
+    @Args('filename') filename: string,
+    @Args('contentBase64') contentBase64: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
+    assertExcelFile(filename);
+    const result = await this.tileDesignImports.preview(decodeBase64Upload(contentBase64, MAX_EXCEL_UPLOAD_BYTES, 'Tile Design Excel upload'), user.id);
+    return { id: `tile-design-preview-${Date.now()}`, result };
+  }
+
+  @Mutation(() => ImportOutput)
+  async applyTileDesignImport(
+    @Args('filename') filename: string,
+    @Args('contentBase64') contentBase64: string,
+    @Args('confirmationToken') confirmationToken: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'catalogue.import');
+    assertExcelFile(filename);
+    const result = await this.tileDesignImports.apply(decodeBase64Upload(contentBase64, MAX_EXCEL_UPLOAD_BYTES, 'Tile Design Excel upload'), user.id, confirmationToken);
+    return { id: `tile-design-apply-${Date.now()}`, result };
+  }
 
   @Query(() => GraphQLJSON)
   async productImportTemplate(@Context() ctx: GraphqlRequestContext) {
@@ -262,7 +295,7 @@ export class ImportsResolver {
     const effectiveScope = scope || 'product-image';
     if (effectiveScope === 'profile-avatar') {
       await requireSession(this.prisma, ctx);
-    } else if (effectiveScope === 'product-image') {
+    } else if (effectiveScope === 'product-image' || effectiveScope === 'tile-design-image') {
       await requirePermission(this.prisma, ctx, 'products.manage');
     } else if (effectiveScope === 'brand-logo') {
       await requirePermission(this.prisma, ctx, 'master_data.manage');

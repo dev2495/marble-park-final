@@ -520,25 +520,26 @@ export class ProductsService {
     }
     const duplicate = await (this.prisma as any).tileDesign.findFirst({ where: { designCode, ...(input.id ? { id: { not: input.id } } : {}) } });
     if (duplicate) throw new BadRequestException(`Design code ${designCode} is already used by ${duplicate.name}`);
+    const requestedBrand = String(input.brand || '').trim();
+    if (!requestedBrand) throw new BadRequestException('Select a brand from Brand Master');
+    const brandMaster = await this.prisma.productBrand.findFirst({
+      where: { name: { equals: requestedBrand, mode: 'insensitive' }, status: 'active' },
+      select: { name: true },
+    });
+    if (!brandMaster) throw new BadRequestException('Choose an active brand from Brand Master');
     const media = input.media === undefined && existing ? existing.media : await this.normalizeMedia(input.media || {});
     const data: any = {
       designCode, name,
-      brand: String(input.brand || '').trim(),
-      collection: String(input.collection || '').trim() || null,
-      material: String(input.material || '').trim() || null,
-      surface: String(input.surface || '').trim() || null,
-      style: String(input.style || '').trim() || null,
-      colour: String(input.colour || '').trim() || null,
-      pattern: String(input.pattern || '').trim() || null,
-      usage: Array.isArray(input.usage) ? Array.from(new Set(input.usage.map((value: any) => String(value).trim()).filter(Boolean))) : [],
-      origin: String(input.origin || '').trim() || null,
-      description: String(input.description || '').trim(),
+      brand: brandMaster.name,
       media,
-      tags: Array.isArray(input.tags) ? Array.from(new Set(input.tags.map((value: any) => String(value).trim()).filter(Boolean))) : [],
       status,
       metadata: { ...(existing?.metadata || {}), ...(input.metadata || {}) },
       updatedAt: new Date(),
     };
+    if (!existing) Object.assign(data, {
+      collection: null, material: null, surface: null, style: null, colour: null, pattern: null,
+      usage: [], origin: null, description: '', tags: [],
+    });
     return this.prisma.$transaction(async (tx: any) => {
       const design = existing
         ? await tx.tileDesign.update({ where: { id: existing.id }, data })
@@ -562,7 +563,14 @@ export class ProductsService {
     if (existing && String(existing.category || '').toLowerCase() !== 'tiles') throw new BadRequestException('Only tile variants can be edited here');
     if (existing && existing.tileDesignId && existing.tileDesignId !== design.id) throw new BadRequestException('A variant cannot be moved to another design; archive it and create a new warehouse SKU');
     if (existing && existing.tileSizeId && existing.tileSizeId !== size.id) throw new BadRequestException('A variant size cannot change after creation; archive it and create a new warehouse SKU');
-    const finish = String(input.finish || design.surface || 'Standard').trim();
+    const requestedFinish = String(input.finish || '').trim();
+    if (!requestedFinish) throw new BadRequestException('Select a finish from Finish Master');
+    const finishMaster = await this.prisma.productFinish.findFirst({
+      where: { name: { equals: requestedFinish, mode: 'insensitive' }, status: 'active' },
+      select: { name: true },
+    });
+    if (!finishMaster) throw new BadRequestException('Choose an active finish from Finish Master');
+    const finish = finishMaster.name;
     const piecesPerPack = Math.max(1, Math.trunc(Number(input.piecesPerPack || size.pcsPerBox || 1)));
     const coveragePerPack = Number(size.areaPerPieceSqFt || 0) > 0 ? Number(size.areaPerPieceSqFt) * piecesPerPack : Number(size.areaPerBoxSqFt || 0);
     const generatedSku = [design.designCode, size.code || size.name, finish].map((value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')).filter(Boolean).join('-').slice(0, 80);
@@ -630,7 +638,6 @@ export class ProductsService {
       { internalCode: { contains: search, mode: 'insensitive' } },
       { sampleNumber: { contains: search, mode: 'insensitive' } },
       { displayZone: { contains: search, mode: 'insensitive' } },
-      { displayPosition: { contains: search, mode: 'insensitive' } },
       { product: { is: { OR: [{ sku: { contains: search, mode: 'insensitive' } }, { name: { contains: search, mode: 'insensitive' } }, { internalCode: { contains: search, mode: 'insensitive' } }] } } },
     ];
     const take = Math.min(100, Math.max(1, Number(args?.take || 30)));
@@ -711,8 +718,8 @@ export class ProductsService {
     const internalCode = this.normalizeInternalCode(input.internalCode || product.internalCode || product.sku);
     const locationId = String(input.locationId || '').trim();
     const displayZone = String(input.displayZone || '').trim();
-    const displayPosition = String(input.displayPosition || '').trim();
-    if (!locationId || !displayZone || !displayPosition) throw new BadRequestException('Display location, zone and position are required so the physical asset can be found');
+    const displayPosition = String(input.displayPosition || '').trim() || null;
+    if (!locationId || !displayZone) throw new BadRequestException('Display location and zone are required so the physical asset can be found');
     const location = await this.prisma.stockLocation.findFirst({ where: { id: locationId, status: 'active' }, select: { id: true } });
     if (!location) throw new BadRequestException('Choose an active governed stock/showroom location');
     if (await this.prisma.displaySample.findUnique({ where: { internalCode } })) throw new BadRequestException('This display code is already registered');

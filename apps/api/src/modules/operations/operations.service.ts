@@ -439,12 +439,23 @@ export class OperationsService {
           { internalCode: { contains: args.search, mode: 'insensitive' } },
           { name: { contains: args.search, mode: 'insensitive' } },
         ] } } },
+        { goodsReceiptLines: { some: { goodsReceiptNote: { is: { OR: [
+          { grnNumber: { contains: args.search, mode: 'insensitive' } },
+          { vendorName: { contains: args.search, mode: 'insensitive' } },
+          { supplierChallan: { contains: args.search, mode: 'insensitive' } },
+          { supplierBill: { contains: args.search, mode: 'insensitive' } },
+        ] } } } } },
       ];
     }
     return (this.prisma as any).inventoryLot.findMany({
       where,
       include: {
-        product: true,
+        product: { include: { tileDesignMaster: true, tileSizeMaster: true } },
+        goodsReceiptLines: {
+          take: 1,
+          include: { goodsReceiptNote: true },
+          orderBy: { createdAt: 'desc' },
+        },
         balances: {
           where: args?.locationId ? { locationId: args.locationId } : undefined,
           include: { location: true },

@@ -37,21 +37,23 @@ async function main() {
 
   const sizes = (await gql('query { tileSizes(status:"active") }', {}, token)).tileSizes;
   assert(sizes.length, 'At least one active governed Tile Size is required');
+  const governedMasters = await gql('query { masterProductBrands(status:"active") masterProductFinishes(status:"active") }', {}, token);
+  assert(governedMasters.masterProductBrands.length && governedMasters.masterProductFinishes.length, 'Active Brand and Finish masters are required');
+  const governedBrand = governedMasters.masterProductBrands[0].name;
+  const governedFinish = governedMasters.masterProductFinishes[0].name;
   const size = sizes.find((row) => Number(row.pcsPerBox || 0) >= 2) || sizes[0];
   const piecesPerPack = Math.max(2, Number(size.pcsPerBox || 2));
   const design = (await gql('mutation($input: TileDesignInput!) { saveTileDesign(input:$input) }', { input: {
-    designCode: `GATE-${suffix}`, name: `Acceptance marble ${suffix}`, brand: 'Release Gate', collection: 'Lifecycle',
-    material: 'Porcelain', surface: 'Matt', style: 'Stone', colour: 'Warm ivory', pattern: 'Vein',
-    usage: ['floor', 'wall'], origin: 'Acceptance clone', description: 'Release-gate design; never production data.', status: 'active',
+    designCode: `GATE-${suffix}`, name: `Acceptance marble ${suffix}`, brand: governedBrand, status: 'active',
   } }, token)).saveTileDesign;
   const variant = (await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id sku internalCode tileDesignId tileSizeId piecesPerPack purchaseUom allowLoose } }', { input: {
-    tileDesignId: design.id, tileSizeId: size.id, sku: `WH-${suffix}`, internalCode: `SHOW-${suffix}`, finish: 'Matt',
+    tileDesignId: design.id, tileSizeId: size.id, sku: `WH-${suffix}`, internalCode: `SHOW-${suffix}`, finish: governedFinish,
     piecesPerPack, purchaseUom: 'BOX', salesUom: 'BOX', allowLoose: true, sellPrice: 200, floorPrice: 180, costPrice: 120,
   } }, token)).saveTileVariant;
   assert(variant.sku === `WH-${suffix}` && variant.tileDesignId === design.id && variant.tileSizeId === size.id, 'Variant must retain immutable warehouse SKU, design and governed size');
-  const duplicateError = await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id } }', { input: { tileDesignId: design.id, tileSizeId: size.id, finish: 'Matt' } }, token, true);
+  const duplicateError = await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id } }', { input: { tileDesignId: design.id, tileSizeId: size.id, finish: governedFinish } }, token, true);
   assert(/already exists/i.test(duplicateError), 'Duplicate design × size × finish variants must be blocked');
-  const updatedVariant = (await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id sku } }', { input: { id: variant.id, tileDesignId: design.id, tileSizeId: size.id, sku: `CHANGED-${suffix}`, finish: 'Matt', piecesPerPack } }, token)).saveTileVariant;
+  const updatedVariant = (await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id sku } }', { input: { id: variant.id, tileDesignId: design.id, tileSizeId: size.id, sku: `CHANGED-${suffix}`, finish: governedFinish, piecesPerPack } }, token)).saveTileVariant;
   assert(updatedVariant.sku === variant.sku, 'Warehouse SKU must remain immutable on update');
   await gql('mutation($input: ProductAliasInput!) { saveProductAlias(input:$input) }', { input: { productId: variant.id, type: 'supplier_sku', value: `SUP-${suffix}` } }, token);
   const aliasResults = (await gql('query($query:String!){globalSearch(query:$query){products}}', { query: `SUP-${suffix}` }, token)).globalSearch.products;
@@ -60,6 +62,22 @@ async function main() {
   const readiness = (await gql('query{productImportReadiness}', {}, token)).productImportReadiness;
   const tileCategory = readiness.options.categories.find((value) => value.toLowerCase() === 'tiles');
   assert(readiness.ready && tileCategory && readiness.options.brands.length && readiness.options.finishes.length && readiness.options.taxCodes.length && sizes.length > 1, 'Tile import needs active category, brand, finish, tax and at least two governed sizes');
+  const liveDesignTemplate = (await gql('query{tileDesignImportTemplate}', {}, token)).tileDesignImportTemplate;
+  const downloadedWorkbook = new ExcelJS.Workbook();
+  await downloadedWorkbook.xlsx.load(Buffer.from(liveDesignTemplate.contentBase64, 'base64'));
+  const downloadedDesignSheet = downloadedWorkbook.getWorksheet('Tile Designs');
+  const downloadedBrandSheet = downloadedWorkbook.getWorksheet('Live Brand Master');
+  assert(downloadedDesignSheet?.getCell('C2').dataValidation?.formulae?.[0] === 'TileDesignBrands' && downloadedBrandSheet?.actualRowCount === governedMasters.masterProductBrands.length + 1, 'Fresh design workbook must contain a live Brand Master dropdown and every current active brand');
+  const designWorkbook = new ExcelJS.Workbook();
+  const designSheet = designWorkbook.addWorksheet('Tile Designs');
+  designSheet.addRow(['Permanent Design Code *', 'Design Name *', 'Brand *', 'Image URL (Optional)']);
+  designSheet.addRow([`DX-${suffix}`, `Excel design ${suffix}`, governedBrand, '']);
+  const designFilename = `tile-design-registry-${suffix}.xlsx`;
+  const designContentBase64 = Buffer.from(await designWorkbook.xlsx.writeBuffer()).toString('base64');
+  const designPreview = (await gql('mutation($filename:String!,$contentBase64:String!){previewTileDesignImport(filename:$filename,contentBase64:$contentBase64){result}}', { filename: designFilename, contentBase64: designContentBase64 }, token)).previewTileDesignImport.result;
+  assert(designPreview.ready === 1 && designPreview.failed === 0 && designPreview.confirmationToken, 'Design-only Excel preview must validate live Brand Master without writing');
+  const designApplied = (await gql('mutation($filename:String!,$contentBase64:String!,$confirmationToken:String!){applyTileDesignImport(filename:$filename,contentBase64:$contentBase64,confirmationToken:$confirmationToken){result}}', { filename: designFilename, contentBase64: designContentBase64, confirmationToken: designPreview.confirmationToken }, token)).applyTileDesignImport.result;
+  assert(designApplied.applied === 1 && await prisma.tileDesign.findUnique({ where: { designCode: `DX-${suffix}` } }), 'Design-only Excel apply must create the governed design exactly once');
   const importDesignCode = `IMP-${suffix}`;
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Product Master');
@@ -109,9 +127,11 @@ async function main() {
   const lot = await prisma.inventoryLot.findFirst({ where: { productId: variant.id, sourceId: manual.id }, include: { balances: true } });
   const manualQuantity = piecesPerPack * 2 + 1;
   assert(lot && Number(lot.balances[0].available) === manualQuantity, 'Manual tile inward must create an exact lot using boxes plus loose pieces');
+  const recognisableLots = (await gql('query($productId:String,$search:String){inventoryLots(productId:$productId,status:"active",search:$search,take:10)}', { productId: variant.id, search: manual.grnNumber }, token)).inventoryLots;
+  assert(recognisableLots.some((row) => row.id === lot.id && row.goodsReceiptLines?.[0]?.goodsReceiptNote?.vendorName === `Gate supplier ${suffix}`), 'Display lot picker must resolve GRN search with supplier and receipt provenance');
 
   const display = (await gql('mutation($input:DisplaySampleInput!){createDisplaySample(input:$input)}', { input: {
-    productId: variant.id, internalCode: `WALL-${suffix}`, locationId: location.id, displayZone: 'Gate', displayPosition: 'A1',
+    productId: variant.id, internalCode: `WALL-${suffix}`, locationId: location.id, displayZone: 'Gate A1',
     sourceLotId: lot.id, issuedQuantity: 1, condition: 'good',
   } }, token)).createDisplaySample;
   let lotBalance = await prisma.inventoryLotBalance.findFirst({ where: { lotId: lot.id, locationId: location.id } });

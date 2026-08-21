@@ -1,131 +1,2036 @@
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { gql, useMutation, useQuery } from '@apollo/client';
-import { AlertTriangle, ArrowRight, Boxes, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, ClipboardList, Download, FileClock, History, PackageCheck, Plus, Printer, Search, ShoppingCart, Store, Trash2, Truck } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { QueryErrorBanner } from '@/components/query-state';
-import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { gql, useMutation, useQuery } from "@apollo/client";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Boxes,
+  CalendarClock,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  CircleDollarSign,
+  ClipboardList,
+  Download,
+  FileClock,
+  History,
+  PackageCheck,
+  Plus,
+  Printer,
+  Search,
+  ShoppingCart,
+  Store,
+  Trash2,
+  Truck,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { QueryErrorBanner } from "@/components/query-state";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
-const DATA=gql`query ProcurementSuite($dSearch:String,$dStatus:String,$dSort:String,$dSkip:Int,$poSearch:String,$poStatus:String,$poSort:String,$poSkip:Int,$gSearch:String,$gSource:String,$gSort:String,$gSkip:Int){
- procurementSummary
- purchaseDemandPage(search:$dSearch,status:$dStatus,sort:$dSort,skip:$dSkip,take:30)
- purchaseOrderPage(search:$poSearch,status:$poStatus,sort:$poSort,skip:$poSkip,take:25)
- goodsReceiptPage(search:$gSearch,source:$gSource,sort:$gSort,skip:$gSkip,take:25)
- vendors(status:"active",take:250)
- stockLocations(status:"active")
- me{id role}
-}`;
-const SEARCH_PRODUCTS=gql`query ProcurementProductSearch($query:String!){globalSearch(query:$query){products}}`;
-const CREATE_PO=gql`mutation CreatePo($input:CreatePurchaseOrderInput!){createPurchaseOrder(input:$input)}`;
-const RECEIVE_PO=gql`mutation ReceivePo($input:ReceivePurchaseOrderInput!){receivePurchaseOrder(input:$input)}`;
-const MANUAL_GRN=gql`mutation ManualGrn($input:ManualGoodsReceiptInput!){createManualGoodsReceipt(input:$input)}`;
-const CANCEL_PO=gql`mutation CancelPo($id:ID!,$reason:String!){cancelPurchaseOrder(id:$id,reason:$reason)}`;
+const DATA = gql`
+  query ProcurementSuite(
+    $dSearch: String
+    $dStatus: String
+    $dSort: String
+    $dSkip: Int
+    $poSearch: String
+    $poStatus: String
+    $poSort: String
+    $poSkip: Int
+    $gSearch: String
+    $gSource: String
+    $gSort: String
+    $gSkip: Int
+  ) {
+    procurementSummary
+    purchaseDemandPage(
+      search: $dSearch
+      status: $dStatus
+      sort: $dSort
+      skip: $dSkip
+      take: 30
+    )
+    purchaseOrderPage(
+      search: $poSearch
+      status: $poStatus
+      sort: $poSort
+      skip: $poSkip
+      take: 25
+    )
+    goodsReceiptPage(
+      search: $gSearch
+      source: $gSource
+      sort: $gSort
+      skip: $gSkip
+      take: 25
+    )
+    vendors(status: "active", take: 250)
+    stockLocations(status: "active")
+    me {
+      id
+      role
+    }
+  }
+`;
+const SEARCH_PRODUCTS = gql`
+  query ProcurementProductSearch($query: String!) {
+    globalSearch(query: $query) {
+      products
+    }
+  }
+`;
+const CREATE_PO = gql`
+  mutation CreatePo($input: CreatePurchaseOrderInput!) {
+    createPurchaseOrder(input: $input)
+  }
+`;
+const RECEIVE_PO = gql`
+  mutation ReceivePo($input: ReceivePurchaseOrderInput!) {
+    receivePurchaseOrder(input: $input)
+  }
+`;
+const MANUAL_GRN = gql`
+  mutation ManualGrn($input: ManualGoodsReceiptInput!) {
+    createManualGoodsReceipt(input: $input)
+  }
+`;
+const CANCEL_PO = gql`
+  mutation CancelPo($id: ID!, $reason: String!) {
+    cancelPurchaseOrder(id: $id, reason: $reason)
+  }
+`;
 
-type Tab='overview'|'demand'|'orders'|'receiving'|'history';
-const emptyCommercial={vendorId:'',vendorName:'',expectedDate:'',notes:'',discount:'',tax:''};
-const emptyReceipt={supplierChallan:'',supplierBill:'',receivedDate:'',locationId:'',notes:''};
-function money(value:any){return `₹${Number(value||0).toLocaleString('en-IN',{maximumFractionDigits:2})}`}
-function statusClass(status:string){return status==='received'||status==='allocated'?'bg-emerald-50 text-emerald-700':status==='partial_received'?'bg-blue-50 text-blue-700':status==='cancelled'?'bg-red-50 text-red-700':'bg-amber-50 text-amber-800'}
-function uuid(){return typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random()}`}
-
-export default function ProcurementSuitePage(){
- const [tab,setTab]=useState<Tab>('overview');
- const [dSearch,setDSearch]=useState('');const[dStatus,setDStatus]=useState('open');const[dSort,setDSort]=useState('priority');const[dPage,setDPage]=useState(0);const[selectedDemand,setSelectedDemand]=useState<string[]>([]);
- const [poSearch,setPoSearch]=useState('');const[poStatus,setPoStatus]=useState('all');const[poSort,setPoSort]=useState('newest');const[poPage,setPoPage]=useState(0);const[activePoId,setActivePoId]=useState('');
- const [gSearch,setGSearch]=useState('');const[gSource,setGSource]=useState('all');const[gSort,setGSort]=useState('newest');const[gPage,setGPage]=useState(0);
- const [commercial,setCommercial]=useState<any>(emptyCommercial);const[productSearch,setProductSearch]=useState('');const[directLines,setDirectLines]=useState<any[]>([]);const[demandCosts,setDemandCosts]=useState<Record<string,string>>({});
- const [receipt,setReceipt]=useState<any>(emptyReceipt);const[receiveRows,setReceiveRows]=useState<Record<string,any>>({});const[receiptKey,setReceiptKey]=useState(uuid());
- const [manualLines,setManualLines]=useState<any[]>([]);const[manualReason,setManualReason]=useState('Supplier delivery received without a prior PO');const[manualKey,setManualKey]=useState(uuid());
- const [notice,setNotice]=useState('');
- useEffect(()=>{const requested=new URLSearchParams(window.location.search).get('view') as Tab|null;if(requested&&['overview','demand','orders','receiving','history'].includes(requested))setTab(requested);},[]);
- const variables={dSearch:useDebouncedValue(dSearch,250)||undefined,dStatus,dSort,dSkip:dPage*30,poSearch:useDebouncedValue(poSearch,250)||undefined,poStatus,poSort,poSkip:poPage*25,gSearch:useDebouncedValue(gSearch,250)||undefined,gSource,gSort,gSkip:gPage*25};
- const {data,loading,error,refetch}=useQuery(DATA,{variables,fetchPolicy:'cache-and-network',pollInterval:120000,skipPollAttempt:()=>typeof document!=='undefined'&&document.hidden});
- const {data:searchData,error:searchError}=useQuery(SEARCH_PRODUCTS,{variables:{query:productSearch},skip:productSearch.trim().length<2,fetchPolicy:'network-only'});
- const [createPo,createState]=useMutation(CREATE_PO);const[receivePo,receiveState]=useMutation(RECEIVE_PO);const[manualGrn,manualState]=useMutation(MANUAL_GRN);const[cancelPo,cancelState]=useMutation(CANCEL_PO);
- const demands=data?.purchaseDemandPage?.items||[];const orders=data?.purchaseOrderPage?.items||[];const grns=data?.goodsReceiptPage?.items||[];const vendors=data?.vendors||[];const locations=data?.stockLocations||[];const products=searchData?.globalSearch?.products||[];const summary=data?.procurementSummary||{};
- const activePo=orders.find((po:any)=>po.id===activePoId);
- const chosenDemands=demands.filter((row:any)=>selectedDemand.includes(row.id));const canCancel=['owner','admin'].includes(data?.me?.role);
- const directLinesReady=directLines.length>0&&directLines.every((line:any)=>enteredBaseQuantity(line)>0);
- const manualLinesReady=manualLines.length>0&&manualLines.every((line:any)=>enteredBaseQuantity(line)>0);
- const receiptLinesReady=Boolean(activePo?.lines?.some((line:any)=>receivedBaseQuantity(line,receiveRows[line.id]||{})>0));
- const errors=[error,searchError,createState.error,receiveState.error,manualState.error,cancelState.error].filter(Boolean);
-
- function resetPo(){setCommercial(emptyCommercial);setDirectLines([]);setSelectedDemand([]);setDemandCosts({});setProductSearch('');}
- function addProduct(product:any,target:'po'|'manual'){const base={productId:product.id,sku:product.sku,internalCode:product.internalCode,name:product.name,category:product.category,piecesPerPack:Number(product.piecesPerPack||1),purchaseUom:product.purchaseUom||product.unit||'PC',allowLoose:product.allowLoose!==false,boxes:'',loosePieces:'',quantity:'1',unitCost:String(Number(product.costPrice||0)||''),damagedQuantity:'',supplierBatch:'',shade:'',caliber:'',grade:''};if(target==='po')setDirectLines(rows=>rows.some(x=>x.productId===product.id)?rows:[...rows,base]);else setManualLines(rows=>rows.some(x=>x.productId===product.id)?rows:[...rows,base]);setProductSearch('');}
- function updateLine(setter:any,id:string,patch:any){setter((rows:any[])=>rows.map(row=>row.productId===id?{...row,...patch}:row));}
- function linePayload(line:any){const tile=String(line.category||'').toLowerCase()==='tiles';return tile?{productId:line.productId,boxes:Number(line.boxes||0),loosePieces:Number(line.loosePieces||0),piecesPerPack:line.piecesPerPack,unitCost:Number(line.unitCost||0),damagedQuantity:Number(line.damagedQuantity||0),supplierBatch:line.supplierBatch||undefined,shade:line.shade||undefined,caliber:line.caliber||undefined,grade:line.grade||undefined}:{productId:line.productId,quantity:Number(line.quantity||0),receivedQuantity:Number(line.quantity||0),unitCost:Number(line.unitCost||0),damagedQuantity:Number(line.damagedQuantity||0),supplierBatch:line.supplierBatch||undefined};}
- async function submitPo(mode:'demand'|'direct'){const lines=mode==='demand'?chosenDemands.map((row:any)=>({purchaseDemandId:row.id,unitCost:Number(demandCosts[row.id]||0)})):directLines.map(linePayload);const response=await createPo({variables:{input:{demandIds:mode==='demand'?selectedDemand:[],lines:JSON.stringify(lines),vendorId:commercial.vendorId||undefined,vendorName:commercial.vendorName||vendors.find((v:any)=>v.id===commercial.vendorId)?.name||chosenDemands[0]?.vendorName,expectedDate:commercial.expectedDate?new Date(commercial.expectedDate).toISOString():undefined,notes:commercial.notes||undefined,discountPercent:commercial.discount===''?undefined:Number(commercial.discount),taxRate:commercial.tax===''?undefined:Number(commercial.tax)}}});const po=response.data?.createPurchaseOrder;setNotice(`${po?.poNumber||'Purchase order'} created. The form is blank and ready for the next PO.`);resetPo();setActivePoId(po?.id||'');setTab('receiving');await refetch();}
- async function submitReceipt(){if(!activePo)return;const lines=(activePo.lines||[]).map((line:any)=>{const row=receiveRows[line.id]||{};const tile=String(line.product?.category||line.category||'').toLowerCase()==='tiles';return tile?{purchaseOrderLineId:line.id,boxes:Number(row.boxes||0),loosePieces:Number(row.loosePieces||0),piecesPerPack:line.product?.piecesPerPack||1,damagedQuantity:Number(row.damagedQuantity||0),supplierBatch:row.supplierBatch||undefined,shade:row.shade||undefined,caliber:row.caliber||undefined,grade:row.grade||undefined,unitCost:row.unitCost===''?undefined:Number(row.unitCost)}:{purchaseOrderLineId:line.id,receivedQuantity:Number(row.receivedQuantity||0),damagedQuantity:Number(row.damagedQuantity||0),supplierBatch:row.supplierBatch||undefined,unitCost:row.unitCost===''?undefined:Number(row.unitCost)}}).filter((row:any)=>Number(row.receivedQuantity||0)>0||Number(row.boxes||0)>0||Number(row.loosePieces||0)>0);if(!lines.length)return;const response=await receivePo({variables:{input:{purchaseOrderId:activePo.id,...receipt,receivedDate:receipt.receivedDate?new Date(receipt.receivedDate).toISOString():undefined,locationId:receipt.locationId||undefined,lines:JSON.stringify(lines),idempotencyKey:receiptKey}}});setNotice(`${response.data?.receivePurchaseOrder?.grnNumber||'GRN'} posted. Inventory, lot ledger and backorder allocation are reconciled.`);setReceipt(emptyReceipt);setReceiveRows({});setReceiptKey(uuid());await refetch();}
- async function submitManual(){if(!manualLines.length||!commercial.vendorId&&!commercial.vendorName)return;const response=await manualGrn({variables:{input:{vendorId:commercial.vendorId||undefined,vendorName:commercial.vendorName||vendors.find((v:any)=>v.id===commercial.vendorId)?.name,...receipt,receivedDate:receipt.receivedDate?new Date(receipt.receivedDate).toISOString():undefined,locationId:receipt.locationId||undefined,reason:manualReason,lines:JSON.stringify(manualLines.map(linePayload)),idempotencyKey:manualKey}}});setNotice(`${response.data?.createManualGoodsReceipt?.grnNumber||'Manual GRN'} posted. The form is blank and ready for the next inward.`);setManualLines([]);setCommercial(emptyCommercial);setReceipt(emptyReceipt);setManualReason('Supplier delivery received without a prior PO');setManualKey(uuid());setProductSearch('');await refetch();}
- async function cancel(po:any){const reason=window.prompt(`Cancellation reason for ${po.poNumber}. History and receipts remain preserved.`);if(!reason?.trim())return;await cancelPo({variables:{id:po.id,reason:reason.trim()}});setNotice(`${po.poNumber} cancelled with audit history preserved.`);await refetch();}
-
- return <div className="space-y-5 pb-10">{errors.map((item:any,index)=><QueryErrorBanner key={index} error={item}/>)}
-  <header className="relative overflow-hidden rounded-[1.4rem] bg-[linear-gradient(128deg,#241f1e_0%,#3e2826_54%,#9b2f2a_100%)] px-5 py-6 text-white shadow-[0_22px_60px_-32px_rgba(87,30,26,.65)] sm:px-7 sm:py-8"><div aria-hidden="true" className="absolute -right-14 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl"/><div aria-hidden="true" className="absolute -bottom-28 left-1/3 h-56 w-56 rounded-full bg-amber-300/10 blur-3xl"/><div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-rose-100/80">Procurement command workspace</p><h1 className="mt-2 max-w-3xl font-display text-3xl font-bold leading-[1.08] text-white sm:text-4xl">Buy, receive and trace—without losing the queue.</h1><p className="mt-3 max-w-3xl text-sm leading-6 text-rose-50/75">One governed daily workspace from demand and supplier commitment through GRN, lot creation and stock allocation.</p></div><div className="flex flex-wrap gap-2"><Button onClick={()=>setTab('orders')} className="border border-white/15 bg-white text-[#612421] hover:bg-rose-50"><Plus className="mr-2 h-4 w-4"/>New purchase order</Button><Button onClick={()=>setTab('receiving')} className="border border-white/25 bg-white/10 text-white hover:bg-white/20"><PackageCheck className="mr-2 h-4 w-4"/>Receive goods</Button></div></div></header>
-  <nav className="grid overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] p-1 shadow-sm sm:grid-cols-5" aria-label="Procurement sections">{([['overview','Overview',ClipboardList,undefined],['demand','Demand',ShoppingCart,summary.openDemand],['orders','Purchase orders',Truck,summary.activePurchaseOrders],['receiving','Receiving',PackageCheck,summary.dueTodayPurchaseOrders],['history','History',History,summary.recentGrn]] as any[]).map(([id,label,Icon,count])=><button key={id} onClick={()=>setTab(id)} className={`relative h-12 rounded-lg px-3 text-sm font-semibold transition-all duration-200 ${tab===id?'bg-[#9f2d29] text-white shadow-[0_7px_18px_-10px_rgba(159,45,41,.9)]':'text-[var(--ink-3)] hover:bg-rose-50 hover:text-[#8d2926]'}`}><Icon className="mr-2 inline h-4 w-4"/>{label}{count!==undefined?<span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${tab===id?'bg-white/20 text-white':'bg-[var(--bg-soft)] text-[var(--ink-4)]'}`}>{Number(count||0).toLocaleString('en-IN')}</span>:null}</button>)}</nav>
-	  {notice?<div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{notice}</div>:null}
-	  {['receiving','history'].includes(tab)?<div className="flex flex-col justify-between gap-3 rounded-xl border border-[#e8cfc5] bg-[#fff8f5] p-4 sm:flex-row sm:items-center"><div><p className="text-sm font-bold text-[var(--ink)]">Is a received item going onto the showroom floor?</p><p className="mt-1 text-xs leading-5 text-[var(--ink-4)]">Post the GRN first, then move the exact accepted lot to a non-sellable display asset. A free vendor sample uses the direct non-stock path.</p></div><Button asChild variant="outline" className="shrink-0"><Link href="/dashboard/inventory/display-assets"><Store className="mr-2 h-4 w-4"/>Open Display Assets</Link></Button></div>:null}
-
-  {tab==='overview'?<ProcurementOverview summary={summary} loading={loading} onTab={setTab}/>:null}
-
-  {tab==='demand'?<section className="space-y-5"><div className="mp-panel overflow-hidden"><ListToolbar search={dSearch} setSearch={(v:string)=>{setDSearch(v);setDPage(0)}} status={dStatus} setStatus={(v:string)=>{setDStatus(v);setDPage(0)}} sort={dSort} setSort={setDSort} statuses={[['all','All'],['open','Open'],['ordered','Ordered'],['partial_received','Partial'],['received','Received']]} sorts={[['priority','Priority'],['oldest','Oldest'],['sku_asc','SKU A–Z'],['shortage_desc','Quantity high–low'],['eta_asc','ETA soonest']]}/><div className="overflow-x-auto"><table className="w-full min-w-[920px] text-left text-sm"><thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-wider text-[var(--ink-4)]"><tr><th className="p-3">Select</th><th>SKU / item</th><th>Customer / order</th><th>Required</th><th>Status / ETA</th><th className="pr-4">PO cost / pc</th></tr></thead><tbody className="divide-y divide-[var(--line)]">{demands.map((row:any)=><tr key={row.id} className="hover:bg-[var(--bg-soft)]"><td className="p-3"><input type="checkbox" disabled={!['open','ordered','partial_received'].includes(row.status)} checked={selectedDemand.includes(row.id)} onChange={(e)=>setSelectedDemand(ids=>e.target.checked?[...ids,row.id]:ids.filter(id=>id!==row.id))}/></td><td><b>{row.sku}</b><p className="text-xs text-[var(--ink-4)]">{row.name} · {row.brand}</p></td><td>{row.customer?.name||'Replenishment'}<p className="text-xs text-[var(--ink-4)]">{row.salesOrder?.orderNumber||row.sourceLineKey}</p></td><td>{row.quantity} {row.unit}<p className="text-xs text-[var(--ink-4)]">Received {row.receivedQuantity||0}</p></td><td><span className={`rounded px-2 py-1 text-xs font-semibold ${statusClass(row.status)}`}>{row.status.replaceAll('_',' ')}</span><p className="mt-1 text-xs">{row.expectedDate?new Date(row.expectedDate).toLocaleDateString('en-IN'):'No ETA'}</p></td><td className="pr-4"><Input className="w-28" type="number" min="0" value={demandCosts[row.id]||''} onChange={(e)=>setDemandCosts({...demandCosts,[row.id]:e.target.value})} placeholder="At GRN"/></td></tr>)}{!loading&&!demands.length?<tr><td colSpan={6}><Empty text="No purchase demand matches these filters."/></td></tr>:null}</tbody></table></div><Pager page={dPage} hasNext={Boolean(data?.purchaseDemandPage?.hasNext)} onPage={setDPage}/></div>{selectedDemand.length?<PoCommercial form={commercial} setForm={setCommercial} vendors={vendors} onSubmit={()=>submitPo('demand')} disabled={createState.loading||!selectedDemand.length} title={`Create PO for ${selectedDemand.length} selected demand line(s)`}/>:null}</section>:null}
-
-  {tab==='orders'?<section className="space-y-5"><div className="mp-panel p-5"><div className="flex items-start justify-between"><div><h2 className="font-semibold">Create planned / replenishment PO</h2><p className="mt-1 text-xs text-[var(--ink-4)]">Search Product Master or a tile variant code. Tile quantities accept boxes plus loose pieces.</p></div><span className="text-xs font-semibold">{directLines.length} line(s)</span></div><ProductPicker value={productSearch} setValue={setProductSearch} products={products} onAdd={(p:any)=>addProduct(p,'po')}/><LineEditor rows={directLines} setRows={setDirectLines} mode="po"/></div>{directLines.length?<PoCommercial form={commercial} setForm={setCommercial} vendors={vendors} onSubmit={()=>submitPo('direct')} disabled={createState.loading||!commercial.vendorId||!directLinesReady} title="Supplier and commercial terms"/>:null}<div className="mp-panel overflow-hidden"><ListToolbar search={poSearch} setSearch={(v:string)=>{setPoSearch(v);setPoPage(0)}} status={poStatus} setStatus={(v:string)=>{setPoStatus(v);setPoPage(0)}} sort={poSort} setSort={setPoSort} statuses={[['all','All'],['ordered','Ordered'],['partial_received','Partial'],['received','Received'],['cancelled','Cancelled']]} sorts={[['newest','Newest'],['oldest','Oldest'],['po_asc','PO number'],['vendor_asc','Vendor'],['value_desc','Value high–low'],['eta_asc','ETA soonest']]}/>{orders.map((po:any)=><article key={po.id} className="grid gap-3 border-b border-[var(--line)] p-4 md:grid-cols-[1.4fr_1fr_1fr_auto] md:items-center"><div><p className="font-semibold">{po.poNumber} · {po.vendorName}</p><p className="mt-1 text-xs text-[var(--ink-4)]">{po.lines?.length||0} lines · {new Date(po.createdAt).toLocaleString('en-IN')}</p></div><div><span className={`rounded px-2 py-1 text-xs font-semibold ${statusClass(po.status)}`}>{po.status.replaceAll('_',' ')}</span><p className="mt-1 text-xs">ETA {po.expectedDate?new Date(po.expectedDate).toLocaleDateString('en-IN'):'not set'}</p></div><div className="font-semibold">{money(po.grandTotal)}<p className="text-xs font-normal text-[var(--ink-4)]">Tax {money(po.taxAmount)}</p></div><div className="flex gap-2"><Button asChild size="sm" variant="outline"><a href={`/api/pdf/purchase-order/${po.id}`} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4"/>PDF</a></Button>{['ordered','partial_received'].includes(po.status)?<Button size="sm" onClick={()=>{setActivePoId(po.id);setTab('receiving')}}>Receive</Button>:null}{canCancel&&['ordered','partial_received','draft'].includes(po.status)?<Button size="sm" variant="outline" disabled={cancelState.loading} onClick={()=>cancel(po)}>Cancel</Button>:null}</div></article>)}{!loading&&!orders.length?<Empty text="No purchase orders match these filters."/>:null}<Pager page={poPage} hasNext={Boolean(data?.purchaseOrderPage?.hasNext)} onPage={setPoPage}/></div></section>:null}
-
-  {tab==='receiving'?<section className="space-y-5"><div className="grid gap-5 xl:grid-cols-2"><div className="mp-panel p-5"><div><p className="text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]">Against purchase order</p><h2 className="mt-1 text-xl font-semibold">Post a controlled PO GRN</h2><p className="mt-1 text-xs text-[var(--ink-4)]">Every line starts blank. Enter only what is physically present.</p></div><label className="mt-4 block text-xs font-semibold text-[var(--ink-4)]">Find open PO<Input className="mt-1" value={poSearch} onChange={(e)=>{setPoSearch(e.target.value);setPoPage(0);setActivePoId('')}} placeholder="Search PO number, supplier, SKU or item"/></label><label className="mt-3 block text-xs font-semibold text-[var(--ink-4)]">Open PO<select value={activePo?.id||''} onChange={(e)=>{setActivePoId(e.target.value);setReceiveRows({})}} className="mt-1 h-11 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"><option value="">Select PO from matching results</option>{orders.filter((po:any)=>['ordered','partial_received'].includes(po.status)).map((po:any)=><option key={po.id} value={po.id}>{po.poNumber} · {po.vendorName}</option>)}</select></label>{activePo?<div className="mt-4 space-y-3">{(activePo.lines||[]).filter((line:any)=>Number(line.orderedQuantity)>Number(line.receivedQuantity)).map((line:any)=><ReceiveLine key={line.id} line={line} value={receiveRows[line.id]||{}} onChange={(patch:any)=>setReceiveRows({...receiveRows,[line.id]:{...(receiveRows[line.id]||{}),...patch}})}/>)}</div>:<Empty text="Search and choose an open PO to receive."/>}<ReceiptHeader form={receipt} setForm={setReceipt} locations={locations}/><Button className="mt-4 w-full" disabled={!activePo||!receiptLinesReady||receiveState.loading} onClick={submitReceipt}>{receiveState.loading?'Posting…':'Post selected quantities and clear'}</Button></div>
-    <div className="mp-panel p-5"><div><p className="text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]">Without purchase order</p><h2 className="mt-1 text-xl font-semibold">Manual multi-line GRN</h2><p className="mt-1 text-xs text-[var(--ink-4)]">Use only for a real supplier delivery without a prior PO. Reason, actor and lot source are audited.</p></div><ProductPicker value={productSearch} setValue={setProductSearch} products={products} onAdd={(p:any)=>addProduct(p,'manual')}/><LineEditor rows={manualLines} setRows={setManualLines} mode="manual"/><div className="mt-4"><PoCommercial form={commercial} setForm={setCommercial} vendors={vendors} compact title="Supplier"/><ReceiptHeader form={receipt} setForm={setReceipt} locations={locations}/><label className="mt-3 block text-xs font-semibold text-[var(--ink-4)]">Mandatory manual reason<Input className="mt-1" value={manualReason} onChange={(e)=>setManualReason(e.target.value)}/></label><Button className="mt-4 w-full" disabled={!manualLinesReady||manualState.loading||!manualReason.trim()||!commercial.vendorId} onClick={submitManual}>{manualState.loading?'Posting…':'Post manual GRN and clear'}</Button>{!commercial.vendorId&&manualLines.length?<p className="mt-2 text-xs font-semibold text-amber-700">Select the supplier before posting.</p>:null}</div></div></div></section>:null}
-
-  {tab==='history'?<section className="mp-panel overflow-hidden"><ListToolbar search={gSearch} setSearch={(v:string)=>{setGSearch(v);setGPage(0)}} status={gSource} setStatus={(v:string)=>{setGSource(v);setGPage(0)}} sort={gSort} setSort={setGSort} statuses={[['all','All sources'],['po','Against PO'],['manual','Manual']]} sorts={[['newest','Newest'],['oldest','Oldest'],['grn_asc','GRN number'],['vendor_asc','Vendor']]}/>{grns.map((grn:any)=><article key={grn.id} className="border-b border-[var(--line)] p-4"><div className="flex flex-col justify-between gap-3 md:flex-row"><div><p className="font-semibold">{grn.grnNumber} · {grn.vendorName}</p><p className="mt-1 text-xs text-[var(--ink-4)]">{grn.purchaseOrderId?'PO receipt':'Manual GRN'} · {new Date(grn.receivedDate).toLocaleString('en-IN')} · challan {grn.supplierChallan||'not captured'} · bill {grn.supplierBill||'not captured'}</p></div><div className="flex items-center gap-2 self-start"><span className="rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">{grn.status}</span><Button asChild size="sm" variant="outline"><Link href={`/dashboard/inventory/labels?grn=${grn.id}`}><Printer className="mr-2 h-3.5 w-3.5"/>Create labels</Link></Button></div></div><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[680px] text-left text-xs"><thead className="text-[var(--ink-4)]"><tr><th>SKU / item</th><th>Received</th><th>Accepted</th><th>Damaged</th><th>Lot</th><th>Location</th><th>Cost</th></tr></thead><tbody>{(grn.lines||[]).map((line:any)=><tr key={line.id}><td className="py-2"><b>{line.product?.internalCode||line.sku}</b> · {line.name}</td><td>{line.receivedQuantity}</td><td>{line.acceptedQuantity}</td><td>{line.damagedQuantity}</td><td>{line.lot?.lotNumber||line.lotId||'—'}</td><td>{line.lot?.balances?.map((row:any)=>row.location?.code||row.locationId).join(', ')||line.location||'—'}</td><td>{money(line.unitCost)}</td></tr>)}</tbody></table></div></article>)}{!loading&&!grns.length?<Empty text="No goods receipts match these filters."/>:null}<Pager page={gPage} hasNext={Boolean(data?.goodsReceiptPage?.hasNext)} onPage={setGPage}/></section>:null}
- </div>;
+type Tab = "overview" | "demand" | "orders" | "receiving" | "history";
+const emptyCommercial = {
+  vendorId: "",
+  vendorName: "",
+  expectedDate: "",
+  notes: "",
+  discount: "",
+  tax: "",
+};
+const emptyReceipt = {
+  supplierChallan: "",
+  supplierBill: "",
+  receivedDate: "",
+  locationId: "",
+  notes: "",
+};
+function money(value: any) {
+  return `₹${Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+function statusClass(status: string) {
+  return status === "received" || status === "allocated"
+    ? "bg-emerald-50 text-emerald-700"
+    : status === "partial_received"
+      ? "bg-blue-50 text-blue-700"
+      : status === "cancelled"
+        ? "bg-red-50 text-red-700"
+        : "bg-amber-50 text-amber-800";
+}
+function uuid() {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
 }
 
-function ProcurementOverview({summary,loading,onTab}:any){
- const expected=summary.expectedReceipts||[];
- const work=[
-  {label:'Demand ready',value:Number(summary.openDemand||0),color:'bg-gradient-to-r from-rose-600 to-rose-400'},
-  {label:'Draft purchase orders',value:Number(summary.draftPurchaseOrders||0),color:'bg-gradient-to-r from-amber-600 to-amber-400'},
-  {label:'Sent / in motion',value:Number(summary.orderedPurchaseOrders||0)+Number(summary.partialPurchaseOrders||0),color:'bg-gradient-to-r from-blue-600 to-cyan-400'},
-  {label:'Due for receipt today',value:Number(summary.dueTodayPurchaseOrders||0),color:'bg-gradient-to-r from-emerald-700 to-emerald-400'},
-  {label:'Completed today',value:Number(summary.receiptsToday||0),color:'bg-gradient-to-r from-teal-700 to-teal-400'},
- ];
- const maxWork=Math.max(1,...work.map(row=>row.value));
- const kpis=[
-  {label:'Actionable demand',value:summary.openDemand||0,detail:`${summary.orderedDemand||0} already ordered`,tone:'rose',icon:ShoppingCart},
-  {label:'POs in motion',value:summary.activePurchaseOrders||0,detail:`${summary.draftPurchaseOrders||0} draft · ${summary.partialPurchaseOrders||0} partial`,tone:'amber',icon:Truck},
-  {label:'Purchase commitment',value:Number(summary.valuedPurchaseOrders||0)>0?money(summary.activePurchaseOrderValue):'Needs cost',detail:`${summary.valuedPurchaseOrders||0} of ${summary.activePurchaseOrders||0} active POs valued`,tone:'blue',icon:CircleDollarSign},
-  {label:'Receiving today',value:summary.receiptsToday||0,detail:`${Number(summary.acceptedUnitsToday||0).toLocaleString('en-IN')} units accepted`,tone:'emerald',icon:PackageCheck},
-  {label:'Supplier exceptions',value:Number(summary.overduePurchaseOrders||0)+Number(summary.purchaseOrdersWithoutEta||0),detail:`${summary.overduePurchaseOrders||0} overdue · ${summary.purchaseOrdersWithoutEta||0} no ETA`,tone:'red',icon:AlertTriangle},
- ];
- const priorities=[
-  {value:summary.overduePurchaseOrders||0,title:'Overdue purchase orders',text:'Supplier receipt date has passed',tone:'red',tab:'orders'},
-  {value:summary.purchaseOrdersWithoutEta||0,title:'POs missing an ETA',text:'Add supplier commitment date',tone:'amber',tab:'orders'},
-  {value:summary.documentExceptionsToday||0,title:'Receipt document gaps today',text:'Challan or supplier bill is missing',tone:'amber',tab:'history'},
-  {value:summary.damagedUnitsToday||0,title:'Damaged units received today',text:'Review exact GRN and lot line',tone:'emerald',tab:'history'},
- ];
- return <section className="space-y-5 animate-in fade-in slide-in-from-bottom-1 duration-300">
-  <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#a2322e]">Live operating overview</p><h2 className="mt-1 font-display text-2xl font-bold">Today’s procurement control</h2><p className="mt-1 text-sm text-[var(--ink-4)]">Source-backed queues, receipts and supplier commitments. Business date {summary.businessDate||'—'}.</p></div><p className="text-xs text-[var(--ink-4)]">{summary.asOf?`Refreshed ${new Date(summary.asOf).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}`:loading?'Refreshing…':'Live source'}</p></div>
-  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{kpis.map((item:any)=><KpiCard key={item.label} {...item}/>)}</div>
-  <div className="grid gap-5 lg:grid-cols-[1.58fr_1fr]">
-   <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_18px_50px_-38px_rgba(30,20,18,.55)]"><div className="flex items-start justify-between border-b border-[var(--line)] p-5"><div><h3 className="font-display text-lg font-bold">Today’s procurement flow</h3><p className="mt-1 text-xs text-[var(--ink-4)]">Counts open the relevant operating queue</p></div><Button size="sm" variant="outline" onClick={()=>onTab('demand')}>Open register<ArrowRight className="ml-2 h-4 w-4"/></Button></div><div className="space-y-5 p-5">{work.map((row,index)=><button key={row.label} onClick={()=>onTab(index===0?'demand':index===4?'history':index===3?'receiving':'orders')} className="grid w-full grid-cols-[140px_1fr_44px] items-center gap-3 text-left text-sm sm:grid-cols-[170px_1fr_50px]"><span className="font-semibold text-[var(--ink-3)]">{row.label}</span><span className="h-2.5 overflow-hidden rounded-full bg-[var(--bg-soft)]"><span className={`block h-full rounded-full ${row.color} transition-all duration-700`} style={{width:`${Math.max(row.value?8:0,(row.value/maxWork)*100)}%`}}/></span><b className="text-right tabular-nums">{row.value.toLocaleString('en-IN')}</b></button>)}</div></div>
-   <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_18px_50px_-38px_rgba(30,20,18,.55)]"><div className="border-b border-[var(--line)] p-5"><h3 className="font-display text-lg font-bold">Priority work</h3><p className="mt-1 text-xs text-[var(--ink-4)]">Ordered by operational risk</p></div><div className="space-y-2.5 p-4">{priorities.map((item:any)=><button key={item.title} onClick={()=>onTab(item.tab)} className="group flex w-full items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--bg-soft)]/50 p-3 text-left transition hover:-translate-y-0.5 hover:border-rose-200 hover:bg-rose-50/50"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.tone==='red'?'bg-red-500':item.tone==='amber'?'bg-amber-500':'bg-emerald-500'}`}/><span className="min-w-0 flex-1"><b className="block text-sm">{Number(item.value).toLocaleString('en-IN')} {item.title}</b><small className="text-[var(--ink-4)]">{item.text}</small></span><ChevronRight className="h-4 w-4 text-[var(--ink-4)] transition group-hover:translate-x-0.5 group-hover:text-[#9f2d29]"/></button>)}</div></div>
-  </div>
-  <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_18px_50px_-38px_rgba(30,20,18,.55)]"><div className="flex flex-col justify-between gap-3 border-b border-[var(--line)] p-5 sm:flex-row sm:items-center"><div><h3 className="font-display text-lg font-bold">Expected inward schedule</h3><p className="mt-1 text-xs text-[var(--ink-4)]">Earliest supplier commitments with remaining base quantity and demand context</p></div><Button size="sm" variant="outline" onClick={()=>onTab('receiving')}><CalendarClock className="mr-2 h-4 w-4"/>Open receiving</Button></div><div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm"><thead className="bg-[var(--bg-soft)] text-[10px] font-bold uppercase tracking-[.13em] text-[var(--ink-4)]"><tr><th className="px-5 py-3">Due</th><th>PO / supplier</th><th>Lines</th><th>Remaining</th><th>Sales-linked</th><th className="pr-5">Status</th></tr></thead><tbody className="divide-y divide-[var(--line)]">{expected.map((po:any)=><tr key={po.id} className="transition hover:bg-rose-50/35"><td className="px-5 py-4 font-semibold">{formatDue(po.expectedDate)}</td><td className="py-4"><b>{po.poNumber}</b><p className="mt-0.5 text-xs text-[var(--ink-4)]">{po.vendorName}</p></td><td>{po.lineCount}</td><td>{Number(po.remainingQuantity||0).toLocaleString('en-IN')} pc</td><td>{po.demandLineCount?`${po.demandLineCount} demand line${po.demandLineCount===1?'':'s'}`:'Replenishment'}</td><td className="pr-5"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${po.status==='partial_received'?'bg-blue-50 text-blue-700':'bg-amber-50 text-amber-800'}`}>{String(po.status).replaceAll('_',' ')}</span></td></tr>)}{!loading&&!expected.length?<tr><td colSpan={6}><Empty text="No supplier receipt is currently scheduled."/></td></tr>:null}</tbody></table></div></div>
-  <div className="grid gap-3 rounded-2xl border border-rose-100 bg-[linear-gradient(100deg,#fff8f5,#fffdf8)] p-4 text-xs text-[var(--ink-3)] sm:grid-cols-3"><p><b className="text-[var(--ink)]">Quantity truth</b><br/>PO and GRN quantities are stored in base pieces; tile box conversions are snapshotted.</p><p><b className="text-[var(--ink)]">Inventory truth</b><br/>Posting a GRN creates the exact lot and one reconciled stock-ledger movement.</p><p><b className="text-[var(--ink)]">No silent receipt</b><br/>Receiving starts blank and posts only explicitly entered physical quantities.</p></div>
- </section>;
+export default function ProcurementSuitePage() {
+  const [tab, setTab] = useState<Tab>("overview");
+  const [dSearch, setDSearch] = useState("");
+  const [dStatus, setDStatus] = useState("open");
+  const [dSort, setDSort] = useState("priority");
+  const [dPage, setDPage] = useState(0);
+  const [selectedDemand, setSelectedDemand] = useState<string[]>([]);
+  const [poSearch, setPoSearch] = useState("");
+  const [poStatus, setPoStatus] = useState("all");
+  const [poSort, setPoSort] = useState("newest");
+  const [poPage, setPoPage] = useState(0);
+  const [activePoId, setActivePoId] = useState("");
+  const [gSearch, setGSearch] = useState("");
+  const [gSource, setGSource] = useState("all");
+  const [gSort, setGSort] = useState("newest");
+  const [gPage, setGPage] = useState(0);
+  const [commercial, setCommercial] = useState<any>(emptyCommercial);
+  const [productSearch, setProductSearch] = useState("");
+  const [directLines, setDirectLines] = useState<any[]>([]);
+  const [demandCosts, setDemandCosts] = useState<Record<string, string>>({});
+  const [receipt, setReceipt] = useState<any>(emptyReceipt);
+  const [receiveRows, setReceiveRows] = useState<Record<string, any>>({});
+  const [receiptKey, setReceiptKey] = useState(uuid());
+  const [manualLines, setManualLines] = useState<any[]>([]);
+  const [manualReason, setManualReason] = useState(
+    "Supplier delivery received without a prior PO",
+  );
+  const [manualKey, setManualKey] = useState(uuid());
+  const [notice, setNotice] = useState("");
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get(
+      "view",
+    ) as Tab | null;
+    if (
+      requested &&
+      ["overview", "demand", "orders", "receiving", "history"].includes(
+        requested,
+      )
+    )
+      setTab(requested);
+  }, []);
+  const variables = {
+    dSearch: useDebouncedValue(dSearch, 250) || undefined,
+    dStatus,
+    dSort,
+    dSkip: dPage * 30,
+    poSearch: useDebouncedValue(poSearch, 250) || undefined,
+    poStatus,
+    poSort,
+    poSkip: poPage * 25,
+    gSearch: useDebouncedValue(gSearch, 250) || undefined,
+    gSource,
+    gSort,
+    gSkip: gPage * 25,
+  };
+  const { data, loading, error, refetch } = useQuery(DATA, {
+    variables,
+    fetchPolicy: "cache-and-network",
+    pollInterval: 120000,
+    skipPollAttempt: () => typeof document !== "undefined" && document.hidden,
+  });
+  const { data: searchData, error: searchError } = useQuery(SEARCH_PRODUCTS, {
+    variables: { query: productSearch },
+    skip: productSearch.trim().length < 2,
+    fetchPolicy: "network-only",
+  });
+  const [createPo, createState] = useMutation(CREATE_PO);
+  const [receivePo, receiveState] = useMutation(RECEIVE_PO);
+  const [manualGrn, manualState] = useMutation(MANUAL_GRN);
+  const [cancelPo, cancelState] = useMutation(CANCEL_PO);
+  const demands = data?.purchaseDemandPage?.items || [];
+  const orders = data?.purchaseOrderPage?.items || [];
+  const grns = data?.goodsReceiptPage?.items || [];
+  const vendors = data?.vendors || [];
+  const locations = data?.stockLocations || [];
+  const products = searchData?.globalSearch?.products || [];
+  const summary = data?.procurementSummary || {};
+  const activePo = orders.find((po: any) => po.id === activePoId);
+  const chosenDemands = demands.filter((row: any) =>
+    selectedDemand.includes(row.id),
+  );
+  const canCancel = ["owner", "admin"].includes(data?.me?.role);
+  const directLinesReady =
+    directLines.length > 0 &&
+    directLines.every((line: any) => enteredBaseQuantity(line) > 0);
+  const manualLinesReady =
+    manualLines.length > 0 &&
+    manualLines.every((line: any) => enteredBaseQuantity(line) > 0);
+  const receiptLinesReady = Boolean(
+    activePo?.lines?.some(
+      (line: any) => receivedBaseQuantity(line, receiveRows[line.id] || {}) > 0,
+    ),
+  );
+  const errors = [
+    error,
+    searchError,
+    createState.error,
+    receiveState.error,
+    manualState.error,
+    cancelState.error,
+  ].filter(Boolean);
+
+  function resetPo() {
+    setCommercial(emptyCommercial);
+    setDirectLines([]);
+    setSelectedDemand([]);
+    setDemandCosts({});
+    setProductSearch("");
+  }
+  function addProduct(product: any, target: "po" | "manual") {
+    const base = {
+      productId: product.id,
+      sku: product.sku,
+      internalCode: product.internalCode,
+      name: product.name,
+      category: product.category,
+      piecesPerPack: Number(product.piecesPerPack || 1),
+      purchaseUom: product.purchaseUom || product.unit || "PC",
+      allowLoose: product.allowLoose !== false,
+      boxes: "",
+      loosePieces: "",
+      quantity: "1",
+      unitCost: String(Number(product.costPrice || 0) || ""),
+      damagedQuantity: "",
+      supplierBatch: "",
+      shade: "",
+      caliber: "",
+      grade: "",
+    };
+    if (target === "po")
+      setDirectLines((rows) =>
+        rows.some((x) => x.productId === product.id) ? rows : [...rows, base],
+      );
+    else
+      setManualLines((rows) =>
+        rows.some((x) => x.productId === product.id) ? rows : [...rows, base],
+      );
+    setProductSearch("");
+  }
+  function updateLine(setter: any, id: string, patch: any) {
+    setter((rows: any[]) =>
+      rows.map((row) => (row.productId === id ? { ...row, ...patch } : row)),
+    );
+  }
+  function linePayload(line: any) {
+    const tile = String(line.category || "").toLowerCase() === "tiles";
+    return tile
+      ? {
+          productId: line.productId,
+          boxes: Number(line.boxes || 0),
+          loosePieces: Number(line.loosePieces || 0),
+          piecesPerPack: line.piecesPerPack,
+          unitCost: Number(line.unitCost || 0),
+          damagedQuantity: Number(line.damagedQuantity || 0),
+          supplierBatch: line.supplierBatch || undefined,
+          shade: line.shade || undefined,
+          caliber: line.caliber || undefined,
+          grade: line.grade || undefined,
+        }
+      : {
+          productId: line.productId,
+          quantity: Number(line.quantity || 0),
+          receivedQuantity: Number(line.quantity || 0),
+          unitCost: Number(line.unitCost || 0),
+          damagedQuantity: Number(line.damagedQuantity || 0),
+          supplierBatch: line.supplierBatch || undefined,
+        };
+  }
+  async function submitPo(mode: "demand" | "direct") {
+    const lines =
+      mode === "demand"
+        ? chosenDemands.map((row: any) => ({
+            purchaseDemandId: row.id,
+            unitCost: Number(demandCosts[row.id] || 0),
+          }))
+        : directLines.map(linePayload);
+    const response = await createPo({
+      variables: {
+        input: {
+          demandIds: mode === "demand" ? selectedDemand : [],
+          lines: JSON.stringify(lines),
+          vendorId: commercial.vendorId || undefined,
+          vendorName:
+            commercial.vendorName ||
+            vendors.find((v: any) => v.id === commercial.vendorId)?.name ||
+            chosenDemands[0]?.vendorName,
+          expectedDate: commercial.expectedDate
+            ? new Date(commercial.expectedDate).toISOString()
+            : undefined,
+          notes: commercial.notes || undefined,
+          discountPercent:
+            commercial.discount === ""
+              ? undefined
+              : Number(commercial.discount),
+          taxRate: commercial.tax === "" ? undefined : Number(commercial.tax),
+        },
+      },
+    });
+    const po = response.data?.createPurchaseOrder;
+    setNotice(
+      `${po?.poNumber || "Purchase order"} created. The form is blank and ready for the next PO.`,
+    );
+    resetPo();
+    setActivePoId(po?.id || "");
+    setTab("receiving");
+    await refetch();
+  }
+  async function submitReceipt() {
+    if (!activePo) return;
+    const lines = (activePo.lines || [])
+      .map((line: any) => {
+        const row = receiveRows[line.id] || {};
+        const tile =
+          String(
+            line.product?.category || line.category || "",
+          ).toLowerCase() === "tiles";
+        return tile
+          ? {
+              purchaseOrderLineId: line.id,
+              boxes: Number(row.boxes || 0),
+              loosePieces: Number(row.loosePieces || 0),
+              piecesPerPack: line.product?.piecesPerPack || 1,
+              damagedQuantity: Number(row.damagedQuantity || 0),
+              supplierBatch: row.supplierBatch || undefined,
+              shade: row.shade || undefined,
+              caliber: row.caliber || undefined,
+              grade: row.grade || undefined,
+              unitCost: row.unitCost === "" ? undefined : Number(row.unitCost),
+            }
+          : {
+              purchaseOrderLineId: line.id,
+              receivedQuantity: Number(row.receivedQuantity || 0),
+              damagedQuantity: Number(row.damagedQuantity || 0),
+              supplierBatch: row.supplierBatch || undefined,
+              unitCost: row.unitCost === "" ? undefined : Number(row.unitCost),
+            };
+      })
+      .filter(
+        (row: any) =>
+          Number(row.receivedQuantity || 0) > 0 ||
+          Number(row.boxes || 0) > 0 ||
+          Number(row.loosePieces || 0) > 0,
+      );
+    if (!lines.length) return;
+    const response = await receivePo({
+      variables: {
+        input: {
+          purchaseOrderId: activePo.id,
+          ...receipt,
+          receivedDate: receipt.receivedDate
+            ? new Date(receipt.receivedDate).toISOString()
+            : undefined,
+          locationId: receipt.locationId || undefined,
+          lines: JSON.stringify(lines),
+          idempotencyKey: receiptKey,
+        },
+      },
+    });
+    setNotice(
+      `${response.data?.receivePurchaseOrder?.grnNumber || "GRN"} posted. Inventory, lot ledger and backorder allocation are reconciled.`,
+    );
+    setReceipt(emptyReceipt);
+    setReceiveRows({});
+    setReceiptKey(uuid());
+    await refetch();
+  }
+  async function submitManual() {
+    if (!manualLines.length || (!commercial.vendorId && !commercial.vendorName))
+      return;
+    const response = await manualGrn({
+      variables: {
+        input: {
+          vendorId: commercial.vendorId || undefined,
+          vendorName:
+            commercial.vendorName ||
+            vendors.find((v: any) => v.id === commercial.vendorId)?.name,
+          ...receipt,
+          receivedDate: receipt.receivedDate
+            ? new Date(receipt.receivedDate).toISOString()
+            : undefined,
+          locationId: receipt.locationId || undefined,
+          reason: manualReason,
+          lines: JSON.stringify(manualLines.map(linePayload)),
+          idempotencyKey: manualKey,
+        },
+      },
+    });
+    setNotice(
+      `${response.data?.createManualGoodsReceipt?.grnNumber || "Manual GRN"} posted. The form is blank and ready for the next inward.`,
+    );
+    setManualLines([]);
+    setCommercial(emptyCommercial);
+    setReceipt(emptyReceipt);
+    setManualReason("Supplier delivery received without a prior PO");
+    setManualKey(uuid());
+    setProductSearch("");
+    await refetch();
+  }
+  async function cancel(po: any) {
+    const reason = window.prompt(
+      `Cancellation reason for ${po.poNumber}. History and receipts remain preserved.`,
+    );
+    if (!reason?.trim()) return;
+    await cancelPo({ variables: { id: po.id, reason: reason.trim() } });
+    setNotice(`${po.poNumber} cancelled with audit history preserved.`);
+    await refetch();
+  }
+
+  return (
+    <div className="space-y-5 pb-10">
+      {errors.map((item: any, index) => (
+        <QueryErrorBanner key={index} error={item} />
+      ))}
+      <header className="relative overflow-hidden rounded-[1.4rem] bg-[linear-gradient(128deg,#241f1e_0%,#3e2826_54%,#9b2f2a_100%)] px-5 py-6 text-white shadow-[0_22px_60px_-32px_rgba(87,30,26,.65)] sm:px-7 sm:py-8">
+        <div
+          aria-hidden="true"
+          className="absolute -right-14 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute -bottom-28 left-1/3 h-56 w-56 rounded-full bg-amber-300/10 blur-3xl"
+        />
+        <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[.2em] text-rose-100/80">
+              Procurement command workspace
+            </p>
+            <h1 className="mt-2 max-w-3xl font-display text-3xl font-bold leading-[1.08] text-white sm:text-4xl">
+              Buy, receive and trace—without losing the queue.
+            </h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-rose-50/75">
+              One governed daily workspace from demand and supplier commitment
+              through GRN, lot creation and stock allocation.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => setTab("orders")}
+              className="border border-white/15 bg-white text-[#612421] hover:bg-rose-50"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              New purchase order
+            </Button>
+            <Button
+              onClick={() => setTab("receiving")}
+              className="border border-white/25 bg-white/10 text-white hover:bg-white/20"
+            >
+              <PackageCheck className="mr-2 h-4 w-4" />
+              Receive goods
+            </Button>
+          </div>
+        </div>
+      </header>
+      <nav
+        className="grid overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] p-1 shadow-sm sm:grid-cols-5"
+        aria-label="Procurement sections"
+      >
+        {(
+          [
+            ["overview", "Overview", ClipboardList, undefined],
+            ["demand", "Demand", ShoppingCart, summary.openDemand],
+            ["orders", "Purchase orders", Truck, summary.activePurchaseOrders],
+            [
+              "receiving",
+              "Receiving",
+              PackageCheck,
+              summary.dueTodayPurchaseOrders,
+            ],
+            ["history", "History", History, summary.recentGrn],
+          ] as any[]
+        ).map(([id, label, Icon, count]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`relative h-12 rounded-lg px-3 text-sm font-semibold transition-all duration-200 ${tab === id ? "bg-[#9f2d29] text-white shadow-[0_7px_18px_-10px_rgba(159,45,41,.9)]" : "text-[var(--ink-3)] hover:bg-rose-50 hover:text-[#8d2926]"}`}
+          >
+            <Icon className="mr-2 inline h-4 w-4" />
+            {label}
+            {count !== undefined ? (
+              <span
+                className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${tab === id ? "bg-white/20 text-white" : "bg-[var(--bg-soft)] text-[var(--ink-4)]"}`}
+              >
+                {Number(count || 0).toLocaleString("en-IN")}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </nav>
+      {notice ? (
+        <div
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800"
+        >
+          {notice}
+        </div>
+      ) : null}
+      {["receiving", "history"].includes(tab) ? (
+        <div className="flex flex-col justify-between gap-3 rounded-xl border border-[#e8cfc5] bg-[#fff8f5] p-4 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-sm font-bold text-[var(--ink)]">
+              Is a received item going onto the showroom floor?
+            </p>
+            <p className="mt-1 text-xs leading-5 text-[var(--ink-4)]">
+              Post the GRN first, then move the exact accepted lot to a
+              non-sellable display asset. A free vendor sample uses the direct
+              non-stock path.
+            </p>
+          </div>
+          <Button asChild variant="outline" className="shrink-0">
+            <Link href="/dashboard/inventory/display-assets">
+              <Store className="mr-2 h-4 w-4" />
+              Open Display Assets
+            </Link>
+          </Button>
+        </div>
+      ) : null}
+
+      {tab === "overview" ? (
+        <ProcurementOverview
+          summary={summary}
+          loading={loading}
+          onTab={setTab}
+        />
+      ) : null}
+
+      {tab === "demand" ? (
+        <section className="space-y-5">
+          <div className="mp-panel overflow-hidden">
+            <ListToolbar
+              search={dSearch}
+              setSearch={(v: string) => {
+                setDSearch(v);
+                setDPage(0);
+              }}
+              status={dStatus}
+              setStatus={(v: string) => {
+                setDStatus(v);
+                setDPage(0);
+              }}
+              sort={dSort}
+              setSort={setDSort}
+              statuses={[
+                ["all", "All"],
+                ["open", "Open"],
+                ["ordered", "Ordered"],
+                ["partial_received", "Partial"],
+                ["received", "Received"],
+              ]}
+              sorts={[
+                ["priority", "Priority"],
+                ["oldest", "Oldest"],
+                ["sku_asc", "SKU A–Z"],
+                ["shortage_desc", "Quantity high–low"],
+                ["eta_asc", "ETA soonest"],
+              ]}
+            />
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[920px] text-left text-sm">
+                <thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-wider text-[var(--ink-4)]">
+                  <tr>
+                    <th className="p-3">Select</th>
+                    <th>SKU / item</th>
+                    <th>Customer / order</th>
+                    <th>Required</th>
+                    <th>Status / ETA</th>
+                    <th className="pr-4">PO cost / pc</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--line)]">
+                  {demands.map((row: any) => (
+                    <tr key={row.id} className="hover:bg-[var(--bg-soft)]">
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          disabled={
+                            !["open", "ordered", "partial_received"].includes(
+                              row.status,
+                            )
+                          }
+                          checked={selectedDemand.includes(row.id)}
+                          onChange={(e) =>
+                            setSelectedDemand((ids) =>
+                              e.target.checked
+                                ? [...ids, row.id]
+                                : ids.filter((id) => id !== row.id),
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <b>{row.sku}</b>
+                        <p className="text-xs text-[var(--ink-4)]">
+                          {row.name} · {row.brand}
+                        </p>
+                      </td>
+                      <td>
+                        {row.customer?.name || "Replenishment"}
+                        <p className="text-xs text-[var(--ink-4)]">
+                          {row.salesOrder?.orderNumber || row.sourceLineKey}
+                        </p>
+                      </td>
+                      <td>
+                        {row.quantity} {row.unit}
+                        <p className="text-xs text-[var(--ink-4)]">
+                          Received {row.receivedQuantity || 0}
+                        </p>
+                      </td>
+                      <td>
+                        <span
+                          className={`rounded px-2 py-1 text-xs font-semibold ${statusClass(row.status)}`}
+                        >
+                          {row.status.replaceAll("_", " ")}
+                        </span>
+                        <p className="mt-1 text-xs">
+                          {row.expectedDate
+                            ? new Date(row.expectedDate).toLocaleDateString(
+                                "en-IN",
+                              )
+                            : "No ETA"}
+                        </p>
+                      </td>
+                      <td className="pr-4">
+                        <Input
+                          className="w-28"
+                          type="number"
+                          min="0"
+                          value={demandCosts[row.id] || ""}
+                          onChange={(e) =>
+                            setDemandCosts({
+                              ...demandCosts,
+                              [row.id]: e.target.value,
+                            })
+                          }
+                          placeholder="At GRN"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                  {!loading && !demands.length ? (
+                    <tr>
+                      <td colSpan={6}>
+                        <Empty text="No purchase demand matches these filters." />
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              page={dPage}
+              hasNext={Boolean(data?.purchaseDemandPage?.hasNext)}
+              onPage={setDPage}
+            />
+          </div>
+          {selectedDemand.length ? (
+            <PoCommercial
+              form={commercial}
+              setForm={setCommercial}
+              vendors={vendors}
+              onSubmit={() => submitPo("demand")}
+              disabled={createState.loading || !selectedDemand.length}
+              title={`Create PO for ${selectedDemand.length} selected demand line(s)`}
+            />
+          ) : null}
+        </section>
+      ) : null}
+
+      {tab === "orders" ? (
+        <section className="space-y-5">
+          <div className="mp-panel p-5">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="font-semibold">
+                  Create planned / replenishment PO
+                </h2>
+                <p className="mt-1 text-xs text-[var(--ink-4)]">
+                  Search Product Master or a tile variant code. Tile quantities
+                  accept boxes plus loose pieces.
+                </p>
+              </div>
+              <span className="text-xs font-semibold">
+                {directLines.length} line(s)
+              </span>
+            </div>
+            <ProductPicker
+              value={productSearch}
+              setValue={setProductSearch}
+              products={products}
+              onAdd={(p: any) => addProduct(p, "po")}
+            />
+            <LineEditor rows={directLines} setRows={setDirectLines} mode="po" />
+          </div>
+          {directLines.length ? (
+            <PoCommercial
+              form={commercial}
+              setForm={setCommercial}
+              vendors={vendors}
+              onSubmit={() => submitPo("direct")}
+              disabled={
+                createState.loading || !commercial.vendorId || !directLinesReady
+              }
+              title="Supplier and commercial terms"
+            />
+          ) : null}
+          <div className="mp-panel overflow-hidden">
+            <ListToolbar
+              search={poSearch}
+              setSearch={(v: string) => {
+                setPoSearch(v);
+                setPoPage(0);
+              }}
+              status={poStatus}
+              setStatus={(v: string) => {
+                setPoStatus(v);
+                setPoPage(0);
+              }}
+              sort={poSort}
+              setSort={setPoSort}
+              statuses={[
+                ["all", "All"],
+                ["ordered", "Ordered"],
+                ["partial_received", "Partial"],
+                ["received", "Received"],
+                ["cancelled", "Cancelled"],
+              ]}
+              sorts={[
+                ["newest", "Newest"],
+                ["oldest", "Oldest"],
+                ["po_asc", "PO number"],
+                ["vendor_asc", "Vendor"],
+                ["value_desc", "Value high–low"],
+                ["eta_asc", "ETA soonest"],
+              ]}
+            />
+            {orders.map((po: any) => (
+              <article
+                key={po.id}
+                className="grid gap-3 border-b border-[var(--line)] p-4 md:grid-cols-[1.4fr_1fr_1fr_auto] md:items-center"
+              >
+                <div>
+                  <p className="font-semibold">
+                    {po.poNumber} · {po.vendorName}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--ink-4)]">
+                    {po.lines?.length || 0} lines ·{" "}
+                    {new Date(po.createdAt).toLocaleString("en-IN")}
+                  </p>
+                </div>
+                <div>
+                  <span
+                    className={`rounded px-2 py-1 text-xs font-semibold ${statusClass(po.status)}`}
+                  >
+                    {po.status.replaceAll("_", " ")}
+                  </span>
+                  <p className="mt-1 text-xs">
+                    ETA{" "}
+                    {po.expectedDate
+                      ? new Date(po.expectedDate).toLocaleDateString("en-IN")
+                      : "not set"}
+                  </p>
+                </div>
+                <div className="font-semibold">
+                  {money(po.grandTotal)}
+                  <p className="text-xs font-normal text-[var(--ink-4)]">
+                    Tax {money(po.taxAmount)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button asChild size="sm" variant="outline">
+                    <a
+                      href={`/api/pdf/purchase-order/${po.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      PDF
+                    </a>
+                  </Button>
+                  {["ordered", "partial_received"].includes(po.status) ? (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setActivePoId(po.id);
+                        setTab("receiving");
+                      }}
+                    >
+                      Receive
+                    </Button>
+                  ) : null}
+                  {canCancel &&
+                  ["ordered", "partial_received", "draft"].includes(
+                    po.status,
+                  ) ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={cancelState.loading}
+                      onClick={() => cancel(po)}
+                    >
+                      Cancel
+                    </Button>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+            {!loading && !orders.length ? (
+              <Empty text="No purchase orders match these filters." />
+            ) : null}
+            <Pager
+              page={poPage}
+              hasNext={Boolean(data?.purchaseOrderPage?.hasNext)}
+              onPage={setPoPage}
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {tab === "receiving" ? (
+        <section className="space-y-5">
+          <div className="grid gap-5 xl:grid-cols-2">
+            <div className="mp-panel p-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]">
+                  Against purchase order
+                </p>
+                <h2 className="mt-1 text-xl font-semibold">
+                  Post a controlled PO GRN
+                </h2>
+                <p className="mt-1 text-xs text-[var(--ink-4)]">
+                  Every line starts blank. Enter only what is physically
+                  present.
+                </p>
+              </div>
+              <label className="mt-4 block text-xs font-semibold text-[var(--ink-4)]">
+                Find open PO
+                <Input
+                  className="mt-1"
+                  value={poSearch}
+                  onChange={(e) => {
+                    setPoSearch(e.target.value);
+                    setPoPage(0);
+                    setActivePoId("");
+                  }}
+                  placeholder="Search PO number, supplier, SKU or item"
+                />
+              </label>
+              <label className="mt-3 block text-xs font-semibold text-[var(--ink-4)]">
+                Open PO
+                <select
+                  value={activePo?.id || ""}
+                  onChange={(e) => {
+                    setActivePoId(e.target.value);
+                    setReceiveRows({});
+                  }}
+                  className="mt-1 h-11 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
+                >
+                  <option value="">Select PO from matching results</option>
+                  {orders
+                    .filter((po: any) =>
+                      ["ordered", "partial_received"].includes(po.status),
+                    )
+                    .map((po: any) => (
+                      <option key={po.id} value={po.id}>
+                        {po.poNumber} · {po.vendorName}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {activePo ? (
+                <div className="mt-4 space-y-3">
+                  {(activePo.lines || [])
+                    .filter(
+                      (line: any) =>
+                        Number(line.orderedQuantity) >
+                        Number(line.receivedQuantity),
+                    )
+                    .map((line: any) => (
+                      <ReceiveLine
+                        key={line.id}
+                        line={line}
+                        value={receiveRows[line.id] || {}}
+                        onChange={(patch: any) =>
+                          setReceiveRows({
+                            ...receiveRows,
+                            [line.id]: {
+                              ...(receiveRows[line.id] || {}),
+                              ...patch,
+                            },
+                          })
+                        }
+                      />
+                    ))}
+                </div>
+              ) : (
+                <Empty text="Search and choose an open PO to receive." />
+              )}
+              <ReceiptHeader
+                form={receipt}
+                setForm={setReceipt}
+                locations={locations}
+              />
+              <Button
+                className="mt-4 w-full"
+                disabled={
+                  !activePo || !receiptLinesReady || receiveState.loading
+                }
+                onClick={submitReceipt}
+              >
+                {receiveState.loading
+                  ? "Posting…"
+                  : "Post selected quantities and clear"}
+              </Button>
+            </div>
+            <div className="mp-panel p-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]">
+                  Without purchase order
+                </p>
+                <h2 className="mt-1 text-xl font-semibold">
+                  Manual multi-line GRN
+                </h2>
+                <p className="mt-1 text-xs text-[var(--ink-4)]">
+                  Use only for a real supplier delivery without a prior PO.
+                  Reason, actor and lot source are audited.
+                </p>
+              </div>
+              <ProductPicker
+                value={productSearch}
+                setValue={setProductSearch}
+                products={products}
+                onAdd={(p: any) => addProduct(p, "manual")}
+              />
+              <LineEditor
+                rows={manualLines}
+                setRows={setManualLines}
+                mode="manual"
+              />
+              <div className="mt-4">
+                <PoCommercial
+                  form={commercial}
+                  setForm={setCommercial}
+                  vendors={vendors}
+                  compact
+                  title="Supplier"
+                />
+                <ReceiptHeader
+                  form={receipt}
+                  setForm={setReceipt}
+                  locations={locations}
+                />
+                <label className="mt-3 block text-xs font-semibold text-[var(--ink-4)]">
+                  Mandatory manual reason
+                  <Input
+                    className="mt-1"
+                    value={manualReason}
+                    onChange={(e) => setManualReason(e.target.value)}
+                  />
+                </label>
+                <Button
+                  className="mt-4 w-full"
+                  disabled={
+                    !manualLinesReady ||
+                    manualState.loading ||
+                    !manualReason.trim() ||
+                    !commercial.vendorId
+                  }
+                  onClick={submitManual}
+                >
+                  {manualState.loading
+                    ? "Posting…"
+                    : "Post manual GRN and clear"}
+                </Button>
+                {!commercial.vendorId && manualLines.length ? (
+                  <p className="mt-2 text-xs font-semibold text-amber-700">
+                    Select the supplier before posting.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {tab === "history" ? (
+        <section className="mp-panel overflow-hidden">
+          <ListToolbar
+            search={gSearch}
+            setSearch={(v: string) => {
+              setGSearch(v);
+              setGPage(0);
+            }}
+            status={gSource}
+            setStatus={(v: string) => {
+              setGSource(v);
+              setGPage(0);
+            }}
+            sort={gSort}
+            setSort={setGSort}
+            statuses={[
+              ["all", "All sources"],
+              ["po", "Against PO"],
+              ["manual", "Manual"],
+            ]}
+            sorts={[
+              ["newest", "Newest"],
+              ["oldest", "Oldest"],
+              ["grn_asc", "GRN number"],
+              ["vendor_asc", "Vendor"],
+            ]}
+          />
+          {grns.map((grn: any) => (
+            <article key={grn.id} className="border-b border-[var(--line)] p-4">
+              <div className="flex flex-col justify-between gap-3 md:flex-row">
+                <div>
+                  <p className="font-semibold">
+                    {grn.grnNumber} · {grn.vendorName}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--ink-4)]">
+                    {grn.purchaseOrderId ? "PO receipt" : "Manual GRN"} ·{" "}
+                    {new Date(grn.receivedDate).toLocaleString("en-IN")} ·
+                    challan {grn.supplierChallan || "not captured"} · bill{" "}
+                    {grn.supplierBill || "not captured"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 self-start">
+                  <span className="rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                    {grn.status}
+                  </span>
+                  <Button asChild size="sm" variant="outline">
+                    <Link href={`/dashboard/inventory/labels?grn=${grn.id}`}>
+                      <Printer className="mr-2 h-3.5 w-3.5" />
+                      Create labels
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[880px] text-left text-xs">
+                  <thead className="text-[var(--ink-4)]">
+                    <tr>
+                      <th>SKU / item</th>
+                      <th>Received</th>
+                      <th>Accepted</th>
+                      <th>Damaged</th>
+                      <th>Lot</th>
+                      <th>Location</th>
+                      <th>Cost</th>
+                      <th className="text-right">Display</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(grn.lines || []).map((line: any) => {
+                      const displayBalance = line.lot?.balances?.find(
+                        (row: any) => Number(row.available || 0) > 0,
+                      );
+                      return (
+                      <tr key={line.id}>
+                        <td className="py-2">
+                          <b>{line.product?.internalCode || line.sku}</b> ·{" "}
+                          {line.name}
+                        </td>
+                        <td>{line.receivedQuantity}</td>
+                        <td>{line.acceptedQuantity}</td>
+                        <td>{line.damagedQuantity}</td>
+                        <td>{line.lot?.lotNumber || line.lotId || "—"}</td>
+                        <td>
+                          {line.lot?.balances
+                            ?.map(
+                              (row: any) =>
+                                row.location?.code || row.locationId,
+                            )
+                            .join(", ") ||
+                            line.location ||
+                            "—"}
+                        </td>
+                        <td>{money(line.unitCost)}</td>
+                        <td className="py-2 text-right">
+                          {line.product?.id && line.lot?.id && displayBalance ? (
+                            <Button asChild size="sm" variant="outline">
+                              <Link
+                                href={`/dashboard/inventory/display-assets?product=${encodeURIComponent(line.product.id)}&lot=${encodeURIComponent(line.lot.id)}&location=${encodeURIComponent(displayBalance.locationId)}`}
+                              >
+                                <Store className="mr-2 h-3.5 w-3.5" />
+                                Move to display
+                              </Link>
+                            </Button>
+                          ) : (
+                            <span className="text-[var(--ink-4)]">
+                              No available stock
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          ))}
+          {!loading && !grns.length ? (
+            <Empty text="No goods receipts match these filters." />
+          ) : null}
+          <Pager
+            page={gPage}
+            hasNext={Boolean(data?.goodsReceiptPage?.hasNext)}
+            onPage={setGPage}
+          />
+        </section>
+      ) : null}
+    </div>
+  );
 }
-function KpiCard({label,value,detail,tone,icon:Icon}:any){const styles:any={rose:['border-rose-100 bg-gradient-to-br from-white to-rose-50/80','bg-rose-100 text-rose-700'],amber:['border-amber-100 bg-gradient-to-br from-white to-amber-50/80','bg-amber-100 text-amber-700'],emerald:['border-emerald-100 bg-gradient-to-br from-white to-emerald-50/70','bg-emerald-100 text-emerald-700'],red:['border-red-100 bg-gradient-to-br from-white to-red-50/70','bg-red-100 text-red-700'],blue:['border-blue-100 bg-gradient-to-br from-white to-blue-50/70','bg-blue-100 text-blue-700']};const display=typeof value==='number'?value.toLocaleString('en-IN'):String(value||0);return <div className={`rounded-2xl border p-4 shadow-[0_14px_36px_-30px_rgba(30,20,18,.65)] transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${styles[tone][0]}`}><div className="flex items-start justify-between"><p className="text-xs font-bold leading-5 text-[var(--ink-4)]">{label}</p><span className={`rounded-xl p-2 ${styles[tone][1]}`}><Icon className="h-4 w-4"/></span></div><p className={`mt-3 font-bold tabular-nums text-[var(--ink)] ${display.length>9?'text-xl':'text-3xl'}`}>{display}</p><p className="mt-1 min-h-8 text-[11px] leading-4 text-[var(--ink-4)]">{detail}</p></div>}
-function formatDue(value:any){if(!value)return 'ETA not set';const date=new Date(value);const today=new Date();const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'});const key=day.format(date);const todayKey=day.format(today);const tomorrowKey=day.format(new Date(today.getTime()+86400000));if(key===todayKey)return 'Today';if(key===tomorrowKey)return 'Tomorrow';return date.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});}
-function ListToolbar({search,setSearch,status,setStatus,sort,setSort,statuses,sorts}:any){return <div className="flex flex-col gap-3 border-b border-[var(--line)] p-4 lg:flex-row lg:items-center"><label className="relative min-w-0 flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]"/><Input className="pl-9" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search code, supplier, SKU or document"/></label><select aria-label="Filter status" value={status} onChange={(e)=>setStatus(e.target.value)} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm">{statuses.map((x:any)=><option key={x[0]} value={x[0]}>{x[1]}</option>)}</select><select aria-label="Sort list" value={sort} onChange={(e)=>setSort(e.target.value)} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm">{sorts.map((x:any)=><option key={x[0]} value={x[0]}>{x[1]}</option>)}</select></div>}
-function Pager({page,hasNext,onPage}:any){return <div className="flex items-center justify-between border-t border-[var(--line)] p-4"><span className="text-xs text-[var(--ink-4)]">Page {page+1}</span><div className="flex gap-2"><Button size="icon" variant="outline" disabled={!page} onClick={()=>onPage(page-1)}><ChevronLeft className="h-4 w-4"/></Button><Button size="icon" variant="outline" disabled={!hasNext} onClick={()=>onPage(page+1)}><ChevronRight className="h-4 w-4"/></Button></div></div>}
-function Empty({text}:any){return <div className="grid min-h-36 place-items-center p-8 text-center"><div><CheckCircle2 className="mx-auto h-7 w-7 text-emerald-600"/><p className="mt-3 text-sm font-semibold">{text}</p></div></div>}
-function ProductPicker({value,setValue,products,onAdd}:any){return <div className="relative mt-4"><Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]"/><Input className="pl-9" value={value} onChange={(e)=>setValue(e.target.value)} placeholder="Search SKU, design, alias or product"/>{value.trim().length>=2&&products.length?<div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 shadow-xl">{products.map((p:any)=><button type="button" key={p.id} onClick={()=>onAdd(p)} className="flex w-full items-center justify-between rounded p-3 text-left hover:bg-[var(--bg-soft)]"><span><b>{p.internalCode||p.sku}</b> · {p.name}<small className="block text-[var(--ink-4)]">{p.sku} · {p.category} · {p.piecesPerPack||1} pc/{p.purchaseUom||p.unit}</small></span><Plus className="h-4 w-4"/></button>)}</div>:null}</div>}
-function LineEditor({rows,setRows,mode}:any){return rows.length?<div className="mt-4 space-y-3">{rows.map((row:any)=><div key={row.productId} className="rounded-md border border-[var(--line)] p-3"><div className="flex items-start justify-between"><div><b className="text-sm">{row.internalCode||row.sku} · {row.name}</b><p className="text-xs text-[var(--ink-4)]">{row.category} · {row.piecesPerPack} pc/{row.purchaseUom}</p></div><button type="button" aria-label={`Remove ${row.sku}`} onClick={()=>setRows((all:any[])=>all.filter(x=>x.productId!==row.productId))} className="p-2 text-red-700"><Trash2 className="h-4 w-4"/></button></div><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{String(row.category).toLowerCase()==='tiles'?<><Field label="Boxes"><Input type="number" min="0" value={row.boxes} onChange={(e)=>updateRows(setRows,row.productId,{boxes:e.target.value})}/></Field><Field label="Loose pieces"><Input type="number" min="0" disabled={!row.allowLoose} value={row.loosePieces} onChange={(e)=>updateRows(setRows,row.productId,{loosePieces:e.target.value})}/></Field></>:<Field label="Quantity"><Input type="number" min="1" value={row.quantity} onChange={(e)=>updateRows(setRows,row.productId,{quantity:e.target.value})}/></Field>}<Field label="Unit cost ₹"><Input type="number" min="0" value={row.unitCost} onChange={(e)=>updateRows(setRows,row.productId,{unitCost:e.target.value})}/></Field>{mode==='manual'?<><Field label="Damaged pc"><Input type="number" min="0" value={row.damagedQuantity} onChange={(e)=>updateRows(setRows,row.productId,{damagedQuantity:e.target.value})}/></Field><Field label="Batch / shade"><Input value={row.supplierBatch} onChange={(e)=>updateRows(setRows,row.productId,{supplierBatch:e.target.value})}/></Field></>:null}</div>{mode==='manual'&&String(row.category).toLowerCase()==='tiles'?<div className="mt-2 grid grid-cols-3 gap-2"><Field label="Shade"><Input value={row.shade} onChange={(e)=>updateRows(setRows,row.productId,{shade:e.target.value})}/></Field><Field label="Caliber"><Input value={row.caliber} onChange={(e)=>updateRows(setRows,row.productId,{caliber:e.target.value})}/></Field><Field label="Grade"><Input value={row.grade} onChange={(e)=>updateRows(setRows,row.productId,{grade:e.target.value})}/></Field></div>:null}</div>)}</div>:null}
-function updateRows(setRows:any,id:string,patch:any){setRows((rows:any[])=>rows.map(row=>row.productId===id?{...row,...patch}:row))}
-function enteredBaseQuantity(line:any){return String(line.category||'').toLowerCase()==='tiles'?Number(line.boxes||0)*Math.max(1,Number(line.piecesPerPack||1))+Number(line.loosePieces||0):Number(line.quantity||0)}
-function receivedBaseQuantity(line:any,row:any){return String(line.product?.category||line.category||'').toLowerCase()==='tiles'?Number(row.boxes||0)*Math.max(1,Number(line.product?.piecesPerPack||1))+Number(row.loosePieces||0):Number(row.receivedQuantity||0)}
-function Field({label,children}:any){return <label className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">{label}<div className="mt-1">{children}</div></label>}
-function PoCommercial({form,setForm,vendors,onSubmit,disabled,title,compact=false}:any){return <div className={compact?'':'mp-panel p-5'}><h2 className="font-semibold">{title}</h2><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><Field label="Supplier"><select value={form.vendorId} onChange={(e)=>setForm({...form,vendorId:e.target.value,vendorName:''})} className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3 text-sm"><option value="">Select supplier</option>{vendors.map((v:any)=><option key={v.id} value={v.id}>{v.name}</option>)}</select></Field><Field label="Expected date"><Input type="date" value={form.expectedDate} onChange={(e)=>setForm({...form,expectedDate:e.target.value})}/></Field>{!compact?<><Field label="Discount %"><Input type="number" min="0" max="100" value={form.discount} onChange={(e)=>setForm({...form,discount:e.target.value})}/></Field><Field label="GST %"><Input type="number" min="0" max="100" value={form.tax} onChange={(e)=>setForm({...form,tax:e.target.value})}/></Field><Field label="Notes"><Input value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})}/></Field><div className="flex items-end"><Button className="w-full" disabled={disabled||!form.vendorId} onClick={onSubmit}>Create PO and clear</Button></div></>:null}</div></div>}
-function ReceiptHeader({form,setForm,locations}:any){return <div className="mt-4 grid grid-cols-2 gap-2"><Field label="Supplier challan"><Input value={form.supplierChallan} onChange={(e)=>setForm({...form,supplierChallan:e.target.value})}/></Field><Field label="Supplier bill"><Input value={form.supplierBill} onChange={(e)=>setForm({...form,supplierBill:e.target.value})}/></Field><Field label="Receipt date"><Input type="date" value={form.receivedDate} onChange={(e)=>setForm({...form,receivedDate:e.target.value})}/></Field><Field label="Stock location"><select value={form.locationId} onChange={(e)=>setForm({...form,locationId:e.target.value})} className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-2 text-sm"><option value="">Default</option>{locations.map((x:any)=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field></div>}
-function ReceiveLine({line,value,onChange}:any){const tile=String(line.product?.category||line.category||'').toLowerCase()==='tiles';const remaining=Math.max(0,Number(line.orderedQuantity||0)-Number(line.receivedQuantity||0));return <div className="rounded-md border border-[var(--line)] p-3"><p className="text-sm font-semibold">{line.product?.internalCode||line.sku} · {line.name}</p><p className="text-xs text-[var(--ink-4)]">Remaining {remaining} base pc{tile?` · ${line.product?.piecesPerPack||1} pc/box`:''}</p><div className="mt-3 grid grid-cols-2 gap-2">{tile?<><Field label="Boxes received"><Input type="number" min="0" value={value.boxes||''} onChange={(e)=>onChange({boxes:e.target.value})}/></Field><Field label="Loose pieces"><Input type="number" min="0" disabled={line.product?.allowLoose===false} value={value.loosePieces||''} onChange={(e)=>onChange({loosePieces:e.target.value})}/></Field></>:<Field label="Quantity received"><Input type="number" min="0" max={remaining} value={value.receivedQuantity||''} onChange={(e)=>onChange({receivedQuantity:e.target.value})}/></Field>}<Field label="Damaged pc"><Input type="number" min="0" value={value.damagedQuantity||''} onChange={(e)=>onChange({damagedQuantity:e.target.value})}/></Field><Field label="Batch"><Input value={value.supplierBatch||''} onChange={(e)=>onChange({supplierBatch:e.target.value})}/></Field>{tile?<><Field label="Shade"><Input value={value.shade||''} onChange={(e)=>onChange({shade:e.target.value})}/></Field><Field label="Caliber"><Input value={value.caliber||''} onChange={(e)=>onChange({caliber:e.target.value})}/></Field><Field label="Grade"><Input value={value.grade||''} onChange={(e)=>onChange({grade:e.target.value})}/></Field></>:null}</div></div>}
+
+function ProcurementOverview({ summary, loading, onTab }: any) {
+  const expected = summary.expectedReceipts || [];
+  const work = [
+    {
+      label: "Demand ready",
+      value: Number(summary.openDemand || 0),
+      color: "bg-gradient-to-r from-rose-600 to-rose-400",
+    },
+    {
+      label: "Draft purchase orders",
+      value: Number(summary.draftPurchaseOrders || 0),
+      color: "bg-gradient-to-r from-amber-600 to-amber-400",
+    },
+    {
+      label: "Sent / in motion",
+      value:
+        Number(summary.orderedPurchaseOrders || 0) +
+        Number(summary.partialPurchaseOrders || 0),
+      color: "bg-gradient-to-r from-blue-600 to-cyan-400",
+    },
+    {
+      label: "Due for receipt today",
+      value: Number(summary.dueTodayPurchaseOrders || 0),
+      color: "bg-gradient-to-r from-emerald-700 to-emerald-400",
+    },
+    {
+      label: "Completed today",
+      value: Number(summary.receiptsToday || 0),
+      color: "bg-gradient-to-r from-teal-700 to-teal-400",
+    },
+  ];
+  const maxWork = Math.max(1, ...work.map((row) => row.value));
+  const kpis = [
+    {
+      label: "Actionable demand",
+      value: summary.openDemand || 0,
+      detail: `${summary.orderedDemand || 0} already ordered`,
+      tone: "rose",
+      icon: ShoppingCart,
+    },
+    {
+      label: "POs in motion",
+      value: summary.activePurchaseOrders || 0,
+      detail: `${summary.draftPurchaseOrders || 0} draft · ${summary.partialPurchaseOrders || 0} partial`,
+      tone: "amber",
+      icon: Truck,
+    },
+    {
+      label: "Purchase commitment",
+      value:
+        Number(summary.valuedPurchaseOrders || 0) > 0
+          ? money(summary.activePurchaseOrderValue)
+          : "Needs cost",
+      detail: `${summary.valuedPurchaseOrders || 0} of ${summary.activePurchaseOrders || 0} active POs valued`,
+      tone: "blue",
+      icon: CircleDollarSign,
+    },
+    {
+      label: "Receiving today",
+      value: summary.receiptsToday || 0,
+      detail: `${Number(summary.acceptedUnitsToday || 0).toLocaleString("en-IN")} units accepted`,
+      tone: "emerald",
+      icon: PackageCheck,
+    },
+    {
+      label: "Supplier exceptions",
+      value:
+        Number(summary.overduePurchaseOrders || 0) +
+        Number(summary.purchaseOrdersWithoutEta || 0),
+      detail: `${summary.overduePurchaseOrders || 0} overdue · ${summary.purchaseOrdersWithoutEta || 0} no ETA`,
+      tone: "red",
+      icon: AlertTriangle,
+    },
+  ];
+  const priorities = [
+    {
+      value: summary.overduePurchaseOrders || 0,
+      title: "Overdue purchase orders",
+      text: "Supplier receipt date has passed",
+      tone: "red",
+      tab: "orders",
+    },
+    {
+      value: summary.purchaseOrdersWithoutEta || 0,
+      title: "POs missing an ETA",
+      text: "Add supplier commitment date",
+      tone: "amber",
+      tab: "orders",
+    },
+    {
+      value: summary.documentExceptionsToday || 0,
+      title: "Receipt document gaps today",
+      text: "Challan or supplier bill is missing",
+      tone: "amber",
+      tab: "history",
+    },
+    {
+      value: summary.damagedUnitsToday || 0,
+      title: "Damaged units received today",
+      text: "Review exact GRN and lot line",
+      tone: "emerald",
+      tab: "history",
+    },
+  ];
+  return (
+    <section className="space-y-5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#a2322e]">
+            Live operating overview
+          </p>
+          <h2 className="mt-1 font-display text-2xl font-bold">
+            Today’s procurement control
+          </h2>
+          <p className="mt-1 text-sm text-[var(--ink-4)]">
+            Source-backed queues, receipts and supplier commitments. Business
+            date {summary.businessDate || "—"}.
+          </p>
+        </div>
+        <p className="text-xs text-[var(--ink-4)]">
+          {summary.asOf
+            ? `Refreshed ${new Date(summary.asOf).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`
+            : loading
+              ? "Refreshing…"
+              : "Live source"}
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {kpis.map((item: any) => (
+          <KpiCard key={item.label} {...item} />
+        ))}
+      </div>
+      <div className="grid gap-5 lg:grid-cols-[1.58fr_1fr]">
+        <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_18px_50px_-38px_rgba(30,20,18,.55)]">
+          <div className="flex items-start justify-between border-b border-[var(--line)] p-5">
+            <div>
+              <h3 className="font-display text-lg font-bold">
+                Today’s procurement flow
+              </h3>
+              <p className="mt-1 text-xs text-[var(--ink-4)]">
+                Counts open the relevant operating queue
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => onTab("demand")}>
+              Open register
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
+          <div className="space-y-5 p-5">
+            {work.map((row, index) => (
+              <button
+                key={row.label}
+                onClick={() =>
+                  onTab(
+                    index === 0
+                      ? "demand"
+                      : index === 4
+                        ? "history"
+                        : index === 3
+                          ? "receiving"
+                          : "orders",
+                  )
+                }
+                className="grid w-full grid-cols-[140px_1fr_44px] items-center gap-3 text-left text-sm sm:grid-cols-[170px_1fr_50px]"
+              >
+                <span className="font-semibold text-[var(--ink-3)]">
+                  {row.label}
+                </span>
+                <span className="h-2.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+                  <span
+                    className={`block h-full rounded-full ${row.color} transition-all duration-700`}
+                    style={{
+                      width: `${Math.max(row.value ? 8 : 0, (row.value / maxWork) * 100)}%`,
+                    }}
+                  />
+                </span>
+                <b className="text-right tabular-nums">
+                  {row.value.toLocaleString("en-IN")}
+                </b>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_18px_50px_-38px_rgba(30,20,18,.55)]">
+          <div className="border-b border-[var(--line)] p-5">
+            <h3 className="font-display text-lg font-bold">Priority work</h3>
+            <p className="mt-1 text-xs text-[var(--ink-4)]">
+              Ordered by operational risk
+            </p>
+          </div>
+          <div className="space-y-2.5 p-4">
+            {priorities.map((item: any) => (
+              <button
+                key={item.title}
+                onClick={() => onTab(item.tab)}
+                className="group flex w-full items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--bg-soft)]/50 p-3 text-left transition hover:-translate-y-0.5 hover:border-rose-200 hover:bg-rose-50/50"
+              >
+                <span
+                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.tone === "red" ? "bg-red-500" : item.tone === "amber" ? "bg-amber-500" : "bg-emerald-500"}`}
+                />
+                <span className="min-w-0 flex-1">
+                  <b className="block text-sm">
+                    {Number(item.value).toLocaleString("en-IN")} {item.title}
+                  </b>
+                  <small className="text-[var(--ink-4)]">{item.text}</small>
+                </span>
+                <ChevronRight className="h-4 w-4 text-[var(--ink-4)] transition group-hover:translate-x-0.5 group-hover:text-[#9f2d29]" />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_18px_50px_-38px_rgba(30,20,18,.55)]">
+        <div className="flex flex-col justify-between gap-3 border-b border-[var(--line)] p-5 sm:flex-row sm:items-center">
+          <div>
+            <h3 className="font-display text-lg font-bold">
+              Expected inward schedule
+            </h3>
+            <p className="mt-1 text-xs text-[var(--ink-4)]">
+              Earliest supplier commitments with remaining base quantity and
+              demand context
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onTab("receiving")}
+          >
+            <CalendarClock className="mr-2 h-4 w-4" />
+            Open receiving
+          </Button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead className="bg-[var(--bg-soft)] text-[10px] font-bold uppercase tracking-[.13em] text-[var(--ink-4)]">
+              <tr>
+                <th className="px-5 py-3">Due</th>
+                <th>PO / supplier</th>
+                <th>Lines</th>
+                <th>Remaining</th>
+                <th>Sales-linked</th>
+                <th className="pr-5">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--line)]">
+              {expected.map((po: any) => (
+                <tr key={po.id} className="transition hover:bg-rose-50/35">
+                  <td className="px-5 py-4 font-semibold">
+                    {formatDue(po.expectedDate)}
+                  </td>
+                  <td className="py-4">
+                    <b>{po.poNumber}</b>
+                    <p className="mt-0.5 text-xs text-[var(--ink-4)]">
+                      {po.vendorName}
+                    </p>
+                  </td>
+                  <td>{po.lineCount}</td>
+                  <td>
+                    {Number(po.remainingQuantity || 0).toLocaleString("en-IN")}{" "}
+                    pc
+                  </td>
+                  <td>
+                    {po.demandLineCount
+                      ? `${po.demandLineCount} demand line${po.demandLineCount === 1 ? "" : "s"}`
+                      : "Replenishment"}
+                  </td>
+                  <td className="pr-5">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${po.status === "partial_received" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-800"}`}
+                    >
+                      {String(po.status).replaceAll("_", " ")}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {!loading && !expected.length ? (
+                <tr>
+                  <td colSpan={6}>
+                    <Empty text="No supplier receipt is currently scheduled." />
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="grid gap-3 rounded-2xl border border-rose-100 bg-[linear-gradient(100deg,#fff8f5,#fffdf8)] p-4 text-xs text-[var(--ink-3)] sm:grid-cols-3">
+        <p>
+          <b className="text-[var(--ink)]">Quantity truth</b>
+          <br />
+          PO and GRN quantities are stored in base pieces; tile box conversions
+          are snapshotted.
+        </p>
+        <p>
+          <b className="text-[var(--ink)]">Inventory truth</b>
+          <br />
+          Posting a GRN creates the exact lot and one reconciled stock-ledger
+          movement.
+        </p>
+        <p>
+          <b className="text-[var(--ink)]">No silent receipt</b>
+          <br />
+          Receiving starts blank and posts only explicitly entered physical
+          quantities.
+        </p>
+      </div>
+    </section>
+  );
+}
+function KpiCard({ label, value, detail, tone, icon: Icon }: any) {
+  const styles: any = {
+    rose: [
+      "border-rose-100 bg-gradient-to-br from-white to-rose-50/80",
+      "bg-rose-100 text-rose-700",
+    ],
+    amber: [
+      "border-amber-100 bg-gradient-to-br from-white to-amber-50/80",
+      "bg-amber-100 text-amber-700",
+    ],
+    emerald: [
+      "border-emerald-100 bg-gradient-to-br from-white to-emerald-50/70",
+      "bg-emerald-100 text-emerald-700",
+    ],
+    red: [
+      "border-red-100 bg-gradient-to-br from-white to-red-50/70",
+      "bg-red-100 text-red-700",
+    ],
+    blue: [
+      "border-blue-100 bg-gradient-to-br from-white to-blue-50/70",
+      "bg-blue-100 text-blue-700",
+    ],
+  };
+  const display =
+    typeof value === "number"
+      ? value.toLocaleString("en-IN")
+      : String(value || 0);
+  return (
+    <div
+      className={`rounded-2xl border p-4 shadow-[0_14px_36px_-30px_rgba(30,20,18,.65)] transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${styles[tone][0]}`}
+    >
+      <div className="flex items-start justify-between">
+        <p className="text-xs font-bold leading-5 text-[var(--ink-4)]">
+          {label}
+        </p>
+        <span className={`rounded-xl p-2 ${styles[tone][1]}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+      <p
+        className={`mt-3 font-bold tabular-nums text-[var(--ink)] ${display.length > 9 ? "text-xl" : "text-3xl"}`}
+      >
+        {display}
+      </p>
+      <p className="mt-1 min-h-8 text-[11px] leading-4 text-[var(--ink-4)]">
+        {detail}
+      </p>
+    </div>
+  );
+}
+function formatDue(value: any) {
+  if (!value) return "ETA not set";
+  const date = new Date(value);
+  const today = new Date();
+  const day = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const key = day.format(date);
+  const todayKey = day.format(today);
+  const tomorrowKey = day.format(new Date(today.getTime() + 86400000));
+  if (key === todayKey) return "Today";
+  if (key === tomorrowKey) return "Tomorrow";
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+function ListToolbar({
+  search,
+  setSearch,
+  status,
+  setStatus,
+  sort,
+  setSort,
+  statuses,
+  sorts,
+}: any) {
+  return (
+    <div className="flex flex-col gap-3 border-b border-[var(--line)] p-4 lg:flex-row lg:items-center">
+      <label className="relative min-w-0 flex-1">
+        <Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
+        <Input
+          className="pl-9"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search code, supplier, SKU or document"
+        />
+      </label>
+      <select
+        aria-label="Filter status"
+        value={status}
+        onChange={(e) => setStatus(e.target.value)}
+        className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm"
+      >
+        {statuses.map((x: any) => (
+          <option key={x[0]} value={x[0]}>
+            {x[1]}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="Sort list"
+        value={sort}
+        onChange={(e) => setSort(e.target.value)}
+        className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm"
+      >
+        {sorts.map((x: any) => (
+          <option key={x[0]} value={x[0]}>
+            {x[1]}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+function Pager({ page, hasNext, onPage }: any) {
+  return (
+    <div className="flex items-center justify-between border-t border-[var(--line)] p-4">
+      <span className="text-xs text-[var(--ink-4)]">Page {page + 1}</span>
+      <div className="flex gap-2">
+        <Button
+          size="icon"
+          variant="outline"
+          disabled={!page}
+          onClick={() => onPage(page - 1)}
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <Button
+          size="icon"
+          variant="outline"
+          disabled={!hasNext}
+          onClick={() => onPage(page + 1)}
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+function Empty({ text }: any) {
+  return (
+    <div className="grid min-h-36 place-items-center p-8 text-center">
+      <div>
+        <CheckCircle2 className="mx-auto h-7 w-7 text-emerald-600" />
+        <p className="mt-3 text-sm font-semibold">{text}</p>
+      </div>
+    </div>
+  );
+}
+function ProductPicker({ value, setValue, products, onAdd }: any) {
+  return (
+    <div className="relative mt-4">
+      <Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
+      <Input
+        className="pl-9"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Search SKU, design, alias or product"
+      />
+      {value.trim().length >= 2 && products.length ? (
+        <div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 shadow-xl">
+          {products.map((p: any) => (
+            <button
+              type="button"
+              key={p.id}
+              onClick={() => onAdd(p)}
+              className="flex w-full items-center justify-between rounded p-3 text-left hover:bg-[var(--bg-soft)]"
+            >
+              <span>
+                <b>{p.internalCode || p.sku}</b> · {p.name}
+                <small className="block text-[var(--ink-4)]">
+                  {p.sku} · {p.category} · {p.piecesPerPack || 1} pc/
+                  {p.purchaseUom || p.unit}
+                </small>
+              </span>
+              <Plus className="h-4 w-4" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+function LineEditor({ rows, setRows, mode }: any) {
+  return rows.length ? (
+    <div className="mt-4 space-y-3">
+      {rows.map((row: any) => (
+        <div
+          key={row.productId}
+          className="rounded-md border border-[var(--line)] p-3"
+        >
+          <div className="flex items-start justify-between">
+            <div>
+              <b className="text-sm">
+                {row.internalCode || row.sku} · {row.name}
+              </b>
+              <p className="text-xs text-[var(--ink-4)]">
+                {row.category} · {row.piecesPerPack} pc/{row.purchaseUom}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-label={`Remove ${row.sku}`}
+              onClick={() =>
+                setRows((all: any[]) =>
+                  all.filter((x) => x.productId !== row.productId),
+                )
+              }
+              className="p-2 text-red-700"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {String(row.category).toLowerCase() === "tiles" ? (
+              <>
+                <Field label="Boxes">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={row.boxes}
+                    onChange={(e) =>
+                      updateRows(setRows, row.productId, {
+                        boxes: e.target.value,
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Loose pieces">
+                  <Input
+                    type="number"
+                    min="0"
+                    disabled={!row.allowLoose}
+                    value={row.loosePieces}
+                    onChange={(e) =>
+                      updateRows(setRows, row.productId, {
+                        loosePieces: e.target.value,
+                      })
+                    }
+                  />
+                </Field>
+              </>
+            ) : (
+              <Field label="Quantity">
+                <Input
+                  type="number"
+                  min="1"
+                  value={row.quantity}
+                  onChange={(e) =>
+                    updateRows(setRows, row.productId, {
+                      quantity: e.target.value,
+                    })
+                  }
+                />
+              </Field>
+            )}
+            <Field label="Unit cost ₹">
+              <Input
+                type="number"
+                min="0"
+                value={row.unitCost}
+                onChange={(e) =>
+                  updateRows(setRows, row.productId, {
+                    unitCost: e.target.value,
+                  })
+                }
+              />
+            </Field>
+            {mode === "manual" ? (
+              <>
+                <Field label="Damaged pc">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={row.damagedQuantity}
+                    onChange={(e) =>
+                      updateRows(setRows, row.productId, {
+                        damagedQuantity: e.target.value,
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Batch / shade">
+                  <Input
+                    value={row.supplierBatch}
+                    onChange={(e) =>
+                      updateRows(setRows, row.productId, {
+                        supplierBatch: e.target.value,
+                      })
+                    }
+                  />
+                </Field>
+              </>
+            ) : null}
+          </div>
+          {mode === "manual" &&
+          String(row.category).toLowerCase() === "tiles" ? (
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <Field label="Shade">
+                <Input
+                  value={row.shade}
+                  onChange={(e) =>
+                    updateRows(setRows, row.productId, {
+                      shade: e.target.value,
+                    })
+                  }
+                />
+              </Field>
+              <Field label="Caliber">
+                <Input
+                  value={row.caliber}
+                  onChange={(e) =>
+                    updateRows(setRows, row.productId, {
+                      caliber: e.target.value,
+                    })
+                  }
+                />
+              </Field>
+              <Field label="Grade">
+                <Input
+                  value={row.grade}
+                  onChange={(e) =>
+                    updateRows(setRows, row.productId, {
+                      grade: e.target.value,
+                    })
+                  }
+                />
+              </Field>
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  ) : null;
+}
+function updateRows(setRows: any, id: string, patch: any) {
+  setRows((rows: any[]) =>
+    rows.map((row) => (row.productId === id ? { ...row, ...patch } : row)),
+  );
+}
+function enteredBaseQuantity(line: any) {
+  return String(line.category || "").toLowerCase() === "tiles"
+    ? Number(line.boxes || 0) * Math.max(1, Number(line.piecesPerPack || 1)) +
+        Number(line.loosePieces || 0)
+    : Number(line.quantity || 0);
+}
+function receivedBaseQuantity(line: any, row: any) {
+  return String(line.product?.category || line.category || "").toLowerCase() ===
+    "tiles"
+    ? Number(row.boxes || 0) *
+        Math.max(1, Number(line.product?.piecesPerPack || 1)) +
+        Number(row.loosePieces || 0)
+    : Number(row.receivedQuantity || 0);
+}
+function Field({ label, children }: any) {
+  return (
+    <label className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">
+      {label}
+      <div className="mt-1">{children}</div>
+    </label>
+  );
+}
+function PoCommercial({
+  form,
+  setForm,
+  vendors,
+  onSubmit,
+  disabled,
+  title,
+  compact = false,
+}: any) {
+  return (
+    <div className={compact ? "" : "mp-panel p-5"}>
+      <h2 className="font-semibold">{title}</h2>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Field label="Supplier">
+          <select
+            value={form.vendorId}
+            onChange={(e) =>
+              setForm({ ...form, vendorId: e.target.value, vendorName: "" })
+            }
+            className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3 text-sm"
+          >
+            <option value="">Select supplier</option>
+            {vendors.map((v: any) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Expected date">
+          <Input
+            type="date"
+            value={form.expectedDate}
+            onChange={(e) => setForm({ ...form, expectedDate: e.target.value })}
+          />
+        </Field>
+        {!compact ? (
+          <>
+            <Field label="Discount %">
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                value={form.discount}
+                onChange={(e) => setForm({ ...form, discount: e.target.value })}
+              />
+            </Field>
+            <Field label="GST %">
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                value={form.tax}
+                onChange={(e) => setForm({ ...form, tax: e.target.value })}
+              />
+            </Field>
+            <Field label="Notes">
+              <Input
+                value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button
+                className="w-full"
+                disabled={disabled || !form.vendorId}
+                onClick={onSubmit}
+              >
+                Create PO and clear
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+function ReceiptHeader({ form, setForm, locations }: any) {
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-2">
+      <Field label="Supplier challan">
+        <Input
+          value={form.supplierChallan}
+          onChange={(e) =>
+            setForm({ ...form, supplierChallan: e.target.value })
+          }
+        />
+      </Field>
+      <Field label="Supplier bill">
+        <Input
+          value={form.supplierBill}
+          onChange={(e) => setForm({ ...form, supplierBill: e.target.value })}
+        />
+      </Field>
+      <Field label="Receipt date">
+        <Input
+          type="date"
+          value={form.receivedDate}
+          onChange={(e) => setForm({ ...form, receivedDate: e.target.value })}
+        />
+      </Field>
+      <Field label="Stock location">
+        <select
+          value={form.locationId}
+          onChange={(e) => setForm({ ...form, locationId: e.target.value })}
+          className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-2 text-sm"
+        >
+          <option value="">Default</option>
+          {locations.map((x: any) => (
+            <option key={x.id} value={x.id}>
+              {x.code} · {x.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+    </div>
+  );
+}
+function ReceiveLine({ line, value, onChange }: any) {
+  const tile =
+    String(line.product?.category || line.category || "").toLowerCase() ===
+    "tiles";
+  const remaining = Math.max(
+    0,
+    Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0),
+  );
+  return (
+    <div className="rounded-md border border-[var(--line)] p-3">
+      <p className="text-sm font-semibold">
+        {line.product?.internalCode || line.sku} · {line.name}
+      </p>
+      <p className="text-xs text-[var(--ink-4)]">
+        Remaining {remaining} base pc
+        {tile ? ` · ${line.product?.piecesPerPack || 1} pc/box` : ""}
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {tile ? (
+          <>
+            <Field label="Boxes received">
+              <Input
+                type="number"
+                min="0"
+                value={value.boxes || ""}
+                onChange={(e) => onChange({ boxes: e.target.value })}
+              />
+            </Field>
+            <Field label="Loose pieces">
+              <Input
+                type="number"
+                min="0"
+                disabled={line.product?.allowLoose === false}
+                value={value.loosePieces || ""}
+                onChange={(e) => onChange({ loosePieces: e.target.value })}
+              />
+            </Field>
+          </>
+        ) : (
+          <Field label="Quantity received">
+            <Input
+              type="number"
+              min="0"
+              max={remaining}
+              value={value.receivedQuantity || ""}
+              onChange={(e) => onChange({ receivedQuantity: e.target.value })}
+            />
+          </Field>
+        )}
+        <Field label="Damaged pc">
+          <Input
+            type="number"
+            min="0"
+            value={value.damagedQuantity || ""}
+            onChange={(e) => onChange({ damagedQuantity: e.target.value })}
+          />
+        </Field>
+        <Field label="Batch">
+          <Input
+            value={value.supplierBatch || ""}
+            onChange={(e) => onChange({ supplierBatch: e.target.value })}
+          />
+        </Field>
+        {tile ? (
+          <>
+            <Field label="Shade">
+              <Input
+                value={value.shade || ""}
+                onChange={(e) => onChange({ shade: e.target.value })}
+              />
+            </Field>
+            <Field label="Caliber">
+              <Input
+                value={value.caliber || ""}
+                onChange={(e) => onChange({ caliber: e.target.value })}
+              />
+            </Field>
+            <Field label="Grade">
+              <Input
+                value={value.grade || ""}
+                onChange={(e) => onChange({ grade: e.target.value })}
+              />
+            </Field>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
