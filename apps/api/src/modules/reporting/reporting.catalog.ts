@@ -53,7 +53,7 @@ export const REPORT_CATALOG: ReportDefinition[] = rows.map(([domain, title, desc
   sources: title === 'Target versus actual'
     ? [...domains[domain].sources, 'ReportingTarget']
     : title === 'Historical quoted margin'
-      ? ['Quote', 'QuoteLine', 'Product.costPrice snapshot']
+      ? ['Quote', 'QuoteLine', 'governed cost snapshot when captured']
       : title === 'Realised gross margin'
         ? ['SalesInvoice', 'SalesInvoiceLine', 'InventoryLot.unitCost snapshot']
         : domains[domain].sources,
@@ -61,7 +61,7 @@ export const REPORT_CATALOG: ReportDefinition[] = rows.map(([domain, title, desc
 
 export const REPORTING_SETUP_GUIDANCE = {
   targets: { classification: 'governed_entry', title: 'Targets and budgets', owner: 'Owner or administrator', actionHref: '/dashboard/reports/setup#target-entry', actionLabel: 'Set company targets', helpHref: '/dashboard/help#reporting-readiness', message: 'Add versioned monthly targets here; revisions and voids retain audit history.' },
-  quoted_margin: { classification: 'automatic_capture', title: 'Historical quoted margin', owner: 'Product master owner and sales operations', actionHref: '/dashboard/reports/setup#cost-provenance', actionLabel: 'Review cost provenance', helpHref: '/dashboard/help#reporting-readiness', message: 'Future quote lines capture Product Master cost automatically. Existing lines stay explicitly uncovered.' },
+  quoted_margin: { classification: 'governed_calculation', title: 'Historical quoted margin', owner: 'Sales operations and inventory owner', actionHref: '/dashboard/reports/setup#cost-provenance', actionLabel: 'Review cost provenance', helpHref: '/dashboard/help#reporting-readiness', message: 'Quoted margin is shown only when a governed cost snapshot exists. Product defaults are never treated as cost; uncovered lines remain explicit.' },
   realised_margin: { classification: 'automatic_capture', title: 'Realised gross margin', owner: 'Inventory and finance operations', actionHref: '/dashboard/reports/setup#cost-provenance', actionLabel: 'Review cost provenance', helpHref: '/dashboard/help#reporting-readiness', message: 'Future invoice lines capture the dispatched lot cost automatically. Existing lines stay explicitly uncovered.' },
   master_data: { classification: 'existing_workflow', title: 'Master-data readiness', owner: 'Product master owner', actionHref: '/dashboard/products', actionLabel: 'Correct Product Master', helpHref: '/dashboard/help#reporting-readiness', message: 'Use existing Product, Tile, Size and alias masters; the report identifies exact exceptions.' },
   supplier_ap: { classification: 'external_or_module', title: 'Supplier payables', owner: 'Finance owner', actionHref: '/dashboard/reports/setup#supplier-ap', actionLabel: 'Review required source', helpHref: '/dashboard/help#reporting-readiness', message: 'Purchase orders and receipts are not supplier invoices or payments. Connect accounting or implement a dedicated AP subledger before reporting payables.' },

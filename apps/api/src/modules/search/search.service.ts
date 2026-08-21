@@ -20,6 +20,13 @@ export class SearchService {
             { aliases: { some: { normalizedValue: { contains: normalized }, status: 'active' } } },
           ]
         },
+        select: {
+          id: true, sku: true, internalCode: true, name: true, category: true, brand: true, finish: true,
+          dimensions: true, unit: true, baseUom: true, purchaseUom: true, salesUom: true,
+          piecesPerPack: true, coveragePerPack: true, allowLoose: true, media: true, status: true,
+          defaultMrpInclusive: true, defaultNrpInclusive: true, priceRateBasis: true, priceUom: true,
+          mrpSource: true, pricingEffectiveFrom: true, pricingVersion: true,
+        },
         orderBy: [{ internalCode: 'asc' }, { name: 'asc' }],
         take: 20
       }),

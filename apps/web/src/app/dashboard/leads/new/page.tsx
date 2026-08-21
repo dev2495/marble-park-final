@@ -14,10 +14,10 @@ import { ScanProductSelector } from '@/components/scan-product-selector';
 
 const DATA = gql`query LeadIntake($search: String) {
   customers { id name mobile city siteAddress }
-  products(search: $search, take: 50) { id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice media }
+  products(search: $search, take: 50) { id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive priceRateBasis media }
 }`;
 const CREATE_LEAD = gql`mutation CreateLead($input: CreateLeadInput!) { createLead(input: $input) { id title stage } }`;
-const PRODUCTS_BY_IDS = gql`query LeadPreloadProducts($ids:[ID!]!){productsByIds(ids:$ids){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice media}}`;
+const PRODUCTS_BY_IDS = gql`query LeadPreloadProducts($ids:[ID!]!){productsByIds(ids:$ids){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive priceRateBasis media}}`;
 const SCAN = gql`mutation LeadScanLabel($labelCode:String!,$input:InternalLabelScanInput){scanInternalLabel(labelCode:$labelCode,input:$input)}`;
 
 function image(media: any) {
@@ -46,7 +46,7 @@ export default function NewLeadPage() {
   function addProduct(product: any) {
     const pricingUom = product.salesUom || product.unit || 'PC';
     const areaPriced = ['SQFT', 'SQM', 'M2'].includes(String(pricingUom).toUpperCase()) && Number(product.coveragePerPack || 0) > 0;
-    setRows((current) => current.some((row)=>row.productId===product.id) ? current : [...current, { key: `${product.id}-${Date.now()}`, productId: product.id, sku: product.sku, internalCode: product.internalCode, name: product.name, category: product.category, brand: product.brand, finish: product.finish, dimensions: product.dimensions, qty: 1, unit: product.purchaseUom || product.unit || 'PC', inventoryUom: product.purchaseUom || product.unit || 'PC', pricingUom, rateBasis: areaPriced ? 'AREA' : 'PACK', coveragePerPack: Number(product.coveragePerPack || 0), piecesPerPack: Number(product.piecesPerPack || 1), requestedArea: areaPriced ? Number(product.coveragePerPack || 0) : 0, wastagePercent: String(product.category || '').toLowerCase() === 'tiles' ? 10 : 0, price: Number(product.sellPrice || 0), area: 'General Selection', media: product.media, quoteImage: '' }]);
+    setRows((current) => current.some((row)=>row.productId===product.id) ? current : [...current, { key: `${product.id}-${Date.now()}`, productId: product.id, sku: product.sku, internalCode: product.internalCode, name: product.name, category: product.category, brand: product.brand, finish: product.finish, dimensions: product.dimensions, qty: 1, unit: product.purchaseUom || product.unit || 'PC', inventoryUom: product.purchaseUom || product.unit || 'PC', pricingUom, rateBasis: product.priceRateBasis || (areaPriced ? 'AREA' : 'BOX'), coveragePerPack: Number(product.coveragePerPack || 0), piecesPerPack: Number(product.piecesPerPack || 1), requestedArea: areaPriced ? Number(product.coveragePerPack || 0) : 0, wastagePercent: String(product.category || '').toLowerCase() === 'tiles' ? 10 : 0, price: Number(product.defaultNrpInclusive || 0), mrpInclusive: product.defaultMrpInclusive == null ? null : Number(product.defaultMrpInclusive), nrpInclusive: product.defaultNrpInclusive == null ? null : Number(product.defaultNrpInclusive), area: 'General Selection', media: product.media, quoteImage: '' }]);
     setSearch('');
   }
   async function scanToIntent(payload:string){setScanMessage('');setScanResult(null);setScanPayload(payload);const response=await scan({variables:{labelCode:payload,input:{action:'lead_intent_lookup',metadata:{surface:'lead_intake'}}}});const result=response.data?.scanInternalLabel;if(result?.result!=='success'||!result?.label?.product){setScanMessage('No active governed label matched this scan. The intent was not changed.');return;}setScanResult(result);}
@@ -58,7 +58,7 @@ export default function NewLeadPage() {
       customerId: form.customerId, ownerId: user?.id, title: form.title, source: form.source, stage: 'new',
       expectedValue: Number(form.expectedValue || 0), notes: form.notes,
       nextActionAt: form.nextActionAt ? new Date(form.nextActionAt).toISOString() : undefined,
-      intentRows: JSON.stringify(rows.map(({ key, internalCode, dimensions, quoteImage, ...row }) => ({ ...row, type: String(row.category).toLowerCase() === 'tiles' ? 'tile' : 'product', quantity: Number(row.qty), sellPrice: Number(row.price), tileCode: internalCode || row.sku, tileSize: dimensions, quoteImage }))),
+      intentRows: JSON.stringify(rows.map(({ key, internalCode, dimensions, quoteImage, ...row }) => ({ ...row, type: String(row.category).toLowerCase() === 'tiles' ? 'tile' : 'product', quantity: Number(row.qty), indicativeNrpInclusive: Number(row.price), tileCode: internalCode || row.sku, tileSize: dimensions, quoteImage }))),
       intentNotes: form.intentNotes,
     } } });
   }

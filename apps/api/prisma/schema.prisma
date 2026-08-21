@@ -282,28 +282,28 @@ model PurchaseDemand {
 }
 
 model PurchaseOrder {
-  id              String    @id
-  poNumber        String    @unique
+  id              String              @id
+  poNumber        String              @unique
   vendorId        String?
   vendorName      String
-  status          String    @default("draft")
+  status          String              @default("draft")
   expectedDate    DateTime?
   sentAt          DateTime?
   orderedAt       DateTime?
   closedAt        DateTime?
   createdBy       String
-  notes           String    @default("")
+  notes           String              @default("")
   /// Optional header discount % applied to qty × unitCost before GST. 0 = none.
-  discountPercent Float     @default(0)
+  discountPercent Decimal             @default(0) @db.Decimal(8, 4)
   /// Optional GST %. Null/0 = no GST on this PO.
-  taxRate         Float?
-  subtotal        Float     @default(0)
-  discountAmount  Float     @default(0)
-  taxableValue    Float     @default(0)
-  taxAmount       Float     @default(0)
-  grandTotal      Float     @default(0)
-  metadata        Json      @default("{}")
-  createdAt       DateTime  @default(now())
+  taxRate         Decimal?            @db.Decimal(8, 4)
+  subtotal        Decimal             @default(0) @db.Decimal(18, 2)
+  discountAmount  Decimal             @default(0) @db.Decimal(18, 2)
+  taxableValue    Decimal             @default(0) @db.Decimal(18, 2)
+  taxAmount       Decimal             @default(0) @db.Decimal(18, 2)
+  grandTotal      Decimal             @default(0) @db.Decimal(18, 2)
+  metadata        Json                @default("{}")
+  createdAt       DateTime            @default(now())
   updatedAt       DateTime
   lines           PurchaseOrderLine[]
 
@@ -315,7 +315,7 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderLine {
-  id                String   @id
+  id                String        @id
   purchaseOrderId   String
   purchaseOrder     PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
   purchaseDemandId  String?
@@ -325,19 +325,19 @@ model PurchaseOrderLine {
   category          String
   brand             String
   finish            String?
-  unit              String   @default("PC")
+  unit              String        @default("PC")
   orderedQuantity   Int
-  receivedQuantity  Int      @default(0)
-  cancelledQuantity Int      @default(0)
-  unitCost          Float    @default(0)
-  discountPercent   Float    @default(0)
-  taxRate           Float    @default(0)
-  taxableValue      Float    @default(0)
-  taxAmount         Float    @default(0)
-  lineTotal         Float    @default(0)
-  status            String   @default("ordered")
-  metadata          Json     @default("{}")
-  createdAt         DateTime @default(now())
+  receivedQuantity  Int           @default(0)
+  cancelledQuantity Int           @default(0)
+  unitCost          Decimal       @default(0) @db.Decimal(18, 4)
+  discountPercent   Decimal       @default(0) @db.Decimal(8, 4)
+  taxRate           Decimal       @default(0) @db.Decimal(8, 4)
+  taxableValue      Decimal       @default(0) @db.Decimal(18, 2)
+  taxAmount         Decimal       @default(0) @db.Decimal(18, 2)
+  lineTotal         Decimal       @default(0) @db.Decimal(18, 2)
+  status            String        @default("ordered")
+  metadata          Json          @default("{}")
+  createdAt         DateTime      @default(now())
   updatedAt         DateTime
 
   @@index([purchaseOrderId])
@@ -347,9 +347,9 @@ model PurchaseOrderLine {
 }
 
 model GoodsReceiptNote {
-  id              String   @id
-  grnNumber       String   @unique
-  idempotencyKey  String?  @unique
+  id              String             @id
+  grnNumber       String             @unique
+  idempotencyKey  String?            @unique
   purchaseOrderId String?
   vendorId        String?
   vendorName      String
@@ -357,10 +357,10 @@ model GoodsReceiptNote {
   supplierBill    String?
   receivedDate    DateTime
   receivedBy      String
-  status          String   @default("posted")
-  notes           String   @default("")
-  attachments     Json     @default("[]")
-  createdAt       DateTime @default(now())
+  status          String             @default("posted")
+  notes           String             @default("")
+  attachments     Json               @default("[]")
+  createdAt       DateTime           @default(now())
   updatedAt       DateTime
   lines           GoodsReceiptLine[]
 
@@ -371,23 +371,25 @@ model GoodsReceiptNote {
 }
 
 model GoodsReceiptLine {
-  id                  String        @id
+  id                  String           @id
   goodsReceiptNoteId  String
   goodsReceiptNote    GoodsReceiptNote @relation(fields: [goodsReceiptNoteId], references: [id], onDelete: Restrict)
   purchaseOrderLineId String?
   productId           String?
-  lot                 InventoryLot? @relation(fields: [lotId], references: [id])
+  lot                 InventoryLot?    @relation(fields: [lotId], references: [id])
   lotId               String?
   sku                 String
   name                String
   orderedQuantity     Int
   receivedQuantity    Int
   acceptedQuantity    Int
-  damagedQuantity     Int           @default(0)
+  damagedQuantity     Int              @default(0)
   location            String?
-  unitCost            Float         @default(0)
-  metadata            Json          @default("{}")
-  createdAt           DateTime      @default(now())
+  unitCost            Decimal          @default(0) @db.Decimal(18, 4)
+  landedUnitCost      Decimal?         @db.Decimal(18, 4)
+  costStatus          String           @default("complete")
+  metadata            Json             @default("{}")
+  createdAt           DateTime         @default(now())
 
   @@index([goodsReceiptNoteId])
   @@index([purchaseOrderLineId])
@@ -571,25 +573,25 @@ model TaxCode {
 }
 
 model TileSize {
-  id          String    @id
-  name        String    @unique
-  code        String?   @unique
-  uom         String    @default("BOX")
-  pcsPerBox   Int       @default(0)
-  widthMm     Float?
-  heightMm    Float?
-  thicknessMm Float?
+  id               String    @id
+  name             String    @unique
+  code             String?   @unique
+  uom              String    @default("BOX")
+  pcsPerBox        Int       @default(0)
+  widthMm          Float?
+  heightMm         Float?
+  thicknessMm      Float?
   areaPerPieceSqM  Float?
   areaPerPieceSqFt Float?
   areaPerBoxSqM    Float?
   areaPerBoxSqFt   Float?
-  description String?
-  status      String    @default("active")
-  sortOrder   Int       @default(0)
-  metadata    Json      @default("{}")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime
-  products    Product[] @relation("ProductTileSizeMaster")
+  description      String?
+  status           String    @default("active")
+  sortOrder        Int       @default(0)
+  metadata         Json      @default("{}")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime
+  products         Product[] @relation("ProductTileSizeMaster")
 
   @@index([status, sortOrder])
 }
@@ -623,65 +625,72 @@ model TileDesign {
 }
 
 model Product {
-  id                  String                    @id
-  sku                 String                    @unique
-  name                String
-  category            String
-  brand               String
-  finish              String
-  dimensions          String
-  unit                String
-  tags                Json
-  sellPrice           Float
-  floorPrice          Float
-  costPrice           Float                     @default(0)
-  mrp                 Float?
-  mrpRateBasis        String?
-  mrpVerifiedAt       DateTime?
-  mrpVerifiedById     String?
-  mrpSource           String?
-  taxClass            String
-  status              String
-  media               Json
-  sourceRefs          Json
-  description         String
-  internalCode        String?                   @unique
-  categoryId          String?
-  brandId             String?
-  finishId            String?
-  materialId          String?
-  tileSizeId          String?
-  tileDesignId        String?
-  baseUom             String                    @default("PC")
-  purchaseUom         String                    @default("PC")
-  salesUom            String                    @default("PC")
-  piecesPerPack       Int                       @default(1)
-  coveragePerPack     Float                     @default(0)
-  hsnCode             String?
-  trackLots           Boolean                   @default(true)
-  allowLoose          Boolean                   @default(false)
-  categoryMaster      ProductCategory?          @relation("ProductCategoryMaster", fields: [categoryId], references: [id])
-  brandMaster         ProductBrand?             @relation("ProductBrandMaster", fields: [brandId], references: [id])
-  finishMaster        ProductFinish?            @relation("ProductFinishMaster", fields: [finishId], references: [id])
-  materialMaster      ProductMaterial?          @relation("ProductMaterialMaster", fields: [materialId], references: [id])
-  tileSizeMaster      TileSize?                 @relation("ProductTileSizeMaster", fields: [tileSizeId], references: [id])
-  tileDesignMaster    TileDesign?               @relation("ProductTileDesignMaster", fields: [tileDesignId], references: [id])
-  createdAt           DateTime                  @default(now())
-  updatedAt           DateTime
-  balances            InventoryBalance?
-  reservations        Reservation[]
-  aliases             ProductAlias[]
-  displaySamples      DisplaySample[]
-  inventoryLots       InventoryLot[]
-  lotLedgerEntries    InventoryLotLedgerEntry[]
-  openingStockLines   OpeningStockLine[]
-  transferLines       StockTransferLine[]
-  pickLines           PickLine[]
-  labelInstances      InternalLabelInstance[]
-  stockCountLines     StockCountLine[]
-  adjustmentApprovals StockAdjustmentApproval[]
-  returnLines         ReturnLine[]
-  periodSnapshots     InventoryPeriodSnapshot[]
+  id                   String                    @id
+  sku                  String                    @unique
+  name                 String
+  category             String
+  brand                String
+  finish               String
+  dimensions           String
+  unit                 String
+  tags                 Json
+  /// Obsolete compatibility columns. Active pricing must use the governed defaults below.
+  sellPrice            Float                     @default(0)
+  floorPrice           Float                     @default(0)
+  costPrice            Float                     @default(0)
+  mrp                  Float?
+  mrpRateBasis         String?
+  mrpVerifiedAt        DateTime?
+  mrpVerifiedById      String?
+  mrpSource            String?
+  defaultMrpInclusive  Decimal?                  @db.Decimal(18, 2)
+  defaultNrpInclusive  Decimal?                  @db.Decimal(18, 2)
+  priceRateBasis       String?
+  priceUom             String?
+  pricingEffectiveFrom DateTime?
+  pricingVersion       String                    @default("unified_retail_v1")
+  taxClass             String
+  status               String
+  media                Json
+  sourceRefs           Json
+  description          String
+  internalCode         String?                   @unique
+  categoryId           String?
+  brandId              String?
+  finishId             String?
+  materialId           String?
+  tileSizeId           String?
+  tileDesignId         String?
+  baseUom              String                    @default("PC")
+  purchaseUom          String                    @default("PC")
+  salesUom             String                    @default("PC")
+  piecesPerPack        Int                       @default(1)
+  coveragePerPack      Float                     @default(0)
+  hsnCode              String?
+  trackLots            Boolean                   @default(true)
+  allowLoose           Boolean                   @default(false)
+  categoryMaster       ProductCategory?          @relation("ProductCategoryMaster", fields: [categoryId], references: [id])
+  brandMaster          ProductBrand?             @relation("ProductBrandMaster", fields: [brandId], references: [id])
+  finishMaster         ProductFinish?            @relation("ProductFinishMaster", fields: [finishId], references: [id])
+  materialMaster       ProductMaterial?          @relation("ProductMaterialMaster", fields: [materialId], references: [id])
+  tileSizeMaster       TileSize?                 @relation("ProductTileSizeMaster", fields: [tileSizeId], references: [id])
+  tileDesignMaster     TileDesign?               @relation("ProductTileDesignMaster", fields: [tileDesignId], references: [id])
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime
+  balances             InventoryBalance?
+  reservations         Reservation[]
+  aliases              ProductAlias[]
+  displaySamples       DisplaySample[]
+  inventoryLots        InventoryLot[]
+  lotLedgerEntries     InventoryLotLedgerEntry[]
+  openingStockLines    OpeningStockLine[]
+  transferLines        StockTransferLine[]
+  pickLines            PickLine[]
+  labelInstances       InternalLabelInstance[]
+  stockCountLines      StockCountLine[]
+  adjustmentApprovals  StockAdjustmentApproval[]
+  returnLines          ReturnLine[]
+  periodSnapshots      InventoryPeriodSnapshot[]
 
   @@index([brand])
   @@index([category])
@@ -696,6 +705,9 @@ model Product {
   @@index([tileDesignId, tileSizeId, status])
   @@index([mrp])
   @@index([mrpRateBasis])
+  @@index([defaultMrpInclusive])
+  @@index([defaultNrpInclusive])
+  @@index([priceRateBasis])
 }
 
 model ProductAlias {
@@ -717,29 +729,29 @@ model ProductAlias {
 }
 
 model DisplaySample {
-  id              String                  @id
-  sampleNumber    String                  @unique
-  product         Product                 @relation(fields: [productId], references: [id])
-  productId       String
-  internalCode    String                  @unique
-  locationId      String?
-  displayZone     String?
-  displayPosition String?
-  imageUrl        String?
-  sourceLotId     String?
-  issuedQuantity Int                     @default(0)
-  condition       String                  @default("good")
-  lastInspectedAt DateTime?
+  id               String                  @id
+  sampleNumber     String                  @unique
+  product          Product                 @relation(fields: [productId], references: [id])
+  productId        String
+  internalCode     String                  @unique
+  locationId       String?
+  displayZone      String?
+  displayPosition  String?
+  imageUrl         String?
+  sourceLotId      String?
+  issuedQuantity   Int                     @default(0)
+  condition        String                  @default("good")
+  lastInspectedAt  DateTime?
   nextInspectionAt DateTime?
-  removalReason   String?
-  status          String                  @default("active")
-  sellable        Boolean                 @default(false)
-  installedAt     DateTime?
-  removedAt       DateTime?
-  metadata        Json                    @default("{}")
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime
-  labelInstances  InternalLabelInstance[]
+  removalReason    String?
+  status           String                  @default("active")
+  sellable         Boolean                 @default(false)
+  installedAt      DateTime?
+  removedAt        DateTime?
+  metadata         Json                    @default("{}")
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime
+  labelInstances   InternalLabelInstance[]
 
   @@index([productId])
   @@index([locationId])
@@ -782,6 +794,11 @@ model Quote {
   status              String
   approvalStatus      String
   discountPercent     Float
+  commercialTotal     Decimal           @default(0) @db.Decimal(18, 2)
+  quoteDiscountMode   String            @default("PERCENT")
+  quoteDiscountValue  Decimal           @default(0) @db.Decimal(18, 2)
+  pricingVersion      String            @default("unified_retail_v1")
+  pricingStatus       String            @default("incomplete")
   displayMode         String            @default("priced")
   projectName         String
   createdAt           DateTime          @default(now())
@@ -808,9 +825,14 @@ model Quote {
   @@index([leadId])
   @@index([customerId])
   @@index([ownerId])
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@index([ownerId, status, createdAt(sort: Desc)])
   @@index([architectId])
   @@index([architectName])
   @@index([status])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([commercialTotal])
+  @@index([status, commercialTotal(sort: Desc)])
   @@index([approvalStatus])
   @@index([validUntil])
   @@index([intentId])
@@ -874,28 +896,31 @@ model Session {
 }
 
 model SalesOrder {
-  id             String           @id
-  orderNumber    String           @unique
-  quoteId        String?
-  idempotencyKey String?          @unique
-  leadId         String
-  customerId     String
-  ownerId        String
-  status         String
-  paymentMode    String
-  paymentStatus  String
-  paymentTerms   String           @default("")
-  promisedDate   DateTime?
-  advanceAmount  Float
-  totalAmount    Float
-  lines          Json
-  notes          String
-  documents      Json             @default("{}")
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime
-  customer       Customer         @relation(fields: [customerId], references: [id])
-  owner          User             @relation(fields: [ownerId], references: [id])
-  lineItems      SalesOrderLine[]
+  id                 String           @id
+  orderNumber        String           @unique
+  quoteId            String?
+  idempotencyKey     String?          @unique
+  leadId             String
+  customerId         String
+  ownerId            String
+  status             String
+  paymentMode        String
+  paymentStatus      String
+  paymentTerms       String           @default("")
+  promisedDate       DateTime?
+  advanceAmount      Decimal          @db.Decimal(18, 2)
+  totalAmount        Decimal          @db.Decimal(18, 2)
+  quoteDiscountMode  String           @default("PERCENT")
+  quoteDiscountValue Decimal          @default(0) @db.Decimal(18, 2)
+  pricingVersion     String           @default("unified_retail_v1")
+  lines              Json
+  notes              String
+  documents          Json             @default("{}")
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime
+  customer           Customer         @relation(fields: [customerId], references: [id])
+  owner              User             @relation(fields: [ownerId], references: [id])
+  lineItems          SalesOrderLine[]
 
   dispatchJob      DispatchJob?      @relation("SalesOrderDispatchJob")
   dispatchChallans DispatchChallan[] @relation("SalesOrderChallans")
@@ -911,43 +936,60 @@ model SalesOrder {
 }
 
 model QuoteLine {
-  id                String    @id
-  quoteId           String
-  lineKey           String
-  lineNo            Int
-  productId         String?
-  sku               String
-  name              String
-  category          String
-  brand             String
-  finish            String?
-  area              String?
-  unit              String    @default("PC")
-  quantity          Int
-  orderedQuantity   Int       @default(0)
-  cancelledQuantity Int       @default(0)
-  closedQuantity    Int       @default(0)
-  listPrice         Float     @default(0)
-  mrp               Float?
-  mrpRateBasis      String?
-  mrpSource         String?   @default("quote_entry")
-  mrpConfirmedAt    DateTime?
-  mrpConfirmedById  String?
-  unitPrice         Float     @default(0)
-  discountPercent   Float     @default(0)
-  taxRate           Float     @default(18)
-  taxableValue      Float     @default(0)
-  taxAmount         Float     @default(0)
-  grossLineTotal    Float     @default(0)
-  lineTotal         Float     @default(0)
-  costSnapshot      Float?
-  costSnapshotSource String?
-  costSnapshotAt    DateTime?
-  status            String    @default("quoted")
-  isTileSpecial     Boolean   @default(false)
-  metadata          Json      @default("{}")
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime
+  id                              String    @id
+  quoteId                         String
+  lineKey                         String
+  lineNo                          Int
+  productId                       String?
+  sku                             String
+  name                            String
+  category                        String
+  brand                           String
+  finish                          String?
+  area                            String?
+  unit                            String    @default("PC")
+  quantity                        Int
+  orderedQuantity                 Int       @default(0)
+  cancelledQuantity               Int       @default(0)
+  closedQuantity                  Int       @default(0)
+  listPrice                       Float     @default(0)
+  mrp                             Float?
+  mrpRateBasis                    String?
+  mrpSource                       String?   @default("quote_entry")
+  mrpConfirmedAt                  DateTime?
+  mrpConfirmedById                String?
+  unitPrice                       Float     @default(0)
+  discountPercent                 Float     @default(0)
+  taxRate                         Float     @default(18)
+  taxableValue                    Float     @default(0)
+  taxAmount                       Float     @default(0)
+  grossLineTotal                  Float     @default(0)
+  lineTotal                       Float     @default(0)
+  pricingVersion                  String    @default("unified_retail_v1")
+  priceRateBasis                  String?
+  mrpInclusive                    Decimal?  @db.Decimal(18, 2)
+  nrpMode                         String?
+  nrpInput                        Decimal?  @db.Decimal(18, 6)
+  nrpInclusive                    Decimal?  @db.Decimal(18, 2)
+  nrpExclusive                    Decimal?  @db.Decimal(18, 2)
+  specialMode                     String    @default("NONE")
+  specialInput                    Decimal?  @db.Decimal(18, 6)
+  specialRateInclusive            Decimal?  @db.Decimal(18, 2)
+  specialRateExclusive            Decimal?  @db.Decimal(18, 2)
+  quoteDiscountMode               String    @default("PERCENT")
+  quoteDiscountValue              Decimal   @default(0) @db.Decimal(18, 2)
+  quoteDiscountAllocatedInclusive Decimal   @default(0) @db.Decimal(18, 2)
+  taxableValueInclusive           Decimal?  @db.Decimal(18, 2)
+  taxAmountInclusive              Decimal?  @db.Decimal(18, 2)
+  grossLineTotalInclusive         Decimal?  @db.Decimal(18, 2)
+  costSnapshot                    Float?
+  costSnapshotSource              String?
+  costSnapshotAt                  DateTime?
+  status                          String    @default("quoted")
+  isTileSpecial                   Boolean   @default(false)
+  metadata                        Json      @default("{}")
+  createdAt                       DateTime  @default(now())
+  updatedAt                       DateTime
 
   @@unique([quoteId, lineKey])
   @@index([quoteId])
@@ -960,52 +1002,69 @@ model QuoteLine {
 }
 
 model SalesOrderLine {
-  id                  String           @id
-  salesOrderId        String
-  quoteId             String?
-  quoteLineId         String?
-  lineKey             String
-  lineNo              Int
-  productId           String?
-  sku                 String
-  name                String
-  category            String
-  brand               String
-  finish              String?
-  area                String?
-  unit                String           @default("PC")
-  orderedQuantity     Int
-  reservedQuantity    Int              @default(0)
-  backorderedQuantity Int              @default(0)
-  allocatedQuantity   Int              @default(0)
-  dispatchedQuantity  Int              @default(0)
-  deliveredQuantity   Int              @default(0)
-  returnedQuantity    Int              @default(0)
-  listPrice           Float            @default(0)
-  mrp                 Float?
-  mrpRateBasis        String?
-  mrpSource           String?          @default("quote_entry")
-  mrpConfirmedAt      DateTime?
-  mrpConfirmedById    String?
-  unitPrice           Float            @default(0)
-  discountPercent     Float            @default(0)
-  taxRate             Float            @default(18)
-  taxableValue        Float            @default(0)
-  taxAmount           Float            @default(0)
-  grossLineTotal      Float            @default(0)
-  lineTotal           Float            @default(0)
-  costSnapshot        Float?
-  costSnapshotSource  String?
-  costSnapshotAt      DateTime?
-  status              String           @default("open")
-  isTileSpecial       Boolean          @default(false)
-  metadata            Json             @default("{}")
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime
-  order               SalesOrder       @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
-  lotReservations     LotReservation[]
-  pickLines           PickLine[]
-  returnLines         ReturnLine[]
+  id                              String           @id
+  salesOrderId                    String
+  quoteId                         String?
+  quoteLineId                     String?
+  lineKey                         String
+  lineNo                          Int
+  productId                       String?
+  sku                             String
+  name                            String
+  category                        String
+  brand                           String
+  finish                          String?
+  area                            String?
+  unit                            String           @default("PC")
+  orderedQuantity                 Int
+  reservedQuantity                Int              @default(0)
+  backorderedQuantity             Int              @default(0)
+  allocatedQuantity               Int              @default(0)
+  dispatchedQuantity              Int              @default(0)
+  deliveredQuantity               Int              @default(0)
+  returnedQuantity                Int              @default(0)
+  listPrice                       Float            @default(0)
+  mrp                             Float?
+  mrpRateBasis                    String?
+  mrpSource                       String?          @default("quote_entry")
+  mrpConfirmedAt                  DateTime?
+  mrpConfirmedById                String?
+  unitPrice                       Float            @default(0)
+  discountPercent                 Float            @default(0)
+  taxRate                         Float            @default(18)
+  taxableValue                    Float            @default(0)
+  taxAmount                       Float            @default(0)
+  grossLineTotal                  Float            @default(0)
+  lineTotal                       Float            @default(0)
+  pricingVersion                  String           @default("unified_retail_v1")
+  priceRateBasis                  String?
+  mrpInclusive                    Decimal?         @db.Decimal(18, 2)
+  nrpMode                         String?
+  nrpInput                        Decimal?         @db.Decimal(18, 6)
+  nrpInclusive                    Decimal?         @db.Decimal(18, 2)
+  nrpExclusive                    Decimal?         @db.Decimal(18, 2)
+  specialMode                     String           @default("NONE")
+  specialInput                    Decimal?         @db.Decimal(18, 6)
+  specialRateInclusive            Decimal?         @db.Decimal(18, 2)
+  specialRateExclusive            Decimal?         @db.Decimal(18, 2)
+  quoteDiscountMode               String           @default("PERCENT")
+  quoteDiscountValue              Decimal          @default(0) @db.Decimal(18, 2)
+  quoteDiscountAllocatedInclusive Decimal          @default(0) @db.Decimal(18, 2)
+  taxableValueInclusive           Decimal?         @db.Decimal(18, 2)
+  taxAmountInclusive              Decimal?         @db.Decimal(18, 2)
+  grossLineTotalInclusive         Decimal?         @db.Decimal(18, 2)
+  costSnapshot                    Float?
+  costSnapshotSource              String?
+  costSnapshotAt                  DateTime?
+  status                          String           @default("open")
+  isTileSpecial                   Boolean          @default(false)
+  metadata                        Json             @default("{}")
+  createdAt                       DateTime         @default(now())
+  updatedAt                       DateTime
+  order                           SalesOrder       @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  lotReservations                 LotReservation[]
+  pickLines                       PickLine[]
+  returnLines                     ReturnLine[]
 
   @@unique([salesOrderId, lineKey])
   @@index([salesOrderId])
@@ -1136,10 +1195,10 @@ model SalesInvoice {
   status         String               @default("posted")
   issueDate      DateTime             @default(now())
   dueDate        DateTime?
-  taxableValue   Float                @default(0)
-  taxAmount      Float                @default(0)
-  totalAmount    Float                @default(0)
-  openAmount     Float                @default(0)
+  taxableValue   Decimal              @default(0) @db.Decimal(18, 2)
+  taxAmount      Decimal              @default(0) @db.Decimal(18, 2)
+  totalAmount    Decimal              @default(0) @db.Decimal(18, 2)
+  openAmount     Decimal              @default(0) @db.Decimal(18, 2)
   paymentTerms   String               @default("")
   notes          String               @default("")
   createdBy      String
@@ -1159,28 +1218,38 @@ model SalesInvoice {
 }
 
 model SalesInvoiceLine {
-  id               String       @id
-  salesInvoice     SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
-  salesInvoiceId   String
-  dispatchLineId   String       @unique
-  salesOrderLineId String?
-  productId        String?
-  sku              String
-  name             String
-  brand            String       @default("")
-  finish           String?
-  unit             String       @default("PC")
-  quantity         Int
-  unitPrice        Float        @default(0)
-  taxRate          Float        @default(0)
-  taxableValue     Float        @default(0)
-  taxAmount        Float        @default(0)
-  grossLineTotal   Float        @default(0)
-  costSnapshot     Float?
-  costSnapshotSource String?
-  costSnapshotAt  DateTime?
-  createdAt        DateTime     @default(now())
-  metadata         Json         @default("{}")
+  id                              String       @id
+  salesInvoice                    SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
+  salesInvoiceId                  String
+  dispatchLineId                  String       @unique
+  salesOrderLineId                String?
+  productId                       String?
+  sku                             String
+  name                            String
+  brand                           String       @default("")
+  finish                          String?
+  unit                            String       @default("PC")
+  quantity                        Int
+  unitPrice                       Decimal      @default(0) @db.Decimal(18, 2)
+  taxRate                         Decimal      @default(0) @db.Decimal(8, 4)
+  taxableValue                    Decimal      @default(0) @db.Decimal(18, 2)
+  taxAmount                       Decimal      @default(0) @db.Decimal(18, 2)
+  grossLineTotal                  Decimal      @default(0) @db.Decimal(18, 2)
+  costSnapshot                    Decimal?     @db.Decimal(18, 4)
+  pricingVersion                  String       @default("unified_retail_v1")
+  priceRateBasis                  String?
+  mrpInclusive                    Decimal?     @db.Decimal(18, 2)
+  nrpMode                         String?
+  nrpInput                        Decimal?     @db.Decimal(18, 6)
+  nrpInclusive                    Decimal?     @db.Decimal(18, 2)
+  specialMode                     String       @default("NONE")
+  specialInput                    Decimal?     @db.Decimal(18, 6)
+  specialRateInclusive            Decimal?     @db.Decimal(18, 2)
+  quoteDiscountAllocatedInclusive Decimal      @default(0) @db.Decimal(18, 2)
+  costSnapshotSource              String?
+  costSnapshotAt                  DateTime?
+  createdAt                       DateTime     @default(now())
+  metadata                        Json         @default("{}")
 
   @@index([salesInvoiceId])
   @@index([salesOrderLineId])
@@ -1368,7 +1437,8 @@ model InventoryLot {
   receivedAt          DateTime
   manufacturedAt      DateTime?
   expiryAt            DateTime?
-  unitCost            Float                     @default(0)
+  unitCost            Decimal                   @default(0) @db.Decimal(18, 4)
+  costStatus          String                    @default("complete")
   status              String                    @default("active")
   attributes          Json                      @default("{}")
   metadata            Json                      @default("{}")
@@ -1435,7 +1505,7 @@ model InventoryLotLedgerEntry {
   referenceType    String
   referenceId      String
   sourceDocumentNo String?
-  unitCost         Float         @default(0)
+  unitCost         Decimal       @default(0) @db.Decimal(18, 4)
   reason           String
   createdBy        String
   metadata         Json          @default("{}")
@@ -1485,7 +1555,8 @@ model OpeningStockLine {
   lotId                 String?
   lotCode               String?
   quantity              Int
-  unitCost              Float               @default(0)
+  unitCost              Decimal             @default(0) @db.Decimal(18, 4)
+  costStatus            String              @default("incomplete")
   supplierBatch         String?
   qualityStatus         String              @default("available")
   rackBin               String?
@@ -2043,7 +2114,7 @@ model ReturnOrder {
   status         String    @default("draft")
   reason         String
   refundMode     String?
-  refundAmount   Float     @default(0)
+  refundAmount   Decimal   @default(0) @db.Decimal(18, 2)
   createdBy      String
   approvedBy     String?
   receivedAt     DateTime?
@@ -2064,8 +2135,8 @@ model CreditNote {
   returnOrderId    String   @unique
   salesOrderId     String?
   customerId       String?
-  amount           Float
-  unappliedAmount  Float    @default(0)
+  amount           Decimal  @db.Decimal(18, 2)
+  unappliedAmount  Decimal  @default(0) @db.Decimal(18, 2)
   refundMode       String
   status           String   @default("issued")
   issuedAt         DateTime @default(now())
@@ -2095,6 +2166,7 @@ model ReturnLine {
   locationId             String?
   sku                    String
   name                   String
+  unit                   String          @default("PC")
   quantity               Int
   acceptedQuantity       Int             @default(0)
   resellQuantity         Int             @default(0)
@@ -2102,6 +2174,22 @@ model ReturnLine {
   supplierReturnQuantity Int             @default(0)
   disposition            String          @default("inspect")
   status                 String          @default("pending")
+  pricingVersion         String          @default("legacy_unverified")
+  priceRateBasis         String?
+  mrpInclusive           Decimal?        @db.Decimal(18, 2)
+  nrpMode                 String?
+  nrpInput                Decimal?        @db.Decimal(18, 6)
+  nrpInclusive            Decimal?        @db.Decimal(18, 2)
+  specialMode             String          @default("NONE")
+  specialInput            Decimal?        @db.Decimal(18, 6)
+  specialRateInclusive    Decimal?        @db.Decimal(18, 2)
+  quoteDiscountAllocatedInclusive Decimal @default(0) @db.Decimal(18, 2)
+  taxableValue            Decimal         @default(0) @db.Decimal(18, 2)
+  taxAmount               Decimal         @default(0) @db.Decimal(18, 2)
+  grossLineTotal          Decimal         @default(0) @db.Decimal(18, 2)
+  costSnapshot            Decimal?        @db.Decimal(18, 4)
+  costSnapshotSource      String?
+  costSnapshotAt          DateTime?
   createdAt              DateTime        @default(now())
   updatedAt              DateTime
   metadata               Json            @default("{}")
@@ -2170,25 +2258,25 @@ model ReportPreset {
 /// Versioned company targets used by governed target-versus-actual reports.
 /// Revisions supersede prior rows and voids preserve the full commercial audit trail.
 model ReportingTarget {
-  id             String   @id
+  id             String    @id
   targetKey      String
-  version        Int      @default(1)
+  version        Int       @default(1)
   metricKey      String
   periodStart    DateTime
   periodEnd      DateTime
-  scopeType      String   @default("company")
+  scopeType      String    @default("company")
   scopeId        String?
   amount         Float
-  status         String   @default("active")
-  notes          String   @default("")
+  status         String    @default("active")
+  notes          String    @default("")
   createdBy      String
   supersededById String?
   voidedAt       DateTime?
   voidedBy       String?
   voidReason     String?
-  metadata       Json     @default("{}")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([targetKey, version])
   @@index([metricKey, periodStart, status])

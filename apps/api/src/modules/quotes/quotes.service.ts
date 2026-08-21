@@ -5,7 +5,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { releaseReservedLotsTx, reserveAvailableLotsTx } from '../common/lot-allocation';
-import { priceQuoteLines } from '../common/pricing';
+import { commercialTotalsFromLines, priceQuoteLines, RETAIL_LADDER_VERSION } from '../common/pricing';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
 import { StoredImageService } from '../assets/stored-image.service';
@@ -117,6 +117,76 @@ export class QuotesService {
     } as any) as any;
   }
 
+  async quotePage(args?: {
+    ownerId?: string; status?: string; architectId?: string; search?: string; customerSearch?: string;
+    ownerSearch?: string; dateFrom?: Date; dateTo?: Date; sort?: string; take?: number; skip?: number;
+  }) {
+    const where: any = {};
+    if (args?.ownerId) where.ownerId = args.ownerId;
+    if (args?.status) where.status = args.status;
+    if (args?.architectId) where.architectId = args.architectId;
+    if (args?.dateFrom || args?.dateTo) where.createdAt = {
+      ...(args.dateFrom ? { gte: args.dateFrom } : {}),
+      ...(args.dateTo ? { lte: args.dateTo } : {}),
+    };
+    const search = String(args?.search || '').trim();
+    const customerSearch = String(args?.customerSearch || '').trim();
+    const ownerSearch = String(args?.ownerSearch || '').trim();
+    const and: any[] = [];
+    if (search) and.push({ OR: [
+      { quoteNumber: { contains: search, mode: 'insensitive' } },
+      { title: { contains: search, mode: 'insensitive' } },
+      { projectName: { contains: search, mode: 'insensitive' } },
+      { architectName: { contains: search, mode: 'insensitive' } },
+      { customer: { name: { contains: search, mode: 'insensitive' } } },
+      { owner: { name: { contains: search, mode: 'insensitive' } } },
+    ] });
+    if (customerSearch) and.push({ customer: { name: { contains: customerSearch, mode: 'insensitive' } } });
+    if (ownerSearch) and.push({ owner: { name: { contains: ownerSearch, mode: 'insensitive' } } });
+    if (and.length) where.AND = and;
+    const sort = String(args?.sort || 'newest');
+    const orderBy: any = sort === 'oldest' ? { createdAt: 'asc' }
+      : sort === 'validity' ? [{ validUntil: 'asc' }, { createdAt: 'desc' }]
+        : sort === 'value_desc' ? [{ commercialTotal: 'desc' }, { createdAt: 'desc' }]
+          : sort === 'value_asc' ? [{ commercialTotal: 'asc' }, { createdAt: 'desc' }]
+            : sort === 'customer' ? [{ customer: { name: 'asc' } }, { createdAt: 'desc' }]
+              : sort === 'owner' ? [{ owner: { name: 'asc' } }, { createdAt: 'desc' }]
+                : sort === 'architect' ? [{ architectName: 'asc' }, { createdAt: 'desc' }]
+                  : sort === 'status' ? [{ status: 'asc' }, { createdAt: 'desc' }]
+        : sort === 'quote_asc' ? { quoteNumber: 'asc' }
+          : sort === 'quote_desc' ? { quoteNumber: 'desc' } : { createdAt: 'desc' };
+    const take = Math.min(Math.max(Number(args?.take) || 30, 1), 100);
+    const skip = Math.max(Number(args?.skip) || 0, 0);
+    const [rows, total, valueAggregate, statusGroups] = await this.prisma.$transaction([
+      this.prisma.quote.findMany({ where, orderBy, take, skip, include: quoteInclude } as any),
+      this.prisma.quote.count({ where }),
+      this.prisma.quote.aggregate({ where, _sum: { commercialTotal: true } }),
+      this.prisma.quote.groupBy({ by: ['status'], where, orderBy: { status: 'asc' }, _count: { _all: true }, _sum: { commercialTotal: true } }),
+    ]);
+    return {
+      rows: (rows as any[]).map((quote) => {
+        const lines = this.normalizeLines(quote.lines);
+        const stored = quote?.approval && typeof quote.approval === 'object' ? (quote.approval as any).pricing : null;
+        const commercial = stored && Number.isFinite(Number(stored.grandTotal)) ? stored : commercialTotalsFromLines(lines);
+        return {
+          ...quote,
+          commercial: {
+            ...commercial,
+            itemCount: lines.length,
+            quantity: lines.reduce((sum: number, line: any) => sum + Number(line.qty || line.quantity || 0), 0),
+            pricingReady: !['incomplete_pricing'].includes(String(quote.status || '')),
+          },
+        };
+      }),
+      total,
+      filteredValue: Number(valueAggregate._sum.commercialTotal || 0),
+      statusSummary: Object.fromEntries((statusGroups as any[]).map((row) => [row.status, { count: row._count._all, value: Number(row._sum.commercialTotal || 0) }])),
+      hasNext: skip + take < total,
+      page: Math.floor(skip / take) + 1,
+      pageSize: take,
+    };
+  }
+
   /**
    * GraphQL-facing single read — bare row, relations fetched via DataLoader.
    */
@@ -151,17 +221,18 @@ export class QuotesService {
     if (!customerId) throw new BadRequestException('A customer is required');
 
     const saveAsDraft = Boolean((data as any).saveAsDraft);
+    const rawQuoteMeta = this.parseQuoteMeta(data.quoteMeta);
     const assertedLines = await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote'));
-    const pricing = priceQuoteLines(assertedLines, data.discountPercent || 0, { requireMrp: !saveAsDraft });
+    const pricing = priceQuoteLines(assertedLines, this.quoteDiscountInput(rawQuoteMeta, data.discountPercent || 0), { requireMrp: !saveAsDraft });
     const normalizedLines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || ownerId));
     const incompletePricing = pricing.pricingErrors.length > 0;
     const displayMode = this.normalizeDisplayMode(data.displayMode);
     const consultingArchitect = await this.resolveConsultingArchitect(data.architectId);
     const quoteMeta = this.normalizeQuoteMeta(
       {
-        ...(typeof data.quoteMeta === 'string'
-          ? (() => { try { return JSON.parse(data.quoteMeta); } catch { return {}; } })()
-          : (data.quoteMeta || {})),
+        ...rawQuoteMeta,
+        pricingVersion: rawQuoteMeta.pricingVersion || RETAIL_LADDER_VERSION,
+        quoteDiscount: { mode: pricing.quoteDiscountMode, value: pricing.quoteDiscountValue, allocatedInclusive: pricing.totals.quoteDiscountInclusive },
         architectName: consultingArchitect?.name || undefined,
       },
       normalizedLines,
@@ -226,6 +297,11 @@ export class QuotesService {
               status: incompletePricing ? 'incomplete_pricing' : pricing.requiresApproval ? 'pending_approval' : 'draft',
               approvalStatus: incompletePricing ? 'incomplete' : pricing.requiresApproval ? 'pending' : 'approved',
               discountPercent: pricing.quoteDiscountPercent,
+              commercialTotal: pricing.totals.grandTotal,
+              quoteDiscountMode: pricing.quoteDiscountMode,
+              quoteDiscountValue: pricing.quoteDiscountValue,
+              pricingVersion: RETAIL_LADDER_VERSION,
+              pricingStatus: incompletePricing ? 'incomplete' : 'complete',
               displayMode,
               projectName: data.projectName || '',
               title: data.title || 'Retail quotation',
@@ -319,11 +395,21 @@ export class QuotesService {
       const assertedLines = await this.persistQuoteLineImages(data.lines !== undefined
         ? await this.assertQuoteLines(data.lines, 'updating a quote')
         : await this.assertQuoteLines(current.lines, 'updating a quote'));
-      const pricing = priceQuoteLines(assertedLines, data.discountPercent ?? current.discountPercent ?? 0, { requireMrp: !saveAsDraft });
+      const nextMeta = this.parseQuoteMeta(data.quoteMeta ?? current.quoteMeta);
+      const pricing = priceQuoteLines(assertedLines, this.quoteDiscountInput(nextMeta, data.discountPercent ?? current.discountPercent ?? 0), { requireMrp: !saveAsDraft });
       const incompletePricing = pricing.pricingErrors.length > 0;
       updateData.lines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || current.ownerId));
       updateData.discountPercent = pricing.quoteDiscountPercent;
-      updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta ?? current.quoteMeta, pricing.lines);
+      updateData.commercialTotal = pricing.totals.grandTotal;
+      updateData.quoteDiscountMode = pricing.quoteDiscountMode;
+      updateData.quoteDiscountValue = pricing.quoteDiscountValue;
+      updateData.pricingVersion = RETAIL_LADDER_VERSION;
+      updateData.pricingStatus = incompletePricing ? 'incomplete' : 'complete';
+      updateData.quoteMeta = this.normalizeQuoteMeta({
+        ...nextMeta,
+        pricingVersion: nextMeta.pricingVersion || RETAIL_LADDER_VERSION,
+        quoteDiscount: { mode: pricing.quoteDiscountMode, value: pricing.quoteDiscountValue, allocatedInclusive: pricing.totals.quoteDiscountInclusive },
+      }, pricing.lines);
       updateData.approvalStatus = incompletePricing ? 'incomplete' : pricing.requiresApproval ? 'pending' : 'approved';
       updateData.status = incompletePricing ? 'incomplete_pricing' : pricing.requiresApproval ? 'pending_approval' : 'draft';
       updateData.approval = {
@@ -659,13 +745,13 @@ export class QuotesService {
           let quoteLines = await tx.quoteLine.findMany({ where: { quoteId: quote.id }, orderBy: { lineNo: 'asc' } });
           if (!quoteLines.length) {
             const historicalLines = await this.assertQuoteLines(latestQuote.lines, 'creating a sales order');
-            const priced = priceQuoteLines(historicalLines, latestQuote.discountPercent || 0, { requireMrp: true });
+            const priced = priceQuoteLines(historicalLines, this.quoteDiscountForQuote(latestQuote), { requireMrp: true });
             await this.syncQuoteLinesTx(tx, latestQuote, priced.lines);
             quoteLines = await tx.quoteLine.findMany({ where: { quoteId: quote.id }, orderBy: { lineNo: 'asc' } });
           }
 
           const selected = this.selectOrderLines(latestQuote, quoteLines as any[], requestedSelections);
-          const commercial = priceQuoteLines(selected.lines, latestQuote.discountPercent || 0, { requireMrp: true });
+          const commercial = priceQuoteLines(selected.lines, { mode: 'FIXED_AMOUNT', value: 0 }, { requireMrp: true, preserveAllocatedDiscount: true });
           const totalAmount = commercial.totals.grandTotal;
           const advanceAmount = paymentMode === 'cash' ? Number(input.advanceAmount || 0) : 0;
           if (!Number.isFinite(advanceAmount) || advanceAmount < 0 || advanceAmount > totalAmount) {
@@ -713,6 +799,9 @@ export class QuotesService {
               promisedDate: input.promisedDate ? new Date(input.promisedDate) : new Date(Date.now() + 86400000),
               advanceAmount,
               totalAmount,
+              quoteDiscountMode: commercial.quoteDiscountMode,
+              quoteDiscountValue: commercial.quoteDiscountValue,
+              pricingVersion: RETAIL_LADDER_VERSION,
               lines: commercial.lines,
               notes: input.notes || '',
               documents: {
@@ -850,6 +939,9 @@ export class QuotesService {
               paymentTerms: String(input.paymentTerms || (paymentMode === 'credit' ? 'Net 30' : 'Cash on order')).trim(),
               promisedDate: input.promisedDate ? new Date(input.promisedDate) : new Date(Date.now() + 86400000),
               advanceAmount, totalAmount: commercial.totals.grandTotal, lines, notes: String(input.notes || ''),
+              quoteDiscountMode: commercial.quoteDiscountMode,
+              quoteDiscountValue: commercial.quoteDiscountValue,
+              pricingVersion: RETAIL_LADDER_VERSION,
               documents: { salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`, salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request' }, pricing: commercial.totals, source: 'direct_order' },
               updatedAt: new Date(),
             },
@@ -864,13 +956,30 @@ export class QuotesService {
                 name: String(line.name || line.description || line.sku || `Line ${index + 1}`), category: String(line.category || 'Product'),
                 brand: String(line.brand || ''), finish: line.finish || null, area: line.area || 'General Selection',
                 unit: String(line.unit || line.inventoryUom || 'PC').toUpperCase(), orderedQuantity: Number(line.qty || line.quantity || 0),
-                listPrice: Number(line.listPrice || 0), mrp: Number(line.mrp), mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
+                listPrice: 0, mrp: Number(line.mrpInclusive), mrpRateBasis: line.priceRateBasis || line.mrpRateBasis || line.rateBasis || null,
                 mrpSource: line.mrpSource || 'direct_order', mrpConfirmedAt: new Date(), mrpConfirmedById: actorUserId,
-                unitPrice: Number(line.unitRate || 0), discountPercent: Number(line.discountPercent || 0), taxRate: Number(line.taxRate || 0),
+                unitPrice: Number(line.specialRateExclusive || line.specialRateInclusive || 0), discountPercent: 0, taxRate: Number(line.taxRate || 0),
                 taxableValue: Number(line.taxableValue || 0), taxAmount: Number(line.taxAmount || 0), grossLineTotal: Number(line.grossLineTotal || line.total || 0),
-                costSnapshot: Number(line.sourceCostPrice || 0) > 0 ? Number(line.sourceCostPrice) : null,
-                costSnapshotSource: Number(line.sourceCostPrice || 0) > 0 ? 'Product.costPrice' : null,
-                costSnapshotAt: Number(line.sourceCostPrice || 0) > 0 ? new Date() : null,
+                pricingVersion: RETAIL_LADDER_VERSION,
+                priceRateBasis: line.priceRateBasis || line.mrpRateBasis || line.rateBasis || null,
+                mrpInclusive: Number(line.mrpInclusive),
+                nrpMode: line.nrpMode,
+                nrpInput: Number(line.nrpInput || 0),
+                nrpInclusive: Number(line.nrpInclusive),
+                nrpExclusive: Number(line.nrpExclusive),
+                specialMode: line.specialMode || 'NONE',
+                specialInput: Number(line.specialInput || 0),
+                specialRateInclusive: Number(line.specialRateInclusive),
+                specialRateExclusive: Number(line.specialRateExclusive),
+                quoteDiscountMode: line.quoteDiscountMode || 'PERCENT',
+                quoteDiscountValue: Number(line.quoteDiscountValue || 0),
+                quoteDiscountAllocatedInclusive: Number(line.quoteDiscountAllocatedInclusive || 0),
+                taxableValueInclusive: Number(line.taxableValue || 0),
+                taxAmountInclusive: Number(line.taxAmount || 0),
+                grossLineTotalInclusive: Number(line.grossLineTotal || line.total || 0),
+                costSnapshot: null,
+                costSnapshotSource: null,
+                costSnapshotAt: null,
                 lineTotal: Number(line.grossLineTotal || line.total || 0), status: 'open', isTileSpecial: this.isTileLine(line) && !line.productId,
                 metadata: { snapshot: line, source: 'direct_order' }, updatedAt: new Date(),
               },
@@ -902,16 +1011,15 @@ export class QuotesService {
     for (const [index, line] of this.normalizeLines(lines).entries()) {
       const key = this.quoteLineKey(line, index);
       const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
-      const listPrice = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
-      const unitPrice = Number(line.unitRate ?? line.specialRate ?? listPrice);
-      const discountPercent = Number(line.discountPercent ?? line.discount ?? 0);
+      const mrpInclusive = line.mrpInclusive == null ? null : Number(line.mrpInclusive);
+      const nrpInclusive = line.nrpInclusive == null ? null : Number(line.nrpInclusive);
+      const specialRateInclusive = line.specialRateInclusive == null ? null : Number(line.specialRateInclusive);
+      const unitPrice = Number(line.specialRateExclusive ?? line.specialRateInclusive ?? 0);
       const taxRate = Number(line.taxRate ?? 18);
       const taxableValue = Number(line.taxableValue ?? quantity * unitPrice);
       const taxAmount = Number(line.taxAmount ?? 0);
       const grossLineTotal = Number(line.grossLineTotal ?? line.total ?? taxableValue + taxAmount);
-      const sourceCostPrice = Number(line.sourceCostPrice ?? line.costSnapshot ?? 0);
-      const hasCostSnapshot = Number.isFinite(sourceCostPrice) && sourceCostPrice > 0;
-      const pricing = { listPrice, unitPrice, discountPercent, taxRate, taxableValue, taxAmount, grossLineTotal };
+      const pricing = { pricingVersion: RETAIL_LADDER_VERSION, mrpInclusive, nrpInclusive, specialRateInclusive, unitPrice, taxRate, taxableValue, taxAmount, grossLineTotal };
       await tx.quoteLine.upsert({
         where: { quoteId_lineKey: { quoteId: quote.id, lineKey: key } },
         update: {
@@ -925,19 +1033,36 @@ export class QuotesService {
           area: line.area || line.room || line.section || null,
           unit: String(line.unit || line.uom || 'PC').toUpperCase(),
           quantity,
-          listPrice,
-          mrp: line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp),
-          mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
+          listPrice: 0,
+          mrp: mrpInclusive,
+          mrpRateBasis: line.priceRateBasis || line.mrpRateBasis || line.rateBasis || null,
           mrpSource: line.mrpSource || 'quote_entry',
           mrpConfirmedAt: line.mrpConfirmedAt ? new Date(line.mrpConfirmedAt) : null,
           mrpConfirmedById: line.mrpConfirmedById || null,
           unitPrice,
-          discountPercent,
+          discountPercent: 0,
           taxRate,
           taxableValue,
           taxAmount,
           grossLineTotal,
           lineTotal: grossLineTotal,
+          pricingVersion: RETAIL_LADDER_VERSION,
+          priceRateBasis: line.priceRateBasis || line.mrpRateBasis || line.rateBasis || null,
+          mrpInclusive,
+          nrpMode: line.nrpMode || null,
+          nrpInput: line.nrpInput == null ? null : Number(line.nrpInput),
+          nrpInclusive,
+          nrpExclusive: line.nrpExclusive == null ? null : Number(line.nrpExclusive),
+          specialMode: line.specialMode || 'NONE',
+          specialInput: line.specialInput == null ? null : Number(line.specialInput),
+          specialRateInclusive,
+          specialRateExclusive: line.specialRateExclusive == null ? null : Number(line.specialRateExclusive),
+          quoteDiscountMode: line.quoteDiscountMode || 'PERCENT',
+          quoteDiscountValue: Number(line.quoteDiscountValue || 0),
+          quoteDiscountAllocatedInclusive: Number(line.quoteDiscountAllocatedInclusive || 0),
+          taxableValueInclusive: taxableValue,
+          taxAmountInclusive: taxAmount,
+          grossLineTotalInclusive: grossLineTotal,
           status: 'quoted',
           isTileSpecial: this.isTileLine(line) && !String(line.productId || '').trim(),
           metadata: { snapshot: line, pricing },
@@ -957,22 +1082,39 @@ export class QuotesService {
           area: line.area || line.room || line.section || null,
           unit: String(line.unit || line.uom || 'PC').toUpperCase(),
           quantity,
-          listPrice,
-          mrp: line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp),
-          mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
+          listPrice: 0,
+          mrp: mrpInclusive,
+          mrpRateBasis: line.priceRateBasis || line.mrpRateBasis || line.rateBasis || null,
           mrpSource: line.mrpSource || 'quote_entry',
           mrpConfirmedAt: line.mrpConfirmedAt ? new Date(line.mrpConfirmedAt) : null,
           mrpConfirmedById: line.mrpConfirmedById || null,
           unitPrice,
-          discountPercent,
+          discountPercent: 0,
           taxRate,
           taxableValue,
           taxAmount,
           grossLineTotal,
           lineTotal: grossLineTotal,
-          costSnapshot: hasCostSnapshot ? sourceCostPrice : null,
-          costSnapshotSource: hasCostSnapshot ? 'Product.costPrice' : null,
-          costSnapshotAt: hasCostSnapshot ? new Date() : null,
+          pricingVersion: RETAIL_LADDER_VERSION,
+          priceRateBasis: line.priceRateBasis || line.mrpRateBasis || line.rateBasis || null,
+          mrpInclusive,
+          nrpMode: line.nrpMode || null,
+          nrpInput: line.nrpInput == null ? null : Number(line.nrpInput),
+          nrpInclusive,
+          nrpExclusive: line.nrpExclusive == null ? null : Number(line.nrpExclusive),
+          specialMode: line.specialMode || 'NONE',
+          specialInput: line.specialInput == null ? null : Number(line.specialInput),
+          specialRateInclusive,
+          specialRateExclusive: line.specialRateExclusive == null ? null : Number(line.specialRateExclusive),
+          quoteDiscountMode: line.quoteDiscountMode || 'PERCENT',
+          quoteDiscountValue: Number(line.quoteDiscountValue || 0),
+          quoteDiscountAllocatedInclusive: Number(line.quoteDiscountAllocatedInclusive || 0),
+          taxableValueInclusive: taxableValue,
+          taxAmountInclusive: taxAmount,
+          grossLineTotalInclusive: grossLineTotal,
+          costSnapshot: null,
+          costSnapshotSource: null,
+          costSnapshotAt: null,
           status: 'quoted',
           isTileSpecial: this.isTileLine(line) && !String(line.productId || '').trim(),
           metadata: { snapshot: line },
@@ -985,7 +1127,7 @@ export class QuotesService {
   private withMrpConfirmation(lines: any[], actorUserId: string | null) {
     const confirmedAt = actorUserId ? new Date().toISOString() : null;
     return this.normalizeLines(lines).map((line: any) => {
-      if (!actorUserId || !line.mrpValid) {
+      if (!actorUserId || Number(line.mrpInclusive || 0) <= 0 || Number(line.nrpInclusive || 0) <= 0) {
         return { ...line, mrpConfirmedAt: null, mrpConfirmedById: null };
       }
       return {
@@ -1092,6 +1234,10 @@ export class QuotesService {
 
     const lines = selectedRows.map(({ quoteLine, quantity }) => {
       const snapshot = (quoteLine.metadata as any)?.snapshot || rawByKey.get(quoteLine.lineKey) || {};
+      const originalQuantity = Math.max(1, Number(quoteLine.quantity || 1));
+      const originalPricingQuantity = Math.max(0.000001, Number(snapshot.pricingQuantity || originalQuantity));
+      const pricingQuantity = Number((originalPricingQuantity * quantity / originalQuantity).toFixed(6));
+      const allocatedQuoteDiscount = Number((Number(quoteLine.quoteDiscountAllocatedInclusive || snapshot.quoteDiscountAllocatedInclusive || 0) * quantity / originalQuantity).toFixed(2));
       return {
         ...snapshot,
         quoteLineId: quoteLine.id,
@@ -1106,18 +1252,22 @@ export class QuotesService {
         unit: quoteLine.unit,
         qty: quantity,
         quantity,
-        price: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
-        sellPrice: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
-        listPrice: Number(quoteLine.listPrice ?? quoteLine.unitPrice ?? 0),
-        mrp: quoteLine.mrp === null || quoteLine.mrp === undefined ? undefined : Number(quoteLine.mrp),
-        mrpRateBasis: quoteLine.mrpRateBasis || snapshot.mrpRateBasis || snapshot.rateBasis,
+        pricingQuantity,
+        mrpInclusive: quoteLine.mrpInclusive == null ? snapshot.mrpInclusive : Number(quoteLine.mrpInclusive),
+        priceRateBasis: quoteLine.priceRateBasis || snapshot.priceRateBasis || snapshot.mrpRateBasis || snapshot.rateBasis,
+        mrpRateBasis: quoteLine.priceRateBasis || snapshot.priceRateBasis || snapshot.mrpRateBasis || snapshot.rateBasis,
         mrpSource: quoteLine.mrpSource || snapshot.mrpSource || 'quote_entry',
         mrpConfirmedAt: quoteLine.mrpConfirmedAt || snapshot.mrpConfirmedAt || null,
         mrpConfirmedById: quoteLine.mrpConfirmedById || snapshot.mrpConfirmedById || null,
-        specialRate: Number(quoteLine.unitPrice ?? 0),
-        discountPercent: Number(quoteLine.discountPercent || 0),
+        pricingVersion: RETAIL_LADDER_VERSION,
+        nrpMode: quoteLine.nrpMode || snapshot.nrpMode,
+        nrpInput: Number(quoteLine.nrpInput ?? snapshot.nrpInput ?? 0),
+        specialMode: quoteLine.specialMode || snapshot.specialMode || 'NONE',
+        specialInput: Number(quoteLine.specialInput ?? snapshot.specialInput ?? 0),
+        quoteDiscountMode: quoteLine.quoteDiscountMode || snapshot.quoteDiscountMode || 'PERCENT',
+        quoteDiscountValue: Number(quoteLine.quoteDiscountValue ?? snapshot.quoteDiscountValue ?? 0),
+        quoteDiscountAllocatedInclusive: allocatedQuoteDiscount,
         taxRate: Number(quoteLine.taxRate ?? 18),
-        floorPrice: Number((quoteLine.metadata as any)?.snapshot?.floorPrice || 0),
         isTileSpecial: Boolean(quoteLine.isTileSpecial),
       };
     });
@@ -1195,9 +1345,9 @@ export class QuotesService {
     if (args?.brand) lineFilters.push({ brand: args.brand });
     if (args?.category) lineFilters.push({ category: args.category });
     if (args?.locationId) lineFilters.push({ lotReservations: { some: { locationId: args.locationId } } });
-    if (args?.completeness === 'missing_mrp') lineFilters.push({ OR: [{ mrp: null }, { mrpConfirmedAt: null }] });
-    if (args?.completeness === 'missing_list') lineFilters.push({ listPrice: { lte: 0 } });
-    if (args?.completeness === 'unpriced') lineFilters.push({ OR: [{ mrp: null }, { mrpConfirmedAt: null }, { listPrice: { lte: 0 } }] });
+    if (args?.completeness === 'missing_mrp') lineFilters.push({ OR: [{ mrpInclusive: null }, { mrpConfirmedAt: null }] });
+    if (['missing_nrp', 'missing_list'].includes(String(args?.completeness || ''))) lineFilters.push({ nrpInclusive: null });
+    if (args?.completeness === 'unpriced') lineFilters.push({ OR: [{ mrpInclusive: null }, { mrpConfirmedAt: null }, { nrpInclusive: null }] });
     if (lineFilters.length) where.AND = [...(where.AND || []), { lineItems: { some: { AND: lineFilters } } }];
 
     const now = new Date();
@@ -1327,8 +1477,9 @@ export class QuotesService {
           dispatchedQuantity: line.dispatchedQuantity,
           deliveredQuantity: line.deliveredQuantity,
           remainingQuantity: Math.max(0, Number(line.orderedQuantity || 0) - Number(line.dispatchedQuantity || 0)),
-          listPrice: Number(line.listPrice || 0),
-          mrp: line.mrp === null || line.mrp === undefined ? null : Number(line.mrp),
+          mrpInclusive: line.mrpInclusive === null || line.mrpInclusive === undefined ? null : Number(line.mrpInclusive),
+          nrpInclusive: line.nrpInclusive === null || line.nrpInclusive === undefined ? null : Number(line.nrpInclusive),
+          specialRateInclusive: line.specialRateInclusive === null || line.specialRateInclusive === undefined ? null : Number(line.specialRateInclusive),
           mrpRateBasis: line.mrpRateBasis || null,
           mrpSource: line.mrpSource || null,
           mrpConfirmedAt: line.mrpConfirmedAt || null,
@@ -1356,7 +1507,7 @@ export class QuotesService {
       this.prisma.salesOrder.count({ where: { AND: [where, { promisedDate: null }] } } as any),
       this.prisma.salesOrder.count({
         where: {
-          AND: [where, { lineItems: { some: { OR: [{ mrp: null }, { mrpConfirmedAt: null }, { listPrice: { lte: 0 } }] } } }],
+          AND: [where, { lineItems: { some: { OR: [{ mrpInclusive: null }, { mrpConfirmedAt: null }, { nrpInclusive: null }] } } }],
         },
       } as any),
       this.prisma.salesOrder.count({ where: statusScope(['pending_inward']) } as any),
@@ -1476,8 +1627,9 @@ export class QuotesService {
           remaining: Math.max(0, quantity - ordered - cancelled - closed),
           status: line.status,
           unit: line.unit,
-          listPrice: Number(line.listPrice || 0),
-          mrp: line.mrp === null || line.mrp === undefined ? null : Number(line.mrp),
+          mrpInclusive: line.mrpInclusive === null || line.mrpInclusive === undefined ? null : Number(line.mrpInclusive),
+          nrpInclusive: line.nrpInclusive === null || line.nrpInclusive === undefined ? null : Number(line.nrpInclusive),
+          specialRateInclusive: line.specialRateInclusive === null || line.specialRateInclusive === undefined ? null : Number(line.specialRateInclusive),
           mrpRateBasis: line.mrpRateBasis || null,
           mrpSource: line.mrpSource || null,
           mrpConfirmedAt: line.mrpConfirmedAt || null,
@@ -1749,6 +1901,12 @@ export class QuotesService {
     return line?.type === 'tile' || line?.nonStock === true || String(line?.category || '').toLowerCase() === 'tiles';
   }
 
+  private basisForQuoteUom(value: unknown) {
+    const uom = String(value || 'PC').trim().toUpperCase();
+    if (['SQFT', 'SQM', 'M2'].includes(uom)) return 'AREA';
+    return uom === 'PC' ? 'PIECE' : 'BOX';
+  }
+
   private tileRateForBasis(rate: unknown, sourceUom: string, targetBasis: string, piecesPerPack: unknown, coveragePerPack: unknown) {
     const sourceRate = Number(rate || 0);
     const pieces = Math.max(1, Math.trunc(Number(piecesPerPack || 1)));
@@ -1769,15 +1927,15 @@ export class QuotesService {
     const piecesPerPack = Math.max(1, Math.trunc(Number(line.piecesPerPack || line.pcsPerBox || 1)));
     const requestedBasis = String(line.rateBasis || '').trim().toUpperCase();
     const fallbackPricingUom = String(line.pricingUom || line.salesUom || line.unit || 'BOX').trim().toUpperCase();
-    const rateBasis = requestedBasis || (['SQFT', 'SQM', 'M2'].includes(fallbackPricingUom)
+    const rateBasis = (requestedBasis === 'PACK' ? 'BOX' : requestedBasis) || (['SQFT', 'SQM', 'M2'].includes(fallbackPricingUom)
       ? 'AREA'
-      : fallbackPricingUom === 'PC' ? 'PIECE' : 'PACK');
-    if (!['AREA', 'PIECE', 'PACK'].includes(rateBasis)) {
-      throw new BadRequestException(`Tile ${tileCode || index + 1} rate basis must be AREA, PIECE, or PACK`);
+      : fallbackPricingUom === 'PC' ? 'PIECE' : 'BOX');
+    if (!['AREA', 'PIECE', 'BOX'].includes(rateBasis)) {
+      throw new BadRequestException(`Tile ${tileCode || index + 1} price basis must be AREA, PIECE, or BOX`);
     }
     const pricingUom = rateBasis === 'PIECE'
       ? 'PC'
-      : rateBasis === 'PACK'
+      : rateBasis === 'BOX'
         ? String(line.inventoryUom || line.purchaseUom || line.unit || 'BOX').trim().toUpperCase()
         : (['SQFT', 'SQM', 'M2'].includes(fallbackPricingUom) ? fallbackPricingUom : 'SQFT');
     const areaPriced = rateBasis === 'AREA';
@@ -1798,12 +1956,6 @@ export class QuotesService {
     if (!tileCode) throw new BadRequestException(`Tile row ${index + 1} needs a tile code`);
     if (!tileSize) throw new BadRequestException(`Tile ${tileCode} needs a tile size`);
     if (!Number.isFinite(qty) || qty <= 0) throw new BadRequestException(`Tile ${tileCode} needs a positive whole-number quantity`);
-    const listPrice = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
-    if (!Number.isFinite(listPrice) || listPrice < 0) throw new BadRequestException(`Tile ${tileCode} has an invalid price`);
-    const specialRate = line.specialRate ?? line.specialPrice;
-    if (specialRate !== undefined && specialRate !== null && specialRate !== '' && (!Number.isFinite(Number(specialRate)) || Number(specialRate) < 0)) {
-      throw new BadRequestException(`Tile ${tileCode} has an invalid negotiated rate`);
-    }
     return {
       ...line,
       type: 'tile',
@@ -1831,11 +1983,14 @@ export class QuotesService {
       coveredArea: coveragePerPack > 0 ? Number((qty * coveragePerPack).toFixed(4)) : null,
       qty,
       quantity: qty,
-      price: listPrice,
-      sellPrice: listPrice,
-      listPrice,
-      specialRate: specialRate === undefined || specialRate === null || specialRate === '' ? null : Number(specialRate),
-      discountPercent: Number(line.discountPercent ?? line.discount ?? 0),
+      pricingVersion: RETAIL_LADDER_VERSION,
+      priceRateBasis: rateBasis,
+      mrpRateBasis: rateBasis,
+      mrpInclusive: line.mrpInclusive ?? null,
+      nrpMode: line.nrpMode || 'PERCENT_OFF_MRP',
+      nrpInput: line.nrpInput ?? 0,
+      specialMode: line.specialMode || 'NONE',
+      specialInput: line.specialInput ?? 0,
       taxRate: Number(line.taxRate ?? 18),
       area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
       quoteImage: line.quoteImage || line.customImageUrl || '',
@@ -1875,21 +2030,27 @@ export class QuotesService {
         const requestedBasis = String(line.rateBasis || '').trim().toUpperCase();
         const inferredBasis = ['SQFT', 'SQM', 'M2'].includes(productSalesUom)
           ? 'AREA'
-          : productSalesUom === 'PC' && inventoryUom !== 'PC' ? 'PIECE' : 'PACK';
-        const rateBasis = ['AREA', 'PIECE', 'PACK'].includes(requestedBasis) ? requestedBasis : inferredBasis;
+          : productSalesUom === 'PC' && inventoryUom !== 'PC' ? 'PIECE' : 'BOX';
+        const normalizedRequestedBasis = requestedBasis === 'PACK' ? 'BOX' : requestedBasis;
+        const rateBasis = ['AREA', 'PIECE', 'BOX'].includes(normalizedRequestedBasis) ? normalizedRequestedBasis : inferredBasis;
         const pricingUom = rateBasis === 'AREA'
           ? (['SQFT', 'SQM', 'M2'].includes(String(line.pricingUom || '').toUpperCase()) ? String(line.pricingUom).toUpperCase() : (['SQFT', 'SQM', 'M2'].includes(productSalesUom) ? productSalesUom : 'SQFT'))
           : rateBasis === 'PIECE' ? 'PC' : inventoryUom;
-        const defaultListPrice = this.tileRateForBasis(product.sellPrice, productSalesUom, rateBasis, product.piecesPerPack, product.coveragePerPack);
-        const floorPrice = this.tileRateForBasis(product.floorPrice, productSalesUom, rateBasis, product.piecesPerPack, product.coveragePerPack);
+        const productBasis = String(product.priceRateBasis || '').toUpperCase() === 'PACK' ? 'BOX' : String(product.priceRateBasis || '').toUpperCase();
+        const basisMatches = productBasis === rateBasis;
+        const defaultMrp = basisMatches && product.defaultMrpInclusive != null ? Number(product.defaultMrpInclusive) : null;
+        const defaultNrp = basisMatches && product.defaultNrpInclusive != null ? Number(product.defaultNrpInclusive) : null;
         return this.normalizeTileLine({
           ...line, productId: product.id, sku: product.sku, name: product.name, brand: product.brand,
           tileSize: line.tileSize || product.dimensions, dimensions: product.dimensions,
-          listPrice: defaultListPrice, sellPrice: defaultListPrice,
-          floorPrice, media: line.media || product.media || {},
+          media: line.media || product.media || {},
           inventoryUom, pricingUom, rateBasis, sourceSalesUom: productSalesUom,
-          sourceSellPrice: Number(product.sellPrice || 0),
-          sourceCostPrice: Number(product.costPrice || 0),
+          mrpInclusive: line.mrpInclusive ?? line.mrp ?? defaultMrp,
+          nrpMode: line.nrpMode || (defaultNrp != null ? 'FIXED_NRP' : 'PERCENT_OFF_MRP'),
+          nrpInput: line.nrpInput ?? (defaultNrp != null ? defaultNrp : 0),
+          specialMode: line.specialMode || 'NONE',
+          specialInput: line.specialInput ?? 0,
+          mrpSource: line.mrpSource || product.mrpSource || (defaultMrp != null ? 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
           piecesPerPack: product.piecesPerPack, coveragePerPack: product.coveragePerPack,
         }, index);
       }
@@ -1897,15 +2058,12 @@ export class QuotesService {
       if (!Number.isFinite(qty) || qty <= 0) {
         throw new BadRequestException(`${product.sku} needs a positive whole-number quantity`);
       }
-      const listPrice = Number(product.sellPrice || 0);
-      const suppliedSpecial = line.specialRate ?? line.specialPrice;
-      const legacyRate = Number(line.price ?? line.sellPrice);
-      const specialRate = suppliedSpecial !== undefined && suppliedSpecial !== null && suppliedSpecial !== ''
-        ? Number(suppliedSpecial)
-        : Number.isFinite(legacyRate) && legacyRate !== listPrice ? legacyRate : null;
-      if (!Number.isFinite(listPrice) || listPrice < 0 || (specialRate !== null && (!Number.isFinite(specialRate) || specialRate < 0))) {
-        throw new BadRequestException(`${product.sku} has an invalid price`);
-      }
+      const productBasis = String(product.priceRateBasis || '').toUpperCase() === 'PACK' ? 'BOX' : String(product.priceRateBasis || '').toUpperCase();
+      const requestedBasis = String(line.priceRateBasis || line.mrpRateBasis || line.rateBasis || productBasis || this.basisForQuoteUom(product.salesUom || product.unit)).toUpperCase();
+      const rateBasis = requestedBasis === 'PACK' ? 'BOX' : requestedBasis;
+      const basisMatches = productBasis === rateBasis;
+      const defaultMrp = basisMatches && product.defaultMrpInclusive != null ? Number(product.defaultMrpInclusive) : null;
+      const defaultNrp = basisMatches && product.defaultNrpInclusive != null ? Number(product.defaultNrpInclusive) : null;
       const media = line.media || product.media || {};
       return {
         ...line,
@@ -1919,14 +2077,17 @@ export class QuotesService {
         unit: product.unit,
         qty,
         quantity: qty,
-        price: listPrice,
-        sellPrice: listPrice,
-        listPrice,
-        specialRate,
-        discountPercent: Number(line.discountPercent ?? line.discount ?? 0),
+        pricingVersion: RETAIL_LADDER_VERSION,
+        rateBasis,
+        priceRateBasis: rateBasis,
+        mrpRateBasis: rateBasis,
+        mrpInclusive: line.mrpInclusive ?? line.mrp ?? defaultMrp,
+        nrpMode: line.nrpMode || (defaultNrp != null ? 'FIXED_NRP' : 'PERCENT_OFF_MRP'),
+        nrpInput: line.nrpInput ?? (defaultNrp != null ? defaultNrp : 0),
+        specialMode: line.specialMode || 'NONE',
+        specialInput: line.specialInput ?? 0,
+        mrpSource: line.mrpSource || product.mrpSource || (defaultMrp != null ? 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
         taxRate: Number(line.taxRate ?? 18),
-        floorPrice: Number(product.floorPrice || 0),
-        sourceCostPrice: Number(product.costPrice || 0),
         media,
         area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
         quoteImage: line.quoteImage || line.customImageUrl || '',
@@ -1980,9 +2141,7 @@ export class QuotesService {
   }
 
   private normalizeQuoteMeta(meta: any, lines: any[]) {
-    const parsed = typeof meta === 'string'
-      ? (() => { try { return JSON.parse(meta); } catch { return {}; } })()
-      : (meta || {});
+    const parsed = this.parseQuoteMeta(meta);
     const areas = Array.from(new Set(this.normalizeLines(lines).map((line: any) => String(line.area || 'General Selection'))));
     return {
       preparedBy: parsed.preparedBy || '',
@@ -1996,27 +2155,55 @@ export class QuotesService {
     };
   }
 
+  private parseQuoteMeta(meta: any) {
+    if (typeof meta !== 'string') return meta && typeof meta === 'object' ? meta : {};
+    try { return JSON.parse(meta || '{}'); } catch { return {}; }
+  }
+
+  private quoteDiscountInput(meta: any, fallback: number) {
+    const parsed = this.parseQuoteMeta(meta);
+    const configured = parsed?.quoteDiscount;
+    if (configured && typeof configured === 'object') {
+      const rawMode = String(configured.mode || configured.type || 'PERCENT').toUpperCase();
+      return { mode: ['AMOUNT', 'FIXED', 'FIXED_AMOUNT'].includes(rawMode) ? 'FIXED_AMOUNT' : 'PERCENT', value: Number(configured.value || 0) };
+    }
+    return { mode: 'PERCENT', value: Number(fallback || 0) };
+  }
+
+  private quoteDiscountForQuote(quote: any) {
+    return this.quoteDiscountInput(quote?.quoteMeta, Number(quote?.discountPercent || 0));
+  }
+
   private getLinesTotal(lines: any, quoteDiscountPercent = 0) {
     return priceQuoteLines(this.normalizeLines(lines), quoteDiscountPercent).totals.grandTotal;
   }
 
   private ensureCommercialReady(quote: any, action: string) {
     const lines = this.normalizeLines(quote?.lines);
-    const pricing = priceQuoteLines(lines, quote?.discountPercent || 0, { requireMrp: true });
-    const contractStartedAt = Date.UTC(2026, 7, 4);
-    const isLegacy = !quote?.createdAt || new Date(quote.createdAt).getTime() < contractStartedAt;
-    if (!isLegacy) {
-      const missingIndex = lines.findIndex((line: any) => !line.mrpConfirmedAt || !line.mrpConfirmedById);
-      if (missingIndex >= 0) {
-        const line = lines[missingIndex];
-        throw new BadRequestException({
-          message: `Cannot ${action}: confirm MRP for ${line.sku || line.name || `line ${missingIndex + 1}`}.`,
-          code: 'QUOTE_MRP_CONFIRMATION_REQUIRED',
-          field: 'mrp',
-          lineKey: line.lineKey || line.quoteLineId || String(missingIndex),
-          remediation: 'Open the quote, verify MRP per selected UOM, then Validate changes.',
-        });
-      }
+    const quoteVersion = String(quote?.pricingVersion || this.parseQuoteMeta(quote?.quoteMeta)?.pricingVersion || '');
+    const legacyOrIncomplete = quote?.status === 'incomplete_pricing'
+      || quote?.pricingStatus === 'incomplete'
+      || quoteVersion !== RETAIL_LADDER_VERSION
+      || lines.some((line: any) => String(line?.pricingVersion || '') !== RETAIL_LADDER_VERSION);
+    if (legacyOrIncomplete) {
+      throw new BadRequestException({
+        message: `Cannot ${action}: this quote has legacy or incomplete pricing.`,
+        code: 'QUOTE_PRICING_MIGRATION_REQUIRED',
+        field: 'pricingVersion',
+        remediation: 'Open the quote, verify MRP, NRP, basis and any special discount for every line, then save the governed pricing snapshot.',
+      });
+    }
+    const pricing = priceQuoteLines(lines, this.quoteDiscountForQuote(quote), { requireMrp: true });
+    const missingIndex = lines.findIndex((line: any) => !line.mrpConfirmedAt || !line.mrpConfirmedById);
+    if (missingIndex >= 0) {
+      const line = lines[missingIndex];
+      throw new BadRequestException({
+        message: `Cannot ${action}: confirm MRP for ${line.sku || line.name || `line ${missingIndex + 1}`}.`,
+        code: 'QUOTE_MRP_CONFIRMATION_REQUIRED',
+        field: 'mrp',
+        lineKey: line.lineKey || line.quoteLineId || String(missingIndex),
+        remediation: 'Open the quote, verify MRP per selected UOM, then Validate changes.',
+      });
     }
     if (quote?.approvalStatus === 'pending' && !/approv/i.test(action)) {
       throw new BadRequestException(`Cannot ${action}: owner approval is still required for a below-floor rate.`);

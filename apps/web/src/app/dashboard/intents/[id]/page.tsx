@@ -358,7 +358,7 @@ export default function IntentDetailPage() {
         brand: product.brand,
         finish: product.finish,
         qty: 1,
-        price: Number(product.sellPrice || 0),
+        price: Number(product.defaultNrpInclusive || 0),
         unit: product.unit || "PC",
         area: "General Selection",
         media: product.media,
@@ -590,7 +590,7 @@ export default function IntentDetailPage() {
                         </p>
                       </div>
                       <span className="shrink-0 text-sm font-bold text-[var(--ink)]">
-                        {money(p.sellPrice)}
+                        {p.defaultNrpInclusive == null ? 'NRP not set' : money(p.defaultNrpInclusive)}
                       </span>
                     </button>
                   ))}

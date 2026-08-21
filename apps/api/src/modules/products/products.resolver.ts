@@ -32,20 +32,15 @@ export class ProductOutput {
   @Field({ nullable: true })
   unit?: string;
 
-  @Field(() => Number, { nullable: true })
-  sellPrice?: number;
-
-  @Field(() => Number, { nullable: true })
-  floorPrice?: number;
-
-  @Field(() => Number, { nullable: true })
-  costPrice?: number;
-
-  @Field(() => Number, { nullable: true }) mrp?: number;
-  @Field({ nullable: true }) mrpRateBasis?: string;
+  @Field(() => Number, { nullable: true }) defaultMrpInclusive?: number;
+  @Field(() => Number, { nullable: true }) defaultNrpInclusive?: number;
+  @Field({ nullable: true }) priceRateBasis?: string;
+  @Field({ nullable: true }) priceUom?: string;
   @Field(() => GraphQLISODateTime, { nullable: true }) mrpVerifiedAt?: Date;
   @Field({ nullable: true }) mrpVerifiedById?: string;
   @Field({ nullable: true }) mrpSource?: string;
+  @Field(() => GraphQLISODateTime, { nullable: true }) pricingEffectiveFrom?: Date;
+  @Field({ nullable: true }) pricingVersion?: string;
 
   @Field({ nullable: true })
   taxClass?: string;
@@ -100,18 +95,12 @@ export class CreateProductInput {
   @Field(() => String, { nullable: true })
   unit?: string;
 
-  @Field(() => Number, { nullable: true })
-  sellPrice?: number;
-
-  @Field(() => Number, { nullable: true })
-  floorPrice?: number;
-
-  @Field(() => Number, { nullable: true })
-  costPrice?: number;
-
-  @Field(() => Number, { nullable: true }) mrp?: number;
-  @Field({ nullable: true }) mrpRateBasis?: string;
+  @Field(() => Number, { nullable: true }) defaultMrpInclusive?: number;
+  @Field(() => Number, { nullable: true }) defaultNrpInclusive?: number;
+  @Field({ nullable: true }) priceRateBasis?: string;
+  @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) mrpSource?: string;
+  @Field(() => String, { nullable: true }) pricingEffectiveFrom?: string;
 
   @Field(() => String, { nullable: true })
   taxClass?: string;
@@ -159,18 +148,12 @@ export class UpdateProductInput {
   @Field(() => String, { nullable: true })
   unit?: string;
 
-  @Field(() => Number, { nullable: true })
-  sellPrice?: number;
-
-  @Field(() => Number, { nullable: true })
-  floorPrice?: number;
-
-  @Field(() => Number, { nullable: true })
-  costPrice?: number;
-
-  @Field(() => Number, { nullable: true }) mrp?: number;
-  @Field({ nullable: true }) mrpRateBasis?: string;
+  @Field(() => Number, { nullable: true }) defaultMrpInclusive?: number;
+  @Field(() => Number, { nullable: true }) defaultNrpInclusive?: number;
+  @Field({ nullable: true }) priceRateBasis?: string;
+  @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) mrpSource?: string;
+  @Field(() => String, { nullable: true }) pricingEffectiveFrom?: string;
 
   @Field(() => String, { nullable: true })
   taxClass?: string;
@@ -282,9 +265,12 @@ class TileVariantInput {
   @Field({ nullable: true }) salesUom?: string;
   @Field({ nullable: true }) allowLoose?: boolean;
   @Field({ nullable: true }) hsnCode?: string;
-  @Field({ nullable: true }) sellPrice?: number;
-  @Field({ nullable: true }) floorPrice?: number;
-  @Field({ nullable: true }) costPrice?: number;
+  @Field({ nullable: true }) defaultMrpInclusive?: number;
+  @Field({ nullable: true }) defaultNrpInclusive?: number;
+  @Field({ nullable: true }) priceRateBasis?: string;
+  @Field({ nullable: true }) priceUom?: string;
+  @Field({ nullable: true }) mrpSource?: string;
+  @Field({ nullable: true }) pricingEffectiveFrom?: string;
   @Field({ nullable: true }) status?: string;
 }
 

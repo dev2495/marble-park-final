@@ -30,6 +30,7 @@ export interface IntentRow {
   qty?: number;
   quantity?: number;
   price?: number;
+  /** Legacy intent payload only. New clients use price/indicativeNrpInclusive. */
   sellPrice?: number;
   unit?: string;
   area?: string;
@@ -397,7 +398,7 @@ export class IntentsService {
       unit: uom === 'box' ? 'BOX' : 'PC',
       pcsPerBox: Number(row.pcsPerBox || 0),
       price,
-      sellPrice: price,
+      indicativeNrpInclusive: price,
       area: row.area || row.room || 'General Selection',
       source: 'product-master-tile',
       inventoryTracked: true,
@@ -432,13 +433,13 @@ export class IntentsService {
       brand: string;
       finish: string | null;
       unit: string;
-      sellPrice: any;
+      defaultNrpInclusive: any;
       media: any;
     };
     const products: IntentProductRow[] = productIds.length
       ? await this.prisma.product.findMany({
           where: { id: { in: productIds }, status: 'active' },
-          select: { id: true, sku: true, name: true, category: true, brand: true, finish: true, unit: true, sellPrice: true, media: true },
+          select: { id: true, sku: true, name: true, category: true, brand: true, finish: true, unit: true, defaultNrpInclusive: true, media: true },
         }) as IntentProductRow[]
       : [];
     const productMap = new Map(products.map((product) => [product.id, product]));
@@ -457,10 +458,10 @@ export class IntentsService {
         brand: product.brand,
         finish: product.finish || row.finish || '',
         unit: row.unit || product.unit || 'BOX',
-        price: Number(row.price || row.sellPrice || product.sellPrice || 0),
+        price: Number(row.price || row.sellPrice || product.defaultNrpInclusive || 0),
         media: product.media || (row as any).media || {},
       });
-      const price = Number(row.price || row.sellPrice || product.sellPrice || 0);
+      const price = Number(row.price || row.sellPrice || product.defaultNrpInclusive || 0);
       if (!Number.isFinite(price) || price < 0) throw new BadRequestException(`${product.sku} has an invalid price`);
       return {
         ...row,
@@ -474,7 +475,7 @@ export class IntentsService {
         qty: Math.trunc(row.qty),
         quantity: Math.trunc(row.qty),
         price,
-        sellPrice: price,
+        indicativeNrpInclusive: price,
         media: product.media || (row as any).media || {},
         area: row.area || row.room || 'General Selection',
         source: 'product-master',

@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@marble-park/pricing-contract": "file:../../packages/pricing-contract",
     "@apollo/client": "^3.8.8",
     "@hookform/resolvers": "^3.3.4",
     "@radix-ui/react-accordion": "^1.1.2",

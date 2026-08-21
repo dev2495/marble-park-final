@@ -33,6 +33,9 @@ export async function cleanupE2eRecords(prisma, context = {}) {
   const challanIds = quoteIds.length || orderIds.length
     ? (await prisma.dispatchChallan.findMany({ where: { OR: [quoteIds.length ? { quoteId: { in: quoteIds } } : undefined, orderIds.length ? { salesOrderId: { in: orderIds } } : undefined].filter(Boolean) }, select: { id: true } }).catch(() => [])).map((row) => row.id)
     : [];
+  const returnOrderIds = orderIds.length || challanIds.length
+    ? (await prisma.returnOrder.findMany({ where: { OR: [orderIds.length ? { salesOrderId: { in: orderIds } } : undefined, challanIds.length ? { challanId: { in: challanIds } } : undefined].filter(Boolean) }, select: { id: true } }).catch(() => [])).map((row) => row.id)
+    : [];
   await safeDelete(prisma, 'customerAllocation', invoiceIds.length || paymentIds.length ? { OR: [invoiceIds.length ? { salesInvoiceId: { in: invoiceIds } } : undefined, paymentIds.length ? { sourceType: 'CustomerPayment', sourceId: { in: paymentIds } } : undefined].filter(Boolean) } : null);
   await safeDelete(prisma, 'salesInvoiceLine', invoiceIds.length ? { salesInvoiceId: { in: invoiceIds } } : null);
   await safeDelete(prisma, 'customerLedgerEntry', customerIds.length ? { customerId: { in: customerIds } } : null);
@@ -40,6 +43,9 @@ export async function cleanupE2eRecords(prisma, context = {}) {
   await safeDelete(prisma, 'customerPayment', paymentIds.length ? { id: { in: paymentIds } } : null);
   await safeDelete(prisma, 'salesInvoice', invoiceIds.length ? { id: { in: invoiceIds } } : null);
   await safeDelete(prisma, 'customerCreditProfile', customerIds.length ? { customerId: { in: customerIds } } : null);
+  await safeDelete(prisma, 'creditNote', returnOrderIds.length ? { returnOrderId: { in: returnOrderIds } } : null);
+  await safeDelete(prisma, 'returnLine', returnOrderIds.length ? { returnOrderId: { in: returnOrderIds } } : null);
+  await safeDelete(prisma, 'returnOrder', returnOrderIds.length ? { id: { in: returnOrderIds } } : null);
   await safeDelete(prisma, 'deliveryProof', challanIds.length ? { challanId: { in: challanIds } } : null);
   await safeDelete(prisma, 'shipment', challanIds.length ? { challanId: { in: challanIds } } : null);
   await safeDelete(prisma, 'dispatchPackage', challanIds.length ? { challanId: { in: challanIds } } : null);

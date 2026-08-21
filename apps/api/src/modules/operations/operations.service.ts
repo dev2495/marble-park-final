@@ -551,7 +551,7 @@ export class OperationsService {
             supplierBatch: row.supplierBatch || null, qualityStatus: row.qualityStatus || 'available', rackBin: row.rackBin || null,
             status: 'counted', metadata: {
               lineNo: index + 1, packCount: Number(row.packCount || 0), labelTemplate: row.labelTemplate || 'stock_pack',
-              attributes: row.attributes || {},
+              attributes: row.attributes || {}, costStatus: unitCost > 0 ? 'captured' : 'incomplete_owner_review_required',
             }, updatedAt: new Date(),
           },
         });
@@ -566,7 +566,7 @@ export class OperationsService {
     }, { isolationLevel: 'Serializable', timeout: 30000 });
   }
 
-  async approveOpeningStockSession(id: string, actorUserId: string) {
+  async approveOpeningStockSession(id: string, actorUserId: string, ownerOverrideReason?: string) {
     return this.prisma.$transaction(async (tx: any) => {
       const session = await tx.openingStockSession.findUnique({
         where: { id }, include: { location: true, lines: { include: { product: true }, orderBy: { createdAt: 'asc' } } },
@@ -575,6 +575,18 @@ export class OperationsService {
       if (session.status === 'posted') return session;
       if (!['draft', 'submitted'].includes(session.status)) throw new BadRequestException(`${session.sessionNumber} cannot be posted from ${session.status}`);
       if (!session.lines.length) throw new BadRequestException('Opening-stock session has no lines');
+      const incompleteCostLines = session.lines.filter((line: any) => Number(line.unitCost || 0) <= 0);
+      const submittedOverrideReason = String(ownerOverrideReason || '').trim();
+      const overrideReason = submittedOverrideReason || String((session.metadata as any)?.ownerOverrideReason || '').trim();
+      if (incompleteCostLines.length && overrideReason.length < 12) {
+        throw new BadRequestException(`Opening stock has ${incompleteCostLines.length} line(s) without unit cost. An owner must record a specific cost-incomplete reason before posting.`);
+      }
+      if (submittedOverrideReason) {
+        await tx.openingStockSession.update({
+          where: { id },
+          data: { metadata: { ...(session.metadata as any), ownerOverrideReason: submittedOverrideReason, ownerOverrideBy: actorUserId, ownerOverrideAt: new Date().toISOString() }, updatedAt: new Date() },
+        });
+      }
       for (const line of session.lines) {
         const existingLot = await tx.inventoryLot.findFirst({
           where: { sourceType: 'opening_stock', sourceId: session.id, sourceLineId: line.id },
@@ -585,7 +597,7 @@ export class OperationsService {
             productId: line.productId, sourceType: 'opening_stock', sourceId: session.id, sourceLineId: line.id,
             supplierBatch: line.supplierBatch || null, qualityStatus: line.qualityStatus || 'available',
             receivedAt: session.effectiveAt, unitCost: Number(line.unitCost || 0), status: 'active',
-            attributes: line.metadata?.attributes || {}, metadata: { openingLineId: line.id, rackBin: line.rackBin || null },
+            attributes: line.metadata?.attributes || {}, metadata: { openingLineId: line.id, rackBin: line.rackBin || null, costStatus: Number(line.unitCost || 0) > 0 ? 'captured' : 'incomplete_owner_exception', costIncompleteReason: Number(line.unitCost || 0) > 0 ? null : overrideReason },
             createdBy: actorUserId, updatedAt: new Date(),
           },
         });
@@ -598,7 +610,7 @@ export class OperationsService {
           reason: `Approved opening stock ${session.sessionNumber}`, createdBy: actorUserId,
           referenceType: 'OpeningStockSession', referenceId: session.id, sourceDocumentNo: session.sessionNumber,
           effectiveAt: session.effectiveAt,
-          unitCost: Number(line.unitCost || 0), metadata: { openingLineId: line.id, rackBin: line.rackBin || null },
+          unitCost: Number(line.unitCost || 0), metadata: { openingLineId: line.id, rackBin: line.rackBin || null, costStatus: Number(line.unitCost || 0) > 0 ? 'captured' : 'incomplete_owner_exception', costIncompleteReason: Number(line.unitCost || 0) > 0 ? null : overrideReason },
         });
         await tx.openingStockLine.update({ where: { id: line.id }, data: { lotId: lot.id, status: 'posted', updatedAt: new Date() } });
         const packCount = Math.max(0, Math.trunc(Number(line.metadata?.packCount || 0)));
@@ -885,8 +897,13 @@ export class OperationsService {
         const commercialLine = dispatchLine?.salesOrderLineId
           ? await tx.salesOrderLine.findUnique({ where: { id: dispatchLine.salesOrderLineId } })
           : null;
-        if (commercialLine) {
-          maximumRefundAmount += Number(commercialLine.lineTotal || 0) * quantity / Math.max(1, Number(commercialLine.orderedQuantity || 0));
+        const invoiceLine = dispatchLine
+          ? await tx.salesInvoiceLine.findUnique({ where: { dispatchLineId: dispatchLine.id } })
+          : null;
+        const sourceCommercialLine = invoiceLine || commercialLine;
+        const sourceCommercialQuantity = Math.max(1, Number(invoiceLine?.quantity || commercialLine?.orderedQuantity || 1));
+        if (sourceCommercialLine) {
+          maximumRefundAmount += Number(sourceCommercialLine.grossLineTotal || commercialLine?.lineTotal || 0) * quantity / sourceCommercialQuantity;
         }
         const sourceAllocations = Array.isArray(row.lotAllocations)
           ? row.lotAllocations
@@ -939,17 +956,37 @@ export class OperationsService {
           const damagedQuantity = ['damaged', 'scrap'].includes(disposition) ? posting.quantity : 0;
           const supplierReturnQuantity = disposition === 'supplier_return' ? posting.quantity : 0;
           const holdQuantity = resellQuantity || damagedQuantity ? 0 : posting.quantity;
+          const proportional = (field: string) => Math.round((Number(sourceCommercialLine?.[field] || 0) * posting.quantity / sourceCommercialQuantity) * 100) / 100;
+          const sourceLot = posting.lotId ? await tx.inventoryLot.findUnique({ where: { id: posting.lotId }, select: { unitCost: true } }) : null;
+          const invoiceCost = Number(invoiceLine?.costSnapshot || 0);
+          const lotCost = Number(sourceLot?.unitCost || 0);
+          const costSnapshot = invoiceCost > 0 ? invoiceCost : lotCost > 0 ? lotCost : null;
           const returnLine = await tx.returnLine.create({
             data: {
               id: ulid(), returnOrderId: order.id, dispatchLineId: dispatchLine?.id || null,
               salesOrderLineId: row.salesOrderLineId || dispatchLine?.salesOrderLineId || null,
               productId: productId || null, lotId: posting.lotId, locationId: returnLocation.id,
               sku: row.sku || dispatchLine?.sku || productId || 'RETURN', name: row.name || dispatchLine?.name || row.sku || 'Returned item',
+              unit: sourceCommercialLine?.unit || row.unit || 'PC',
               quantity: posting.quantity, acceptedQuantity: input.receive ? posting.quantity : 0,
               resellQuantity: input.receive ? resellQuantity : 0, damagedQuantity: input.receive ? damagedQuantity : 0,
               supplierReturnQuantity: input.receive ? supplierReturnQuantity : 0, disposition,
               status: input.receive ? 'received' : 'pending', updatedAt: new Date(),
-              metadata: { ...(row.metadata || {}), sourceAllocation: posting },
+              pricingVersion: sourceCommercialLine?.pricingVersion || 'legacy_unverified',
+              priceRateBasis: sourceCommercialLine?.priceRateBasis || sourceCommercialLine?.mrpRateBasis || null,
+              mrpInclusive: sourceCommercialLine?.mrpInclusive ?? sourceCommercialLine?.mrp ?? null,
+              nrpMode: sourceCommercialLine?.nrpMode || null,
+              nrpInput: sourceCommercialLine?.nrpInput ?? null,
+              nrpInclusive: sourceCommercialLine?.nrpInclusive ?? null,
+              specialMode: sourceCommercialLine?.specialMode || 'NONE',
+              specialInput: sourceCommercialLine?.specialInput ?? null,
+              specialRateInclusive: sourceCommercialLine?.specialRateInclusive ?? null,
+              quoteDiscountAllocatedInclusive: proportional('quoteDiscountAllocatedInclusive'),
+              taxableValue: proportional('taxableValue'), taxAmount: proportional('taxAmount'),
+              grossLineTotal: proportional('grossLineTotal'),
+              costSnapshot, costSnapshotSource: invoiceCost > 0 ? invoiceLine?.costSnapshotSource || 'SalesInvoiceLine.costSnapshot' : lotCost > 0 ? 'InventoryLot.unitCost' : null,
+              costSnapshotAt: costSnapshot ? new Date() : null,
+              metadata: { ...(row.metadata || {}), sourceAllocation: posting, sourceInvoiceLineId: invoiceLine?.id || null, sourcePricingLineId: sourceCommercialLine?.id || null },
             },
           });
           if (input.receive) {

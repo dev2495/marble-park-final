@@ -285,6 +285,7 @@ export default function ProcurementSuitePage() {
     }
   }, [commercial.vendorId, demands, selectedDemand]);
   const canCancel = ["owner", "admin"].includes(data?.me?.role);
+  const canViewCost = ["owner", "admin"].includes(data?.me?.role);
   const actionableDemandIds = demands
     .filter((row: any) =>
       ["open", "ordered", "partial_received"].includes(row.status),
@@ -338,7 +339,7 @@ export default function ProcurementSuitePage() {
       boxes: "",
       loosePieces: "",
       quantity: "1",
-      unitCost: String(Number(product.costPrice || 0) || ""),
+      unitCost: "",
       damagedQuantity: "",
       supplierBatch: "",
       shade: "",
@@ -362,13 +363,14 @@ export default function ProcurementSuitePage() {
   }
   function linePayload(line: any) {
     const tile = String(line.category || "").toLowerCase() === "tiles";
+    const cost = canViewCost && line.unitCost !== "" ? { unitCost: Number(line.unitCost) } : {};
     return tile
       ? {
           productId: line.productId,
           boxes: Number(line.boxes || 0),
           loosePieces: Number(line.loosePieces || 0),
           piecesPerPack: line.piecesPerPack,
-          unitCost: Number(line.unitCost || 0),
+          ...cost,
           damagedQuantity: Number(line.damagedQuantity || 0),
           supplierBatch: line.supplierBatch || undefined,
           shade: line.shade || undefined,
@@ -379,7 +381,7 @@ export default function ProcurementSuitePage() {
           productId: line.productId,
           quantity: Number(line.quantity || 0),
           receivedQuantity: Number(line.quantity || 0),
-          unitCost: Number(line.unitCost || 0),
+          ...cost,
           damagedQuantity: Number(line.damagedQuantity || 0),
           supplierBatch: line.supplierBatch || undefined,
         };
@@ -389,7 +391,7 @@ export default function ProcurementSuitePage() {
       mode === "demand"
         ? chosenDemands.map((row: any) => ({
             purchaseDemandId: row.id,
-            unitCost: Number(demandCosts[row.id] || 0),
+            ...(canViewCost && demandCosts[row.id] !== undefined && demandCosts[row.id] !== "" ? { unitCost: Number(demandCosts[row.id]) } : {}),
           }))
         : directLines.map(linePayload);
     const response = await createPo({
@@ -443,14 +445,14 @@ export default function ProcurementSuitePage() {
               shade: row.shade || undefined,
               caliber: row.caliber || undefined,
               grade: row.grade || undefined,
-              unitCost: row.unitCost === "" ? undefined : Number(row.unitCost),
+              ...(canViewCost && row.unitCost !== "" ? { unitCost: Number(row.unitCost) } : {}),
             }
           : {
               purchaseOrderLineId: line.id,
               receivedQuantity: Number(row.receivedQuantity || 0),
               damagedQuantity: Number(row.damagedQuantity || 0),
               supplierBatch: row.supplierBatch || undefined,
-              unitCost: row.unitCost === "" ? undefined : Number(row.unitCost),
+              ...(canViewCost && row.unitCost !== "" ? { unitCost: Number(row.unitCost) } : {}),
             };
       })
       .filter(
@@ -779,7 +781,7 @@ export default function ProcurementSuitePage() {
                     <th>Customer / order</th>
                     <th>Required</th>
                     <th>Status / ETA</th>
-                    <th className="pr-4">PO cost / pc</th>
+                    {canViewCost ? <th className="pr-4">PO cost / pc</th> : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--line)]">
@@ -835,7 +837,7 @@ export default function ProcurementSuitePage() {
                             : "No ETA"}
                         </p>
                       </td>
-                      <td className="pr-4">
+                      {canViewCost ? <td className="pr-4">
                         <Input
                           className="w-28"
                           type="number"
@@ -849,7 +851,7 @@ export default function ProcurementSuitePage() {
                           }
                           placeholder="At GRN"
                         />
-                      </td>
+                      </td> : null}
                     </tr>
                   ))}
                   {!loading && !demands.length ? (
@@ -904,7 +906,7 @@ export default function ProcurementSuitePage() {
               products={products}
               onAdd={(p: any) => addProduct(p, "po")}
             />
-            <LineEditor rows={directLines} setRows={setDirectLines} mode="po" />
+            <LineEditor rows={directLines} setRows={setDirectLines} mode="po" canViewCost={canViewCost} />
             {!directLines.length ? (
               <div className="mt-4 rounded-xl border border-dashed border-[#dfb8ad] bg-white/70 p-5 text-center">
                 <ShoppingCart className="mx-auto h-6 w-6 text-[#9f2d29]" />
@@ -1188,6 +1190,7 @@ export default function ProcurementSuitePage() {
                 rows={manualLines}
                 setRows={setManualLines}
                 mode="manual"
+                canViewCost={canViewCost}
               />
               <div className="mt-4">
                 <PoCommercial
@@ -1331,7 +1334,7 @@ export default function ProcurementSuitePage() {
                       <th>Damaged</th>
                       <th>Lot</th>
                       <th>Location</th>
-                      <th>Cost</th>
+                      {canViewCost ? <th>Cost</th> : null}
                       <th className="text-right">Display</th>
                     </tr>
                   </thead>
@@ -1360,7 +1363,7 @@ export default function ProcurementSuitePage() {
                             line.location ||
                             "—"}
                         </td>
-                        <td>{money(line.unitCost)}</td>
+                        {canViewCost ? <td>{money(line.unitCost)}</td> : null}
                         <td className="py-2 text-right">
                           {line.product?.id && line.lot?.id && displayBalance ? (
                             <Button asChild size="sm" variant="outline">
@@ -2063,7 +2066,7 @@ function ProductPicker({ value, setValue, products, onAdd, inputRef }: any) {
     </div>
   );
 }
-function LineEditor({ rows, setRows, mode }: any) {
+function LineEditor({ rows, setRows, mode, canViewCost }: any) {
   return rows.length ? (
     <div className="mt-4 space-y-3">
       {rows.map((row: any) => (
@@ -2136,7 +2139,7 @@ function LineEditor({ rows, setRows, mode }: any) {
                 />
               </Field>
             )}
-            <Field label="Unit cost ₹">
+            {canViewCost ? <Field label="Unit cost ₹">
               <Input
                 type="number"
                 min="0"
@@ -2147,7 +2150,7 @@ function LineEditor({ rows, setRows, mode }: any) {
                   })
                 }
               />
-            </Field>
+            </Field> : null}
             {mode === "manual" ? (
               <>
                 <Field label="Damaged pc">

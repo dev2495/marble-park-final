@@ -1,8 +1,10 @@
+import { BadRequestException } from '@nestjs/common';
 import { Args, Context, Field, ID, InputType, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requireAnyPermission, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProcurementService } from './procurement.service';
+import { assertNoCostInput, procurementCostView } from '../common/cost-visibility';
 
 @InputType()
 class CreatePurchaseOrderInput {
@@ -104,8 +106,8 @@ export class ProcurementResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireSession(this.prisma, ctx);
-    return this.procurement.purchaseDemandQueue({ status, take });
+    const user = await requireSession(this.prisma, ctx);
+    return procurementCostView(await this.procurement.purchaseDemandQueue({ status, take }), user);
   }
 
   @Query(() => [GraphQLJSON])
@@ -114,14 +116,14 @@ export class ProcurementResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireSession(this.prisma, ctx);
-    return this.procurement.purchaseOrders({ status, take });
+    const user = await requireSession(this.prisma, ctx);
+    return procurementCostView(await this.procurement.purchaseOrders({ status, take }), user);
   }
 
   @Query(() => GraphQLJSON)
   async purchaseOrder(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    await requireSession(this.prisma, ctx);
-    return this.procurement.purchaseOrder(id);
+    const user = await requireSession(this.prisma, ctx);
+    return procurementCostView(await this.procurement.purchaseOrder(id), user);
   }
 
   @Query(() => [GraphQLJSON])
@@ -130,14 +132,14 @@ export class ProcurementResolver {
     @Args('purchaseOrderId', { nullable: true }) purchaseOrderId?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireSession(this.prisma, ctx);
-    return this.procurement.goodsReceiptNotes({ purchaseOrderId, take });
+    const user = await requireSession(this.prisma, ctx);
+    return procurementCostView(await this.procurement.goodsReceiptNotes({ purchaseOrderId, take }), user);
   }
 
   @Query(() => GraphQLJSON)
   async procurementSummary(@Context() ctx: GraphqlRequestContext) {
-    await requireSession(this.prisma, ctx);
-    return this.procurement.procurementSummary();
+    const user = await requireSession(this.prisma, ctx);
+    return procurementCostView(await this.procurement.procurementSummary(), user);
   }
 
   @Query(() => GraphQLJSON)
@@ -149,8 +151,8 @@ export class ProcurementResolver {
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requirePermission(this.prisma, ctx, 'procurement.manage', ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
-    return this.procurement.purchaseDemandPage({ search, status, sort, skip, take });
+    const user = await requirePermission(this.prisma, ctx, 'procurement.manage', ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
+    return procurementCostView(await this.procurement.purchaseDemandPage({ search, status, sort, skip, take }), user);
   }
 
   @Query(() => GraphQLJSON)
@@ -164,8 +166,8 @@ export class ProcurementResolver {
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requirePermission(this.prisma, ctx, 'procurement.manage', ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
-    return this.procurement.purchaseOrderPage({ search, status, sort, dateFrom, dateTo, skip, take });
+    const user = await requirePermission(this.prisma, ctx, 'procurement.manage', ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
+    return procurementCostView(await this.procurement.purchaseOrderPage({ search, status, sort, dateFrom, dateTo, skip, take }), user);
   }
 
   @Query(() => GraphQLJSON)
@@ -179,13 +181,14 @@ export class ProcurementResolver {
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requireAnyPermission(this.prisma, ctx, ['procurement.manage', 'goods_receipts.manage'], ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
-    return this.procurement.goodsReceiptPage({ search, source, sort, dateFrom, dateTo, skip, take });
+    const user = await requireAnyPermission(this.prisma, ctx, ['procurement.manage', 'goods_receipts.manage'], ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
+    return procurementCostView(await this.procurement.goodsReceiptPage({ search, source, sort, dateFrom, dateTo, skip, take }), user);
   }
 
   @Mutation(() => GraphQLJSON)
   async createPurchaseOrder(@Args('input') input: CreatePurchaseOrderInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'procurement.manage');
+    assertNoCostInput(input.lines, user, (message) => new BadRequestException(message));
     return this.procurement.createPurchaseOrder(input as any, user.id);
   }
 
@@ -212,12 +215,14 @@ export class ProcurementResolver {
   @Mutation(() => GraphQLJSON)
   async receivePurchaseOrder(@Args('input') input: ReceivePurchaseOrderInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'goods_receipts.manage');
+    assertNoCostInput(input.lines, user, (message) => new BadRequestException(message));
     return this.procurement.receivePurchaseOrder(input as any, user.id);
   }
 
   @Mutation(() => GraphQLJSON)
   async createManualGoodsReceipt(@Args('input') input: ManualGoodsReceiptInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'goods_receipts.manage');
+    assertNoCostInput(input.lines, user, (message) => new BadRequestException(message));
     return this.procurement.createManualGoodsReceipt(input as any, user.id);
   }
 }

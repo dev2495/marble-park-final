@@ -95,7 +95,7 @@ export class InventoryService {
             COALESCE(SUM(lb."hold"), 0)::double precision AS "hold",
             COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged",
             COALESCE(SUM(CASE WHEN lot."unitCost" <= 0 THEN lb."onHand" ELSE 0 END), 0)::double precision AS "missingCostQuantity",
-            MAX(product."sellPrice")::double precision AS "sellPrice",
+            MAX(product."defaultNrpInclusive")::double precision AS "defaultNrpInclusive",
             policy."lowStockThreshold", policy."criticalStockThreshold"
           FROM "InventoryBalance" policy
           INNER JOIN "Product" product ON product."id" = policy."productId"
@@ -109,7 +109,7 @@ export class InventoryService {
             (${stockState} = 'out_of_stock' AND "available" = 0) OR
             (${stockState} = 'reserved' AND "reserved" > 0) OR
             (${stockState} = 'available' AND "available" > 0) OR
-            (${stockState} = 'data_exception' AND ("missingCostQuantity" > 0 OR "sellPrice" <= 0)) OR
+            (${stockState} = 'data_exception' AND ("missingCostQuantity" > 0 OR COALESCE("defaultNrpInclusive", 0) <= 0)) OR
             (${stockState} IN ('low_stock', 'critical') AND COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0)) OR
             (${stockState} IN ('low_stock', 'warning') AND "lowStockThreshold" > 0 AND "available" <= "lowStockThreshold"
               AND NOT (COALESCE("criticalStockThreshold", 0) > 0 AND "available" <= COALESCE("criticalStockThreshold", 0))))
@@ -182,8 +182,8 @@ export class InventoryService {
         stockState: available === 0 ? 'out_of_stock' : isAlertingState(alertState) ? 'low_stock' : reserved > 0 ? 'reserved' : 'available',
         onHandValue: Number(scoped.onHandValue || 0),
         availableValue: Number(scoped.availableValue || 0),
-        retailValue: available * Number(row.product?.sellPrice || 0),
-        completenessCodes: [Number(row.product?.sellPrice || 0) <= 0 ? 'LIST_RATE_MISSING' : null, Number(scoped.missingCostQuantity || 0) > 0 ? 'LOT_COST_MISSING' : null].filter(Boolean),
+        retailValue: available * Number(row.product?.defaultNrpInclusive || 0),
+        completenessCodes: [Number(row.product?.defaultNrpInclusive || 0) <= 0 ? 'DEFAULT_NRP_MISSING' : null, Number(scoped.missingCostQuantity || 0) > 0 ? 'LOT_COST_MISSING' : null].filter(Boolean),
         lots: (lotsByProduct.get(row.productId) || []).slice(0, 10).map((lot: any) => ({
           id: lot.id, lotNumber: lot.lotNumber, sourceType: lot.sourceType, sourceId: lot.sourceId,
           qualityStatus: lot.qualityStatus, receivedAt: lot.receivedAt, unitCost: Number(lot.unitCost || 0),
@@ -221,7 +221,7 @@ export class InventoryService {
     else if (args.stockState === 'warning') conditions.push(Prisma.sql`b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold"
       AND NOT (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0))`);
     else if (args.stockState === 'critical') conditions.push(Prisma.sql`COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0)`);
-    else if (args.stockState === 'data_exception') conditions.push(Prisma.sql`(b."missingCostQuantity" > 0 OR COALESCE(p."sellPrice", 0) <= 0)`);
+    else if (args.stockState === 'data_exception') conditions.push(Prisma.sql`(b."missingCostQuantity" > 0 OR COALESCE(p."defaultNrpInclusive", 0) <= 0)`);
     if (args.lotState === 'hold') conditions.push(Prisma.sql`b."hold" > 0`);
     else if (args.lotState === 'damaged') conditions.push(Prisma.sql`b."damaged" > 0`);
     const where = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
@@ -260,8 +260,8 @@ export class InventoryService {
           AND NOT (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0)))::int AS "warningStock",
         COUNT(*) FILTER (WHERE b."available" = 0)::int AS "outOfStock",
         COALESCE(SUM(b."onHandValue"), 0)::double precision AS "onHandValue",
-        COALESCE(SUM(b."available" * COALESCE(p."sellPrice", 0)), 0)::double precision AS "retailValue",
-        COUNT(*) FILTER (WHERE COALESCE(p."sellPrice", 0) <= 0)::int AS "zeroSellPrice",
+        COALESCE(SUM(b."available" * COALESCE(p."defaultNrpInclusive", 0)), 0)::double precision AS "retailValue",
+        COUNT(*) FILTER (WHERE COALESCE(p."defaultNrpInclusive", 0) <= 0)::int AS "zeroDefaultNrp",
         COUNT(*) FILTER (WHERE b."missingCostQuantity" > 0)::int AS "zeroCostOnHand",
         COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM "InventoryLot" lot WHERE lot."productId" = p."id" AND lot."status" = 'active' AND lot."receivedAt" < NOW() - INTERVAL '180 days'))::int AS "staleStock"
       ${source} ${where}
@@ -274,7 +274,7 @@ export class InventoryService {
     return {
       total: Number(row.total || 0), available: Number(row.available || 0), reserved: Number(row.reserved || 0), hold: Number(row.hold || 0), damaged: Number(row.damaged || 0),
       lowStock: Number(row.lowStock || 0), criticalStock: Number(row.criticalStock || 0), warningStock: Number(row.warningStock || 0), outOfStock: Number(row.outOfStock || 0), productCount: Number(row.productCount || 0),
-      onHandValue: Number(row.onHandValue || 0), retailValue: Number(row.retailValue || 0), zeroSellPrice: Number(row.zeroSellPrice || 0), zeroCostOnHand: Number(row.zeroCostOnHand || 0), staleStock: Number(row.staleStock || 0),
+      onHandValue: Number(row.onHandValue || 0), retailValue: Number(row.retailValue || 0), zeroDefaultNrp: Number(row.zeroDefaultNrp || 0), zeroCostOnHand: Number(row.zeroCostOnHand || 0), staleStock: Number(row.staleStock || 0),
       inbound: Math.max(0, Number(demand._sum.quantity || 0) - Number(demand._sum.receivedQuantity || 0)),
     };
   }
@@ -587,10 +587,10 @@ export class InventoryService {
         COUNT(*) FILTER (WHERE b."available" = 0)::int AS "outOfStock",
         COALESCE(SUM(b."onHandValue"), 0)::double precision AS "onHandValue",
         COALESCE(SUM(b."availableValue"), 0)::double precision AS "availableValue",
-        COALESCE(SUM(b."available" * COALESCE(p."sellPrice", 0)), 0)::double precision AS "retailValue",
-        COUNT(*) FILTER (WHERE COALESCE(p."sellPrice", 0) <= 0)::int AS "zeroSellPrice",
+        COALESCE(SUM(b."available" * COALESCE(p."defaultNrpInclusive", 0)), 0)::double precision AS "retailValue",
+        COUNT(*) FILTER (WHERE COALESCE(p."defaultNrpInclusive", 0) <= 0)::int AS "zeroDefaultNrp",
         COUNT(*) FILTER (WHERE b."missingCostQuantity" > 0)::int AS "zeroCostOnHand",
-        COUNT(*) FILTER (WHERE COALESCE(p."sellPrice", 0) > 0)::int AS "priceCompleteProducts"
+        COUNT(*) FILTER (WHERE COALESCE(p."defaultNrpInclusive", 0) > 0)::int AS "priceCompleteProducts"
       FROM truth b
       INNER JOIN "Product" p ON p."id" = b."productId"
     `) as any[];
@@ -606,7 +606,7 @@ export class InventoryService {
       onHandValue: Number(row.onHandValue || 0),
       availableValue: Number(row.availableValue || 0),
       retailValue: Number(row.retailValue || 0),
-      zeroSellPrice: Number(row.zeroSellPrice || 0),
+      zeroDefaultNrp: Number(row.zeroDefaultNrp || 0),
       zeroCostOnHand: Number(row.zeroCostOnHand || 0),
       priceCompleteProducts: Number(row.priceCompleteProducts || 0),
     };
@@ -708,7 +708,7 @@ export class InventoryService {
         quantity,
         available,
         shortage: Math.max(0, quantity - available),
-        sellPrice: Number(product?.sellPrice || 0),
+        defaultNrpInclusive: Number(product?.defaultNrpInclusive || 0),
         purchaseStatus: demand?.status || 'demand_pending',
         vendorName: demand?.vendorName || product?.brand || '',
         expectedDate: demand?.expectedDate || null,

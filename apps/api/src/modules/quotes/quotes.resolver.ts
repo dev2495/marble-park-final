@@ -30,6 +30,14 @@ export class QuoteOutput {
   @Field(() => Number, { nullable: true })
   discountPercent?: number;
 
+  @Field(() => Number, { nullable: true })
+  commercialTotal?: number;
+
+  @Field({ nullable: true }) quoteDiscountMode?: string;
+  @Field(() => Number, { nullable: true }) quoteDiscountValue?: number;
+  @Field({ nullable: true }) pricingVersion?: string;
+  @Field({ nullable: true }) pricingStatus?: string;
+
   @Field({ nullable: true })
   displayMode?: string;
 
@@ -310,6 +318,28 @@ export class QuotesResolver {
     return requireSession(this.prisma, ctx).then((user) =>
       this.quotes.findAll({ leadId, customerId, ownerId: canManageQuotes(user) ? ownerId : user.id, status, architectId, take, skip }),
     );
+  }
+
+  @Query(() => GraphQLJSON)
+  async quotePage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('customerSearch', { nullable: true }) customerSearch?: string,
+    @Args('ownerSearch', { nullable: true }) ownerSearch?: string,
+    @Args('ownerId', { nullable: true }) ownerId?: string,
+    @Args('architectId', { nullable: true }) architectId?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('dateFrom', { type: () => Date, nullable: true }) dateFrom?: Date,
+    @Args('dateTo', { type: () => Date, nullable: true }) dateTo?: Date,
+    @Args('sort', { nullable: true }) sort?: string,
+    @Args('skip', { type: () => Number, nullable: true }) skip?: number,
+    @Args('take', { type: () => Number, nullable: true }) take?: number,
+  ) {
+    const user = await requireSession(this.prisma, ctx);
+    return this.quotes.quotePage({
+      search, customerSearch, ownerSearch, architectId, status, dateFrom, dateTo, sort, skip, take,
+      ownerId: canManageQuotes(user) ? ownerId : user.id,
+    });
   }
 
   @Query(() => QuoteOutput)

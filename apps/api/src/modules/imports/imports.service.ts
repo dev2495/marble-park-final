@@ -30,16 +30,22 @@ type NormalizedProductRow = {
   coveragePerPack: number;
   hsnCode: string;
   taxClass: string;
-  sellPrice: number;
-  floorPrice: number;
-  costPrice: number;
+  defaultMrpInclusive: number;
+  defaultNrpInclusive: number;
+  priceRateBasis: string;
+  priceUom: string;
+  mrpSource: string;
+  pricingEffectiveFrom: string;
   hasBrand: boolean;
   hasFinish: boolean;
   hasDimensions: boolean;
   hasUnit: boolean;
-  hasSellPrice: boolean;
-  hasFloorPrice: boolean;
-  hasCostPrice: boolean;
+  hasDefaultMrpInclusive: boolean;
+  hasDefaultNrpInclusive: boolean;
+  hasPriceRateBasis: boolean;
+  hasPriceUom: boolean;
+  hasMrpSource: boolean;
+  hasPricingEffectiveFrom: boolean;
   hasDescription: boolean;
   description: string;
   range: string;
@@ -70,9 +76,12 @@ type ProductImportReviewRow = {
   salesUom?: unknown;
   piecesPerPack?: unknown;
   coveragePerPack?: unknown;
-  sellPrice?: unknown;
-  floorPrice?: unknown;
-  costPrice?: unknown;
+  defaultMrpInclusive?: unknown;
+  defaultNrpInclusive?: unknown;
+  priceRateBasis?: unknown;
+  priceUom?: unknown;
+  mrpSource?: unknown;
+  pricingEffectiveFrom?: unknown;
   taxClass?: unknown;
   hsnCode?: unknown;
   allowLoose?: unknown;
@@ -85,8 +94,8 @@ type ProductImportReviewRow = {
 
 const PRODUCT_IMPORT_HEADERS = [
   'SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Material', 'Tile Size / Dimensions',
-  'Base UOM', 'Purchase UOM', 'Sales UOM', 'Pieces Per Pack', 'Coverage Per Pack', 'Sell Price', 'Floor Price',
-  'Default Purchase Cost', 'Tax Code', 'HSN Code', 'Allow Loose', 'Range / Series', 'Image URL', 'Product Image', 'Description',
+  'Base UOM', 'Purchase UOM', 'Sales UOM', 'Pieces Per Pack', 'Coverage Per Pack', 'Default MRP Incl GST', 'Default NRP Incl GST',
+  'Price Basis', 'Price UOM', 'MRP Source', 'Pricing Effective From', 'Tax Code', 'HSN Code', 'Allow Loose', 'Range / Series', 'Image URL', 'Product Image', 'Description',
   'Tile Design Code', 'Tile Design Name',
 ];
 const PRODUCT_IMPORT_DISPLAY_HEADERS = PRODUCT_IMPORT_HEADERS.map((header) =>
@@ -429,7 +438,7 @@ export class ImportsService {
     const headerByField: Record<string, string> = {
       sku: 'SKU', internalCode: 'Internal Code', name: 'Product Name', category: 'Category', brand: 'Brand', finish: 'Finish',
       material: 'Material', dimensions: 'Tile Size / Dimensions', baseUom: 'Base UOM', purchaseUom: 'Purchase UOM', salesUom: 'Sales UOM',
-      piecesPerPack: 'Pieces Per Pack', coveragePerPack: 'Coverage Per Pack', sellPrice: 'Sell Price', floorPrice: 'Floor Price', costPrice: 'Default Purchase Cost',
+      piecesPerPack: 'Pieces Per Pack', coveragePerPack: 'Coverage Per Pack', defaultMrpInclusive: 'Default MRP Incl GST', defaultNrpInclusive: 'Default NRP Incl GST', priceRateBasis: 'Price Basis', priceUom: 'Price UOM', mrpSource: 'MRP Source', pricingEffectiveFrom: 'Pricing Effective From',
       taxClass: 'Tax Code', hsnCode: 'HSN Code', allowLoose: 'Allow Loose', range: 'Range / Series', imageUrl: 'Image URL', description: 'Description', designCode: 'Tile Design Code', designName: 'Tile Design Name',
     };
     for (const review of reviewed) {
@@ -449,7 +458,7 @@ export class ImportsService {
     if (value.length > MAX_IMPORT_ROWS) throw new BadRequestException(`A review can contain at most ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} rows.`);
     const allowed = new Set([
       'sku', 'internalCode', 'name', 'category', 'brand', 'finish', 'material', 'dimensions', 'baseUom', 'purchaseUom', 'salesUom',
-      'piecesPerPack', 'coveragePerPack', 'sellPrice', 'floorPrice', 'costPrice', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description', 'designCode', 'designName',
+      'piecesPerPack', 'coveragePerPack', 'defaultMrpInclusive', 'defaultNrpInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description', 'designCode', 'designName',
     ]);
     const identities = new Set<string>();
     const rows = value.map((input: any) => {
@@ -480,7 +489,7 @@ export class ImportsService {
 
     const parsed = rawRows.map((raw) => {
       const normalized = this.normalizeProductRow(raw);
-      const errors = this.validateNormalizedRow(normalized);
+      const errors = [...this.deprecatedPricingHeaderErrors(raw), ...this.validateNormalizedRow(normalized)];
       if (raw.__embeddedImageError) errors.push(raw.__embeddedImageError);
       return { raw, normalized, errors };
     });
@@ -602,9 +611,12 @@ export class ImportsService {
         salesUom: row.normalized.salesUom,
         piecesPerPack: row.normalized.piecesPerPack,
         coveragePerPack: row.normalized.coveragePerPack,
-        sellPrice: row.normalized.sellPrice,
-        floorPrice: row.normalized.floorPrice,
-        costPrice: row.normalized.costPrice,
+        defaultMrpInclusive: row.normalized.defaultMrpInclusive,
+        defaultNrpInclusive: row.normalized.defaultNrpInclusive,
+        priceRateBasis: row.normalized.priceRateBasis,
+        priceUom: row.normalized.priceUom,
+        mrpSource: row.normalized.mrpSource,
+        pricingEffectiveFrom: row.normalized.pricingEffectiveFrom,
         taxClass: row.normalized.taxClass,
         hsnCode: row.normalized.hsnCode,
         allowLoose: row.normalized.allowLoose,
@@ -618,9 +630,12 @@ export class ImportsService {
           salesUom: row.normalized.hasSalesUom,
           piecesPerPack: row.normalized.hasPiecesPerPack,
           coveragePerPack: row.normalized.hasCoveragePerPack,
-          sellPrice: row.normalized.hasSellPrice,
-          floorPrice: row.normalized.hasFloorPrice,
-          costPrice: row.normalized.hasCostPrice,
+          defaultMrpInclusive: row.normalized.hasDefaultMrpInclusive,
+          defaultNrpInclusive: row.normalized.hasDefaultNrpInclusive,
+          priceRateBasis: row.normalized.hasPriceRateBasis,
+          priceUom: row.normalized.hasPriceUom,
+          mrpSource: row.normalized.hasMrpSource,
+          pricingEffectiveFrom: row.normalized.hasPricingEffectiveFrom,
           taxClass: row.normalized.hasTaxClass,
           allowLoose: row.normalized.hasAllowLoose,
         },
@@ -712,16 +727,36 @@ export class ImportsService {
     if (!row.hasTaxClass) errors.push('Tax Code is required');
     if (this.key(row.category) === 'tiles' && (!row.hasDesignCode || !row.designCode)) errors.push('Tile Design Code is required for Tiles so all size and finish variants share one governed design');
     if (this.key(row.category) === 'tiles' && (!row.hasDesignName || !row.designName)) errors.push('Tile Design Name is required for Tiles and remains independent of the size/finish variant name');
-    if (row.hasSellPrice && (!Number.isFinite(row.sellPrice) || row.sellPrice < 0)) errors.push('Sell Price must be zero or greater');
-    if (row.hasFloorPrice && (!Number.isFinite(row.floorPrice) || row.floorPrice < 0)) errors.push('Floor/dealer price must be zero or greater');
-    if (row.hasCostPrice && (!Number.isFinite(row.costPrice) || row.costPrice < 0)) errors.push('Default purchase cost must be zero or greater');
-    if (row.hasFloorPrice && row.sellPrice > 0 && row.floorPrice > row.sellPrice) errors.push('Floor price cannot exceed sell price');
+    if (row.hasDefaultMrpInclusive && (!Number.isFinite(row.defaultMrpInclusive) || row.defaultMrpInclusive <= 0)) errors.push('Default MRP incl GST must be greater than zero');
+    if (row.hasDefaultNrpInclusive && (!Number.isFinite(row.defaultNrpInclusive) || row.defaultNrpInclusive <= 0)) errors.push('Default NRP incl GST must be greater than zero');
+    if (row.hasDefaultMrpInclusive !== row.hasDefaultNrpInclusive) errors.push('Default MRP and Default NRP must be supplied together or both left blank');
+    if (row.hasDefaultMrpInclusive && row.defaultNrpInclusive > row.defaultMrpInclusive) errors.push('Default NRP cannot exceed Default MRP');
+    if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !['BOX', 'PIECE', 'AREA'].includes(row.priceRateBasis)) errors.push('Price Basis must be BOX, PIECE, or AREA when defaults are supplied');
+    if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !row.priceUom) errors.push('Price UOM is required when defaults are supplied');
+    if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !row.mrpSource) errors.push('MRP Source is required when price defaults are supplied');
+    if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && (!row.pricingEffectiveFrom || !Number.isFinite(new Date(row.pricingEffectiveFrom).getTime()))) errors.push('Pricing Effective From must be a valid date when defaults are supplied');
     if (!Number.isInteger(row.piecesPerPack) || row.piecesPerPack <= 0) errors.push('Pieces per pack must be a positive whole number');
     if (!Number.isFinite(row.coveragePerPack) || row.coveragePerPack < 0) errors.push('Coverage per pack must be zero or greater');
     if (row.imageUrl && row.imageUrl !== '__embedded_excel_image__' && !/^(https:\/\/|\/catalogue-images\/)/i.test(row.imageUrl)) {
       errors.push('Image URL must use HTTPS or a managed /catalogue-images/ path');
     }
     return errors;
+  }
+
+  private deprecatedPricingHeaderErrors(raw: Record<string, unknown>) {
+    const deprecated = new Map([
+      ['sellprice', 'Sell Price'],
+      ['floorprice', 'Floor Price'],
+      ['defaultpurchasecost', 'Default Purchase Cost'],
+      ['costprice', 'Cost Price'],
+      ['listprice', 'List Price'],
+    ]);
+    const found = Object.keys(raw)
+      .map((header) => deprecated.get(this.normalizeHeader(header)))
+      .filter((header): header is string => Boolean(header));
+    return found.length
+      ? [`Deprecated pricing header(s): ${Array.from(new Set(found)).join(', ')}. Use Default MRP Incl GST, Default NRP Incl GST, Price Basis, Price UOM, MRP Source and Pricing Effective From.`]
+      : [];
   }
 
   private detectHeaders(worksheet: any) {
@@ -775,9 +810,12 @@ export class ImportsService {
       }
       return undefined;
     };
-    const price = pick('MRP', 'Price', 'SELL PRICE', 'Sell Price', 'Selling Price', 'MRP INR', 'MRP(INR)', 'List Price', 'Amount', 'Rate');
-    const floorPrice = pick('Floor Price', 'FLOOR PRICE', 'Dealer Price', 'Net Price', 'Special Rate');
-    const costPrice = pick('Default Purchase Cost', 'Purchase Cost', 'Cost Price', 'Landed Cost', 'Unit Cost');
+    const defaultMrpInclusive = pick('Default MRP Incl GST');
+    const defaultNrpInclusive = pick('Default NRP Incl GST');
+    const priceRateBasis = pick('Price Basis');
+    const priceUom = pick('Price UOM');
+    const mrpSource = pick('MRP Source');
+    const pricingEffectiveFrom = pick('Pricing Effective From');
     const category = this.cleanText(pick('Category', 'CATEGORY', 'Product Category', 'Group', 'Type'));
     const brand = this.cleanText(pick('Brand', 'BRAND', 'Make', 'Company'));
     const finish = this.cleanText(pick('Finish', 'FINISH', 'Color', 'Colour', 'Surface', 'Shade'));
@@ -820,16 +858,22 @@ export class ImportsService {
       coveragePerPack: this.number(pick('Coverage Per Pack', 'Coverage/Box', 'SQFT/BOX', 'SQM/BOX', 'Box Coverage'), 0),
       hsnCode: this.cleanText(pick('HSN', 'HSN Code', 'HSN/SAC')),
       taxClass: this.normalizeTaxClass(taxClassValue),
-      sellPrice: this.money(price),
-      floorPrice: this.money(floorPrice),
-      costPrice: this.money(costPrice),
+      defaultMrpInclusive: this.money(defaultMrpInclusive),
+      defaultNrpInclusive: this.money(defaultNrpInclusive),
+      priceRateBasis: String(priceRateBasis || '').trim().toUpperCase(),
+      priceUom: String(priceUom || '').trim().toUpperCase(),
+      mrpSource: this.cleanText(mrpSource),
+      pricingEffectiveFrom: this.cleanText(pricingEffectiveFrom),
       hasBrand: Boolean(brand),
       hasFinish: Boolean(finish),
       hasDimensions: Boolean(dimensions),
       hasUnit: unit !== undefined,
-      hasSellPrice: price !== undefined,
-      hasFloorPrice: floorPrice !== undefined,
-      hasCostPrice: costPrice !== undefined,
+      hasDefaultMrpInclusive: defaultMrpInclusive !== undefined,
+      hasDefaultNrpInclusive: defaultNrpInclusive !== undefined,
+      hasPriceRateBasis: priceRateBasis !== undefined,
+      hasPriceUom: priceUom !== undefined,
+      hasMrpSource: mrpSource !== undefined,
+      hasPricingEffectiveFrom: pricingEffectiveFrom !== undefined,
       hasDescription: Boolean(description),
       description,
       range: this.cleanText(pick('Range / Series', 'Range', 'RANGE', 'Series', 'Collection')) || '',
@@ -846,7 +890,7 @@ export class ImportsService {
   }
 
   private async applyProductRowTx(tx: any, normalized: NormalizedProductRow, uploadedBy: string): Promise<any> {
-    const { sku, name, category, brand, finish, dimensions, sellPrice } = normalized;
+    const { sku, name, category, brand, finish, dimensions } = normalized;
     const masters = await this.ensureProductMastersTx(tx, normalized);
     const media = normalized.imageUrl && normalized.imageUrl !== '__embedded_excel_image__'
       ? { primaryUrl: normalized.imageUrl, gallery: [{ url: normalized.imageUrl }], source: 'excel-import', exactSkuMatch: true }
@@ -882,9 +926,16 @@ export class ImportsService {
         trackLots: true,
         allowLoose: normalized.allowLoose,
         tags: [],
-        sellPrice,
-        floorPrice: normalized.floorPrice,
-        costPrice: normalized.costPrice,
+        sellPrice: 0,
+        floorPrice: 0,
+        costPrice: 0,
+        defaultMrpInclusive: normalized.hasDefaultMrpInclusive ? normalized.defaultMrpInclusive : null,
+        defaultNrpInclusive: normalized.hasDefaultNrpInclusive ? normalized.defaultNrpInclusive : null,
+        priceRateBasis: normalized.hasPriceRateBasis ? normalized.priceRateBasis : null,
+        priceUom: normalized.hasPriceUom ? normalized.priceUom : null,
+        mrpSource: normalized.hasMrpSource ? normalized.mrpSource : null,
+        pricingEffectiveFrom: normalized.hasPricingEffectiveFrom ? new Date(normalized.pricingEffectiveFrom) : null,
+        pricingVersion: 'unified_retail_v1',
         taxClass: normalized.taxClass,
         status: 'active',
         media: media || {},
@@ -1058,9 +1109,16 @@ export class ImportsService {
       trackLots: true,
       allowLoose: normalized.allowLoose,
       tags: [],
-      sellPrice: normalized.sellPrice,
-      floorPrice: normalized.floorPrice,
-      costPrice: normalized.costPrice,
+      sellPrice: 0,
+      floorPrice: 0,
+      costPrice: 0,
+      defaultMrpInclusive: normalized.hasDefaultMrpInclusive ? normalized.defaultMrpInclusive : null,
+      defaultNrpInclusive: normalized.hasDefaultNrpInclusive ? normalized.defaultNrpInclusive : null,
+      priceRateBasis: normalized.hasPriceRateBasis ? normalized.priceRateBasis : null,
+      priceUom: normalized.hasPriceUom ? normalized.priceUom : null,
+      mrpSource: normalized.hasMrpSource ? normalized.mrpSource : null,
+      pricingEffectiveFrom: normalized.hasPricingEffectiveFrom ? new Date(normalized.pricingEffectiveFrom) : null,
+      pricingVersion: 'unified_retail_v1',
       taxClass: normalized.taxClass,
       status: 'active',
       media,

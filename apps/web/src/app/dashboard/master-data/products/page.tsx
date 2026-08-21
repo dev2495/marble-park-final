@@ -16,13 +16,13 @@ const MASTER_DATA = gql`
 const GET_PRODUCTS = gql`
   query ProductRegister($search: String, $take: Int, $skip: Int, $includeInactive: Boolean) {
     products(search: $search, take: $take, skip: $skip, includeInactive: $includeInactive) {
-      id sku internalCode name category brand finish dimensions unit sellPrice floorPrice costPrice mrp mrpRateBasis mrpVerifiedAt mrpVerifiedById mrpSource taxClass status description media updatedAt
+      id sku internalCode name category brand finish dimensions unit defaultMrpInclusive defaultNrpInclusive priceRateBasis priceUom mrpVerifiedAt mrpVerifiedById mrpSource pricingEffectiveFrom pricingVersion taxClass status description media updatedAt
       categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
     }
   }
 `;
 const CREATE_PRODUCT = gql`mutation CreateProduct($input: CreateProductInput!) { createProduct(input: $input) {
-  id sku internalCode name category brand finish dimensions unit sellPrice floorPrice costPrice mrp mrpRateBasis mrpVerifiedAt mrpVerifiedById mrpSource taxClass status description media updatedAt
+  id sku internalCode name category brand finish dimensions unit defaultMrpInclusive defaultNrpInclusive priceRateBasis priceUom mrpVerifiedAt mrpVerifiedById mrpSource pricingEffectiveFrom pricingVersion taxClass status description media updatedAt
   categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
 } }`;
 const UPDATE_PRODUCT = gql`mutation UpdateProduct($id: ID!, $input: UpdateProductInput!) { updateProduct(id: $id, input: $input) { id sku updatedAt status } }`;
@@ -36,7 +36,7 @@ const UPLOAD_ASSET = gql`
 const emptyProduct = {
   sku: '', internalCode: '', name: '', category: '', brand: '', finish: '', dimensions: '', unit: 'PC',
   materialId: '', tileSizeId: '', baseUom: 'PC', purchaseUom: 'PC', salesUom: 'PC', piecesPerPack: '1', coveragePerPack: '', hsnCode: '', allowLoose: false,
-  sellPrice: '', floorPrice: '', costPrice: '', mrp: '', mrpRateBasis: 'PIECE', mrpSource: 'MANUAL', mrpVerifiedAt: '', taxClass: 'GST_18', description: '', status: 'active',
+  defaultMrpInclusive: '', defaultNrpInclusive: '', priceRateBasis: 'PIECE', priceUom: 'PC', mrpSource: 'MANUAL', mrpVerifiedAt: '', pricingEffectiveFrom: '', taxClass: 'GST_18', description: '', status: 'active',
   updatedAt: '', images: [] as string[],
 };
 
@@ -114,8 +114,8 @@ export default function ProductMasterPage() {
     setSelectedId(product.id);
     setForm({
       sku: product.sku || '', internalCode: product.internalCode || product.sku || '', name: product.name || '', category: product.category || '', brand: product.brand || '', finish: product.finish || '',
-      dimensions: product.dimensions || '', unit: product.unit || 'PC', sellPrice: String(product.sellPrice ?? ''), floorPrice: String(product.floorPrice ?? ''), costPrice: String(product.costPrice ?? ''),
-      mrp: product.mrp === null || product.mrp === undefined ? '' : String(product.mrp), mrpRateBasis: product.mrpRateBasis || 'PIECE', mrpSource: product.mrpSource || 'MANUAL', mrpVerifiedAt: product.mrpVerifiedAt || '',
+      dimensions: product.dimensions || '', unit: product.unit || 'PC', defaultMrpInclusive: product.defaultMrpInclusive == null ? '' : String(product.defaultMrpInclusive), defaultNrpInclusive: product.defaultNrpInclusive == null ? '' : String(product.defaultNrpInclusive),
+      priceRateBasis: product.priceRateBasis || 'PIECE', priceUom: product.priceUom || product.salesUom || 'PC', mrpSource: product.mrpSource || 'MANUAL', mrpVerifiedAt: product.mrpVerifiedAt || '', pricingEffectiveFrom: product.pricingEffectiveFrom ? String(product.pricingEffectiveFrom).slice(0, 10) : '',
       taxClass: product.taxClass || 'GST_18', description: product.description || '', status: product.status || 'active', updatedAt: product.updatedAt || '',
       materialId: product.materialId || '', tileSizeId: product.tileSizeId || '', baseUom: product.baseUom || 'PC', purchaseUom: product.purchaseUom || 'PC',
       salesUom: product.salesUom || 'PC', piecesPerPack: String(product.piecesPerPack || 1), coveragePerPack: String(product.coveragePerPack || ''),
@@ -171,15 +171,22 @@ export default function ProductMasterPage() {
       hsnCode: form.hsnCode || (isEditing ? '' : undefined),
     };
     if (isEditing || form.images.length) shared.media = mediaPayload(form.images);
-    if (form.sellPrice !== '' || isEditing) shared.sellPrice = Number(form.sellPrice || 0);
-    if (form.floorPrice !== '' || isEditing) shared.floorPrice = Number(form.floorPrice || 0);
-    if (form.costPrice !== '' || isEditing) shared.costPrice = Number(form.costPrice || 0);
-    if (form.mrp !== '') {
-      shared.mrp = Number(form.mrp);
-      shared.mrpRateBasis = form.mrpRateBasis;
+    if (form.defaultMrpInclusive !== '') {
+      shared.defaultMrpInclusive = Number(form.defaultMrpInclusive);
+      shared.priceRateBasis = form.priceRateBasis;
+      shared.priceUom = form.priceUom;
       shared.mrpSource = form.mrpSource;
+      shared.pricingEffectiveFrom = form.pricingEffectiveFrom || undefined;
     } else if (isEditing) {
-      shared.mrp = null;
+      shared.defaultMrpInclusive = null;
+    }
+    if (form.defaultNrpInclusive !== '') {
+      shared.defaultNrpInclusive = Number(form.defaultNrpInclusive);
+      shared.priceRateBasis = form.priceRateBasis;
+      shared.priceUom = form.priceUom;
+      shared.pricingEffectiveFrom = form.pricingEffectiveFrom || undefined;
+    } else if (isEditing) {
+      shared.defaultNrpInclusive = null;
     }
     if (isTile) {
       Object.assign(shared, {
@@ -316,15 +323,16 @@ export default function ProductMasterPage() {
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Dimensions <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input value={form.dimensions} onChange={(event) => setForm({ ...form, dimensions: event.target.value })} /></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Tax class</span><select value={form.taxClass} onChange={(event) => setForm({ ...form, taxClass: event.target.value, hsnCode: taxCodes.find((item: any) => item.code === event.target.value)?.hsnCode || form.hsnCode })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm">{taxCodes.map((item: any) => <option key={item.code} value={item.code}>{item.name} · {item.rate}%</option>)}</select></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">HSN code <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input value={form.hsnCode} onChange={(event) => setForm({ ...form, hsnCode: event.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Sell price <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input type="number" min={0} value={form.sellPrice} onChange={(event) => setForm({ ...form, sellPrice: event.target.value })} /></label>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Floor price <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input type="number" min={0} value={form.floorPrice} onChange={(event) => setForm({ ...form, floorPrice: event.target.value })} /></label>
-          <div className="grid gap-3 border-y border-[#fee2e2] bg-[#fffafa] px-1 py-4 md:col-span-2 md:grid-cols-3">
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Verified default MRP <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input type="number" min={0.01} step="0.01" value={form.mrp} onChange={(event) => setForm({ ...form, mrp: event.target.value })} placeholder="Tax-inclusive" /></label>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP basis</span><select value={form.mrpRateBasis} onChange={(event) => setForm({ ...form, mrpRateBasis: event.target.value })} disabled={!form.mrp} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="PACK">Box / pack</option><option value="PIECE">Piece</option><option value="AREA">Area</option></select></label>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP evidence</span><select value={form.mrpSource} onChange={(event) => setForm({ ...form, mrpSource: event.target.value })} disabled={!form.mrp} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
-            <p className="text-[11px] leading-5 text-[#71717a] md:col-span-3">This value only suggests MRP when the quotation basis matches. The quote creator still confirms the tax-inclusive MRP on each commercial line.{form.mrpVerifiedAt ? ` Last verified ${new Date(form.mrpVerifiedAt).toLocaleString('en-IN')}.` : ''}</p>
+          <div className="grid gap-3 rounded-xl bg-[#f8f4ef] p-4 md:col-span-2 md:grid-cols-2 xl:grid-cols-3">
+            <div className="md:col-span-2 xl:col-span-3"><p className="text-xs font-black uppercase tracking-[0.18em] text-[#9f342d]">Optional selling defaults</p><p className="mt-1 text-xs leading-5 text-[#52525b]">MRP and Normal Retail Price (NRP) are tax-inclusive suggestions for a matching UOM. Procurement and lot cost never come from Product Master.</p></div>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Default MRP ₹ incl. GST</span><Input type="number" min={0.01} step="0.01" value={form.defaultMrpInclusive} onChange={(event) => setForm({ ...form, defaultMrpInclusive: event.target.value })} placeholder="Optional" /></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Default NRP ₹ incl. GST</span><Input type="number" min={0.01} step="0.01" value={form.defaultNrpInclusive} onChange={(event) => setForm({ ...form, defaultNrpInclusive: event.target.value })} placeholder="Optional · must be ≤ MRP" /></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price basis</span><select value={form.priceRateBasis} onChange={(event) => setForm({ ...form, priceRateBasis: event.target.value })} disabled={!form.defaultMrpInclusive && !form.defaultNrpInclusive} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="BOX">Box</option><option value="PIECE">Piece</option><option value="AREA">Area</option></select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price UOM</span><select value={form.priceUom} onChange={(event) => setForm({ ...form, priceUom: event.target.value })} disabled={!form.defaultMrpInclusive && !form.defaultNrpInclusive} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50">{uoms.map((item: any) => <option key={item.code} value={item.code}>{item.code} · {item.name}</option>)}</select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP source</span><select value={form.mrpSource} onChange={(event) => setForm({ ...form, mrpSource: event.target.value })} disabled={!form.defaultMrpInclusive} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Effective from</span><Input type="date" value={form.pricingEffectiveFrom} onChange={(event) => setForm({ ...form, pricingEffectiveFrom: event.target.value })} disabled={!form.defaultMrpInclusive && !form.defaultNrpInclusive} /></label>
+            <p className="text-[11px] leading-5 text-[#71717a] md:col-span-2 xl:col-span-3">A quote must still confirm its immutable MRP and NRP snapshot. Changing these defaults never changes an existing quote, order, invoice or credit note.{form.mrpVerifiedAt ? ` Last MRP verification ${new Date(form.mrpVerifiedAt).toLocaleString('en-IN')}.` : ''}</p>
           </div>
-          <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Default purchase cost <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input type="number" min={0} value={form.costPrice} onChange={(event) => setForm({ ...form, costPrice: event.target.value })} /><span className="block text-[11px] text-[#71717a]">Used only when PO and GRN costs are blank.</span></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Status</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archived</option></select></label>
           <label className="space-y-2 md:col-span-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Description</span><textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className="min-h-20 w-full rounded-lg border border-input bg-background p-3 text-sm" /></label>
         </div>
@@ -334,7 +342,7 @@ export default function ProductMasterPage() {
         <div className="mt-3 flex flex-wrap gap-3"><Button disabled={saving || uploading || !canSave} onClick={saveProduct}><Save className="mr-2 h-4 w-4" /> {saving ? 'Saving...' : isEditing ? 'Save changes' : 'Create SKU'}</Button>{isEditing && form.status !== 'archived' ? <Button variant="outline" disabled={archiving} onClick={archiveCurrent}><Archive className="mr-2 h-4 w-4" /> Archive SKU</Button> : null}</div>
       </div>
 
-      <div className="mp-card min-w-0 rounded-r5 p-5"><div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><h2 className="text-xl font-semibold text-[#18181b]">SKU register</h2><Input placeholder="Search SKU/name" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} className="w-full sm:max-w-xs" /></div><div className="mt-5 max-h-[54rem] min-w-0 space-y-2 overflow-y-auto custom-scrollbar">{loadingProducts && !products.length ? <p className="p-5 text-sm font-semibold text-[#52525b]">Loading products...</p> : null}{products.map((product: any) => { const image = mediaUrls(product.media)[0]; return <button type="button" onClick={() => chooseProduct(product)} key={product.id} className={`flex min-w-0 w-full gap-4 rounded-lg p-3 text-left transition ${selectedId === product.id ? 'bg-[#dbeafe]' : 'bg-white hover:bg-[#f7faff]'}`}>{image ? <img src={image} alt="" loading="lazy" decoding="async" className="h-14 w-14 shrink-0 rounded-lg bg-[#f7faff] object-contain p-1" /> : <div className="h-14 w-14 shrink-0 rounded-lg bg-[#f4f4f5]" />}<div className="min-w-0"><p className="truncate font-semibold text-[#18181b]">{product.sku} · {product.name}</p><p className="mt-1 truncate text-xs font-bold text-[#52525b]">{[product.category, product.brand, product.finish].filter(Boolean).join(' · ')} · ₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</p><span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${product.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{product.status}</span></div></button>; })}{!loadingProducts && !products.length ? <p className="p-5 text-sm font-semibold text-[#52525b]">No products found.</p> : null}</div>{page > 0 || hasNextPage ? <nav aria-label="Product register pages" className="mt-4 flex items-center justify-between border-t border-[#e4e4e7] pt-4"><Button variant="outline" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}><ChevronLeft className="mr-2 h-4 w-4" />Previous</Button><span className="text-xs font-semibold text-[#71717a]">Page {page + 1}</span><Button variant="outline" disabled={!hasNextPage} onClick={() => setPage((current) => current + 1)}>Next<ChevronRight className="ml-2 h-4 w-4" /></Button></nav> : null}</div>
+      <div className="mp-card min-w-0 rounded-r5 p-5"><div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><h2 className="text-xl font-semibold text-[#18181b]">SKU register</h2><Input placeholder="Search SKU/name" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} className="w-full sm:max-w-xs" /></div><div className="mt-5 max-h-[54rem] min-w-0 space-y-2 overflow-y-auto custom-scrollbar">{loadingProducts && !products.length ? <p className="p-5 text-sm font-semibold text-[#52525b]">Loading products...</p> : null}{products.map((product: any) => { const image = mediaUrls(product.media)[0]; return <button type="button" onClick={() => chooseProduct(product)} key={product.id} className={`flex min-w-0 w-full gap-4 rounded-lg p-3 text-left transition ${selectedId === product.id ? 'bg-[#dbeafe]' : 'bg-white hover:bg-[#f7faff]'}`}>{image ? <img src={image} alt="" loading="lazy" decoding="async" className="h-14 w-14 shrink-0 rounded-lg bg-[#f7faff] object-contain p-1" /> : <div className="h-14 w-14 shrink-0 rounded-lg bg-[#f4f4f5]" />}<div className="min-w-0"><p className="truncate font-semibold text-[#18181b]">{product.sku} · {product.name}</p><p className="mt-1 truncate text-xs font-bold text-[#52525b]">{[product.category, product.brand, product.finish].filter(Boolean).join(' · ')} · {product.defaultNrpInclusive == null ? 'NRP not set' : `NRP ₹${Number(product.defaultNrpInclusive).toLocaleString('en-IN')}`} {product.priceUom ? `/ ${product.priceUom}` : ''}</p><span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${product.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{product.status}</span></div></button>; })}{!loadingProducts && !products.length ? <p className="p-5 text-sm font-semibold text-[#52525b]">No products found.</p> : null}</div>{page > 0 || hasNextPage ? <nav aria-label="Product register pages" className="mt-4 flex items-center justify-between border-t border-[#e4e4e7] pt-4"><Button variant="outline" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}><ChevronLeft className="mr-2 h-4 w-4" />Previous</Button><span className="text-xs font-semibold text-[#71717a]">Page {page + 1}</span><Button variant="outline" disabled={!hasNextPage} onClick={() => setPage((current) => current + 1)}>Next<ChevronRight className="ml-2 h-4 w-4" /></Button></nav> : null}</div>
     </section>
   </div>;
 }

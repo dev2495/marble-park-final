@@ -387,17 +387,14 @@ export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
       const quoteLine = quoteLineById.get(String(line.quoteLineId || '')) || quoteLineMap.get(qKey);
       const key = qKey || (productId ? quoteLineKey(line, index) : tileDemandKey(salesOrder.id, line, index));
       const orderedQuantity = Math.trunc(Number(line.qty || line.quantity || 0));
-      const listPrice = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
-      const unitPrice = Number(line.unitRate ?? line.specialRate ?? line.specialPrice ?? listPrice);
-      const discountPercent = Number(line.discountPercent ?? line.discount ?? 0);
+      const mrpInclusive = line.mrpInclusive == null ? null : Number(line.mrpInclusive);
+      const nrpInclusive = line.nrpInclusive == null ? null : Number(line.nrpInclusive);
+      const specialRateInclusive = line.specialRateInclusive == null ? null : Number(line.specialRateInclusive);
+      const unitPrice = Number(line.specialRateExclusive ?? line.specialRateInclusive ?? 0);
       const taxRate = Number(line.taxRate ?? 18);
       const taxableValue = Number(line.taxableValue ?? orderedQuantity * unitPrice);
       const taxAmount = Number(line.taxAmount ?? 0);
       const grossLineTotal = Number(line.grossLineTotal ?? line.total ?? taxableValue + taxAmount);
-      const sourceCostPrice = Number(line.sourceCostPrice ?? line.costSnapshot ?? 0);
-      const costSnapshot = Number(quoteLine?.costSnapshot || 0) > 0
-        ? Number(quoteLine.costSnapshot)
-        : Number.isFinite(sourceCostPrice) && sourceCostPrice > 0 ? sourceCostPrice : null;
       const existing = await tx.salesOrderLine.findUnique({
         where: { salesOrderId_lineKey: { salesOrderId: salesOrder.id, lineKey: key } },
       }).catch(() => null);
@@ -421,15 +418,32 @@ export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
         area: line.area || line.room || line.section || null,
         unit: String(line.unit || line.uom || 'PC').toUpperCase(),
         orderedQuantity, reservedQuantity, backorderedQuantity, allocatedQuantity, dispatchedQuantity, deliveredQuantity, returnedQuantity,
-        listPrice, unitPrice, discountPercent, taxRate, taxableValue, taxAmount, grossLineTotal,
-        mrp: line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp),
-        mrpRateBasis: line.mrpRateBasis || line.rateBasis || null,
+        listPrice: 0, unitPrice, discountPercent: 0, taxRate, taxableValue, taxAmount, grossLineTotal,
+        mrp: mrpInclusive,
+        mrpRateBasis: line.priceRateBasis || line.mrpRateBasis || line.rateBasis || null,
         mrpSource: line.mrpSource || 'quote_entry',
         mrpConfirmedAt: line.mrpConfirmedAt ? new Date(line.mrpConfirmedAt) : quoteLine?.mrpConfirmedAt || null,
         mrpConfirmedById: line.mrpConfirmedById || quoteLine?.mrpConfirmedById || null,
-        costSnapshot,
-        costSnapshotSource: costSnapshot ? quoteLine?.costSnapshotSource || 'Product.costPrice' : null,
-        costSnapshotAt: costSnapshot ? quoteLine?.costSnapshotAt || new Date() : null,
+        pricingVersion: line.pricingVersion || 'unified_retail_v1',
+        priceRateBasis: line.priceRateBasis || line.mrpRateBasis || line.rateBasis || null,
+        mrpInclusive,
+        nrpMode: line.nrpMode || null,
+        nrpInput: line.nrpInput == null ? null : Number(line.nrpInput),
+        nrpInclusive,
+        nrpExclusive: line.nrpExclusive == null ? null : Number(line.nrpExclusive),
+        specialMode: line.specialMode || 'NONE',
+        specialInput: line.specialInput == null ? null : Number(line.specialInput),
+        specialRateInclusive,
+        specialRateExclusive: line.specialRateExclusive == null ? null : Number(line.specialRateExclusive),
+        quoteDiscountMode: line.quoteDiscountMode || 'PERCENT',
+        quoteDiscountValue: Number(line.quoteDiscountValue || 0),
+        quoteDiscountAllocatedInclusive: Number(line.quoteDiscountAllocatedInclusive || 0),
+        taxableValueInclusive: taxableValue,
+        taxAmountInclusive: taxAmount,
+        grossLineTotalInclusive: grossLineTotal,
+        costSnapshot: null,
+        costSnapshotSource: null,
+        costSnapshotAt: null,
         lineTotal: grossLineTotal,
         status,
         isTileSpecial: isTileSelectionLine(line) && !productId,

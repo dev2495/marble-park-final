@@ -1,7 +1,9 @@
+import { BadRequestException } from '@nestjs/common';
 import { Args, Context, Field, ID, InputType, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertNoCostInput, inventoryCostView } from '../common/cost-visibility';
 import { OperationsService } from './operations.service';
 
 @InputType()
@@ -218,8 +220,8 @@ export class OperationsResolver {
     @Args('take', { type: () => Int, nullable: true }) take?: number,
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
   ) {
-    await requireSession(this.prisma, ctx);
-    return this.operations.stockLedgerEntries({ productId, referenceId, take, skip });
+    const user = await requireSession(this.prisma, ctx);
+    return inventoryCostView(await this.operations.stockLedgerEntries({ productId, referenceId, take, skip }), user);
   }
 
   @Query(() => [GraphQLJSON])
@@ -241,8 +243,8 @@ export class OperationsResolver {
     @Args('search', { nullable: true }) search?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.operations.inventoryLots({ productId, locationId, status, search, take });
+    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return inventoryCostView(await this.operations.inventoryLots({ productId, locationId, status, search, take }), user);
   }
 
   @Mutation(() => GraphQLJSON)
@@ -252,7 +254,7 @@ export class OperationsResolver {
     @Args('reason') reason: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
     return this.operations.correctMissingInventoryLotCost(id, unitCost, reason, user.id);
   }
 
@@ -262,20 +264,25 @@ export class OperationsResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.operations.openingStockSessions({ status, take });
+    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return inventoryCostView(await this.operations.openingStockSessions({ status, take }), user);
   }
 
   @Mutation(() => GraphQLJSON)
   async createOpeningStockSession(@Args('input') input: OpeningStockInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    assertNoCostInput(input.lines, user, (message) => new BadRequestException(message));
     return this.operations.createOpeningStockSession(input as any, user.id);
   }
 
   @Mutation(() => GraphQLJSON)
-  async approveOpeningStockSession(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.operations.approveOpeningStockSession(id, user.id);
+  async approveOpeningStockSession(
+    @Args('id', { type: () => ID }) id: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('ownerOverrideReason', { nullable: true }) ownerOverrideReason?: string,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.operations.approveOpeningStockSession(id, user.id, ownerOverrideReason);
   }
 
   @Query(() => [GraphQLJSON])
@@ -339,8 +346,8 @@ export class OperationsResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requireSession(this.prisma, ctx);
-    return this.operations.returnOrders({ status, take });
+    const user = await requireSession(this.prisma, ctx);
+    return inventoryCostView(await this.operations.returnOrders({ status, take }), user);
   }
 
   @Query(() => [GraphQLJSON])
@@ -349,14 +356,14 @@ export class OperationsResolver {
     @Args('search', { nullable: true }) search?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requirePermission(this.prisma, ctx, 'returns.manage');
-    return this.operations.returnableDispatchLines({ search, take });
+    const user = await requirePermission(this.prisma, ctx, 'returns.manage');
+    return inventoryCostView(await this.operations.returnableDispatchLines({ search, take }), user);
   }
 
   @Mutation(() => GraphQLJSON)
   async createReturnOrder(@Args('input') input: ReturnOrderInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'returns.manage');
-    return this.operations.createReturnOrder(input as any, user.id);
+    return inventoryCostView(await this.operations.createReturnOrder(input as any, user.id), user);
   }
 
   @Query(() => GraphQLJSON)

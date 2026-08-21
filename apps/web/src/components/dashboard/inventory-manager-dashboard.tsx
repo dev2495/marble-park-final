@@ -23,11 +23,11 @@ const INV_DASH = gql`
     inventoryDashboard { stats summary }
     lowStockBalances(take: 12) {
       id available reserved onHand damaged lowStockThreshold reorderPoint
-      product { id sku name brand category sellPrice }
+      product { id sku name brand category defaultNrpInclusive }
     }
     inventoryBalances(take: 200) {
       id available reserved onHand damaged
-      product { id sku name brand category sellPrice }
+      product { id sku name brand category defaultNrpInclusive }
     }
   }
 `;
@@ -150,7 +150,7 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
                   <th className="px-3 py-2.5 text-right">Available</th>
                   <th className="px-3 py-2.5 text-right">Reserved</th>
                   <th className="px-3 py-2.5 text-right">Threshold</th>
-                  <th className="px-3 py-2.5 text-right">Sell price</th>
+                  <th className="px-3 py-2.5 text-right">Default NRP</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f4f4f5]">
@@ -167,7 +167,7 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-[#52525b]">{row.reserved}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-[#71717a]">≤ {row.reorderPoint ?? row.lowStockThreshold}</td>
-                    <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{moneyShort(row.product?.sellPrice || 0)}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{row.product?.defaultNrpInclusive == null ? 'Not set' : moneyShort(row.product.defaultNrpInclusive)}</td>
                   </tr>
                 ))}
               </tbody>

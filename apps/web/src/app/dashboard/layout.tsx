@@ -406,7 +406,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 <span className="mp-mono">{product.sku}</span> · {product.brand}
                               </p>
                             </div>
-                            <span className="shrink-0 text-sm font-semibold text-[var(--ink)]">₹{Number(product.sellPrice || 0).toLocaleString('en-IN')}</span>
+                            <span className="shrink-0 text-sm font-semibold text-[var(--ink)]">{Number(product.defaultNrpInclusive || 0) > 0 ? `NRP ₹${Number(product.defaultNrpInclusive).toLocaleString('en-IN')}` : 'Price on quote'}</span>
                           </button>
                         ))
                       ) : (

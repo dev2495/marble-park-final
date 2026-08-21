@@ -28,8 +28,10 @@ const GET_PRODUCTS = gql`
       salesUom
       piecesPerPack
       coveragePerPack
-      sellPrice
-      floorPrice
+      defaultMrpInclusive
+      defaultNrpInclusive
+      priceRateBasis
+      priceUom
       taxClass
       status
       media
@@ -49,7 +51,7 @@ const GET_PRODUCT_STATS = gql`
     productStats
   }
 `;
-const GET_PRODUCT = gql`query CatalogueProduct($id:ID!){product(id:$id){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice floorPrice taxClass status media description}}`;
+const GET_PRODUCT = gql`query CatalogueProduct($id:ID!){product(id:$id){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive priceRateBasis priceUom taxClass status media description}}`;
 
 
 const emptyPreview = {
@@ -61,8 +63,10 @@ const emptyPreview = {
   finish: 'No finish yet',
   dimensions: 'Add first SKU',
   unit: 'PC',
-  sellPrice: 0,
-  floorPrice: 0,
+  defaultMrpInclusive: 0,
+  defaultNrpInclusive: 0,
+  priceRateBasis: 'PIECE',
+  priceUom: 'PC',
   taxClass: 'GST_18',
   status: 'draft',
   description: 'This workspace is clean. Add products manually or import a client catalogue to begin.',
@@ -234,8 +238,8 @@ export default function ProductsPage() {
                   <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-[var(--ink-3)]">{selected?.description || `${selected?.brand} ${selected?.finish} catalogue product.`}</p>
                 </div>
                 <div className="text-right">
-                  <div className="text-3xl font-semibold text-[var(--ink)]">{currency(selected?.sellPrice)}</div>
-                  <div className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">MRP / {selected?.unit}</div>
+                  <div className="text-3xl font-semibold text-[var(--ink)]">{Number(selected?.defaultNrpInclusive || 0) > 0 ? currency(selected.defaultNrpInclusive) : 'Price on quote'}</div>
+                  <div className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Default NRP / {selected?.priceUom || selected?.unit}</div>
                 </div>
               </div>
               <div className="mt-5 grid grid-cols-3 gap-3">
@@ -305,7 +309,6 @@ export default function ProductsPage() {
           {products.map((product: any) => {
             const productLook = getLook(product.category);
             const ProductIcon = productLook.icon;
-            const margin = product.floorPrice ? Math.max(0, product.sellPrice - product.floorPrice) : 0;
             return (
               <article
                 key={product.id}
@@ -340,8 +343,8 @@ export default function ProductsPage() {
                   </div>
                   <div className="flex items-end justify-between border-t border-[var(--line-soft)] pt-4">
                     <div>
-                      <div className="text-2xl font-semibold text-[var(--ink)]">{currency(product.sellPrice)}</div>
-                      <div className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Floor margin {currency(margin)}</div>
+                      <div className="text-2xl font-semibold text-[var(--ink)]">{Number(product.defaultNrpInclusive || 0) > 0 ? currency(product.defaultNrpInclusive) : 'Price on quote'}</div>
+                      <div className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">MRP {Number(product.defaultMrpInclusive || 0) > 0 ? currency(product.defaultMrpInclusive) : 'not set'} · {product.priceRateBasis || 'basis pending'}</div>
                     </div>
                     <div className="rounded-2xl bg-[var(--ink)] p-3 text-[var(--surface)] transition-transform group-hover:rotate-3">
                       <Tag size={18} />

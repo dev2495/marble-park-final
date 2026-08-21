@@ -218,9 +218,12 @@ function editableRow(row: any) {
       provided.piecesPerPack === false ? "" : (row.piecesPerPack ?? ""),
     coveragePerPack:
       provided.coveragePerPack === false ? "" : (row.coveragePerPack ?? ""),
-    sellPrice: provided.sellPrice === false ? "" : (row.sellPrice ?? ""),
-    floorPrice: provided.floorPrice === false ? "" : (row.floorPrice ?? ""),
-    costPrice: provided.costPrice === false ? "" : (row.costPrice ?? ""),
+    defaultMrpInclusive: provided.defaultMrpInclusive === false ? "" : (row.defaultMrpInclusive ?? ""),
+    defaultNrpInclusive: provided.defaultNrpInclusive === false ? "" : (row.defaultNrpInclusive ?? ""),
+    priceRateBasis: provided.priceRateBasis === false ? "" : (row.priceRateBasis ?? ""),
+    priceUom: provided.priceUom === false ? "" : (row.priceUom ?? ""),
+    mrpSource: provided.mrpSource === false ? "" : (row.mrpSource ?? ""),
+    pricingEffectiveFrom: provided.pricingEffectiveFrom === false ? "" : (row.pricingEffectiveFrom ?? ""),
     taxClass: provided.taxClass === false ? "" : row.taxClass || "",
     hsnCode: row.hsnCode || "",
     allowLoose:
@@ -1046,53 +1049,49 @@ export default function ImportCenterPage() {
                                 }
                               />
                             </Field>
-                            <Field label="Sell price">
+                            <Field label="Default MRP incl GST">
                               <input
                                 className={inputClass}
                                 type="number"
                                 min={0.01}
                                 step="0.01"
-                                value={row.sellPrice}
+                                value={row.defaultMrpInclusive}
                                 onChange={(event) =>
                                   updateRow(
                                     index,
-                                    "sellPrice",
+                                    "defaultMrpInclusive",
                                     event.target.value,
                                   )
                                 }
                               />
                             </Field>
-                            <Field label="Floor price">
+                            <Field label="Default NRP incl GST">
                               <input
                                 className={inputClass}
                                 type="number"
-                                min={0}
+                                min={0.01}
                                 step="0.01"
-                                value={row.floorPrice}
+                                value={row.defaultNrpInclusive}
                                 onChange={(event) =>
                                   updateRow(
                                     index,
-                                    "floorPrice",
+                                    "defaultNrpInclusive",
                                     event.target.value,
                                   )
                                 }
                               />
                             </Field>
-                            <Field label="Default purchase cost">
-                              <input
-                                className={inputClass}
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                value={row.costPrice}
-                                onChange={(event) =>
-                                  updateRow(
-                                    index,
-                                    "costPrice",
-                                    event.target.value,
-                                  )
-                                }
-                              />
+                            <Field label="Price basis">
+                              <SelectField value={row.priceRateBasis} options={["BOX", "PIECE", "AREA"]} onChange={(value) => updateRow(index, "priceRateBasis", value)} placeholder="Select basis" />
+                            </Field>
+                            <Field label="Price UOM">
+                              <SelectField value={row.priceUom} options={options.uoms || []} onChange={(value) => updateRow(index, "priceUom", value)} placeholder="Select UOM" />
+                            </Field>
+                            <Field label="MRP source">
+                              <input className={inputClass} value={row.mrpSource} onChange={(event) => updateRow(index, "mrpSource", event.target.value)} placeholder="Vendor price list / contract" />
+                            </Field>
+                            <Field label="Pricing effective from">
+                              <input className={inputClass} type="date" value={row.pricingEffectiveFrom} onChange={(event) => updateRow(index, "pricingEffectiveFrom", event.target.value)} />
                             </Field>
                             <Field label="Tax code">
                               <SelectField

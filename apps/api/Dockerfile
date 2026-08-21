@@ -9,10 +9,12 @@ RUN apt-get update \
 COPY package*.json ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
+COPY packages/pricing-contract/package.json ./packages/pricing-contract/package.json
 COPY vendor/minimatch-compat ./vendor/minimatch-compat
 RUN npm ci --legacy-peer-deps --workspace=apps/api --include-workspace-root
 
 COPY apps/api ./apps/api
+COPY packages/pricing-contract ./packages/pricing-contract
 RUN npm run db:generate --workspace=apps/api && npm run build:api
 
 ENV NODE_ENV=production

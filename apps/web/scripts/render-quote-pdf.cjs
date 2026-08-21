@@ -21,6 +21,7 @@
  */
 const React = require('react');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
+const { PRICING_VERSION, priceQuoteLines } = require('@marble-park/pricing-contract');
 
 const colors = {
   ink: '#222222',
@@ -254,71 +255,38 @@ async function hydrateImages(payload, requestUrl, apiUrl) {
 
 function rateFor(line) {
   const qty = Number(line.qty || line.quantity || 0);
-  const basis = String(line.rateBasis || 'PACK').toUpperCase();
+  const basis = String(line.priceRateBasis || line.rateBasis || 'BOX').toUpperCase().replace('PACK', 'BOX');
   const pricingQuantity = Number(line.pricingQuantity || (basis === 'AREA'
     ? qty * Number(line.coveragePerPack || 0)
     : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
   const pricingUom = String(line.pricingUom || (basis === 'PIECE' ? 'PC' : line.unit || line.uom || 'BOX')).toUpperCase();
-  const price = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
-  const discount = Number(line.discountPercent || line.discount || 0);
-  const specialRate = Number(line.specialRate || line.specialPrice || 0);
-  const hasStoredUnitRate = line.unitRate !== null && line.unitRate !== undefined && line.unitRate !== '';
-  const storedUnitRate = Number(line.unitRate);
-  const unitRate = hasStoredUnitRate && Number.isFinite(storedUnitRate) && storedUnitRate >= 0 ? storedUnitRate : specialRate > 0 ? specialRate : price * (1 - discount / 100);
-  const hasStoredTaxable = line.taxableValue !== null && line.taxableValue !== undefined && line.taxableValue !== '';
-  const quoteDiscountPercent = Number(line.quoteDiscountPercent || 0);
-  const lineSubtotal = pricingQuantity * unitRate;
-  const quoteDiscountAmount = line.quoteDiscountAmount !== null && line.quoteDiscountAmount !== undefined && line.quoteDiscountAmount !== ''
-    ? Number(line.quoteDiscountAmount)
-    : lineSubtotal * quoteDiscountPercent / 100;
-  const taxableValue = hasStoredTaxable && Number.isFinite(Number(line.taxableValue))
-    ? Number(line.taxableValue)
-    : Math.max(0, lineSubtotal - quoteDiscountAmount);
-  const taxAmount = line.taxAmount !== null && line.taxAmount !== undefined && line.taxAmount !== ''
-    ? Number(line.taxAmount)
-    : taxableValue * Math.max(0, Number(line.taxRate ?? 18)) / 100;
-  const amount = line.grossLineTotal !== null && line.grossLineTotal !== undefined && line.grossLineTotal !== ''
-    ? Number(line.grossLineTotal)
-    : taxableValue + taxAmount;
-  const mrp = line.mrp === null || line.mrp === undefined || line.mrp === '' ? null : Number(line.mrp);
+  if (String(line.pricingVersion || '') !== PRICING_VERSION) throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'line'} uses unverified legacy pricing. Open the quote and confirm MRP and NRP.`);
+  const priced = priceQuoteLines([{ ...line, pricingQuantity, priceRateBasis: basis, lineRateBasis: basis }], {
+    mode: line.quoteDiscountMode || 'PERCENT', value: line.quoteDiscountValue || 0,
+  }, { requireComplete: true, preserveAllocatedDiscount: true }).lines[0];
+  const quoteDiscountAmount = Number(priced.quoteDiscountAllocatedInclusive || 0);
+  const taxableValue = Number(priced.taxableValue || 0);
+  const taxAmount = Number(priced.taxAmount || 0);
+  const amount = Number(priced.grossLineTotal || 0);
+  const mrp = Number(priced.mrpInclusive);
   const mrpUom = basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
-  const grossMrp = mrp !== null && Number.isFinite(mrp) && mrp > 0 ? mrp * pricingQuantity : null;
-  // MRP is tax-inclusive, so compare it with the final tax-inclusive payable.
+  const grossMrp = Number(priced.mrpValueInclusive || 0);
   const savingFromMrp = grossMrp === null ? null : Math.max(0, grossMrp - amount);
   const finalUnitPayable = pricingQuantity > 0 ? amount / pricingQuantity : 0;
-  // % off: prefer the final payable vs MRP when MRP is shown.
-  let displayOffPercent = 0;
-  if (mrp !== null && Number.isFinite(mrp) && mrp > 0 && finalUnitPayable < mrp) {
-    displayOffPercent = Math.round((1 - finalUnitPayable / mrp) * 100);
-  } else if (price > 0 && unitRate < price && discount > 0 && !(specialRate > 0)) {
-    displayOffPercent = Math.round(discount);
-  }
-  return { qty, basis, pricingQuantity, pricingUom, price, discount, displayOffPercent, unitRate, lineSubtotal, quoteDiscountPercent, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, mrpUom, grossMrp, savingFromMrp };
+  const displayOffPercent = mrp > 0 && finalUnitPayable < mrp ? Math.round((1 - finalUnitPayable / mrp) * 100) : 0;
+  return { qty, basis, pricingQuantity, pricingUom, displayOffPercent, unitRate: priced.specialRateExclusive, lineSubtotal: priced.specialValueInclusive, grossBeforeQuoteDiscount: priced.specialValueInclusive, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, nrp: priced.nrpInclusive, netSellingPrice: priced.specialRateInclusive, finalUnitPayable, mrpUom, grossMrp, savingFromMrp };
 }
 
-function isLegacyQuoteBeforeMrpContract(quote) {
-  const createdAt = quote?.createdAt ? new Date(quote.createdAt).getTime() : 0;
-  return !createdAt || createdAt < Date.UTC(2026, 7, 4);
-}
-
-function assertQuoteCommercialReady(quote, taxMode, options = {}) {
-  const quoteDiscountPercent = Number(quote.discountPercent || 0);
+function assertQuoteCommercialReady(quote, taxMode) {
   const lines = asArray(quote.lines);
-  const legacyLines = lines.length > 0 && lines.every((line) => {
-    const mrp = line?.mrp;
-    return mrp === null || mrp === undefined || mrp === '';
-  });
-  if (options.allowLegacy !== false && legacyLines && isLegacyQuoteBeforeMrpContract(quote)) {
-    return { legacyPricing: true };
-  }
+  if (!lines.length) throw new Error('Quote PDF blocked: add at least one priced line.');
   for (const line of lines) {
     const rate = rateFor(line);
-    const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
-    const payable = Math.max(0, rate.unitRate) * (1 - quoteDiscountPercent / 100) * (1 + taxRate / 100);
+    const payable = rate.finalUnitPayable;
     if (rate.mrp === null || !Number.isFinite(rate.mrp) || rate.mrp <= 0) {
       throw new Error(`Quote PDF blocked: MRP is required for ${line.sku || line.name || 'every line'} per ${rate.mrpUom}`);
     }
-    if (payable > rate.mrp + 0.5) {
+    if (payable > rate.mrp + 0.005) {
       throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'Line'} payable ${payable.toFixed(2)} per ${rate.mrpUom} exceeds MRP ${rate.mrp.toFixed(2)}`);
     }
   }
@@ -622,8 +590,8 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, compact = fal
       e(Text, { style: [styles.th, styles.descCol] }, 'Description'),
       e(Text, { style: [styles.th, styles.qtyCol] }, 'Qty'),
       showPrices ? e(Text, { style: [styles.th, styles.rateCol] }, 'MRP') : null,
-      showPrices ? e(Text, { style: [styles.th, styles.discountCol] }, 'List rate') : null,
-      showPrices ? e(Text, { style: [styles.th, styles.specialCol] }, 'Special') : null,
+      showPrices ? e(Text, { style: [styles.th, styles.discountCol] }, 'NRP') : null,
+      showPrices ? e(Text, { style: [styles.th, styles.specialCol] }, 'Net selling') : null,
       showPrices ? e(Text, { style: [styles.th, styles.amountCol] }, 'Total') : null,
     ),
     ...group.rows.map((line, index) => {
@@ -640,8 +608,8 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, compact = fal
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, money(rate.price)) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, `${money(rate.unitRate)}${rate.displayOffPercent ? `\n${rate.displayOffPercent}% off` : ''}${rate.savingFromMrp !== null && rate.savingFromMrp > 0 ? `\nSave ${money(rate.savingFromMrp)}` : ''}`) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, money(rate.nrp === null ? rate.mrp : rate.nrp)) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, `${money(rate.netSellingPrice)}${rate.displayOffPercent ? `\n${rate.displayOffPercent}% off` : ''}${rate.savingFromMrp !== null && rate.savingFromMrp > 0 ? `\nSave ${money(rate.savingFromMrp)}` : ''}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.amount)) : null,
       );
     }),
@@ -654,12 +622,13 @@ function PricedDocumentBody(payload, requestUrl) {
   const settings = payload.settings || {};
   const lines = asArray(quote.lines);
   const quoteMeta = safeJson(quote.quoteMeta, {});
+  const quoteDiscount = safeJson(quoteMeta.quoteDiscount, {});
   const groups = groupByArea(lines);
   const compact = lines.length <= 4;
   const taxMode = quoteMeta.taxMode === 'non_gst' ? 'non_gst' : 'gst';
   assertQuoteCommercialReady(quote, taxMode);
   const pricedLines = lines.map((line) => rateFor(line));
-  const subtotal = pricedLines.reduce((sum, rate) => sum + rate.lineSubtotal, 0);
+  const lineNetValue = pricedLines.reduce((sum, rate) => sum + rate.grossBeforeQuoteDiscount, 0);
   const discountAmount = pricedLines.reduce((sum, rate) => sum + rate.quoteDiscountAmount, 0);
   const taxable = pricedLines.reduce((sum, rate) => sum + rate.taxableValue, 0);
   const tax = taxMode === 'non_gst' ? 0 : pricedLines.reduce((sum, rate) => sum + rate.taxAmount, 0);
@@ -723,8 +692,9 @@ function PricedDocumentBody(payload, requestUrl) {
       ),
       e(View, { style: [styles.totalsBox, compact ? styles.totalsBoxCompact : null] },
         savingFromMrp > 0 ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Saving from MRP'), e(Text, { style: [styles.totalValue, { color: '#087f5b' }] }, money(savingFromMrp))) : null,
-        e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal))),
-        e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, `Discount ${Number(quote.discountPercent || 0)}%`), e(Text, { style: styles.totalValue }, money(discountAmount))),
+        e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Line net value'), e(Text, { style: styles.totalValue }, money(lineNetValue))),
+        discountAmount > 0 ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, `Additional quote discount ${String(quoteDiscount.mode || quoteDiscount.type || 'PERCENT').toUpperCase() === 'FIXED_AMOUNT' ? money(quoteDiscount.value || 0) : `${Number(quoteDiscount.value ?? quote.discountPercent ?? 0)}%`}`), e(Text, { style: styles.totalValue }, money(discountAmount))) : null,
+        e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Taxable value'), e(Text, { style: styles.totalValue }, money(taxable))),
         taxMode === 'gst' ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'GST'), e(Text, { style: styles.totalValue }, money(tax))) : null,
         e(View, { style: [styles.totalRow, styles.grand] }, e(Text, { style: styles.grandText }, 'Total'), e(Text, { style: styles.grandText }, money(total))),
       ),

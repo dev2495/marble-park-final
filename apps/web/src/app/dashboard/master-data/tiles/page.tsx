@@ -179,9 +179,12 @@ const emptyVariant: any = {
   salesUom: "BOX",
   allowLoose: true,
   hsnCode: "",
-  sellPrice: "",
-  floorPrice: "",
-  costPrice: "",
+  defaultMrpInclusive: "",
+  defaultNrpInclusive: "",
+  priceRateBasis: "BOX",
+  priceUom: "BOX",
+  mrpSource: "MANUAL",
+  pricingEffectiveFrom: "",
   status: "active",
   alias: "",
 };
@@ -429,9 +432,11 @@ export default function TileWorkspacePage() {
       ...emptyVariant,
       ...row,
       piecesPerPack: String(row.piecesPerPack || ""),
-      sellPrice: String(row.sellPrice || ""),
-      floorPrice: String(row.floorPrice || ""),
-      costPrice: String(row.costPrice || ""),
+      defaultMrpInclusive: row.defaultMrpInclusive == null ? "" : String(row.defaultMrpInclusive),
+      defaultNrpInclusive: row.defaultNrpInclusive == null ? "" : String(row.defaultNrpInclusive),
+      priceRateBasis: row.priceRateBasis || "BOX",
+      priceUom: row.priceUom || row.salesUom || "BOX",
+      pricingEffectiveFrom: row.pricingEffectiveFrom ? String(row.pricingEffectiveFrom).slice(0, 10) : "",
     });
   }
   async function submitVariant(event: any) {
@@ -444,9 +449,12 @@ export default function TileWorkspacePage() {
           sku: variant.id ? undefined : variant.sku || undefined,
           internalCode: variant.internalCode || undefined,
           piecesPerPack: Number(variant.piecesPerPack || 1),
-          sellPrice: Number(variant.sellPrice || 0),
-          floorPrice: Number(variant.floorPrice || 0),
-          costPrice: Number(variant.costPrice || 0),
+          defaultMrpInclusive: variant.defaultMrpInclusive === "" ? undefined : Number(variant.defaultMrpInclusive),
+          defaultNrpInclusive: variant.defaultNrpInclusive === "" ? undefined : Number(variant.defaultNrpInclusive),
+          priceRateBasis: variant.defaultMrpInclusive !== "" || variant.defaultNrpInclusive !== "" ? variant.priceRateBasis : undefined,
+          priceUom: variant.defaultMrpInclusive !== "" || variant.defaultNrpInclusive !== "" ? variant.priceUom : undefined,
+          mrpSource: variant.defaultMrpInclusive !== "" ? variant.mrpSource : undefined,
+          pricingEffectiveFrom: variant.pricingEffectiveFrom || undefined,
         },
       },
     });
@@ -1276,43 +1284,44 @@ export default function TileWorkspacePage() {
                 />
                 Allow loose-piece inward and sale
               </label>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-xl bg-[#f8f4ef] p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#9f342d]">Optional selling defaults</p>
+                <p className="mt-1 text-xs text-[var(--ink-4)]">Tax-inclusive suggestions only. Actual cost comes from PO → GRN → inventory lot.</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Sell ₹
+                  Default MRP ₹ incl. GST
                   <Input
                     className="mt-1"
                     type="number"
-                    min="0"
-                    value={variant.sellPrice}
+                    min="0.01"
+                    step="0.01"
+                    value={variant.defaultMrpInclusive}
                     onChange={(e) =>
-                      setVariant({ ...variant, sellPrice: e.target.value })
+                      setVariant({ ...variant, defaultMrpInclusive: e.target.value })
                     }
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Floor ₹
+                  Default NRP ₹ incl. GST
                   <Input
                     className="mt-1"
                     type="number"
-                    min="0"
-                    value={variant.floorPrice}
+                    min="0.01"
+                    step="0.01"
+                    value={variant.defaultNrpInclusive}
                     onChange={(e) =>
-                      setVariant({ ...variant, floorPrice: e.target.value })
+                      setVariant({ ...variant, defaultNrpInclusive: e.target.value })
                     }
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Cost ₹
-                  <Input
-                    className="mt-1"
-                    type="number"
-                    min="0"
-                    value={variant.costPrice}
-                    onChange={(e) =>
-                      setVariant({ ...variant, costPrice: e.target.value })
-                    }
-                  />
+                  Price basis
+                  <select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.priceRateBasis} onChange={(e) => setVariant({ ...variant, priceRateBasis: e.target.value })}><option value="BOX">Box</option><option value="PIECE">Piece</option><option value="AREA">Area</option></select>
                 </label>
+                <label className="block text-xs font-semibold text-[var(--ink-4)]">Price UOM<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.priceUom} onChange={(e) => setVariant({ ...variant, priceUom: e.target.value })}><option value="BOX">BOX</option><option value="PC">PC</option><option value="SQFT">SQFT</option><option value="SQM">SQM</option></select></label>
+                <label className="block text-xs font-semibold text-[var(--ink-4)]">MRP source<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.mrpSource} onChange={(e) => setVariant({ ...variant, mrpSource: e.target.value })}><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
+                <label className="block text-xs font-semibold text-[var(--ink-4)]">Effective from<Input className="mt-1" type="date" value={variant.pricingEffectiveFrom} onChange={(e) => setVariant({ ...variant, pricingEffectiveFrom: e.target.value })}/></label>
+                </div>
               </div>
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
                 Supplier / old code alias

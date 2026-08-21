@@ -1,236 +1,128 @@
 import { BadRequestException } from '@nestjs/common';
+import {
+  PRICING_VERSION,
+  PricingContractError,
+  priceQuoteLines as priceCanonicalQuoteLines,
+  priceUnit,
+} from '@marble-park/pricing-contract';
 
 export const DEFAULT_TAX_RATE = 18;
+export const RETAIL_LADDER_VERSION = PRICING_VERSION;
 
 export type CommercialTotals = {
-  subtotal: number;
-  lineDiscountAmount: number;
-  quoteDiscountAmount: number;
+  mrpValueInclusive: number;
+  nrpValueInclusive: number;
+  specialValueInclusive: number;
+  quoteDiscountInclusive: number;
   taxableValue: number;
   taxAmount: number;
   grandTotal: number;
 };
 
-export type QuotePricingOptions = {
-  /** Require a positive tax-inclusive MRP for a commercial action. */
-  requireMrp?: boolean;
-  /** Extra rupee tolerance for decimal/rounding differences at the MRP edge. */
-  mrpTolerance?: number;
-};
+export type QuotePricingOptions = { requireMrp?: boolean; requireComplete?: boolean; allowSpecialAboveNrp?: boolean; preserveAllocatedDiscount?: boolean };
 
-export type PricingIssue = {
-  code: 'QUOTE_MRP_REQUIRED' | 'QUOTE_MRP_INVALID' | 'QUOTE_MRP_EXCEEDED' | 'QUOTE_MRP_BASIS_STALE';
-  field: string;
-  lineKey: string;
-  message: string;
-  remediation: string;
-  maximumPreTaxNetRate?: number;
-};
-
-function structuredPricingError(issue: PricingIssue): never {
-  throw new BadRequestException({
-    statusCode: 400,
-    error: 'Bad Request',
-    ...issue,
-  });
-}
-
-function money(value: unknown) {
-  const amount = Number(value || 0);
-  if (!Number.isFinite(amount)) throw new BadRequestException('Commercial values must be valid numbers');
-  return Math.round((amount + Number.EPSILON) * 100) / 100;
-}
-
-function percent(value: unknown, fallback = 0, label = 'Discount') {
-  if (value === undefined || value === null || value === '') return fallback;
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
-    throw new BadRequestException(`${label} must be between 0 and 100`);
+function asBadRequest(error: unknown): never {
+  if (error instanceof PricingContractError) {
+    throw new BadRequestException({ statusCode: 400, error: 'Bad Request', code: error.code, field: error.field, message: error.message, remediation: error.remediation });
   }
-  return money(amount);
+  throw error;
 }
 
-function hasRate(value: any) {
-  return value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
+function normalizeBasis(value: unknown) {
+  const raw = String(value || '').toUpperCase();
+  if (raw === 'PACK') return 'BOX';
+  if (raw === 'PC') return 'PIECE';
+  if (['BOX', 'PIECE', 'AREA'].includes(raw)) return raw;
+  return '';
 }
 
-function rateBasis(line: any) {
-  const explicit = String(line?.rateBasis || '').trim().toUpperCase();
-  if (['PACK', 'PIECE', 'AREA'].includes(explicit)) return explicit;
-  const uom = String(line?.pricingUom || line?.salesUom || line?.unit || 'PC').trim().toUpperCase();
-  return ['SQFT', 'SQM', 'M2'].includes(uom) ? 'AREA' : uom === 'PC' ? 'PIECE' : 'PACK';
+function inferredBasis(line: any) {
+  const uom = String(line?.pricingUom || line?.salesUom || line?.unit || 'PC').toUpperCase();
+  return ['SQFT', 'SQM', 'M2'].includes(uom) ? 'AREA' : uom === 'PC' ? 'PIECE' : 'BOX';
 }
 
-function pricingUom(line: any, basis: string) {
-  if (basis === 'AREA') return String(line?.pricingUom || line?.salesUom || 'SQFT').trim().toUpperCase();
-  if (basis === 'PIECE') return 'PC';
-  return String(line?.inventoryUom || line?.purchaseUom || line?.unit || 'PACK').trim().toUpperCase();
+function canonicalBasis(line: any) {
+  return normalizeBasis(line?.lineRateBasis || line?.rateBasis) || normalizeBasis(line?.priceRateBasis || line?.mrpRateBasis) || inferredBasis(line);
 }
 
-function mrpSnapshot(line: any, lineIndex: number, unitRate: number, quoteDiscountPercent: number, taxRate: number, options: QuotePricingOptions) {
-  const raw = line?.mrp;
-  const hasMrp = raw !== undefined && raw !== null && raw !== '';
-  const numericMrp = hasMrp ? Number(raw) : null;
-  const mrp = numericMrp !== null && Number.isFinite(numericMrp) ? money(numericMrp) : null;
-  const basis = rateBasis(line);
-  const mrpRateBasis = String(line?.mrpRateBasis || basis).trim().toUpperCase();
-  const uom = pricingUom(line, basis);
-  const finalUnitPayable = money(unitRate * (1 - quoteDiscountPercent / 100) * (1 + taxRate / 100));
-  const tolerance = Math.max(0, Number(options.mrpTolerance ?? 0.5));
-  const lineKey = String(line?.lineKey || line?.id || line?.sku || `line-${lineIndex + 1}`);
-  const field = `lines[${lineIndex}].mrp`;
-  const missing = !hasMrp;
-  const invalid = hasMrp && (mrp === null || mrp <= 0);
-  const staleBasis = !missing && !invalid && mrpRateBasis !== basis;
-  const exceeded = !missing && !invalid && !staleBasis && finalUnitPayable > Number(mrp) + tolerance;
-  const maximumPreTaxNetRate = mrp === null ? undefined : money(Number(mrp) / (1 + taxRate / 100) / Math.max(0.000001, 1 - quoteDiscountPercent / 100));
-  const issue: PricingIssue | null = missing
-    ? { code: 'QUOTE_MRP_REQUIRED', field, lineKey, message: `Enter MRP / ${uom} for ${line?.sku || line?.name || `line ${lineIndex + 1}`} before confirming this quote.`, remediation: `Open line ${lineIndex + 1} and enter the tax-inclusive MRP for one ${uom}.` }
-    : invalid
-      ? { code: 'QUOTE_MRP_INVALID', field, lineKey, message: `MRP / ${uom} for ${line?.sku || line?.name || `line ${lineIndex + 1}`} must be a finite number greater than zero.`, remediation: `Replace the MRP on line ${lineIndex + 1} with the tax-inclusive package or price-list value.` }
-      : staleBasis
-        ? { code: 'QUOTE_MRP_BASIS_STALE', field, lineKey, message: `MRP for ${line?.sku || line?.name || `line ${lineIndex + 1}`} was confirmed for ${mrpRateBasis}, not ${basis}.`, remediation: `Review the converted suggestion and confirm a new MRP / ${uom} on line ${lineIndex + 1}.` }
-        : exceeded
-          ? { code: 'QUOTE_MRP_EXCEEDED', field, lineKey, message: `${line?.sku || line?.name || 'Quote line'} payable ${finalUnitPayable.toFixed(2)} per ${uom} exceeds MRP ${Number(mrp).toFixed(2)}.`, remediation: `Reduce the pre-tax negotiated rate to ${Number(maximumPreTaxNetRate).toFixed(2)} or less, or verify the correct MRP.`, maximumPreTaxNetRate }
-          : null;
-  if (options.requireMrp && issue) structuredPricingError(issue);
+function commercialQuantity(line: any) {
+  const inventoryQuantity = Number(line?.qty ?? line?.quantity ?? 0);
+  const basis = canonicalBasis(line);
+  const piecesPerPack = Math.max(1, Math.trunc(Number(line?.piecesPerPack || line?.pcsPerBox || 1)));
+  const coveragePerPack = Number(line?.coveragePerPack || 0);
+  if (basis === 'AREA' && (!Number.isFinite(coveragePerPack) || coveragePerPack <= 0)) {
+    throw new BadRequestException(`${line?.sku || line?.name || 'Area-priced item'} needs positive governed coverage per box`);
+  }
+  return basis === 'PIECE' ? inventoryQuantity * piecesPerPack : basis === 'AREA' ? inventoryQuantity * coveragePerPack : inventoryQuantity;
+}
+
+function canonicalLine(line: any) {
+  const lineBasis = canonicalBasis(line);
+  const priceBasis = normalizeBasis(line?.priceRateBasis || line?.mrpRateBasis) || lineBasis;
   return {
-    mrp,
-    mrpRateBasis,
-    mrpSource: String(line?.mrpSource || 'quote_entry'),
-    mrpUom: uom,
-    finalUnitPayable,
-    mrpVariance: mrp === null ? null : money(Number(mrp) - finalUnitPayable),
-    mrpMissing: missing,
-    mrpValid: !issue,
-    pricingCompletenessCode: issue?.code || 'READY',
-    pricingRemediation: issue?.remediation || null,
-    pricingIssue: issue,
+    ...line,
+    quantity: Number(line?.qty ?? line?.quantity ?? 0),
+    pricingQuantity: Number(line?.pricingQuantity || commercialQuantity(line)),
+    priceRateBasis: priceBasis,
+    lineRateBasis: lineBasis,
+    mrpInclusive: line?.mrpInclusive ?? line?.mrp,
+    nrpMode: line?.nrpMode || 'PERCENT_OFF_MRP',
+    nrpInput: line?.nrpInput ?? 0,
+    specialMode: line?.specialMode || 'NONE',
+    specialInput: line?.specialInput ?? 0,
+    taxRate: line?.taxRate ?? DEFAULT_TAX_RATE,
   };
 }
 
 export function finalUnitRate(line: any) {
-  const listPrice = money(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
-  if (listPrice < 0) throw new BadRequestException('List price must be zero or greater');
-  const discountPercent = percent(line.discountPercent ?? line.discount, 0, 'Line discount');
-  const specialRaw = hasRate(line.specialRate) ? line.specialRate : hasRate(line.specialPrice) ? line.specialPrice : undefined;
-  const unitRate = specialRaw === undefined
-    ? money(listPrice * (1 - discountPercent / 100))
-    : money(specialRaw);
-  if (unitRate < 0) throw new BadRequestException('Negotiated rate must be zero or greater');
-  return { listPrice, discountPercent, unitRate };
-}
-
-function commercialQuantity(line: any, inventoryQuantity: number) {
-  const basis = rateBasis(line);
-  if (!['PACK', 'PIECE', 'AREA'].includes(basis)) throw new BadRequestException('Rate basis must be PACK, PIECE, or AREA');
-  const piecesPerPack = Math.max(1, Math.trunc(Number(line.piecesPerPack || line.pcsPerBox || 1)));
-  const coveragePerPack = Number(line.coveragePerPack || 0);
-  if (basis === 'AREA' && (!Number.isFinite(coveragePerPack) || coveragePerPack <= 0)) {
-    throw new BadRequestException(`${line.sku || line.name || 'Area-priced item'} needs positive coverage per pack in Product Master`);
+  try {
+    return priceUnit(canonicalLine(line), { requireComplete: true });
+  } catch (error) {
+    return asBadRequest(error);
   }
-  const pricingQuantity = basis === 'PIECE'
-    ? inventoryQuantity * piecesPerPack
-    : basis === 'AREA' ? money(inventoryQuantity * coveragePerPack) : inventoryQuantity;
-  return { basis, piecesPerPack, coveragePerPack, pricingQuantity };
 }
 
-export function priceQuoteLines(lines: any[], quoteDiscountPercent: unknown = 0, options: QuotePricingOptions = {}) {
-  const normalizedQuoteDiscount = percent(quoteDiscountPercent, 0, 'Quote discount');
-  let totals: CommercialTotals = {
-    subtotal: 0,
-    lineDiscountAmount: 0,
-    quoteDiscountAmount: 0,
-    taxableValue: 0,
-    taxAmount: 0,
-    grandTotal: 0,
-  };
-  let requiresApproval = false;
-
-  const pricedLines = (Array.isArray(lines) ? lines : []).map((line, lineIndex) => {
-    const quantity = Math.trunc(Number(line.qty ?? line.quantity ?? 0));
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      throw new BadRequestException('Each commercial line needs a positive whole-number quantity');
-    }
-    const { basis, piecesPerPack, coveragePerPack, pricingQuantity } = commercialQuantity(line, quantity);
-    const { listPrice, discountPercent, unitRate } = finalUnitRate(line);
-    const taxRate = percent(line.taxRate, DEFAULT_TAX_RATE, 'Tax rate');
-    const mrp = mrpSnapshot(line, lineIndex, unitRate, normalizedQuoteDiscount, taxRate, options);
-    const listAmount = money(pricingQuantity * listPrice);
-    const lineSubtotal = money(pricingQuantity * unitRate);
-    const lineDiscountAmount = money(Math.max(0, listAmount - lineSubtotal));
-    const quoteDiscountAmount = money(lineSubtotal * normalizedQuoteDiscount / 100);
-    const taxableValue = money(lineSubtotal - quoteDiscountAmount);
-    const taxAmount = money(taxableValue * taxRate / 100);
-    const grossLineTotal = money(taxableValue + taxAmount);
-    const floorPrice = money(line.floorPrice ?? 0);
-    const belowFloor = floorPrice > 0 && unitRate < floorPrice;
-    requiresApproval ||= belowFloor;
-
-    totals = {
-      subtotal: money(totals.subtotal + lineSubtotal),
-      lineDiscountAmount: money(totals.lineDiscountAmount + lineDiscountAmount),
-      quoteDiscountAmount: money(totals.quoteDiscountAmount + quoteDiscountAmount),
-      taxableValue: money(totals.taxableValue + taxableValue),
-      taxAmount: money(totals.taxAmount + taxAmount),
-      grandTotal: money(totals.grandTotal + grossLineTotal),
-    };
-
+export function priceQuoteLines(lines: any[], quoteDiscountInput: any = {}, options: QuotePricingOptions = {}): any {
+  try {
+    const discount = typeof quoteDiscountInput === 'object' && quoteDiscountInput !== null
+      ? { mode: quoteDiscountInput.mode || quoteDiscountInput.type, value: quoteDiscountInput.value }
+      : { mode: 'PERCENT', value: quoteDiscountInput };
+    const result = priceCanonicalQuoteLines(
+      (Array.isArray(lines) ? lines : []).map(canonicalLine),
+      discount,
+      { requireComplete: options.requireComplete ?? options.requireMrp ?? true, allowSpecialAboveNrp: options.allowSpecialAboveNrp, preserveAllocatedDiscount: options.preserveAllocatedDiscount },
+    );
     return {
-      ...line,
-      qty: quantity,
-      quantity,
-      inventoryQuantity: quantity,
-      pricingQuantity,
-      rateBasis: basis,
-      piecesPerPack,
-      coveragePerPack,
-      price: listPrice,
-      sellPrice: listPrice,
-      listPrice,
-      discountPercent,
-      specialRate: unitRate === listPrice && discountPercent === 0 ? null : unitRate,
-      unitRate,
-      taxRate,
-      listAmount,
-      lineDiscountAmount,
-      quoteDiscountPercent: normalizedQuoteDiscount,
-      quoteDiscountAmount,
-      taxableValue,
-      taxAmount,
-      grossLineTotal,
-      total: grossLineTotal,
-      floorPrice,
-      belowFloor,
-      ...mrp,
+      ...result,
+      requiresApproval: false,
+      quoteDiscountType: result.quoteDiscountMode,
+      quoteDiscountPercent: result.quoteDiscountMode === 'PERCENT' ? result.quoteDiscountValue : 0,
+      pricingErrors: result.lines.flatMap((line: any, index: number) => {
+        if (Number(line.mrpInclusive || 0) <= 0) return [{ code: 'MRP_REQUIRED', field: `lines[${index}].mrpInclusive`, lineKey: line.lineKey || String(index), message: 'MRP is required.', remediation: 'Enter and confirm a positive tax-inclusive MRP.' }];
+        if (Number(line.nrpInclusive || 0) <= 0) return [{ code: 'NRP_REQUIRED', field: `lines[${index}].nrpInput`, lineKey: line.lineKey || String(index), message: 'Normal Retail Price (NRP) is required.', remediation: 'Enter a positive NRP or % off MRP.' }];
+        if (Number(line.specialRateInclusive || 0) <= 0) return [{ code: 'SPECIAL_RATE_INVALID', field: `lines[${index}].specialInput`, lineKey: line.lineKey || String(index), message: 'Final line rate is incomplete.', remediation: 'Complete the line pricing ladder.' }];
+        return [];
+      }),
+      totals: {
+        ...result.totals,
+        subtotal: result.totals.specialValueInclusive,
+        lineDiscountAmount: Number((result.totals.mrpValueInclusive - result.totals.specialValueInclusive).toFixed(2)),
+        quoteDiscountAmount: result.totals.quoteDiscountInclusive,
+      },
     };
-  });
-
-  return {
-    lines: pricedLines,
-    totals,
-    requiresApproval,
-    quoteDiscountPercent: normalizedQuoteDiscount,
-    pricingErrors: pricedLines.map((line: any) => line.pricingIssue).filter(Boolean),
-  };
+  } catch (error) {
+    return asBadRequest(error);
+  }
 }
 
-export function commercialTotalsFromLines(lines: any[]) {
-  return (Array.isArray(lines) ? lines : []).reduce<CommercialTotals>((totals, line) => {
-    const gross = money(line.grossLineTotal ?? line.total ?? line.lineTotal ?? 0);
-    const taxable = money(line.taxableValue ?? gross);
-    const tax = money(line.taxAmount ?? 0);
-    const unitRate = money(line.unitRate ?? line.specialRate ?? line.price ?? line.sellPrice ?? 0);
-    const quantity = Math.trunc(Number(line.qty ?? line.quantity ?? 0));
-    const pricingQuantity = Number(line.pricingQuantity ?? commercialQuantity(line, Math.max(0, quantity)).pricingQuantity);
-    const subtotal = money(unitRate * Math.max(0, pricingQuantity));
-    return {
-      subtotal: money(totals.subtotal + subtotal),
-      lineDiscountAmount: money(totals.lineDiscountAmount + money(line.lineDiscountAmount ?? 0)),
-      quoteDiscountAmount: money(totals.quoteDiscountAmount + money(line.quoteDiscountAmount ?? 0)),
-      taxableValue: money(totals.taxableValue + taxable),
-      taxAmount: money(totals.taxAmount + tax),
-      grandTotal: money(totals.grandTotal + gross),
-    };
-  }, { subtotal: 0, lineDiscountAmount: 0, quoteDiscountAmount: 0, taxableValue: 0, taxAmount: 0, grandTotal: 0 });
+export function commercialTotalsFromLines(lines: any[]): CommercialTotals {
+  return (Array.isArray(lines) ? lines : []).reduce((totals, line) => ({
+    mrpValueInclusive: Number((totals.mrpValueInclusive + Number(line.mrpValueInclusive || 0)).toFixed(2)),
+    nrpValueInclusive: Number((totals.nrpValueInclusive + Number(line.nrpValueInclusive || 0)).toFixed(2)),
+    specialValueInclusive: Number((totals.specialValueInclusive + Number(line.specialValueInclusive || 0)).toFixed(2)),
+    quoteDiscountInclusive: Number((totals.quoteDiscountInclusive + Number(line.quoteDiscountAllocatedInclusive || 0)).toFixed(2)),
+    taxableValue: Number((totals.taxableValue + Number(line.taxableValue || line.taxableValueInclusive || 0)).toFixed(2)),
+    taxAmount: Number((totals.taxAmount + Number(line.taxAmount || line.taxAmountInclusive || 0)).toFixed(2)),
+    grandTotal: Number((totals.grandTotal + Number(line.grossLineTotal || line.grossLineTotalInclusive || line.lineTotal || 0)).toFixed(2)),
+  }), { mrpValueInclusive: 0, nrpValueInclusive: 0, specialValueInclusive: 0, quoteDiscountInclusive: 0, taxableValue: 0, taxAmount: 0, grandTotal: 0 });
 }

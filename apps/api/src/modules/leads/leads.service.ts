@@ -489,7 +489,7 @@ export class LeadsService {
       unit: uom === 'box' ? 'BOX' : 'PC',
       pcsPerBox: Number(row.pcsPerBox || 0),
       price,
-      sellPrice: price,
+      indicativeNrpInclusive: price,
       area: row.area || row.room || 'General Selection',
       source: 'product-master-tile',
       inventoryTracked: true,
@@ -521,7 +521,9 @@ export class LeadsService {
       brand: string;
       finish: string | null;
       unit: string;
-      sellPrice: any;
+      defaultMrpInclusive: any;
+      defaultNrpInclusive: any;
+      priceRateBasis: string | null;
       media: any;
     };
     const products = await this.prisma.product.findMany({
@@ -534,7 +536,9 @@ export class LeadsService {
         brand: true,
         finish: true,
         unit: true,
-        sellPrice: true,
+        defaultMrpInclusive: true,
+        defaultNrpInclusive: true,
+        priceRateBasis: true,
         media: true,
       },
     }) as LeadIntentProductRow[];
@@ -554,10 +558,10 @@ export class LeadsService {
         brand: product.brand,
         finish: product.finish || row.finish || '',
         unit: row.unit || product.unit || 'BOX',
-        price: Number(row.price || row.sellPrice || product.sellPrice || 0),
+        price: Number(row.price || row.sellPrice || product.defaultNrpInclusive || 0),
         media: product.media || row.media || {},
       });
-      const price = Number(row.price || row.sellPrice || product.sellPrice || 0);
+      const price = Number(row.price || row.sellPrice || product.defaultNrpInclusive || 0);
       if (!Number.isFinite(price) || price < 0) throw new BadRequestException(`${product.sku} has an invalid price`);
       return {
         ...row,
@@ -571,7 +575,7 @@ export class LeadsService {
         qty: Math.trunc(row.qty),
         quantity: Math.trunc(row.qty),
         price,
-        sellPrice: price,
+        indicativeNrpInclusive: price,
         media: product.media || row.media || {},
         area: row.area || row.room || 'General Selection',
         source: 'product-master',
@@ -603,10 +607,12 @@ export class LeadsService {
         finish: product.finish || row.finish || '',
         qty: Number(row.qty || row.quantity || 0),
         unit: row.unit || product?.unit || 'PC',
-        price: Number(row.price || row.sellPrice || product?.sellPrice || 0),
-        sellPrice: Number(row.price || row.sellPrice || product?.sellPrice || 0),
-        mrp: row.mrp === undefined || row.mrp === null || row.mrp === '' ? null : Number(row.mrp),
-        mrpRateBasis: row.mrpRateBasis || row.rateBasis || null,
+        mrpInclusive: row.mrpInclusive ?? row.mrp ?? (product.defaultMrpInclusive == null ? null : Number(product.defaultMrpInclusive)),
+        nrpMode: row.nrpMode || row.baseDecisionMode || 'FIXED_NRP',
+        nrpInput: row.nrpInput ?? row.baseDecisionValue ?? row.nrpInclusive ?? row.price ?? row.sellPrice ?? (product.defaultNrpInclusive == null ? 0 : Number(product.defaultNrpInclusive)),
+        specialMode: row.specialMode || row.specialDecisionMode || 'NONE',
+        specialInput: row.specialInput ?? row.specialDecisionValue ?? 0,
+        priceRateBasis: row.priceRateBasis || row.mrpRateBasis || row.rateBasis || product.priceRateBasis || null,
         mrpSource: row.mrpSource || 'quote_entry',
         taxRate: row.taxRate === undefined ? 18 : Number(row.taxRate),
         media: product.media || row.media || {},

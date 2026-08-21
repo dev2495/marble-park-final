@@ -276,17 +276,23 @@ export class ReceivablesService {
         const taxAmount = roundMoney(Number(orderLine?.taxAmount ?? fallback.taxAmount ?? 0) * quantity / orderedQuantity);
         const grossLineTotal = roundMoney(Number(orderLine?.grossLineTotal ?? fallback.grossLineTotal ?? fallback.lineTotal ?? 0) * quantity / orderedQuantity);
         const lotUnitCost = Number(dispatchLine.lot?.unitCost || 0);
-        const costSnapshot = Number.isFinite(lotUnitCost) && lotUnitCost > 0
-          ? lotUnitCost
-          : Number(orderLine?.costSnapshot || 0) > 0 ? Number(orderLine.costSnapshot) : null;
-        const costSnapshotSource = Number.isFinite(lotUnitCost) && lotUnitCost > 0
-          ? 'InventoryLot.unitCost'
-          : costSnapshot ? orderLine?.costSnapshotSource || 'Product.costPrice' : null;
+        const costSnapshot = Number.isFinite(lotUnitCost) && lotUnitCost > 0 ? lotUnitCost : null;
+        const costSnapshotSource = costSnapshot ? 'InventoryLot.unitCost' : null;
         return {
           dispatchLineId: dispatchLine.id, salesOrderLineId: dispatchLine.salesOrderLineId || null, productId: dispatchLine.productId || orderLine?.productId || fallback.productId || null,
           sku: dispatchLine.sku, name: dispatchLine.name, brand: orderLine?.brand || fallback.brand || '', finish: orderLine?.finish || fallback.finish || null,
           unit: orderLine?.unit || fallback.unit || 'PC', quantity,
           unitPrice: roundMoney(grossLineTotal / quantity), taxRate: Number(orderLine?.taxRate ?? fallback.taxRate ?? 0), taxableValue, taxAmount, grossLineTotal,
+          pricingVersion: orderLine?.pricingVersion || 'unified_retail_v1',
+          priceRateBasis: orderLine?.priceRateBasis || orderLine?.mrpRateBasis || fallback.priceRateBasis || fallback.rateBasis || null,
+          mrpInclusive: orderLine?.mrpInclusive ?? orderLine?.mrp ?? fallback.mrpInclusive ?? null,
+          nrpMode: orderLine?.nrpMode || fallback.nrpMode || null,
+          nrpInput: orderLine?.nrpInput ?? fallback.nrpInput ?? null,
+          nrpInclusive: orderLine?.nrpInclusive ?? fallback.nrpInclusive ?? null,
+          specialMode: orderLine?.specialMode || fallback.specialMode || 'NONE',
+          specialInput: orderLine?.specialInput ?? fallback.specialInput ?? null,
+          specialRateInclusive: orderLine?.specialRateInclusive ?? fallback.specialRateInclusive ?? null,
+          quoteDiscountAllocatedInclusive: roundMoney(Number(orderLine?.quoteDiscountAllocatedInclusive ?? fallback.quoteDiscountAllocatedInclusive ?? 0) * quantity / orderedQuantity),
           costSnapshot, costSnapshotSource, costSnapshotAt: costSnapshot ? now : null,
           metadata: { dispatchChallanId: dispatchLine.challanId || null, dispatchStatus: dispatchLine.status, lotId: dispatchLine.lotId || null, lotNumber: dispatchLine.lot?.lotNumber || null },
         };

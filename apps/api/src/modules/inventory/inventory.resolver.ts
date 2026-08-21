@@ -5,6 +5,7 @@ import { ProductOutput } from '../products/products.resolver';
 import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { computeStockAlertState, isAlertingState } from './stock-alerts';
+import { inventoryCostView } from '../common/cost-visibility';
 
 @InputType()
 export class CreateInventoryInput {
@@ -138,8 +139,8 @@ export class InventoryResolver {
     @Args('cursor', { nullable: true }) cursor?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requireSession(this.prisma, ctx);
-    return this.inventory.controlTower({ search, category, brand, stockState, locationId, lotState, sort, cursor, take });
+    const user = await requireSession(this.prisma, ctx);
+    return inventoryCostView(await this.inventory.controlTower({ search, category, brand, stockState, locationId, lotState, sort, cursor, take }), user);
   }
 
   /**

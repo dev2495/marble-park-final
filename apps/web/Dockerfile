@@ -5,10 +5,12 @@ WORKDIR /app
 COPY package*.json ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
+COPY packages/pricing-contract/package.json ./packages/pricing-contract/package.json
 COPY vendor/minimatch-compat ./vendor/minimatch-compat
 RUN npm ci --legacy-peer-deps --workspace=apps/web --include-workspace-root
 
 COPY apps/web ./apps/web
+COPY packages/pricing-contract ./packages/pricing-contract
 COPY scripts ./scripts
 ARG NEXT_PUBLIC_API_URL=https://api-production-bc49.up.railway.app/graphql
 ARG NEXT_PUBLIC_CATALOGUE_IMAGE_ORIGIN

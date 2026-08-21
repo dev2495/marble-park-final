@@ -8,6 +8,7 @@ import { AlertTriangle, ArrowLeft, BadgeCheck, BadgeIndianRupee, Building2, Chec
 import { Button } from '@/components/ui/button';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
+import { allocateQuoteDiscount, retailLadder, type DiscountMode } from '@/lib/quote-pricing';
 
 const QUOTE_DETAIL = gql`
   query QuoteDetail($id: ID!) {
@@ -56,23 +57,23 @@ function mrpUom(line: any) {
   if (basis === 'PIECE') return 'PC';
   return String(line.inventoryUom || line.purchaseUom || line.unit || line.uom || 'BOX').toUpperCase();
 }
-function lineRate(line: any, taxMode: 'gst' | 'non_gst' = 'gst', quoteDiscountPercent = 0) {
+function lineRate(line: any, taxMode: 'gst' | 'non_gst' = 'gst') {
   const qty = Number(line.qty || line.quantity || 0);
-  const basis = String(line.rateBasis || 'PACK').toUpperCase();
+  const basis = String(line.priceRateBasis || line.rateBasis || 'BOX').toUpperCase();
   const pricingQuantity = Number(line.pricingQuantity || (basis === 'AREA'
     ? qty * Number(line.coveragePerPack || 0)
     : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
-  const price = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0);
-  const discount = Number(line.discountPercent || line.discount || 0);
-  const specialRate = Number(line.specialRate || line.specialPrice || 0);
-  const unitRate = specialRate > 0 ? specialRate : price * (1 - discount / 100);
   const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
-  const amount = pricingQuantity * unitRate;
-  const finalUnitPayable = Math.max(0, unitRate) * (1 - Number(quoteDiscountPercent || 0) / 100) * (1 + taxRate / 100);
-  const rawMrp = line.mrp === '' || line.mrp === null || line.mrp === undefined ? null : Number(line.mrp);
-  const mrpMissing = rawMrp === null || !Number.isFinite(rawMrp) || rawMrp <= 0;
-  const mrpValid = !mrpMissing && finalUnitPayable <= Number(rawMrp) + 0.5;
-  return { qty, pricingQuantity, price, discount, specialRate: unitRate, amount, taxRate, mrp: rawMrp, mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(line) };
+  const ladder = retailLadder({
+    ...line,
+    priceRateBasis: line.priceRateBasis || line.rateBasis || 'BOX',
+    mrpInclusive: line.mrpInclusive,
+    nrpMode: line.nrpMode || 'PERCENT_OFF_MRP',
+    nrpInput: line.nrpInput ?? 0,
+    specialMode: line.specialMode || 'NONE',
+    specialInput: line.specialInput ?? 0,
+  }, pricingQuantity, taxRate);
+  return { qty, pricingQuantity, amount: ladder.grossBeforeQuoteDiscount, taxRate, mrpUom: mrpUom(line), ...ladder };
 }
 function groupLines(lines: any[]) {
   const groups = new Map<string, any[]>();
@@ -102,7 +103,8 @@ export default function QuoteDetailPage() {
   const [remarks, setRemarks] = useState('');
   const [terms, setTerms] = useState('');
   const [bankDetails, setBankDetails] = useState('');
-  const [discountPercent, setDiscountPercent] = useState('0');
+  const [quoteDiscountType, setQuoteDiscountType] = useState<DiscountMode>('PERCENT');
+  const [quoteDiscountValue, setQuoteDiscountValue] = useState('0');
   const [coverImage, setCoverImage] = useState('');
   const [tagline, setTagline] = useState('');
   const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
@@ -152,14 +154,18 @@ export default function QuoteDetailPage() {
   useEffect(() => {
     if (!quote) return;
     const meta = quote.quoteMeta || {};
-    setEditLines((Array.isArray(quote.lines) ? quote.lines : []).map((line: any) => ({ ...line, area: line.area || 'General Selection', quoteImage: line.quoteImage || line.customImageUrl || '' })));
+    setEditLines((Array.isArray(quote.lines) ? quote.lines : []).map((line: any) => {
+      if (String(line.pricingVersion || '') === 'unified_retail_v1') return { ...line, area: line.area || 'General Selection', quoteImage: line.quoteImage || line.customImageUrl || '' };
+      return { ...line, pricingVersion: 'legacy_unverified', mrpInclusive: '', priceRateBasis: String(line.rateBasis || 'BOX').toUpperCase().replace('PACK', 'BOX'), nrpMode: 'PERCENT_OFF_MRP', nrpInput: 0, specialMode: 'NONE', specialInput: 0, area: line.area || 'General Selection', quoteImage: line.quoteImage || line.customImageUrl || '' };
+    }));
     setDisplayMode(quote.displayMode || 'priced');
     setTaxMode(meta.taxMode === 'non_gst' ? 'non_gst' : 'gst');
     const loadedRemarks = String(meta.remarks || quote.notes || '').trim();
     setRemarks(/^prepared from quote studio\.?$/i.test(loadedRemarks) ? '' : loadedRemarks);
     setTerms(meta.terms || documentSettings.defaultTerms || 'Prices are valid until the quote validity date. Installation, unloading, plumbing and civil work are excluded unless mentioned.');
     setBankDetails(meta.bankDetails || documentSettings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.');
-    setDiscountPercent(String(quote.discountPercent || 0));
+    setQuoteDiscountType((meta.quoteDiscount?.mode || meta.quoteDiscount?.type) === 'FIXED_AMOUNT' || meta.quoteDiscount?.type === 'amount' ? 'FIXED_AMOUNT' : 'PERCENT');
+    setQuoteDiscountValue(String(meta.quoteDiscount?.value ?? quote.discountPercent ?? 0));
     setCoverImage(quote.coverImage || meta.coverImage || '');
     setTagline(meta.tagline || documentSettings.documentTagline || '');
     const mode = String(documentSettings.quoteBrandSelectionMode || 'all');
@@ -199,26 +205,53 @@ export default function QuoteDetailPage() {
     }
   }
 
-  const subtotal = useMemo(() => editLines.reduce((sum, line) => sum + lineRate(line, taxMode, Number(discountPercent || 0)).amount, 0), [editLines, taxMode, discountPercent]);
-  const quoteDiscount = subtotal * (Number(discountPercent || 0) / 100);
-  const discountFactor = Math.max(0, 1 - Number(discountPercent || 0) / 100);
-  const tax = taxMode === 'non_gst' ? 0 : editLines.reduce((sum, line) => sum + lineRate(line, taxMode, Number(discountPercent || 0)).amount * discountFactor * Math.max(0, Number(line.taxRate ?? 18)) / 100, 0);
-  const total = subtotal - quoteDiscount + tax;
+  const pricedEditLines = useMemo(() => allocateQuoteDiscount(editLines.map((line, index) => ({ index, ...lineRate(line, taxMode) })), quoteDiscountType, Number(quoteDiscountValue || 0)).map((rate) => {
+    const taxableValue = rate.grossAfterQuoteDiscount / (1 + rate.taxRate / 100);
+    const taxAmount = rate.grossAfterQuoteDiscount - taxableValue;
+    const finalUnitPayable = rate.pricingQuantity > 0 ? rate.grossAfterQuoteDiscount / rate.pricingQuantity : 0;
+    const mrpMissing = rate.mrpInclusive === null || !Number.isFinite(rate.mrpInclusive) || Number(rate.mrpInclusive) <= 0;
+    return { ...rate, taxableValue, taxAmount, finalUnitPayable, mrpMissing, mrpValid: !mrpMissing && finalUnitPayable <= Number(rate.mrpInclusive) + 0.005 };
+  }), [editLines, quoteDiscountType, quoteDiscountValue, taxMode]);
+  const rateForLine = (line: any) => pricedEditLines[editLines.indexOf(line)] || lineRate(line, taxMode);
+  const subtotal = pricedEditLines.reduce((sum, rate) => sum + rate.grossBeforeQuoteDiscount, 0);
+  const quoteDiscount = pricedEditLines.reduce((sum, rate) => sum + rate.quoteDiscountAmount, 0);
+  const tax = pricedEditLines.reduce((sum, rate) => sum + rate.taxAmount, 0);
+  const total = pricedEditLines.reduce((sum, rate) => sum + rate.grossAfterQuoteDiscount, 0);
   const showPrices = displayMode !== 'selection';
   const grouped = groupLines(editLines);
-  const mrpIssues = useMemo(() => editLines.map((line) => ({ line, rate: lineRate(line, taxMode, Number(discountPercent || 0)) })).filter(({ rate }) => rate.mrpMissing || !rate.mrpValid), [editLines, taxMode, discountPercent]);
-  const grossMrp = editLines.reduce((sum, line) => { const rate = lineRate(line, taxMode, Number(discountPercent || 0)); return sum + (rate.mrp && rate.mrp > 0 ? rate.pricingQuantity * rate.mrp : 0); }, 0);
-  const listValue = editLines.reduce((sum, line) => { const rate = lineRate(line, taxMode, Number(discountPercent || 0)); return sum + rate.pricingQuantity * Math.max(0, rate.price); }, 0);
-  const missingListCount = editLines.filter((line) => Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0) <= 0).length;
-  const belowFloorCount = editLines.filter((line) => Number(line.floorPrice || 0) > 0 && lineRate(line, taxMode, Number(discountPercent || 0)).specialRate < Number(line.floorPrice || 0)).length;
-  const pricingReady = editLines.length > 0 && mrpIssues.length === 0;
+  const mrpIssues = editLines.map((line) => ({ line, rate: rateForLine(line) })).filter(({ rate }) => rate.mrpMissing || !rate.mrpValid);
+  const grossMrp = editLines.reduce((sum, line) => { const rate = rateForLine(line); return sum + (rate.mrpInclusive && rate.mrpInclusive > 0 ? rate.pricingQuantity * rate.mrpInclusive : 0); }, 0);
+  const nrpValue = editLines.reduce((sum, line) => sum + Number(rateForLine(line).nrpValueInclusive || 0), 0);
+  const specialValue = editLines.reduce((sum, line) => sum + Number(rateForLine(line).specialValueInclusive || 0), 0);
+  const missingNrpCount = editLines.filter((line) => Number(rateForLine(line).nrpInclusive || 0) <= 0).length;
+  const discountIssues = editLines.flatMap((line) => {
+    const rate = rateForLine(line);
+    const baseValue = Number(line.nrpInput ?? 0);
+    const specialValue = Number(line.specialInput || 0);
+    const issues: Array<{ line: any; field: 'base' | 'special'; message: string }> = [];
+    if (!Number.isFinite(baseValue) || baseValue < 0 || (rate.nrpMode === 'PERCENT_OFF_MRP' && baseValue > 100) || (rate.nrpMode === 'FIXED_NRP' && baseValue > Math.max(0, Number(rate.mrpInclusive || 0)))) {
+      issues.push({ line, field: 'base', message: `NRP decision for ${line.sku || line.name} must be ${rate.nrpMode === 'PERCENT_OFF_MRP' ? 'between 0% and 100%' : `between ₹0 and MRP ${money(rate.mrpInclusive || 0)}`}.` });
+    }
+    if (!Number.isFinite(specialValue) || specialValue < 0 || (rate.specialMode === 'PERCENT_OFF_NRP' && specialValue > 100) || (rate.specialMode === 'FIXED_SPECIAL_RATE' && specialValue > Math.max(0, Number(rate.nrpInclusive || 0)))) {
+      issues.push({ line, field: 'special', message: `Special pricing for ${line.sku || line.name} must be ${rate.specialMode === 'PERCENT_OFF_NRP' ? 'between 0% and 100%' : `between ₹0 and NRP ${money(rate.nrpInclusive || 0)}`}.` });
+    }
+    return issues;
+  });
+  const quoteDiscountNumeric = Number(quoteDiscountValue || 0);
+  const quoteDiscountIssue = !Number.isFinite(quoteDiscountNumeric) || quoteDiscountNumeric < 0
+    || (quoteDiscountType === 'PERCENT' && quoteDiscountNumeric > 100)
+    || (quoteDiscountType === 'FIXED_AMOUNT' && quoteDiscountNumeric > subtotal)
+    ? `Whole-quote discount must be ${quoteDiscountType === 'PERCENT' ? 'between 0% and 100%' : `between ₹0 and subtotal ${money(subtotal)}`}.`
+    : '';
+  const pricingIssueCount = mrpIssues.length + discountIssues.length + (quoteDiscountIssue ? 1 : 0);
+  const pricingReady = editLines.length > 0 && pricingIssueCount === 0;
   const quotedBrandIds = brands.filter((brand: any) => editLines.some((line: any) => String(line.brand || '').trim().toLowerCase() === String(brand.name || '').trim().toLowerCase())).map((brand: any) => String(brand.id));
 
   const updateLine = (index: number, patch: any) => setEditLines((current) => current.map((line, idx) => idx === index ? { ...line, ...patch } : line));
   const presentationInput = () => ({
     displayMode,
     coverImage,
-    quoteMeta: JSON.stringify({ remarks, terms, bankDetails, taxMode, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, coverImage, tagline }),
+    quoteMeta: JSON.stringify({ remarks, terms, bankDetails, taxMode, pricingVersion: 'unified_retail_v1', quoteDiscount: { mode: quoteDiscountType, value: Number(quoteDiscountValue || 0) }, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, coverImage, tagline }),
     linePresentation: JSON.stringify(editLines.map((line, index) => ({
       lineKey: line.lineKey || line.id || `index:${index}`,
       area: line.area || '',
@@ -235,13 +268,25 @@ export default function QuoteDetailPage() {
     window.setTimeout(() => target?.querySelector<HTMLElement>('[data-pricing-error="true"]')?.focus(), 350);
   };
   const saveQuote = (saveAsDraft = false) => {
-    if (!commercialLocked && !saveAsDraft && mrpIssues.length) {
-      const issue = mrpIssues[0];
-      setValidationMessage(issue.rate.mrpMissing
-        ? `MRP is required for ${issue.line.sku || issue.line.name}, entered per ${issue.rate.mrpUom}.`
-        : `${issue.line.sku || issue.line.name} exceeds MRP: payable ${money(issue.rate.finalUnitPayable)} per ${issue.rate.mrpUom}, MRP ${money(issue.rate.mrp || 0)}.`);
-      focusQuoteLine(issue.line);
-      return;
+    if (!commercialLocked && !saveAsDraft) {
+      if (mrpIssues.length) {
+        const issue = mrpIssues[0];
+        setValidationMessage(issue.rate.mrpMissing
+          ? `MRP is required for ${issue.line.sku || issue.line.name}, entered per ${issue.rate.mrpUom}.`
+          : `${issue.line.sku || issue.line.name} exceeds MRP: payable ${money(issue.rate.finalUnitPayable)} per ${issue.rate.mrpUom}, MRP ${money(issue.rate.mrpInclusive || 0)}.`);
+        focusQuoteLine(issue.line);
+        return;
+      }
+      if (discountIssues.length) {
+        setValidationMessage(discountIssues[0].message);
+        focusQuoteLine(discountIssues[0].line);
+        return;
+      }
+      if (quoteDiscountIssue) {
+        setValidationMessage(quoteDiscountIssue);
+        document.getElementById('quote-level-discount')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
     }
     setValidationMessage('');
     if (commercialLocked) {
@@ -253,18 +298,20 @@ export default function QuoteDetailPage() {
     return updateQuote({ variables: { id: quote.id, input: {
       ...presentationInput(),
       linePresentation: undefined,
-      discountPercent: Number(discountPercent || 0),
+      discountPercent: quoteDiscountType === 'PERCENT' ? Number(quoteDiscountValue || 0) : 0,
       saveAsDraft,
       architectId: selectedArchitectId || '',
-      lines: JSON.stringify(editLines.map((line) => ({ ...line, taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18) }))),
+      lines: JSON.stringify(editLines.map((line) => { const rate = rateForLine(line); return { ...line, pricingVersion: 'unified_retail_v1', taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), priceRateBasis: line.priceRateBasis || line.rateBasis || 'BOX', mrpInclusive: rate.mrpInclusive, nrpMode: rate.nrpMode, nrpInput: rate.nrpInput, nrpInclusive: rate.nrpInclusive, nrpExclusive: rate.nrpExclusive, specialMode: rate.specialMode, specialInput: rate.specialInput, specialRateInclusive: rate.specialRateInclusive, specialRateExclusive: rate.specialRateExclusive, pricingQuantity: rate.pricingQuantity, quoteDiscountMode: quoteDiscountType, quoteDiscountValue: Number(quoteDiscountValue || 0), quoteDiscountAllocatedInclusive: rate.quoteDiscountAllocatedInclusive, taxableValue: rate.taxableValue, taxAmount: rate.taxAmount, grossLineTotal: rate.grossAfterQuoteDiscount, total: rate.grossAfterQuoteDiscount }; })),
     } } });
   };
 
   async function shareQuote() {
     setShareMessage('');
-    if (mrpIssues.length) {
+    if (!pricingReady && !commercialLocked) {
       const issue = mrpIssues[0];
-      setValidationMessage(issue.rate.mrpMissing ? `Add MRP for ${issue.line.sku || issue.line.name} before sharing.` : `${issue.line.sku || issue.line.name} exceeds its MRP.`);
+      setValidationMessage(issue
+        ? (issue.rate.mrpMissing ? `Add MRP for ${issue.line.sku || issue.line.name} before sharing.` : `${issue.line.sku || issue.line.name} exceeds its MRP.`)
+        : discountIssues[0]?.message || quoteDiscountIssue || 'Validate commercial pricing before sharing.');
       return;
     }
     const result = await createQuoteShare({ variables: { quoteId: quote.id } });
@@ -292,7 +339,7 @@ export default function QuoteDetailPage() {
     {createOrderError ? <QueryErrorBanner error={createOrderError} /> : null}
     {closeRemainderError ? <QueryErrorBanner error={closeRemainderError} /> : null}
     {reviseError ? <QueryErrorBanner error={reviseError} /> : null}
-    {!commercialLocked && mrpIssues.length ? <section className="flex flex-col gap-2 rounded-r4 border border-red-200 bg-red-50 p-4 text-sm text-red-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">Commercial actions are waiting for MRP.</p><p className="mt-1 text-xs font-semibold">{mrpIssues.length} line{mrpIssues.length === 1 ? '' : 's'} need a positive tax-inclusive MRP in the selected billing unit.</p></div><span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black uppercase tracking-wider">{mrpIssues.length} issue{mrpIssues.length === 1 ? '' : 's'}</span></section> : null}
+    {!commercialLocked && pricingIssueCount ? <section className="flex flex-col gap-2 rounded-r4 border border-red-200 bg-red-50 p-4 text-sm text-red-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">Commercial pricing needs attention.</p><p className="mt-1 text-xs font-semibold">Resolve MRP and discount validation before PDF, share, send or order conversion.</p></div><span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black uppercase tracking-wider">{pricingIssueCount} issue{pricingIssueCount === 1 ? '' : 's'}</span></section> : null}
     {commercialLocked ? <section className="flex flex-col gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">Commercial terms are locked after sales-order conversion.</p><p className="mt-1 text-xs leading-5 text-amber-800">You can still save cover, room labels, product images, terms and brand logos. Revise the quote to change quantity, rates, discount or GST.</p></div><Button size="sm" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}><PenLine className="mr-2 h-4 w-4" />Revise commercial terms</Button></section> : null}
     <section className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-6 shadow-md-soft">
       <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
@@ -317,8 +364,8 @@ export default function QuoteDetailPage() {
           {!cancelled ? <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded' || (!commercialLocked && !pricingReady)} onClick={() => saveQuote(false)} size="lg" variant="outline"><ShieldCheck className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Validate changes'}</Button> : null}
           {!cancelled && (pricingReady || commercialLocked) ? <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button> : !cancelled ? <Button size="lg" disabled><Download className="mr-2 h-5 w-5"/>PDF waiting</Button> : null}
           {!cancelled && (pricingReady || commercialLocked) ? <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button> : null}
-          {!cancelled ? <Button size="lg" variant="outline" disabled={sharing || Boolean(mrpIssues.length)} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button> : null}
-          {!cancelled && quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending || Boolean(mrpIssues.length)} onClick={() => { if (!mrpIssues.length) sendQuote({ variables: { id: quote.id } }); }} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
+          {!cancelled ? <Button size="lg" variant="outline" disabled={sharing || (!pricingReady && !commercialLocked)} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button> : null}
+          {!cancelled && quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending || (!pricingReady && !commercialLocked)} onClick={() => { if (pricingReady || commercialLocked) sendQuote({ variables: { id: quote.id } }); }} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
           {!cancelled && !['won', 'closed', 'superseded'].includes(quote.status) ? <Button size="lg" variant="outline" disabled={cancelling} onClick={() => { const reason = window.prompt('Cancellation reason. Converted orders can only be cancelled before dispatch, invoice, or receipt activity.'); if (reason?.trim()) cancelQuote({ variables: { id: quote.id, reason: reason.trim() } }); }} className="border-red-200 text-red-700">{cancelling ? 'Cancelling...' : 'Cancel quote'}</Button> : null}
         </div>
       </div>
@@ -394,7 +441,7 @@ export default function QuoteDetailPage() {
           <div className="grid gap-4 md:grid-cols-5">
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">PDF type</span><select value={displayMode} onChange={(event)=>setDisplayMode(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black"><option value="priced">Show prices - quotation</option><option value="selection">Hide prices - selection summary</option></select></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Tax treatment</span><select disabled={commercialLocked} value={taxMode} onChange={(event)=>setTaxMode(event.target.value as 'gst' | 'non_gst')} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55"><option value="gst">GST quotation</option><option value="non_gst">Without GST</option></select></label>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Quote discount %</span><input disabled={commercialLocked} type="number" value={discountPercent} onChange={(event)=>setDiscountPercent(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
+            <label id="quote-level-discount" className="scroll-mt-24 space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Additional quote discount</span><div className="grid grid-cols-[5.5rem_1fr] gap-1"><select disabled={commercialLocked} value={quoteDiscountType} onChange={(event)=>setQuoteDiscountType(event.target.value as DiscountMode)} className="h-11 rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-black disabled:opacity-55"><option value="PERCENT">Percent</option><option value="FIXED_AMOUNT">Amount</option></select><input data-pricing-error={quoteDiscountIssue ? 'true' : undefined} disabled={commercialLocked} type="number" min={0} max={quoteDiscountType === 'PERCENT' ? 100 : undefined} value={quoteDiscountValue} onChange={(event)=>setQuoteDiscountValue(event.target.value)} className={`h-11 w-full rounded-2xl border bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55 ${quoteDiscountIssue ? 'border-red-300 bg-red-50' : 'border-[var(--line)]'}`} /></div>{quoteDiscountIssue ? <span className="block text-[10px] font-bold text-red-700">{quoteDiscountIssue}</span> : null}</label>
             <label className="space-y-2 md:col-span-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Remarks</span><input value={remarks} onChange={(event)=>setRemarks(event.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>
           </div>
         </div>
@@ -403,11 +450,11 @@ export default function QuoteDetailPage() {
           {[
             [BadgeIndianRupee, 'Lines / items', `${editLines.length} / ${editLines.reduce((sum, line) => sum + Number(line.qty || line.quantity || 0), 0)}`, null],
             [BadgeIndianRupee, 'Gross MRP', money(grossMrp), mrpIssues.length ? () => focusQuoteLine(mrpIssues[0].line) : null],
-            [BadgeIndianRupee, 'List value', money(listValue), missingListCount ? () => focusQuoteLine(editLines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0)) : null],
-            [BadgeIndianRupee, 'Offered', money(subtotal - quoteDiscount), null],
+            [BadgeIndianRupee, 'NRP value', money(nrpValue), missingNrpCount ? () => focusQuoteLine(editLines.find((line) => Number(rateForLine(line).nrpInclusive || 0) <= 0)) : null],
+            [BadgeIndianRupee, 'Special value', money(specialValue), null],
             [BadgeIndianRupee, 'Saving from MRP', money(Math.max(0, grossMrp - total)), null],
             [BadgeIndianRupee, 'GST', money(tax), null],
-            [AlertTriangle, 'Exceptions', `${mrpIssues.length + missingListCount + belowFloorCount}`, () => focusQuoteLine(mrpIssues[0]?.line || editLines.find((line) => Number(line.listPrice ?? line.price ?? 0) <= 0))],
+            [AlertTriangle, 'Exceptions', `${pricingIssueCount + missingNrpCount}`, () => focusQuoteLine(mrpIssues[0]?.line || discountIssues[0]?.line || editLines.find((line) => Number(rateForLine(line).nrpInclusive || 0) <= 0))],
             [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : 'Draft only', null],
           ].map(([Icon, label, value, action]: any) => <button key={label} type="button" onClick={action || undefined} className={`rounded-lg border p-3 text-left ${action ? 'border-amber-200 bg-amber-50' : 'border-[var(--line)] bg-[var(--surface)]'} ${label === 'Readiness' && pricingReady ? 'border-emerald-200 bg-emerald-50' : ''}`}><Icon className="h-4 w-4 text-[var(--brand-700)]"/><p className="mt-2 truncate text-base font-black text-[var(--ink)]">{value}</p><p className="mt-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--ink-4)]">{label}</p></button>)}
         </section>
@@ -417,9 +464,8 @@ export default function QuoteDetailPage() {
           <div className="divide-y divide-[var(--line)]">
             {group.rows.map((line: any) => {
               const index = editLines.indexOf(line);
-              const rate = lineRate(line, taxMode, Number(discountPercent || 0));
-              const listMissing = Number(line.listPrice ?? line.price ?? line.sellPrice ?? 0) <= 0;
-              return <article id={`quote-edit-line-${index}`} key={`${line.sku}-${index}`} className="scroll-mt-24 grid gap-4 p-5 xl:grid-cols-[8rem_1fr_7rem_7rem_7rem_7rem_7rem] xl:items-center">
+              const rate = rateForLine(line);
+              return <article id={`quote-edit-line-${index}`} key={`${line.sku}-${index}`} className="scroll-mt-24 grid gap-4 p-5 xl:grid-cols-[7rem_1fr_5rem_6rem_8rem_9rem_7rem] xl:items-center">
                 <ProductImageFrame src={productImage(line)} alt={line.name} className="h-28 w-32 rounded-[1.35rem]" imageClassName="p-2" />
                 <div className="space-y-2">
                   <input value={line.area || ''} onChange={(event)=>updateLine(index,{area:event.target.value})} className="h-9 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]" placeholder="Area / room" />
@@ -428,10 +474,10 @@ export default function QuoteDetailPage() {
                   <div className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-[var(--brand-700)]"/><input value={line.quoteImage || ''} onChange={(event)=>updateLine(index,{quoteImage:event.target.value})} placeholder="Optional HTTPS quote image URL" className="h-9 flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold" /></div><p className="text-[10px] text-[var(--ink-5)]">Saved URLs are copied into Marble Park for reliable PDFs.</p>
                 </div>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty</span><input disabled={commercialLocked} type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">List rate</span>{listMissing ? <span className="block rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs font-black text-amber-900">List Rate missing<Link href={`/dashboard/master-data/products?product=${line.productId}`} className="mt-1 block text-[10px] underline">Open Product Master</Link></span> : <><input disabled type="number" min={0} value={line.listPrice ?? line.price ?? line.sellPrice ?? 0} className="h-10 w-full cursor-not-allowed rounded-xl border border-[var(--line)] bg-[var(--muted)] px-3 text-sm font-black opacity-75"/><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Product Master</span></>}</label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">MRP / {rate.mrpUom}</span><input data-pricing-error={rate.mrpMissing || !rate.mrpValid ? 'true' : undefined} disabled={commercialLocked} aria-label={`MRP per ${rate.mrpUom} for ${line.name}`} type="number" min={0.01} step="0.01" value={line.mrp ?? ''} onChange={(event)=>updateLine(index,{mrp:event.target.value,mrpRateBasis:String(line.rateBasis || 'PACK').toUpperCase(),mrpSource:'MANUAL'})} className={`h-10 w-full rounded-xl border px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55 ${rate.mrpMissing || !rate.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`} /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Tax-inclusive</span></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Disc %</span><input disabled={commercialLocked} type="number" value={line.discountPercent || line.discount || 0} onChange={(event)=>updateLine(index,{discountPercent:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
-                <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Negotiated / total</p><input disabled={commercialLocked} aria-label={`Negotiated rate for ${line.name}`} type="number" min={0} value={line.specialRate ?? line.specialPrice ?? ''} placeholder={String(rate.specialRate)} onChange={(event)=>updateLine(index,{specialRate:event.target.value})} className="mt-1 h-10 w-full rounded-xl border border-[var(--brand-400)] bg-[var(--brand-50)] px-2 text-right text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" />{showPrices && <p className="mt-1 text-xl font-black text-[var(--success)]">{money(rate.amount)}</p>}</div>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">MRP / {rate.mrpUom}</span><input data-pricing-error={rate.mrpMissing || !rate.mrpValid ? 'true' : undefined} disabled={commercialLocked} aria-label={`MRP per ${rate.mrpUom} for ${line.name}`} type="number" min={0.01} step="0.01" value={line.mrpInclusive ?? ''} onChange={(event)=>updateLine(index,{mrpInclusive:event.target.value,priceRateBasis:String(line.rateBasis || 'BOX').toUpperCase().replace('PACK','BOX'),mrpSource:'MANUAL'})} className={`h-10 w-full rounded-xl border px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55 ${rate.mrpMissing || !rate.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`} /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Tax-inclusive</span></label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Base pricing → NRP</span><div className="grid grid-cols-[1fr_6.2rem] gap-1"><input data-pricing-error={discountIssues.some((issue) => issue.line === line && issue.field === 'base') ? 'true' : undefined} disabled={commercialLocked} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} value={line.nrpInput ?? 0} onChange={(event)=>updateLine(index,{nrpInput:event.target.value,pricingVersion:'unified_retail_v1'})} className={`h-10 min-w-0 rounded-xl border bg-[var(--surface)] px-2 text-sm font-black disabled:opacity-55 ${discountIssues.some((issue) => issue.line === line && issue.field === 'base') ? 'border-red-300 bg-red-50' : 'border-[var(--line)]'}`}/><select disabled={commercialLocked} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(index,{nrpMode:event.target.value,nrpInput:0,pricingVersion:'unified_retail_v1'})} className="h-10 rounded-xl border border-[var(--line)] bg-white px-1 text-[10px] font-black"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><span className="block text-[10px] font-black text-[#8f2f28]">NRP {money(rate.nrpInclusive)}</span></label>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Optional special</span><div className="grid grid-cols-[1fr_7.5rem] gap-1"><input data-pricing-error={discountIssues.some((issue) => issue.line === line && issue.field === 'special') ? 'true' : undefined} disabled={commercialLocked || (line.specialMode || 'NONE') === 'NONE'} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} value={line.specialInput || 0} onChange={(event)=>updateLine(index,{specialInput:event.target.value,pricingVersion:'unified_retail_v1'})} className={`h-10 min-w-0 rounded-xl border bg-[var(--surface)] px-2 text-sm font-black disabled:opacity-55 ${discountIssues.some((issue) => issue.line === line && issue.field === 'special') ? 'border-red-300 bg-red-50' : 'border-[var(--line)]'}`}/><select disabled={commercialLocked} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(index,{specialMode:event.target.value,specialInput:0,pricingVersion:'unified_retail_v1'})} className="h-10 rounded-xl border border-[var(--line)] bg-white px-1 text-[10px] font-black"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><span className="block text-[10px] font-black text-[#1d4ed8]">Special {money(rate.specialRateInclusive)}</span></label>
+                <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Final total</p><p className="mt-2 text-sm font-black text-[var(--ink)]">{money(rate.finalUnitPayable)} / {rate.mrpUom}</p>{showPrices && <p className="mt-1 text-xl font-black text-[var(--success)]">{money(rate.grossAfterQuoteDiscount)}</p>}</div>
               </article>;
             })}
           </div>
@@ -484,6 +530,6 @@ export default function QuoteDetailPage() {
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Convert selected quantity</h2><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">Choose only the quantities being confirmed now. The remaining balance stays on this quote for the next order or an explicit close-out.</p><div className="mt-4 space-y-2">{(fulfillment?.lines || []).map((line: any) => <label key={line.id} className="grid grid-cols-[1fr_5.5rem] items-center gap-3 rounded-lg border border-[var(--line)] p-3"><span className="min-w-0"><span className="block truncate text-sm font-bold text-[var(--ink)]">{line.sku} · {line.name}</span><span className="text-xs font-semibold text-[var(--ink-4)]">Ordered {line.ordered} of {line.quantity} · remaining {line.remaining}</span></span><input aria-label={`Order quantity for ${line.sku}`} type="number" min={0} max={line.remaining} value={orderQuantities[line.id] ?? ''} onChange={(event) => setOrderQuantities((current) => ({ ...current, [line.id]: event.target.value }))} disabled={!line.remaining} className="h-10 rounded-lg border border-[var(--brand-400)] bg-[var(--brand-50)] px-2 text-right text-sm font-black" /></label>)}{fulfillment && !fulfillment.lines?.length ? <p className="text-sm font-semibold text-[var(--ink-4)]">No remaining quote lines.</p> : null}</div><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Payment</span><select value={paymentMode} onChange={(e)=>setPaymentMode(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black"><option value="cash">Cash</option><option value="credit">Credit</option></select></label>{paymentMode === 'cash' && <label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Advance / full paid</span><input type="number" min={0} value={advanceAmount} onChange={(e)=>setAdvanceAmount(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>}<label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Payment terms</span><input value={paymentTerms} onChange={(e)=>setPaymentTerms(e.target.value)} placeholder={paymentMode === 'credit' ? 'Net 30' : 'Cash on order'} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Promised dispatch date</span><input type="date" value={promisedDate} onChange={(e)=>setPromisedDate(e.target.value)} className="h-11 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-black" /></label>{orderMessage && <div className="mt-3 rounded-2xl bg-[var(--brand-50)] p-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]"><p>{orderMessage}</p>{orderPdfUrl ? <a className="mt-2 inline-flex rounded-xl bg-[var(--brand-600)] px-3 py-2 text-white" href={orderPdfUrl} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" /> Sales order PDF</a> : null}</div>}<Button className="mt-4 w-full" disabled={creatingOrder || quote.status === 'superseded' || !(fulfillment?.lines || []).some((line: any) => Number(orderQuantities[line.id] || 0) > 0)} onClick={()=>{ const key = orderKey || (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`); setOrderKey(key); createSalesOrder({variables:{input:{quoteId:quote.id,paymentMode,advanceAmount:Number(advanceAmount||0),paymentTerms:paymentTerms || undefined,promisedDate:promisedDate || undefined,idempotencyKey:key,lines:JSON.stringify((fulfillment?.lines || []).map((line: any) => ({ quoteLineId: line.id, quantity: Number(orderQuantities[line.id] || 0) })).filter((line: any) => line.quantity > 0)),notes:'Created from quote detail'}}}); }}>{creatingOrder ? 'Creating...' : 'Create selected sales order'}</Button>{(fulfillment?.orders || []).length ? <div className="mt-5 border-t border-[var(--line)] pt-4"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Orders from this quote</p>{fulfillment.orders.map((order: any) => <div key={order.id} className="mt-2 flex justify-between gap-3 text-sm font-bold"><span>{order.orderNumber} · {order.status}</span><span>{money(order.totalAmount)}</span></div>)}</div> : null}<div className="mt-5 border-t border-[var(--line)] pt-4"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Close unused remainder</p><input value={closeReason} onChange={(event) => setCloseReason(event.target.value)} placeholder="Reason required to close remaining quantity" className="mt-2 h-10 w-full rounded-lg border border-[var(--line)] px-3 text-sm font-semibold" /><Button variant="outline" className="mt-2 w-full" disabled={closingRemainder || !closeReason.trim() || !(fulfillment?.lines || []).some((line: any) => Number(line.remaining || 0) > 0)} onClick={() => closeRemainder({ variables: { quoteId: quote.id, reason: closeReason } })}>{closingRemainder ? 'Closing...' : 'Close remaining quantity'}</Button></div></div>
       </aside>
     </section>
-    {!commercialLocked ? <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--surface)]/95 p-3 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur xl:hidden"><div className="mx-auto grid max-w-xl grid-cols-[1fr_auto_1fr] gap-2"><Button variant="outline" disabled={savingQuote} onClick={() => saveQuote(true)}><Save className="mr-2 h-4 w-4"/>Draft</Button><button type="button" onClick={() => focusQuoteLine(mrpIssues[0]?.line)} className={`rounded-md px-2 text-xs font-black ${pricingReady ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{pricingReady ? 'Ready' : `${mrpIssues.length} errors`}</button><Button disabled={savingQuote || !pricingReady} onClick={() => saveQuote(false)}><ShieldCheck className="mr-2 h-4 w-4"/>Validate</Button></div></div> : null}
+    {!commercialLocked ? <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--surface)]/95 p-3 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur xl:hidden"><div className="mx-auto grid max-w-xl grid-cols-[1fr_auto_1fr] gap-2"><Button variant="outline" disabled={savingQuote} onClick={() => saveQuote(true)}><Save className="mr-2 h-4 w-4"/>Draft</Button><button type="button" onClick={() => focusQuoteLine((mrpIssues[0] || discountIssues[0])?.line)} className={`rounded-md px-2 text-xs font-black ${pricingReady ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{pricingReady ? 'Ready' : `${pricingIssueCount} errors`}</button><Button disabled={savingQuote || !pricingReady} onClick={() => saveQuote(false)}><ShieldCheck className="mr-2 h-4 w-4"/>Validate</Button></div></div> : null}
   </div>;
 }
