@@ -1417,7 +1417,7 @@ export class OperationsService {
       const instance = await tx.internalLabelInstance.findUnique({
         where: { labelCode: normalizedCode },
         include: {
-          product: { include: { tileDesignMaster: true, tileSizeMaster: true, aliases: { where: { status: 'active' }, orderBy: { isPrimary: 'desc' } } } },
+          product: { include: { tileDesignMaster: true, tileSizeMaster: true, balances: true, aliases: { where: { status: 'active' }, orderBy: { isPrimary: 'desc' } } } },
           lot: { include: { balances: { include: { location: true } } } },
           displaySample: true,
           labelJob: true,
@@ -1428,15 +1428,83 @@ export class OperationsService {
         && (!instance.lot || instance.lot.status === 'active')
         && (!instance.displaySample || instance.displaySample.status === 'active');
       const result = subjectActive ? 'success' : instance ? 'inactive' : 'not_found';
+      const rawSelectedProductIds = input?.metadata?.selectedProductIds;
+      if (Array.isArray(rawSelectedProductIds) && rawSelectedProductIds.length > 250) {
+        throw new BadRequestException('A scan selection can contain at most 250 Product Master variants');
+      }
+      const requestedProductIds = Array.isArray(rawSelectedProductIds)
+        ? Array.from(new Set(rawSelectedProductIds.map((id: any) => String(id || '').trim()).filter(Boolean)))
+        : [];
+      if (requestedProductIds.length) {
+        if (!subjectActive || !instance?.product) throw new BadRequestException('The scanned physical identity is not active');
+        const selectedProducts = await tx.product.findMany({
+          where: { id: { in: requestedProductIds }, status: 'active' },
+          select: { id: true, tileDesignId: true },
+        });
+        const anchorDesignId = instance.product.tileDesignId;
+        const validIds = new Set(selectedProducts
+          .filter((product: any) => product.id === instance.product.id || (anchorDesignId && product.tileDesignId === anchorDesignId))
+          .map((product: any) => product.id));
+        if (validIds.size !== requestedProductIds.length) {
+          throw new BadRequestException('Every selected item must be the scanned Product Master item or an active variant of the same tile design');
+        }
+      }
+      const auditMetadata = {
+        ...(input?.metadata || {}),
+        ...(requestedProductIds.length ? {
+          selectedProductIds: requestedProductIds,
+          scannedProductId: instance?.product?.id || null,
+          tileDesignId: instance?.product?.tileDesignId || null,
+          selectionCount: requestedProductIds.length,
+        } : {}),
+      };
       const event = await tx.internalScanEvent.create({
         data: {
           id: ulid(), labelInstanceId: instance?.id || null, labelCode: normalizedCode,
           action: String(input?.action || 'lookup').trim().toLowerCase(), actorUserId,
           locationId: input?.locationId || null, entityType: input?.entityType || null, entityId: input?.entityId || null,
-          result, metadata: input?.metadata || {},
+          result, metadata: auditMetadata,
         },
       });
-      return { result, event, label: instance || null };
+      const relatedProducts = subjectActive && instance?.product
+        ? await tx.product.findMany({
+          where: instance.product.tileDesignId
+            ? { tileDesignId: instance.product.tileDesignId, status: 'active' }
+            : { id: instance.product.id, status: 'active' },
+          include: {
+            tileDesignMaster: true,
+            tileSizeMaster: true,
+            balances: true,
+            aliases: { where: { status: 'active' }, orderBy: { isPrimary: 'desc' } },
+          },
+          orderBy: [{ dimensions: 'asc' }, { finish: 'asc' }, { internalCode: 'asc' }, { sku: 'asc' }],
+          take: 250,
+        })
+        : [];
+      return {
+        result,
+        event,
+        label: instance || null,
+        relatedProducts: relatedProducts.map((product: any) => ({
+          ...product,
+          available: Number(product.balances?.available || 0),
+          onHand: Number(product.balances?.onHand || 0),
+          isScannedProduct: product.id === instance?.product?.id,
+        })),
+        relatedSummary: instance?.product?.tileDesignId ? {
+          type: 'tile_design',
+          designId: instance.product.tileDesignId,
+          designCode: instance.product.tileDesignMaster?.designCode || '',
+          designName: instance.product.tileDesignMaster?.name || instance.product.name,
+          count: relatedProducts.length,
+        } : {
+          type: 'exact_product',
+          designId: null,
+          designCode: '',
+          designName: instance?.product?.name || '',
+          count: relatedProducts.length,
+        },
+      };
     });
   }
 

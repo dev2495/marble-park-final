@@ -4,13 +4,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
-import { AlertTriangle, BadgeIndianRupee, Building2, Check, CheckCircle, Download, FileText, Image as ImageIcon, Percent, Plus, Save, Search, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertTriangle, BadgeIndianRupee, Building2, Camera, Check, CheckCircle, Download, FileText, Image as ImageIcon, Percent, Plus, Save, Search, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
 import { SelectMenu, SelectMenuTrigger, SelectMenuContent, SelectMenuItem, SelectMenuValue } from '@/components/ui/select-menu';
 import { describeApolloError } from '@/lib/apollo-errors';
+import { PhysicalQrScanner } from '@/components/physical-qr-scanner';
+import { ScanProductSelector } from '@/components/scan-product-selector';
 
 const GET_QUOTE_SETUP = gql`
   query GetQuoteSetup {
@@ -25,7 +27,8 @@ const GET_QUOTE_SETUP = gql`
 const SEARCH_PRODUCTS = gql`
   query SearchProducts($query: String!) { globalSearch(query: $query) { products } }
 `;
-const PRELOAD_PRODUCT = gql`query QuotePreloadProduct($id:ID!){product(id:$id){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice floorPrice mrp mrpRateBasis media}}`;
+const PRELOAD_PRODUCTS = gql`query QuotePreloadProducts($ids:[ID!]!){productsByIds(ids:$ids){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack sellPrice floorPrice mrp mrpRateBasis media}}`;
+const SCAN_LABEL = gql`mutation QuoteScanLabel($labelCode:String!,$input:InternalLabelScanInput){scanInternalLabel(labelCode:$labelCode,input:$input)}`;
 
 const CREATE_QUOTE = gql`
   mutation CreateQuote($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber architectId architectName } }
@@ -153,9 +156,14 @@ export default function QuoteBuilderPage() {
   const { data: searchData, loading: searching, error: searchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: searchQuery }, skip: searchQuery.length < 2 });
   const [createQuote, { loading: saving, error: saveError }] = useMutation(CREATE_QUOTE);
   const [validationError, setValidationError] = useState<string>('');
-  const [preloadProductId,setPreloadProductId]=useState('');
+  const [preloadProductIds,setPreloadProductIds]=useState<string[]>([]);
   const preloadApplied=useRef(false);
-  const {data:preloadData,error:preloadError}=useQuery(PRELOAD_PRODUCT,{variables:{id:preloadProductId},skip:!preloadProductId});
+  const {data:preloadData,error:preloadError}=useQuery(PRELOAD_PRODUCTS,{variables:{ids:preloadProductIds},skip:!preloadProductIds.length});
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanPayload, setScanPayload] = useState('');
+  const [scanResult, setScanResult] = useState<any>(null);
+  const [scanMessage, setScanMessage] = useState('');
+  const [scanLabel, scanState] = useMutation(SCAN_LABEL);
   const documentSettings = customerData?.documentSettings?.data || {};
   const brands = useMemo<any[]>(() => (customerData?.masterProductBrands || []).filter((brand: any) => brand.metadata?.quoteEnabled !== false), [customerData?.masterProductBrands]);
   const brandDefaultsApplied = useRef(false);
@@ -176,7 +184,7 @@ export default function QuoteBuilderPage() {
     setSelectedOwnerId(match?.id || customerData.salesAssignees[0].id);
   }, [customerData?.salesAssignees, selectedOwnerId]);
 
-  useEffect(()=>{setPreloadProductId(new URLSearchParams(window.location.search).get('product')||'');},[]);
+  useEffect(()=>{const params=new URLSearchParams(window.location.search);const ids=(params.get('products')||params.get('product')||'').split(',').map((id)=>id.trim()).filter(Boolean).slice(0,250);setPreloadProductIds([...new Set(ids)]);},[]);
 
   const addProduct = (product: any) => {
     const isTile = String(product.category || '').toLowerCase() === 'tiles';
@@ -190,14 +198,33 @@ export default function QuoteBuilderPage() {
     const sourceMrpRateBasis = String(product.mrpRateBasis || '').toUpperCase();
     const sourceMrpUom = sourceMrpRateBasis === 'AREA' ? (['SQFT', 'SQM', 'M2'].includes(String(product.salesUom || '').toUpperCase()) ? product.salesUom : 'SQFT') : sourceMrpRateBasis === 'PIECE' ? 'PC' : inventoryUom;
     const matchingMrp = Number(product.mrp || 0) > 0 && sourceMrpRateBasis === rateBasis ? Number(product.mrp) : null;
-    setLines((current) => [...current, { id: `${product.id}-${Date.now()}`, lineKey: `product:${product.id}:${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces: isTile ? Number(product.piecesPerPack || 1) : 0, wastagePercent, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom, pricingUom, rateBasis, sourceSalesUom: pricingUom, sourceSellPrice: Number(product.sellPrice || 0), price: product.sellPrice || 0, listPrice: product.sellPrice || 0, floorPrice: Number(product.floorPrice || 0), mrp: '', mrpSuggestion: matchingMrp, sourceMrp: Number(product.mrp || 0) || null, sourceMrpRateBasis, sourceMrpUom, mrpRateBasis: rateBasis, mrpSource: 'MANUAL', specialRate: '', discountPercent: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
+    setLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, { id: `${product.id}-${Date.now()}`, lineKey: `product:${product.id}:${Date.now()}`, area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces: isTile ? Number(product.piecesPerPack || 1) : 0, wastagePercent, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom, pricingUom, rateBasis, sourceSalesUom: pricingUom, sourceSellPrice: Number(product.sellPrice || 0), price: product.sellPrice || 0, listPrice: product.sellPrice || 0, floorPrice: Number(product.floorPrice || 0), mrp: '', mrpSuggestion: matchingMrp, sourceMrp: Number(product.mrp || 0) || null, sourceMrpRateBasis, sourceMrpUom, mrpRateBasis: rateBasis, mrpSource: 'MANUAL', specialRate: '', discountPercent: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media, quoteImage: '' }]);
     const matchedBrand = brands.find((brand: any) => String(brand.name || '').trim().toLowerCase() === String(product.brand || '').trim().toLowerCase());
     if (matchedBrand) setSelectedBrandIds((current) => current.includes(String(matchedBrand.id)) ? current : [...current, String(matchedBrand.id)]);
     setSearchQuery('');
   };
   // The preload is intentionally one-shot; addProduct is a render-local builder.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(()=>{if(!preloadData?.product||preloadApplied.current)return;preloadApplied.current=true;addProduct(preloadData.product);setSuccess(`${preloadData.product.internalCode||preloadData.product.sku} added from the scanned label. Select the customer and verify quantity, MRP and rate before saving.`);},[preloadData?.product]);
+  useEffect(()=>{const products=preloadData?.productsByIds||[];if(!products.length||preloadApplied.current)return;preloadApplied.current=true;products.forEach(addProduct);setSuccess(`${products.length} scanned selection${products.length === 1 ? '' : 's'} added. Select the customer and verify quantity, MRP and rate before saving.`);},[preloadData?.productsByIds]);
+  const scanToQuote = async (payload: string) => {
+    setScanMessage('');
+    setScanPayload(payload);
+    setScanResult(null);
+    const response = await scanLabel({ variables: { labelCode: payload, input: { action: 'quote_similar_lookup', metadata: { surface: 'quote_new' } } } });
+    const result = response.data?.scanInternalLabel;
+    if (result?.result !== 'success' || !result?.label?.product) {
+      setScanMessage('No active governed label matched this scan. The quote was not changed.');
+      return;
+    }
+    setScanResult(result);
+  };
+  const addScannedProducts = async (products: any[]) => {
+    await scanLabel({ variables: { labelCode: scanPayload, input: { action: 'quote_similar_select', entityType: 'QuoteDraft', metadata: { surface: 'quote_new', selectedProductIds: products.map((product) => product.id) } } } });
+    products.forEach(addProduct);
+    setScanMessage(`${products.length} selected item${products.length === 1 ? '' : 's'} added to the quote draft.`);
+    setScanResult(null);
+    setScanOpen(false);
+  };
   const updateQty = (id: string, qty: number) => setLines((current) => current.map((line) => line.id === id ? { ...line, qty } : line));
   const updateLine = (id: string, patch: any) => setLines((current) => current.map((line) => {
     if (line.id !== id) return line;
@@ -353,7 +380,7 @@ export default function QuoteBuilderPage() {
     }
   };
 
-  const queryError = customerError || searchError || preloadError;
+  const queryError = customerError || searchError || preloadError || scanState.error;
   return (
     <div className="grid gap-4 pb-24 xl:h-[calc(100vh-10rem)] xl:overflow-hidden xl:pb-4 xl:grid-cols-[1fr_0.52fr]">
       {queryError ? <div className="xl:col-span-2"><QueryErrorBanner error={queryError} /></div> : null}
@@ -497,8 +524,9 @@ export default function QuoteBuilderPage() {
 
           {lines.some((line) => Number(line.mrpSuggestion || 0) > 0 && !Number(line.mrp || 0)) ? <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3"><div><p className="text-sm font-black text-blue-950">Verified Product Master MRP is available.</p><p className="mt-1 text-xs font-semibold text-blue-800">Apply matching-basis suggestions, then review each line before validating.</p></div><Button type="button" variant="outline" onClick={() => applyVerifiedMrp()}><Check className="mr-2 h-4 w-4"/>Apply eligible MRP</Button></div> : null}
 
-          <div className="relative mt-6">
-            <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#52525b]" />
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-4 top-7 h-5 w-5 -translate-y-1/2 text-[#52525b]" />
             <Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search showroom code, SKU, brand or name..." className="h-14 pl-12 text-base" />
             <AnimatePresence>
               {searchQuery.length >= 2 && searchData?.globalSearch?.products?.length > 0 && (
@@ -515,7 +543,14 @@ export default function QuoteBuilderPage() {
                 </motion.div>
               )}
             </AnimatePresence>
+            </div>
+            <Button type="button" variant="outline" size="lg" onClick={() => { setScanOpen((value) => !value); setScanResult(null); }} className="h-14 shrink-0">
+              <Camera className="mr-2 h-5 w-5" />{scanOpen ? 'Close scanner' : 'Scan showroom item'}
+            </Button>
           </div>
+          {scanOpen ? <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3"><PhysicalQrScanner compact busy={scanState.loading} onDetected={scanToQuote}/></div> : null}
+          {scanResult ? <div className="mt-3"><ScanProductSelector result={scanResult} busy={scanState.loading} existingProductIds={lines.map((line) => line.productId)} primaryLabel="Add selected to quote" onPrimary={addScannedProducts} onDismiss={() => setScanResult(null)}/></div> : null}
+          {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-xl p-3 text-xs font-semibold ${scanMessage.startsWith('No active') ? 'bg-red-50 text-red-800' : 'bg-emerald-50 text-emerald-800'}`}>{scanMessage.startsWith('No active') ? <XCircle className="h-4 w-4"/> : <CheckCircle className="h-4 w-4"/>}{scanMessage}</div> : null}
 
           <div className="mt-6 overflow-hidden rounded-r4 border border-[#e4e4e7] bg-white/80">
             <div className="divide-y divide-[#e4e4e7]">

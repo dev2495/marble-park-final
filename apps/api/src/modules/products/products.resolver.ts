@@ -314,6 +314,12 @@ export class ProductsResolver {
     return this.products.findById(id);
   }
 
+  @Query(() => [ProductOutput])
+  async productsByIds(@Args('ids', { type: () => [ID] }) ids: string[], @Context() ctx: GraphqlRequestContext) {
+    await requireSession(this.prisma, ctx);
+    return this.products.findByIds(ids);
+  }
+
   @Query(() => [String])
   async productCategories(@Context() ctx: GraphqlRequestContext) {
     await requireSession(this.prisma, ctx);

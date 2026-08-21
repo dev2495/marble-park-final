@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
 import { PhysicalQrScanner } from "@/components/physical-qr-scanner";
+import { ScanProductSelector } from "@/components/scan-product-selector";
 
 const INTENT = gql`
   query Intent($id: ID!) {
@@ -259,6 +260,8 @@ export default function IntentDetailPage() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
   const [scanMessage, setScanMessage] = useState("");
+  const [scanPayload, setScanPayload] = useState("");
+  const [scanResult, setScanResult] = useState<any>(null);
   const [scanLabel, scanState] = useMutation(SCAN_LABEL);
   const { data: searchData, loading: searching } = useQuery(PRODUCT_SEARCH, {
     variables: { query: searchTerm },
@@ -345,9 +348,9 @@ export default function IntentDetailPage() {
     setDirty(true);
   };
   const addFromProduct = (product: any) => {
-    setRows((prev) => [
-      ...prev,
-      {
+    setRows((prev) => {
+      if (prev.some((row) => row.productId === product.id)) return prev;
+      return [...prev, {
         productId: product.id,
         sku: product.sku,
         name: product.name,
@@ -378,22 +381,29 @@ export default function IntentDetailPage() {
         requestedArea: Number(product.coveragePerPack || 0),
         wastagePercent:
           String(product.category || "").toLowerCase() === "tiles" ? 10 : 0,
-      },
-    ]);
+      }];
+    });
     setDirty(true);
     setSearchTerm("");
     setSearchOpen(false);
   };
   const addFromScan = async (payload: string) => {
     setScanMessage("");
-    const response = await scanLabel({ variables: { labelCode: payload, input: { action: "intent_row_add", entityType: "Intent", entityId: id, metadata: { surface: "intent_detail" } } } });
+    setScanPayload(payload);
+    setScanResult(null);
+    const response = await scanLabel({ variables: { labelCode: payload, input: { action: "intent_similar_lookup", entityType: "Intent", entityId: id, metadata: { surface: "intent_detail" } } } });
     const result = response.data?.scanInternalLabel;
     if (result?.result !== "success" || !result?.label?.product) {
       setScanMessage("No active governed label matched this scan. The intent was not changed.");
       return;
     }
-    addFromProduct(result.label.product);
-    setScanMessage(`${result.label.product.internalCode || result.label.product.sku} added to this intent. Save or submit to persist it.`);
+    setScanResult(result);
+  };
+  const addScannedProducts = async (products: any[]) => {
+    await scanLabel({ variables: { labelCode: scanPayload, input: { action: "intent_similar_select", entityType: "Intent", entityId: id, metadata: { surface: "intent_detail", selectedProductIds: products.map((product) => product.id) } } } });
+    products.forEach(addFromProduct);
+    setScanMessage(`${products.length} selected item${products.length === 1 ? "" : "s"} added. Save or submit to persist the intent.`);
+    setScanResult(null);
     setScanOpen(false);
   };
 
@@ -587,11 +597,12 @@ export default function IntentDetailPage() {
                 </div>
               ) : null}
             </div>
-            <Button type="button" variant="outline" onClick={() => setScanOpen((value) => !value)}>
+            <Button type="button" variant="outline" onClick={() => { setScanOpen((value) => !value); setScanResult(null); }}>
               <Camera className="mr-2 h-4 w-4" />{scanOpen ? "Close scanner" : "Scan showroom item"}
             </Button>
           </div>
           {scanOpen ? <div className="mt-3 rounded-r4 border border-emerald-200 bg-emerald-50 p-3"><PhysicalQrScanner compact busy={scanState.loading} onDetected={addFromScan}/></div> : null}
+          {scanResult ? <div className="mt-3"><ScanProductSelector result={scanResult} busy={scanState.loading} existingProductIds={rows.map((row) => row.productId || "")} primaryLabel="Add selected to intent" onPrimary={addScannedProducts} onDismiss={() => setScanResult(null)}/></div> : null}
           {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-r4 p-3 text-xs font-semibold ${scanMessage.startsWith("No active") ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}><CheckCircle2 className="h-4 w-4" />{scanMessage}</div> : null}
           {scanState.error ? <div className="mt-3"><QueryErrorBanner error={scanState.error}/></div> : null}
         </section>

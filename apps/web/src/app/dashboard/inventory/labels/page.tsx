@@ -3,13 +3,14 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { ArrowUpRight, Barcode, Box, Check, ChevronLeft, ChevronRight, ClipboardCheck, FilePlus2, HelpCircle as CircleHelp, History, MapPin, PackageCheck, PackageSearch, Printer, QrCode, ScanLine, Search, ShoppingCart, Sparkles, Store, XCircle } from 'lucide-react';
+import { ArrowUpRight, Barcode, Box, Check, ChevronLeft, ChevronRight, ClipboardCheck, HelpCircle as CircleHelp, History, MapPin, PackageCheck, PackageSearch, Printer, QrCode, ScanLine, Search, Sparkles, Store, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { PhysicalQrScanner } from '@/components/physical-qr-scanner';
+import { ScanProductSelector } from '@/components/scan-product-selector';
 
 const SOURCES = gql`query LabelSources($search: String) {
   products(search: $search, take: 50) { id sku internalCode name category brand finish dimensions piecesPerPack media }
@@ -62,6 +63,7 @@ export default function LabelDeskPage() {
   const [printReason, setPrintReason] = useState('Operational label print');
   const [voidReason, setVoidReason] = useState('Damaged or superseded physical label');
   const [scanResult, setScanResult] = useState<any>(null);
+  const [scanPayload, setScanPayload] = useState('');
   const debouncedSource = useDebouncedValue(sourceSearch.trim(), 250);
   const debouncedRegister = useDebouncedValue(registerSearch.trim(), 250);
   const pageSize = 20;
@@ -134,7 +136,14 @@ export default function LabelDeskPage() {
   }
   async function executeScan(payload: string) {
     setScanResult(null);
+    setScanPayload(payload);
     await scan({ variables: { labelCode: payload, input: { action: 'physical_identity_lookup', metadata: { surface: 'label_desk' } } } });
+  }
+  async function continueFromScan(products: any[], target: 'intent' | 'quote') {
+    if (!scanPayload || !products.length) return;
+    await scan({ variables: { labelCode: scanPayload, input: { action: `scan_similar_${target}`, metadata: { surface: 'label_desk', selectedProductIds: products.map((product) => product.id) } } } });
+    const params = new URLSearchParams({ products: products.map((product) => product.id).join(','), scanned: scanPayload });
+    window.location.href = target === 'intent' ? `/dashboard/leads/new?${params}` : `/dashboard/quotes/new?${params}`;
   }
 
   return <div className="space-y-5 pb-12">
@@ -165,23 +174,23 @@ export default function LabelDeskPage() {
     {tab==='scan'?<section className="grid gap-5 xl:grid-cols-[1fr_22rem]">
       <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
         <div className="bg-[linear-gradient(120deg,#17302c,#225d52)] p-6 text-white"><div className="flex items-center gap-2"><ScanLine className="h-5 w-5 text-emerald-300"/><h2 className="text-lg font-bold">Scan, identify and act</h2></div><p className="mt-2 max-w-3xl text-sm leading-6 text-white/72">Use the phone camera, a handheld scanner, or the printed human code. A successful scan opens the catalogue identity, exact lot/display context and sales actions.</p><div className="mt-5 rounded-2xl bg-white p-3 text-slate-950"><PhysicalQrScanner busy={scanState.loading} onDetected={executeScan}/></div></div>
-        {scanResult?<ScanIdentityResult result={scanResult}/>:<Empty icon={QrCode} title="Ready for the next scan" text="Camera scanning is available after you tap Scan with camera. No background camera or polling is used."/>}
+        {scanResult?<ScanIdentityResult result={scanResult} busy={scanState.loading} onIntent={(products)=>continueFromScan(products,'intent')} onQuote={(products)=>continueFromScan(products,'quote')} onDismiss={()=>setScanResult(null)}/>:<Empty icon={QrCode} title="Ready for the next scan" text="Camera scanning is available after you tap Scan with camera. No background camera or polling is used."/>}
       </div>
       <aside className="space-y-4"><div className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><ClipboardCheck className="h-5 w-5 text-amber-700"/><h3 className="mt-3 font-bold text-amber-950">Before moving stock</h3><p className="mt-2 text-xs leading-5 text-amber-900">Match the label, product, exact lot, batch and location. A display QR identifies a non-sellable showroom asset and must never be dispatched as saleable stock.</p></div><div className="rounded-2xl border border-sky-200 bg-sky-50 p-5"><Store className="h-5 w-5 text-sky-700"/><h3 className="mt-3 font-bold text-sky-950">Need to create a display?</h3><p className="mt-2 text-xs leading-5 text-sky-900">Purchased items go through GRN, then move from their exact lot. Free vendor samples are registered without increasing stock.</p><Button asChild size="sm" className="mt-4 w-full"><Link href="/dashboard/inventory/display-assets">Open Display Assets</Link></Button></div><Button asChild variant="outline" className="w-full"><Link href="/dashboard/help#labels-lots"><CircleHelp className="mr-2 h-4 w-4"/>Open scan help</Link></Button></aside>
     </section>:null}
   </div>;
 }
 
-function ScanIdentityResult({result}:{result:any}) {
+function ScanIdentityResult({result,busy,onIntent,onQuote,onDismiss}:{result:any;busy:boolean;onIntent:(products:any[])=>Promise<void>;onQuote:(products:any[])=>Promise<void>;onDismiss:()=>void}) {
   const label=result?.label; const product=label?.product; const lot=label?.lot; const display=label?.displaySample;
   const ok=result?.result==='success';
   if(!label)return <div className="m-5 rounded-2xl border border-red-200 bg-red-50 p-5"><div className="flex items-center gap-2 text-red-900"><span className="grid h-8 w-8 place-items-center rounded-full bg-red-600 text-white"><XCircle className="h-4 w-4"/></span><b>No registered physical identity found</b></div><p className="mt-3 text-sm leading-6 text-red-800">This QR or code is not in the governed label register. Do not issue, move, quote or dispatch it until the physical item is matched.</p></div>;
   const available=(lot?.balances||[]).reduce((sum:number,row:any)=>sum+Number(row.available||0),0);
-  return <div className={`m-5 overflow-hidden rounded-2xl border ${ok?'border-emerald-200 bg-emerald-50':'border-red-200 bg-red-50'}`}>
+  return <div className="space-y-4 p-5"><div className={`overflow-hidden rounded-2xl border ${ok?'border-emerald-200 bg-emerald-50':'border-red-200 bg-red-50'}`}>
     <div className="flex flex-col justify-between gap-3 border-b border-black/5 p-5 sm:flex-row sm:items-center"><div className="flex items-center gap-3"><span className={`grid h-9 w-9 place-items-center rounded-full text-white ${ok?'bg-emerald-600':'bg-red-600'}`}>{ok?<Check className="h-4 w-4"/>:<XCircle className="h-4 w-4"/>}</span><div><p className="font-bold capitalize">{String(result.result).replaceAll('_',' ')} physical identity</p><p className="mt-0.5 font-mono text-[11px] text-[var(--ink-4)]">{label.labelCode}</p></div></div><span className={`self-start rounded-full px-3 py-1 text-[10px] font-bold uppercase ${display?'bg-violet-100 text-violet-800':lot?'bg-blue-100 text-blue-800':'bg-slate-100 text-slate-700'}`}>{display?'Display asset':lot?'Exact stock lot':'Catalogue / shelf'}</span></div>
-    <div className="grid gap-5 p-5 lg:grid-cols-[10rem_1fr]"><ProductImageFrame src={imageOf(label)} alt={product?.name||'Scanned item'} className="aspect-square rounded-2xl"/><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[.14em] text-[var(--ink-4)]">{display?.internalCode||product?.internalCode||product?.sku}</p><h3 className="mt-1 text-2xl font-bold text-[var(--ink)]">{product?.name}</h3><p className="mt-2 text-sm text-[var(--ink-3)]">{product?.brand||'Brand pending'} · {product?.finish||product?.tileDesignMaster?.surface||'Finish pending'} · {product?.dimensions||product?.tileSizeMaster?.name||'Size pending'}</p><div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4"><Fact label="Warehouse SKU" value={product?.sku}/><Fact label="Display code" value={display?.internalCode||product?.internalCode||'—'}/><Fact label="Inventory UOM" value={product?.purchaseUom||product?.unit||'PC'}/><Fact label="Selling UOM" value={product?.salesUom||product?.unit||'PC'}/></div>{lot?<div className="mt-3 rounded-xl border border-blue-200 bg-white/70 p-3 text-xs leading-5 text-blue-950"><b>{lot.lotNumber}</b>{lot.supplierBatch?` · supplier batch ${lot.supplierBatch}`:''} · <b>{available} available</b><br/>{(lot.balances||[]).map((row:any)=><span key={row.id} className="mr-3 inline-flex items-center gap-1"><MapPin className="h-3 w-3"/>{row.location?.code||row.locationId}: {row.available}</span>)}</div>:null}{display?<div className="mt-3 rounded-xl border border-violet-200 bg-white/70 p-3 text-xs leading-5 text-violet-950"><b>{display.sampleNumber}</b> · {display.status} · {display.condition}<br/><MapPin className="mr-1 inline h-3 w-3"/>{display.displayZone||'Zone pending'} · {display.displayPosition||'Position pending'} · non-sellable asset</div>:null}
-      {!ok?<p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold leading-5 text-red-900">This label, product, lot or display is no longer active. Do not use the physical item for a new intent, quote or stock movement until the source record is corrected.</p>:null}<div className={`mt-5 grid gap-2 ${ok?(lot?'sm:grid-cols-2 xl:grid-cols-4':'sm:grid-cols-3'):'sm:grid-cols-1'}`}><Button asChild variant="outline"><Link href={`/dashboard/products?product=${product?.id}`}><ArrowUpRight className="mr-2 h-4 w-4"/>Open catalogue</Link></Button>{ok?<>{lot?<Button asChild variant="outline"><Link href={`/dashboard/inventory/display-assets?product=${product?.id}&lot=${lot.id}&location=${lot.balances?.find((row:any)=>Number(row.available)>0)?.locationId||''}`}><Store className="mr-2 h-4 w-4"/>Move to display</Link></Button>:null}<Button asChild variant="outline"><Link href={`/dashboard/leads/new?product=${product?.id}`}><FilePlus2 className="mr-2 h-4 w-4"/>Add to intent</Link></Button><Button asChild><Link href={`/dashboard/quotes/new?product=${product?.id}`}><ShoppingCart className="mr-2 h-4 w-4"/>Quick quote</Link></Button></>:null}</div>
-    </div></div></div>;
+    <div className="grid gap-5 p-5 lg:grid-cols-[10rem_1fr]"><ProductImageFrame src={imageOf(label)} alt={product?.name||'Scanned item'} className="aspect-square rounded-2xl"/><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[.14em] text-[var(--ink-4)]">{display?.internalCode||product?.internalCode||product?.sku}</p><h3 className="mt-1 text-2xl font-bold text-[var(--ink)]">{product?.name}</h3><p className="mt-2 text-sm text-[var(--ink-3)]">{product?.brand||'Brand pending'} · {product?.finish||product?.tileDesignMaster?.surface||'Finish pending'} · {product?.dimensions||product?.tileSizeMaster?.name||'Size pending'}</p><div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4"><Fact label="Warehouse SKU" value={product?.sku}/><Fact label="Display code" value={display?.internalCode||product?.internalCode||'—'}/><Fact label="Inventory UOM" value={product?.purchaseUom||product?.unit||'PC'}/><Fact label="Selling UOM" value={product?.salesUom||product?.unit||'PC'}/></div>{lot?<div className="mt-3 rounded-xl border border-blue-200 bg-white/70 p-3 text-xs leading-5 text-blue-950"><b>{lot.lotNumber}</b>{lot.supplierBatch?` · supplier batch ${lot.supplierBatch}`:''} · <b>{available} available</b><br/>{(lot.balances||[]).map((row:any)=><span key={row.id} className="mr-3 inline-flex items-center gap-1"><MapPin className="h-3 w-3"/>{row.location?.code||row.locationId}: {row.available}</span>)}</div>:null}{display?<div className="mt-3 rounded-xl border border-violet-200 bg-white/70 p-3 text-xs leading-5 text-violet-950"><b>{display.sampleNumber}</b> · {display.status} · {display.condition}<br/><MapPin className="mr-1 inline h-3 w-3"/>{display.displayZone||'Zone pending'} · non-sellable asset</div>:null}
+      {!ok?<p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold leading-5 text-red-900">This label, product, lot or display is no longer active. Do not use the physical item for a new intent, quote or stock movement until the source record is corrected.</p>:null}<div className={`mt-5 grid gap-2 ${ok&&lot?'sm:grid-cols-2':'sm:grid-cols-1'}`}><Button asChild variant="outline"><Link href={`/dashboard/products?product=${product?.id}`}><ArrowUpRight className="mr-2 h-4 w-4"/>Open catalogue</Link></Button>{ok&&lot?<Button asChild variant="outline"><Link href={`/dashboard/inventory/display-assets?product=${product?.id}&lot=${lot.id}&location=${lot.balances?.find((row:any)=>Number(row.available)>0)?.locationId||''}`}><Store className="mr-2 h-4 w-4"/>Move to display</Link></Button>:null}</div>
+    </div></div></div>{ok?<ScanProductSelector result={result} busy={busy} primaryLabel="Quick quote with selected" onPrimary={onQuote} secondaryLabel="Add selected to intent" onSecondary={onIntent} onDismiss={onDismiss}/>:null}</div>;
 }
 function Fact({label,value}:{label:string;value:any}){return <div className="rounded-xl bg-white/65 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">{label}</p><p className="mt-1 truncate text-xs font-bold text-[var(--ink)]">{value||'—'}</p></div>}
 

@@ -98,6 +98,15 @@ export class ProductsService {
     return product;
   }
 
+  async findByIds(ids: string[]) {
+    const uniqueIds = Array.from(new Set((ids || []).map((id) => String(id || '').trim()).filter(Boolean)));
+    if (!uniqueIds.length) return [];
+    if (uniqueIds.length > 250) throw new BadRequestException('Select at most 250 Product Master items');
+    const products = await this.prisma.product.findMany({ where: { id: { in: uniqueIds }, status: 'active' } });
+    const byId = new Map(products.map((product: any) => [product.id, product]));
+    return uniqueIds.map((id) => byId.get(id)).filter(Boolean);
+  }
+
   async findBySku(sku: string) {
     return this.prisma.product.findUnique({ where: { sku: this.normalizeSku(sku) } });
   }

@@ -36,7 +36,7 @@ async function main() {
   assert(token, 'Acceptance owner must authenticate');
 
   const sizes = (await gql('query { tileSizes(status:"active") }', {}, token)).tileSizes;
-  assert(sizes.length, 'At least one active governed Tile Size is required');
+  assert(sizes.length > 1, 'At least two active governed Tile Sizes are required for same-design selection acceptance');
   const governedMasters = await gql('query { masterProductBrands(status:"active") masterProductFinishes(status:"active") }', {}, token);
   assert(governedMasters.masterProductBrands.length && governedMasters.masterProductFinishes.length, 'Active Brand and Finish masters are required');
   const governedBrand = governedMasters.masterProductBrands[0].name;
@@ -55,6 +55,12 @@ async function main() {
   assert(/already exists/i.test(duplicateError), 'Duplicate design × size × finish variants must be blocked');
   const updatedVariant = (await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id sku } }', { input: { id: variant.id, tileDesignId: design.id, tileSizeId: size.id, sku: `CHANGED-${suffix}`, finish: governedFinish, piecesPerPack } }, token)).saveTileVariant;
   assert(updatedVariant.sku === variant.sku, 'Warehouse SKU must remain immutable on update');
+  const siblingSize = sizes.find((row) => row.id !== size.id);
+  const siblingVariant = (await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id sku internalCode tileDesignId tileSizeId } }', { input: {
+    tileDesignId: design.id, tileSizeId: siblingSize.id, sku: `WH-${suffix}-ALT`, internalCode: `SHOW-${suffix}-ALT`, finish: governedFinish,
+    piecesPerPack: Math.max(1, Number(siblingSize.pcsPerBox || 1)), purchaseUom: 'BOX', salesUom: 'BOX', sellPrice: 210, floorPrice: 185, costPrice: 122,
+  } }, token)).saveTileVariant;
+  assert(siblingVariant.tileDesignId === design.id && siblingVariant.tileSizeId === siblingSize.id, 'A second active size must remain governed by the same Tile Design');
   await gql('mutation($input: ProductAliasInput!) { saveProductAlias(input:$input) }', { input: { productId: variant.id, type: 'supplier_sku', value: `SUP-${suffix}` } }, token);
   const aliasResults = (await gql('query($query:String!){globalSearch(query:$query){products}}', { query: `SUP-${suffix}` }, token)).globalSearch.products;
   assert(aliasResults.some((row) => row.id === variant.id), 'Supplier alias must resolve in shared search');
@@ -143,8 +149,19 @@ async function main() {
   const printRun = (await gql('mutation($input:InternalLabelPrintRunInput!){prepareInternalLabelPrintRun(input:$input)}', { input: { labelJobId: labelJob.id, templateCode: 'thermal_100x50', labelIds: [labelJob.instances[0].id], copies: 1, reason: 'Clone display print acceptance' } }, token)).prepareInternalLabelPrintRun;
   const printData = (await gql('query($id:ID!){internalLabelPrintRun(id:$id)}', { id: printRun.id }, token)).internalLabelPrintRun;
   assert(printData.status === 'prepared' && printData.labels.length === 1 && printData.labels[0].qrValue.startsWith('MP-LABEL:'), 'Selected label print run must use isolated scanner-ready payload');
+  const stockBeforeSelection = await prisma.inventoryBalance.findUnique({ where: { productId: variant.id } });
   const scanned = (await gql('mutation($code:String!){scanInternalLabel(labelCode:$code)}', { code: printData.labels[0].qrValue }, token)).scanInternalLabel;
   assert(scanned.result === 'success', 'Scanner must accept the actual rendered QR payload');
+  assert(scanned.relatedSummary?.type === 'tile_design' && scanned.relatedProducts?.length === 2, 'A tile scan must return every active variant from only the same governed design');
+  assert(scanned.relatedProducts.some((product) => product.id === variant.id && product.isScannedProduct) && scanned.relatedProducts.some((product) => product.id === siblingVariant.id), 'Scan response must distinguish the physical item and its selectable sibling size');
+  const orderedProducts = (await gql('query($ids:[ID!]!){productsByIds(ids:$ids){id}}', { ids: [siblingVariant.id, variant.id] }, token)).productsByIds;
+  assert(orderedProducts.map((product) => product.id).join(',') === `${siblingVariant.id},${variant.id}`, 'Bulk preload must preserve the user-selected Product Master order');
+  const selectedScan = (await gql('mutation($code:String!,$input:InternalLabelScanInput){scanInternalLabel(labelCode:$code,input:$input)}', { code: printData.labels[0].qrValue, input: { action: 'acceptance_similar_select', entityType: 'QuoteDraft', metadata: { surface: 'acceptance', selectedProductIds: [variant.id, siblingVariant.id] } } }, token)).scanInternalLabel;
+  assert(selectedScan.event.metadata.selectionCount === 2 && selectedScan.event.metadata.scannedProductId === variant.id, 'Multi-selection must be accepted and audit the exact anchor plus selected variants');
+  const crossDesignError = await gql('mutation($code:String!,$input:InternalLabelScanInput){scanInternalLabel(labelCode:$code,input:$input)}', { code: printData.labels[0].qrValue, input: { action: 'acceptance_invalid_select', metadata: { selectedProductIds: [variant.id, importedDesign.variants[0].id] } } }, token, true);
+  assert(/same tile design/i.test(crossDesignError), 'Cross-design scan selection must be rejected by the server');
+  const stockAfterSelection = await prisma.inventoryBalance.findUnique({ where: { productId: variant.id } });
+  assert(Number(stockAfterSelection.onHand) === Number(stockBeforeSelection.onHand) && Number(stockAfterSelection.available) === Number(stockBeforeSelection.available), 'Scan lookup and multi-selection must not reserve, issue or change inventory');
   await gql('mutation($id:ID!,$reason:String!){cancelInternalLabelPrintRun(id:$id,reason:$reason)}', { id: printRun.id, reason: 'Acceptance browser dialog cancelled' }, token);
   const cancelledInstance = await prisma.internalLabelInstance.findUnique({ where: { id: labelJob.instances[0].id } });
   assert(cancelledInstance.printCount === 0, 'Cancelled browser print must not mark the label printed');
@@ -169,13 +186,13 @@ async function main() {
   ]);
   assert(Number(aggregate.onHand) === Number(lots._sum.onHand) && Number(aggregate.available) === Number(lots._sum.available), 'Aggregate inventory must equal the sum of lot balances');
   assert(reconciliation.stockReconciliation.summary.critical === 0, 'Stock reconciliation must report zero critical mismatches');
-  assert(designPage.tileDesignsPage.total === 1 && variantPage.tileVariantsPage.total === 1, 'Tile design and variant registers must be searchable and server-paged');
+  assert(designPage.tileDesignsPage.total === 1 && variantPage.tileVariantsPage.total === 2, 'Tile design and both same-design variant rows must be searchable and server-paged');
 
   console.log(JSON.stringify({
     ok: true, designCode: design.designCode, warehouseSku: variant.sku, sizeCode: size.code, importedDesignVariants: importedDesign.variants.length,
     poNumber: po.poNumber, poStatus: poRead.status, poBasePieces: piecesPerPack * 3,
     manualGrn: manual.grnNumber, manualBasePieces: manualQuantity, displayCode: display.internalCode,
-    displayIssueAndReturn: true, scannerPayload: true, removedDisplayScan: inactiveScan.result, cancelledPrintCount: cancelledInstance.printCount,
+    displayIssueAndReturn: true, scannerPayload: true, similarDesignSelection: { returned: scanned.relatedProducts.length, selected: selectedScan.event.metadata.selectionCount, crossDesignBlocked: true }, removedDisplayScan: inactiveScan.result, cancelledPrintCount: cancelledInstance.printCount,
     stock: { onHand: aggregate.onHand, available: aggregate.available, lotOnHand: lots._sum.onHand, lotAvailable: lots._sum.available },
     criticalReconciliation: reconciliation.stockReconciliation.summary.critical,
   }, null, 2));
