@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ulid } from 'ulid';
 import { brandedLabelQrDataUrl } from '../common/branded-label-qr';
 import { nextDocumentNumber } from '../common/sequence';
@@ -130,14 +131,28 @@ export class OperationsService {
   }
 
   async stockLocationBalances(args?: { locationId?: string; productId?: string; take?: number }) {
-    const where: any = {};
-    if (args?.locationId) where.locationId = args.locationId;
-    if (args?.productId) where.productId = args.productId;
-    const rows = await (this.prisma as any).stockBalanceByLocation.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      take: this.limit(args?.take, 250),
-    }).catch(() => []);
+    const take = this.limit(args?.take, 250);
+    // InventoryLotBalance is the physical stock truth. StockBalanceByLocation
+    // remains only as a legacy posting projection and must never be served as
+    // an independent quantity source because older projection rows may drift.
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT
+        CONCAT('lot-location:', lot."productId", ':', lb."locationId") AS id,
+        lot."productId",
+        lb."locationId",
+        COALESCE(SUM(lb."onHand"), 0)::integer AS "onHand",
+        COALESCE(SUM(lb."reserved"), 0)::integer AS reserved,
+        COALESCE(SUM(lb."damaged"), 0)::integer AS damaged,
+        COALESCE(SUM(lb."hold"), 0)::integer AS hold,
+        MAX(lb."updatedAt") AS "updatedAt"
+      FROM "InventoryLotBalance" lb
+      INNER JOIN "InventoryLot" lot ON lot.id = lb."lotId" AND lot.status = 'active'
+      WHERE (${args?.locationId || null}::text IS NULL OR lb."locationId" = ${args?.locationId || null})
+        AND (${args?.productId || null}::text IS NULL OR lot."productId" = ${args?.productId || null})
+      GROUP BY lot."productId", lb."locationId"
+      ORDER BY MAX(lb."updatedAt") DESC, lot."productId", lb."locationId"
+      LIMIT ${take}
+    `).catch(() => []);
     const [products, locations] = await Promise.all([
       rows.length ? this.prisma.product.findMany({ where: { id: { in: Array.from(new Set(rows.map((row: any) => row.productId))) } } }) : [],
       rows.length ? (this.prisma as any).stockLocation.findMany({ where: { id: { in: Array.from(new Set(rows.map((row: any) => row.locationId))) } } }).catch(() => []) : [],
