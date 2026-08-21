@@ -56,6 +56,7 @@ async function main() {
   const password = `RbacPass${tag}!`;
   const admin = await login(TEST_EMAIL);
   const createdUserIds = [];
+  let overrideQuoteId = '';
 
   try {
     const owner = await createUser(admin.token, {
@@ -99,6 +100,17 @@ async function main() {
     createdUserIds.push(accessManager.id);
     assert(accessManager.effectivePermissions.includes('users.manage'), 'per-user users.manage override should be effective');
 
+    const quoteBuilder = await createUser(ownerSession.token, {
+      name: `RBAC Quote Builder ${tag}`,
+      email: `rbac-quote-${tag.toLowerCase()}@example.com`,
+      phone: '9000000005',
+      password,
+      role: 'inventory_manager',
+      permissionOverrides: { 'quotes.manage': true },
+    });
+    createdUserIds.push(quoteBuilder.id);
+    assert(quoteBuilder.effectivePermissions.includes('quotes.manage'), 'inventory user quote-building override should be effective');
+
     const skuSession = await login(skuManager.email, password);
     const product = (await gql(
       `mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku name } }`,
@@ -129,15 +141,73 @@ async function main() {
     createdUserIds.push(createdByOverride.id);
     assert(createdByOverride.role === 'dispatch_ops', 'user with users.manage override should create another user');
 
+    const quoteSession = await login(quoteBuilder.email, password);
+    const quoteWorkspace = await gql(
+      `query { salesAssignees intents(pendingOnly: true) }`,
+      {},
+      quoteSession.token,
+    );
+    assert(Array.isArray(quoteWorkspace.salesAssignees), 'quotes.manage override should unlock quote setup data');
+    assert(Array.isArray(quoteWorkspace.intents), 'quotes.manage override should unlock the intent-to-quote queue');
+
+    const quoteSetup = await gql(
+      `query {
+        customers(take: 1) { id }
+        products(take: 1) { id sku name sellPrice mrp }
+      }`,
+      {},
+      quoteSession.token,
+    );
+    assert(quoteSetup.customers[0]?.id && quoteSetup.products[0]?.id, 'quote-building override needs an existing customer and Product Master SKU');
+    const quoteProduct = quoteSetup.products[0];
+    const overrideQuote = (await gql(
+      `mutation($input: CreateQuoteInput!) {
+        createQuote(input: $input) { id quoteNumber status owner }
+      }`,
+      {
+        input: {
+          customerId: quoteSetup.customers[0].id,
+          title: `RBAC override draft ${tag}`,
+          saveAsDraft: true,
+          lines: JSON.stringify([{
+            productId: quoteProduct.id,
+            sku: quoteProduct.sku,
+            name: quoteProduct.name,
+            qty: 1,
+            price: Number(quoteProduct.sellPrice || 1),
+            mrp: Number(quoteProduct.mrp || quoteProduct.sellPrice || 1),
+          }]),
+        },
+      },
+      quoteSession.token,
+    )).createQuote;
+    overrideQuoteId = overrideQuote.id;
+    assert(overrideQuote.id && overrideQuote.owner?.role === 'inventory_manager', 'inventory user with quotes.manage should create and own a quotation draft');
+    const overrideQuoteRead = (await gql(
+      `query($id: ID!) { quote(id: $id) { id quoteNumber status } }`,
+      { id: overrideQuote.id },
+      quoteSession.token,
+    )).quote;
+    assert(overrideQuoteRead.id === overrideQuote.id, 'quote-building override should read back its quotation');
+
     console.log(JSON.stringify({
       ok: true,
       ownerId: owner.id,
       skuManagerId: skuManager.id,
       accessManagerId: accessManager.id,
+      quoteBuilderId: quoteBuilder.id,
+      overrideQuote: overrideQuote.quoteNumber,
       createdByOverrideId: createdByOverride.id,
       productSku: product.sku,
     }, null, 2));
   } finally {
+    if (overrideQuoteId) {
+      await gql(
+        `mutation($id: ID!, $reason: String!) { cancelQuote(id: $id, reason: $reason) { id status } }`,
+        { id: overrideQuoteId, reason: 'Isolated RBAC acceptance cleanup' },
+        admin.token,
+      ).catch(() => null);
+    }
     for (const id of createdUserIds.reverse()) await deleteUser(admin.token, id);
   }
 }

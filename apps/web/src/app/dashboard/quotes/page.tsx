@@ -28,7 +28,6 @@ const QUOTES = gql`
       architect
     }
     architects(status: "active", take: 200)
-    ownerDashboard { stats userPerformance }
   }
 `;
 

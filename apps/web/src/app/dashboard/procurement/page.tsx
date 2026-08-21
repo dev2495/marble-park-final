@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { gql, useMutation, useQuery } from "@apollo/client";
 import {
   AlertTriangle,
@@ -40,10 +40,20 @@ const DATA = gql`
     $poStatus: String
     $poSort: String
     $poSkip: Int
+    $poDateFrom: String
+    $poDateTo: String
+    $hPoSearch: String
+    $hPoStatus: String
+    $hPoSort: String
+    $hPoSkip: Int
+    $hPoDateFrom: String
+    $hPoDateTo: String
     $gSearch: String
     $gSource: String
     $gSort: String
     $gSkip: Int
+    $gDateFrom: String
+    $gDateTo: String
   ) {
     procurementSummary
     purchaseDemandPage(
@@ -59,6 +69,17 @@ const DATA = gql`
       sort: $poSort
       skip: $poSkip
       take: 25
+      dateFrom: $poDateFrom
+      dateTo: $poDateTo
+    )
+    purchaseOrderHistoryPage: purchaseOrderPage(
+      search: $hPoSearch
+      status: $hPoStatus
+      sort: $hPoSort
+      skip: $hPoSkip
+      take: 25
+      dateFrom: $hPoDateFrom
+      dateTo: $hPoDateTo
     )
     goodsReceiptPage(
       search: $gSearch
@@ -66,13 +87,12 @@ const DATA = gql`
       sort: $gSort
       skip: $gSkip
       take: 25
+      dateFrom: $gDateFrom
+      dateTo: $gDateTo
     )
     vendors(status: "active", take: 250)
     stockLocations(status: "active")
-    me {
-      id
-      role
-    }
+    me { id role effectivePermissions }
   }
 `;
 const SEARCH_PRODUCTS = gql`
@@ -145,14 +165,25 @@ export default function ProcurementSuitePage() {
   const [dPage, setDPage] = useState(0);
   const [selectedDemand, setSelectedDemand] = useState<string[]>([]);
   const [poSearch, setPoSearch] = useState("");
-  const [poStatus, setPoStatus] = useState("all");
+  const [poStatus, setPoStatus] = useState("open");
   const [poSort, setPoSort] = useState("newest");
   const [poPage, setPoPage] = useState(0);
+  const [poDateFrom, setPoDateFrom] = useState("");
+  const [poDateTo, setPoDateTo] = useState("");
+  const [historyView, setHistoryView] = useState<"po" | "grn">("grn");
+  const [hPoSearch, setHPoSearch] = useState("");
+  const [hPoStatus, setHPoStatus] = useState("all");
+  const [hPoSort, setHPoSort] = useState("newest");
+  const [hPoPage, setHPoPage] = useState(0);
+  const [hPoDateFrom, setHPoDateFrom] = useState("");
+  const [hPoDateTo, setHPoDateTo] = useState("");
   const [activePoId, setActivePoId] = useState("");
   const [gSearch, setGSearch] = useState("");
   const [gSource, setGSource] = useState("all");
   const [gSort, setGSort] = useState("newest");
   const [gPage, setGPage] = useState(0);
+  const [gDateFrom, setGDateFrom] = useState("");
+  const [gDateTo, setGDateTo] = useState("");
   const [commercial, setCommercial] = useState<any>(emptyCommercial);
   const [productSearch, setProductSearch] = useState("");
   const [directLines, setDirectLines] = useState<any[]>([]);
@@ -166,6 +197,8 @@ export default function ProcurementSuitePage() {
   );
   const [manualKey, setManualKey] = useState(uuid());
   const [notice, setNotice] = useState("");
+  const poComposerRef = useRef<HTMLDivElement>(null);
+  const poProductInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get(
       "view",
@@ -187,10 +220,20 @@ export default function ProcurementSuitePage() {
     poStatus,
     poSort,
     poSkip: poPage * 25,
+    poDateFrom: poDateFrom || undefined,
+    poDateTo: poDateTo || undefined,
+    hPoSearch: useDebouncedValue(hPoSearch, 250) || undefined,
+    hPoStatus,
+    hPoSort,
+    hPoSkip: hPoPage * 25,
+    hPoDateFrom: hPoDateFrom || undefined,
+    hPoDateTo: hPoDateTo || undefined,
     gSearch: useDebouncedValue(gSearch, 250) || undefined,
     gSource,
     gSort,
     gSkip: gPage * 25,
+    gDateFrom: gDateFrom || undefined,
+    gDateTo: gDateTo || undefined,
   };
   const { data, loading, error, refetch } = useQuery(DATA, {
     variables,
@@ -207,8 +250,12 @@ export default function ProcurementSuitePage() {
   const [receivePo, receiveState] = useMutation(RECEIVE_PO);
   const [manualGrn, manualState] = useMutation(MANUAL_GRN);
   const [cancelPo, cancelState] = useMutation(CANCEL_PO);
-  const demands = data?.purchaseDemandPage?.items || [];
+  const demands = useMemo(
+    () => data?.purchaseDemandPage?.items || [],
+    [data?.purchaseDemandPage?.items],
+  );
   const orders = data?.purchaseOrderPage?.items || [];
+  const historicOrders = data?.purchaseOrderHistoryPage?.items || [];
   const grns = data?.goodsReceiptPage?.items || [];
   const vendors = data?.vendors || [];
   const locations = data?.stockLocations || [];
@@ -218,7 +265,31 @@ export default function ProcurementSuitePage() {
   const chosenDemands = demands.filter((row: any) =>
     selectedDemand.includes(row.id),
   );
+  useEffect(() => {
+    if (commercial.vendorId || !selectedDemand.length) return;
+    const selectedRowsOnPage = demands.filter((row: any) =>
+      selectedDemand.includes(row.id),
+    );
+    const preferredVendorIds = selectedRowsOnPage
+      .map((row: any) => row.preferredVendorId)
+      .filter(Boolean);
+    if (
+      selectedRowsOnPage.length === selectedDemand.length &&
+      preferredVendorIds.length === selectedDemand.length &&
+      new Set(preferredVendorIds).size === 1
+    ) {
+      setCommercial((current: any) => ({
+        ...current,
+        vendorId: preferredVendorIds[0],
+      }));
+    }
+  }, [commercial.vendorId, demands, selectedDemand]);
   const canCancel = ["owner", "admin"].includes(data?.me?.role);
+  const actionableDemandIds = demands
+    .filter((row: any) =>
+      ["open", "ordered", "partial_received"].includes(row.status),
+    )
+    .map((row: any) => row.id);
   const directLinesReady =
     directLines.length > 0 &&
     directLines.every((line: any) => enteredBaseQuantity(line) > 0);
@@ -245,6 +316,14 @@ export default function ProcurementSuitePage() {
     setSelectedDemand([]);
     setDemandCosts({});
     setProductSearch("");
+  }
+  function beginNewPo() {
+    setTab("orders");
+    setNotice("");
+    window.setTimeout(() => {
+      poComposerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      poProductInputRef.current?.focus({ preventScroll: true });
+    }, 80);
   }
   function addProduct(product: any, target: "po" | "manual") {
     const base = {
@@ -474,7 +553,7 @@ export default function ProcurementSuitePage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
-              onClick={() => setTab("orders")}
+              onClick={beginNewPo}
               className="border border-white/15 bg-white text-[#612421] hover:bg-rose-50"
             >
               <Plus className="mr-2 h-4 w-4" />
@@ -593,6 +672,104 @@ export default function ProcurementSuitePage() {
                 ["eta_asc", "ETA soonest"],
               ]}
             />
+            <div className="flex flex-col gap-3 border-b border-[var(--line)] bg-[linear-gradient(90deg,#fff8f5,#fffdf9)] p-4 lg:flex-row lg:items-center">
+              <label className="flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
+                <input
+                  type="checkbox"
+                  checked={
+                    actionableDemandIds.length > 0 &&
+                    actionableDemandIds.every((id: string) =>
+                      selectedDemand.includes(id),
+                    )
+                  }
+                  onChange={(event) =>
+                    setSelectedDemand((current) =>
+                      event.target.checked
+                        ? Array.from(
+                            new Set([...current, ...actionableDemandIds]),
+                          )
+                        : current.filter(
+                            (id) => !actionableDemandIds.includes(id),
+                          ),
+                    )
+                  }
+                />
+                Select all {actionableDemandIds.length} visible lines
+              </label>
+              <span className="text-xs font-semibold text-[var(--ink-4)] lg:ml-auto">
+                {selectedDemand.length
+                  ? `${selectedDemand.length} selected for one governed PO`
+                  : "Select one or many demand lines"}
+              </span>
+            </div>
+            {selectedDemand.length ? (
+              <div className="sticky top-[4.5rem] z-10 border-b border-[#edc7bd] bg-[#fff8f5]/95 p-4 shadow-sm backdrop-blur">
+                <div className="grid gap-3 lg:grid-cols-[1fr_180px_180px_auto] lg:items-end">
+                  <Field label="Supplier for selected lines">
+                    <select
+                      value={commercial.vendorId}
+                      onChange={(event) =>
+                        setCommercial({
+                          ...commercial,
+                          vendorId: event.target.value,
+                          vendorName: "",
+                        })
+                      }
+                      className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm"
+                    >
+                      <option value="">Select supplier</option>
+                      {vendors.map((vendor: any) => (
+                        <option key={vendor.id} value={vendor.id}>
+                          {vendor.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Expected date">
+                    <Input
+                      type="date"
+                      value={commercial.expectedDate}
+                      onChange={(event) =>
+                        setCommercial({
+                          ...commercial,
+                          expectedDate: event.target.value,
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="GST % (optional)">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={commercial.tax}
+                      onChange={(event) =>
+                        setCommercial({
+                          ...commercial,
+                          tax: event.target.value,
+                        })
+                      }
+                      placeholder="0"
+                    />
+                  </Field>
+                  <Button
+                    disabled={createState.loading || !commercial.vendorId}
+                    onClick={() => submitPo("demand")}
+                    className="min-w-44"
+                  >
+                    {createState.loading
+                      ? "Creating…"
+                      : `Create PO (${selectedDemand.length})`}
+                  </Button>
+                </div>
+                {!commercial.vendorId ? (
+                  <p className="mt-2 text-xs font-semibold text-amber-800">
+                    Choose the supplier once; blank line costs remain explicitly
+                    pending until GRN.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-left text-sm">
                 <thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-wider text-[var(--ink-4)]">
@@ -691,22 +868,16 @@ export default function ProcurementSuitePage() {
               onPage={setDPage}
             />
           </div>
-          {selectedDemand.length ? (
-            <PoCommercial
-              form={commercial}
-              setForm={setCommercial}
-              vendors={vendors}
-              onSubmit={() => submitPo("demand")}
-              disabled={createState.loading || !selectedDemand.length}
-              title={`Create PO for ${selectedDemand.length} selected demand line(s)`}
-            />
-          ) : null}
         </section>
       ) : null}
 
       {tab === "orders" ? (
         <section className="space-y-5">
-          <div className="mp-panel p-5">
+          <div
+            ref={poComposerRef}
+            className="mp-panel scroll-mt-24 overflow-hidden border-[#e7c8bf]"
+          >
+            <div className="bg-[linear-gradient(102deg,#fff7f3,#fffdf8)] p-5">
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="font-semibold">
@@ -717,17 +888,36 @@ export default function ProcurementSuitePage() {
                   accept boxes plus loose pieces.
                 </p>
               </div>
-              <span className="text-xs font-semibold">
-                {directLines.length} line(s)
-              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!directLines.length && !commercial.vendorId}
+                onClick={resetPo}
+              >
+                Clear draft
+              </Button>
             </div>
             <ProductPicker
+              inputRef={poProductInputRef}
               value={productSearch}
               setValue={setProductSearch}
               products={products}
               onAdd={(p: any) => addProduct(p, "po")}
             />
             <LineEditor rows={directLines} setRows={setDirectLines} mode="po" />
+            {!directLines.length ? (
+              <div className="mt-4 rounded-xl border border-dashed border-[#dfb8ad] bg-white/70 p-5 text-center">
+                <ShoppingCart className="mx-auto h-6 w-6 text-[#9f2d29]" />
+                <p className="mt-2 text-sm font-semibold text-[var(--ink)]">
+                  Start by searching a SKU, tile design, alias or item name
+                </p>
+                <p className="mt-1 text-xs text-[var(--ink-4)]">
+                  Add multiple lines, confirm supplier and terms, then create one
+                  auditable PO.
+                </p>
+              </div>
+            ) : null}
+            </div>
           </div>
           {directLines.length ? (
             <PoCommercial
@@ -756,11 +946,9 @@ export default function ProcurementSuitePage() {
               sort={poSort}
               setSort={setPoSort}
               statuses={[
-                ["all", "All"],
+                ["open", "All open"],
                 ["ordered", "Ordered"],
                 ["partial_received", "Partial"],
-                ["received", "Received"],
-                ["cancelled", "Cancelled"],
               ]}
               sorts={[
                 ["newest", "Newest"],
@@ -770,7 +958,34 @@ export default function ProcurementSuitePage() {
                 ["value_desc", "Value high–low"],
                 ["eta_asc", "ETA soonest"],
               ]}
+              dateFrom={poDateFrom}
+              setDateFrom={(value: string) => {
+                setPoDateFrom(value);
+                setPoPage(0);
+              }}
+              dateTo={poDateTo}
+              setDateTo={(value: string) => {
+                setPoDateTo(value);
+                setPoPage(0);
+              }}
             />
+            <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 text-xs text-[var(--ink-4)]">
+              <span>
+                {Number(data?.purchaseOrderPage?.total || 0).toLocaleString(
+                  "en-IN",
+                )} open purchase order(s)
+              </span>
+              <button
+                type="button"
+                className="font-semibold text-[#922b27] hover:underline"
+                onClick={() => {
+                  setHistoryView("po");
+                  setTab("history");
+                }}
+              >
+                Open complete PO history
+              </button>
+            </div>
             {orders.map((po: any) => (
               <article
                 key={po.id}
@@ -1022,31 +1237,64 @@ export default function ProcurementSuitePage() {
 
       {tab === "history" ? (
         <section className="mp-panel overflow-hidden">
-          <ListToolbar
-            search={gSearch}
-            setSearch={(v: string) => {
-              setGSearch(v);
-              setGPage(0);
-            }}
-            status={gSource}
-            setStatus={(v: string) => {
-              setGSource(v);
-              setGPage(0);
-            }}
-            sort={gSort}
-            setSort={setGSort}
-            statuses={[
-              ["all", "All sources"],
-              ["po", "Against PO"],
-              ["manual", "Manual"],
-            ]}
-            sorts={[
-              ["newest", "Newest"],
-              ["oldest", "Oldest"],
-              ["grn_asc", "GRN number"],
-              ["vendor_asc", "Vendor"],
-            ]}
-          />
+          <div className="grid grid-cols-2 border-b border-[var(--line)] bg-[var(--bg-soft)] p-1">
+            <button
+              type="button"
+              onClick={() => setHistoryView("grn")}
+              className={`h-11 rounded-lg text-sm font-semibold transition ${historyView === "grn" ? "bg-white text-[#922b27] shadow-sm" : "text-[var(--ink-4)] hover:text-[var(--ink)]"}`}
+            >
+              GRN / inward history
+            </button>
+            <button
+              type="button"
+              onClick={() => setHistoryView("po")}
+              className={`h-11 rounded-lg text-sm font-semibold transition ${historyView === "po" ? "bg-white text-[#922b27] shadow-sm" : "text-[var(--ink-4)] hover:text-[var(--ink)]"}`}
+            >
+              Purchase order history
+            </button>
+          </div>
+          {historyView === "grn" ? (
+            <>
+              <ListToolbar
+                search={gSearch}
+                setSearch={(v: string) => {
+                  setGSearch(v);
+                  setGPage(0);
+                }}
+                status={gSource}
+                setStatus={(v: string) => {
+                  setGSource(v);
+                  setGPage(0);
+                }}
+                sort={gSort}
+                setSort={setGSort}
+                statuses={[
+                  ["all", "All sources"],
+                  ["po", "Against PO"],
+                  ["manual", "Manual"],
+                ]}
+                sorts={[
+                  ["newest", "Newest"],
+                  ["oldest", "Oldest"],
+                  ["grn_asc", "GRN number"],
+                  ["vendor_asc", "Vendor"],
+                ]}
+                dateFrom={gDateFrom}
+                setDateFrom={(value: string) => {
+                  setGDateFrom(value);
+                  setGPage(0);
+                }}
+                dateTo={gDateTo}
+                setDateTo={(value: string) => {
+                  setGDateTo(value);
+                  setGPage(0);
+                }}
+              />
+              <div className="border-b border-[var(--line)] px-4 py-3 text-xs text-[var(--ink-4)]">
+                {Number(data?.goodsReceiptPage?.total || 0).toLocaleString(
+                  "en-IN",
+                )} goods receipt(s) match these filters
+              </div>
           {grns.map((grn: any) => (
             <article key={grn.id} className="border-b border-[var(--line)] p-4">
               <div className="flex flex-col justify-between gap-3 md:flex-row">
@@ -1145,6 +1393,76 @@ export default function ProcurementSuitePage() {
             hasNext={Boolean(data?.goodsReceiptPage?.hasNext)}
             onPage={setGPage}
           />
+            </>
+          ) : (
+            <>
+              <ListToolbar
+                search={hPoSearch}
+                setSearch={(value: string) => {
+                  setHPoSearch(value);
+                  setHPoPage(0);
+                }}
+                status={hPoStatus}
+                setStatus={(value: string) => {
+                  setHPoStatus(value);
+                  setHPoPage(0);
+                }}
+                sort={hPoSort}
+                setSort={setHPoSort}
+                statuses={[
+                  ["all", "All statuses"],
+                  ["open", "Open"],
+                  ["received", "Received"],
+                  ["closed", "Closed"],
+                  ["cancelled", "Cancelled"],
+                ]}
+                sorts={[
+                  ["newest", "Newest"],
+                  ["oldest", "Oldest"],
+                  ["po_asc", "PO number"],
+                  ["vendor_asc", "Vendor"],
+                  ["value_desc", "Value high–low"],
+                  ["eta_asc", "ETA soonest"],
+                ]}
+                dateFrom={hPoDateFrom}
+                setDateFrom={(value: string) => {
+                  setHPoDateFrom(value);
+                  setHPoPage(0);
+                }}
+                dateTo={hPoDateTo}
+                setDateTo={(value: string) => {
+                  setHPoDateTo(value);
+                  setHPoPage(0);
+                }}
+              />
+              <div className="border-b border-[var(--line)] px-4 py-3 text-xs text-[var(--ink-4)]">
+                {Number(
+                  data?.purchaseOrderHistoryPage?.total || 0,
+                ).toLocaleString("en-IN")} purchase order(s) match these filters
+              </div>
+              {historicOrders.map((po: any) => (
+                <PurchaseOrderRow
+                  key={po.id}
+                  po={po}
+                  canCancel={canCancel}
+                  cancelling={cancelState.loading}
+                  onCancel={cancel}
+                  onReceive={() => {
+                    setActivePoId(po.id);
+                    setTab("receiving");
+                  }}
+                />
+              ))}
+              {!loading && !historicOrders.length ? (
+                <Empty text="No purchase orders match these history filters." />
+              ) : null}
+              <Pager
+                page={hPoPage}
+                hasNext={Boolean(data?.purchaseOrderHistoryPage?.hasNext)}
+                onPage={setHPoPage}
+              />
+            </>
+          )}
         </section>
       ) : null}
     </div>
@@ -1540,6 +1858,10 @@ function ListToolbar({
   setSort,
   statuses,
   sorts,
+  dateFrom,
+  setDateFrom,
+  dateTo,
+  setDateTo,
 }: any) {
   return (
     <div className="flex flex-col gap-3 border-b border-[var(--line)] p-4 lg:flex-row lg:items-center">
@@ -1576,7 +1898,99 @@ function ListToolbar({
           </option>
         ))}
       </select>
+      {setDateFrom ? (
+        <label className="flex items-center gap-2 text-xs font-semibold text-[var(--ink-4)]">
+          From
+          <Input
+            aria-label="Filter from date"
+            type="date"
+            className="w-36"
+            value={dateFrom || ""}
+            onChange={(event) => setDateFrom(event.target.value)}
+          />
+        </label>
+      ) : null}
+      {setDateTo ? (
+        <label className="flex items-center gap-2 text-xs font-semibold text-[var(--ink-4)]">
+          To
+          <Input
+            aria-label="Filter to date"
+            type="date"
+            className="w-36"
+            value={dateTo || ""}
+            onChange={(event) => setDateTo(event.target.value)}
+          />
+        </label>
+      ) : null}
     </div>
+  );
+}
+function PurchaseOrderRow({
+  po,
+  canCancel,
+  cancelling,
+  onCancel,
+  onReceive,
+}: any) {
+  return (
+    <article className="grid gap-3 border-b border-[var(--line)] p-4 md:grid-cols-[1.4fr_1fr_1fr_auto] md:items-center">
+      <div>
+        <p className="font-semibold">
+          {po.poNumber} · {po.vendorName}
+        </p>
+        <p className="mt-1 text-xs text-[var(--ink-4)]">
+          {po.lines?.length || 0} lines ·{" "}
+          {new Date(po.createdAt).toLocaleString("en-IN")}
+        </p>
+      </div>
+      <div>
+        <span
+          className={`rounded px-2 py-1 text-xs font-semibold ${statusClass(po.status)}`}
+        >
+          {String(po.status || "unknown").replaceAll("_", " ")}
+        </span>
+        <p className="mt-1 text-xs">
+          ETA{" "}
+          {po.expectedDate
+            ? new Date(po.expectedDate).toLocaleDateString("en-IN")
+            : "not set"}
+        </p>
+      </div>
+      <div className="font-semibold">
+        {money(po.grandTotal)}
+        <p className="text-xs font-normal text-[var(--ink-4)]">
+          Tax {money(po.taxAmount)}
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button asChild size="sm" variant="outline">
+          <a
+            href={`/api/pdf/purchase-order/${po.id}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <Download className="mr-2 h-4 w-4" />
+            PDF
+          </a>
+        </Button>
+        {["ordered", "partial_received"].includes(po.status) ? (
+          <Button size="sm" onClick={onReceive}>
+            Receive
+          </Button>
+        ) : null}
+        {canCancel &&
+        ["ordered", "partial_received", "draft"].includes(po.status) ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={cancelling}
+            onClick={() => onCancel(po)}
+          >
+            Cancel
+          </Button>
+        ) : null}
+      </div>
+    </article>
   );
 }
 function Pager({ page, hasNext, onPage }: any) {
@@ -1614,11 +2028,12 @@ function Empty({ text }: any) {
     </div>
   );
 }
-function ProductPicker({ value, setValue, products, onAdd }: any) {
+function ProductPicker({ value, setValue, products, onAdd, inputRef }: any) {
   return (
     <div className="relative mt-4">
       <Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
       <Input
+        ref={inputRef}
         className="pl-9"
         value={value}
         onChange={(e) => setValue(e.target.value)}

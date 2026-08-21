@@ -276,7 +276,7 @@ export default function IntentDetailPage() {
     "owner",
     "sales_manager",
     "office_staff",
-  ].includes(role);
+  ].includes(role) || Boolean(me?.effectivePermissions?.includes("quotes.manage"));
   const grouped = useMemo(() => {
     const map = new Map<string, Row[]>();
     for (const row of rows) {

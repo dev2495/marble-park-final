@@ -199,8 +199,8 @@ export class IntentsService {
   }
 
   // Office staff claims a pending intent, preventing sales-side edits.
-  async pickUp(id: string, actor: { id: string; role: string }) {
-    if (!['admin', 'owner', 'sales_manager', 'office_staff'].includes(actor.role)) {
+  async pickUp(id: string, actor: { id: string; role: string; canManageQuotes?: boolean }) {
+    if (!actor.canManageQuotes && !['admin', 'owner', 'sales_manager', 'office_staff'].includes(actor.role)) {
       throw new ForbiddenException('Only office staff or managers can pick up intents.');
     }
     const intent = await this.maybeAutoRelease(await this.getRaw(id));

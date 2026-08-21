@@ -126,7 +126,8 @@ export class ProcurementService {
 
   async purchaseOrderPage(args?: { search?: string; status?: string; sort?: string; dateFrom?: string; dateTo?: string; skip?: number; take?: number }) {
     const where: any = {};
-    if (args?.status && args.status !== 'all') where.status = args.status;
+    if (args?.status === 'open') where.status = { in: ['draft', 'ordered', 'partial_received'] };
+    else if (args?.status && args.status !== 'all') where.status = args.status;
     const search = String(args?.search || '').trim();
     if (search) where.OR = [
       { poNumber: { contains: search, mode: 'insensitive' } },
@@ -199,7 +200,9 @@ export class ProcurementService {
       where: { id: { in: demandIds }, status: { in: ['open', 'ordered', 'partial_received'] } },
       orderBy: { createdAt: 'asc' },
     }) : [];
-    if (demandIds.length && !demands.length) throw new BadRequestException('Selected demand rows are already closed or unavailable');
+    if (demandIds.length && demands.length !== demandIds.length) {
+      throw new BadRequestException('One or more selected demand rows changed or are no longer available. Refresh the queue and select again.');
+    }
     const selectedDemandIds = new Set(demands.map((demand: any) => demand.id));
     const unknownDemandCost = demandCostInputs.find((line: any) => !selectedDemandIds.has(String(line.purchaseDemandId)));
     if (unknownDemandCost) throw new BadRequestException('A demand cost override does not belong to the selected purchase demand');
@@ -226,6 +229,16 @@ export class ProcurementService {
       if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${product.sku} unit cost must be zero or greater`);
       return { product, orderedQuantity, unitCost, unit: 'PC', note: String(line.note || '').trim(), orderedInput: this.uomSnapshot(line, product) };
     });
+
+    const selectedPreferredVendors = new Set(
+      demands.map((demand: any) => String(demand.preferredVendorId || '').trim()).filter(Boolean),
+    );
+    const selectedVendorNames = new Set(
+      demands.map((demand: any) => String(demand.vendorName || '').trim().toLowerCase()).filter(Boolean),
+    );
+    if (!input.vendorId && (selectedPreferredVendors.size > 1 || selectedVendorNames.size > 1)) {
+      throw new BadRequestException('Selected demand lines belong to different suppliers. Choose one supplier explicitly or create separate purchase orders.');
+    }
 
     const vendor = input.vendorId
       ? await (this.prisma as any).vendor.findUnique({ where: { id: input.vendorId } }).catch(() => null)

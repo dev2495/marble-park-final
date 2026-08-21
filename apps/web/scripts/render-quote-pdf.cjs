@@ -39,7 +39,12 @@ const colors = {
 const styles = StyleSheet.create({
   // Shared
   page: { backgroundColor: colors.paper, paddingTop: 24, paddingLeft: 28, paddingRight: 28, paddingBottom: 34, color: colors.ink, fontFamily: 'Helvetica' },
+  pageCompact: { paddingTop: 18, paddingLeft: 22, paddingRight: 22, paddingBottom: 30 },
   pagePadded: { backgroundColor: colors.paper, paddingTop: 28, paddingBottom: 70, paddingLeft: 28, paddingRight: 28, color: colors.ink, fontFamily: 'Helvetica' },
+  compactSelectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 3, borderBottomColor: colors.redAccent, paddingBottom: 9, marginBottom: 10 },
+  compactSelectionTitle: { fontSize: 18, fontWeight: 900, color: colors.ink },
+  compactSelectionMeta: { fontSize: 8, color: colors.muted, textAlign: 'right', lineHeight: 1.4 },
+  compactSelectionTerms: { marginTop: 5, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 6, fontSize: 7, color: colors.muted, lineHeight: 1.3 },
   // ---- Cover page (selection layout) ----
   coverPage: { padding: 0, backgroundColor: '#ffffff', color: colors.ink, fontFamily: 'Helvetica' },
   coverTagline: { position: 'absolute', top: 24, left: 28, right: 28, fontSize: 11, fontStyle: 'italic', fontWeight: 700, color: colors.ink },
@@ -59,11 +64,13 @@ const styles = StyleSheet.create({
   areaPageHeader: { fontSize: 14, fontWeight: 900, color: colors.redAccent, letterSpacing: 1.6, textTransform: 'uppercase', marginBottom: 14 },
   cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 18 },
   selectionCard: { width: '47%', marginBottom: 22, padding: 4 },
+  selectionCardCompact: { marginBottom: 8, padding: 2 },
   cardLabelRow: { fontSize: 10.5, color: colors.ink, marginBottom: 3 },
   cardLabelKey: { fontWeight: 800, textDecoration: 'underline' },
   cardLabelValue: { color: colors.redAccent, fontWeight: 700 },
   cardLabelValueBlack: { color: colors.ink, fontWeight: 700 },
   cardImageWrap: { marginTop: 10, height: 220, backgroundColor: colors.cream, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  cardImageWrapCompact: { marginTop: 5, height: 138 },
   cardImage: { width: '100%', height: '100%', objectFit: 'cover' },
   cardImagePlaceholder: { fontSize: 9.5, color: colors.tan, textAlign: 'center' },
   // ---- Priced quote layout (kept compact) ----
@@ -81,22 +88,27 @@ const styles = StyleSheet.create({
   quoteTitle: { maxWidth: 182, fontSize: 12.5, lineHeight: 1.15, fontWeight: 900, textAlign: 'right', letterSpacing: 0.4 },
   quoteDate: { marginTop: 3, fontSize: 8.5, color: colors.muted, textAlign: 'right' },
   panels: { flexDirection: 'row', gap: 12, marginTop: 7, marginBottom: 8 },
+  panelsCompact: { gap: 7, marginTop: 3, marginBottom: 4 },
   panel: { flex: 1, minHeight: 65, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9 },
+  panelCompact: { minHeight: 52, padding: 7 },
   label: { fontSize: 7.2, fontWeight: 900, color: colors.tan, letterSpacing: 1.5, textTransform: 'uppercase' },
   value: { marginTop: 4, fontSize: 12, fontWeight: 900, color: colors.ink },
   text: { marginTop: 3, fontSize: 8.8, lineHeight: 1.35, color: colors.muted },
   badgeRow: { flexDirection: 'row', gap: 6, marginTop: 5, flexWrap: 'wrap' },
   badge: { borderRadius: 999, backgroundColor: colors.cream, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 8, paddingVertical: 4, fontSize: 7.2, fontWeight: 900, color: colors.tan, textTransform: 'uppercase', letterSpacing: 1.1 },
   areaBlock: { marginTop: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 16, backgroundColor: colors.cardBg, overflow: 'hidden' },
+  areaBlockCompact: { marginTop: 5 },
   areaHeader: { backgroundColor: colors.ink, color: colors.paper, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', justifyContent: 'space-between' },
   areaTitle: { fontSize: 10, fontWeight: 900, letterSpacing: 1.5, textTransform: 'uppercase' },
   areaCount: { fontSize: 8, color: '#e8c39b' },
   tableHeader: { flexDirection: 'row', backgroundColor: colors.line, paddingVertical: 7, paddingHorizontal: 8 },
   tableRow: { flexDirection: 'row', minHeight: 62, paddingVertical: 6, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: '#f1e3d2' },
+  tableRowCompact: { minHeight: 46, paddingVertical: 4 },
   th: { fontSize: 6.8, fontWeight: 900, color: colors.muted, textTransform: 'uppercase', letterSpacing: 1.05 },
   td: { fontSize: 8.6, color: colors.ink, lineHeight: 1.25 },
   imageCol: { width: '13%' },
   image: { width: 46, height: 46, objectFit: 'contain', borderRadius: 6, backgroundColor: colors.cream },
+  imageCompact: { width: 34, height: 34 },
   descCol: { width: '33%', paddingRight: 6 },
   qtyCol: { width: '10%', textAlign: 'center' },
   rateCol: { width: '13%', textAlign: 'right' },
@@ -106,15 +118,20 @@ const styles = StyleSheet.create({
   sku: { marginTop: 4, fontSize: 7.2, color: colors.tan, letterSpacing: 0.8 },
   meta: { marginTop: 3, fontSize: 7.6, color: colors.muted },
   totalsWrap: { marginTop: 9, flexDirection: 'row', gap: 12, alignItems: 'stretch' },
+  totalsWrapCompact: { marginTop: 5, gap: 7 },
   notesBox: { flex: 1, minHeight: 72, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9 },
+  notesBoxCompact: { minHeight: 52, padding: 7 },
   totalsBox: { width: 200, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9 },
+  totalsBoxCompact: { padding: 7 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   totalLabel: { fontSize: 8.6, color: colors.muted, fontWeight: 700 },
   totalValue: { fontSize: 8.8, color: colors.ink, fontWeight: 900 },
   grand: { borderTopWidth: 2, borderTopColor: colors.ink, paddingTop: 5, marginTop: 1 },
   grandText: { fontSize: 12, fontWeight: 900, color: colors.ink },
   bottomGrid: { marginTop: 9, flexDirection: 'row', gap: 12 },
+  bottomGridCompact: { marginTop: 5, gap: 7 },
   halfBox: { flex: 1, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 9, minHeight: 60 },
+  halfBoxCompact: { minHeight: 42, padding: 7 },
   brandStrip: { marginTop: 9, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 7 },
   brandStripTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 },
   brandStripTitle: { fontSize: 7.2, fontWeight: 900, color: colors.tan, letterSpacing: 1.5, textTransform: 'uppercase' },
@@ -495,13 +512,13 @@ function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
  * from the user's sample. Kept on a 2-column grid so 4 cards fit per page on
  * portrait A4 (with the area title above).
  */
-function SelectionCard({ row, requestUrl }) {
+function SelectionCard({ row, requestUrl, compact = false }) {
   const e = React.createElement;
   const utilize = row.area || row.room || 'General Selection';
   const size = row.tileSize || row.size || row.dimensions || (row.unit && row.qty ? `${row.qty} ${row.unit}` : '—');
   const designName = row.tileCode || row.sku || row.name || row.designName || '—';
   const src = imageSrc(row, requestUrl);
-  return e(View, { style: styles.selectionCard, wrap: false },
+  return e(View, { style: [styles.selectionCard, compact ? styles.selectionCardCompact : null], wrap: false },
     e(Text, { style: styles.cardLabelRow },
       e(Text, { style: styles.cardLabelKey }, 'Utilize '), ':- ',
       e(Text, { style: styles.cardLabelValue }, utilize),
@@ -514,10 +531,45 @@ function SelectionCard({ row, requestUrl }) {
       e(Text, { style: styles.cardLabelKey }, 'Design Name '), ':- ',
       e(Text, { style: styles.cardLabelValueBlack }, designName),
     ),
-    e(View, { style: styles.cardImageWrap },
+    e(View, { style: [styles.cardImageWrap, compact ? styles.cardImageWrapCompact : null] },
       src
         ? e(Image, { src, style: styles.cardImage })
         : e(Text, { style: styles.cardImagePlaceholder }, 'Image not available'),
+    ),
+  );
+}
+
+function CompactSelectionDocument({ payload, requestUrl }) {
+  const e = React.createElement;
+  const quote = payload.quote;
+  const settings = payload.settings || {};
+  const quoteMeta = safeJson(quote.quoteMeta, {});
+  const rows = asArray(quote.lines);
+  const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.png', requestUrl);
+  const terms = quoteMeta.terms || settings.defaultTerms || 'Selections remain subject to final stock, commercial terms and lot verification.';
+  return e(Page, { size: 'A4', style: [styles.pagePadded, styles.pageCompact] },
+    e(View, { style: styles.compactSelectionHeader },
+      e(View, { style: { flexDirection: 'row', alignItems: 'center', gap: 9 } },
+        companyLogo ? e(Image, { src: companyLogo, style: { width: 44, height: 44, objectFit: 'contain' } }) : null,
+        e(View, null,
+          e(Text, { style: styles.compactSelectionTitle }, 'SELECTION QUOTATION'),
+          e(Text, { style: { marginTop: 2, fontSize: 8, color: colors.redAccent, fontWeight: 900 } }, quote.quoteNumber || 'QT/PENDING'),
+        ),
+      ),
+      e(Text, { style: styles.compactSelectionMeta }, [
+        quote.customer?.name || 'Premium Client',
+        quote.projectName || quote.title || '',
+        fmtDate(quote.createdAt),
+        quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team',
+      ].filter(Boolean).join('\n')),
+    ),
+    e(View, { style: styles.cardGrid },
+      ...rows.map((row, index) => e(SelectionCard, { key: row.sku || row.tileCode || index, row, requestUrl, compact: true })),
+    ),
+    e(Text, { style: styles.compactSelectionTerms }, terms),
+    e(View, { style: styles.footer },
+      e(Text, null, `${settings.companyName || 'Marble Park'} · Selection quotation`),
+      e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}`, style: styles.pageNumber }),
     ),
   );
 }
@@ -558,9 +610,9 @@ function ClosingPage({ payload, settings, terms, bank, quoteMeta, requestUrl }) 
 
 // ============= Priced layout (inherited compact style) =============
 
-function PricedAreaTable({ group, showPrices, requestUrl, taxMode }) {
+function PricedAreaTable({ group, showPrices, requestUrl, taxMode, compact = false }) {
   const e = React.createElement;
-  return e(View, { style: styles.areaBlock, wrap: false },
+  return e(View, { style: [styles.areaBlock, compact ? styles.areaBlockCompact : null], wrap: true },
     e(View, { style: styles.areaHeader },
       e(Text, { style: styles.areaTitle }, group.area),
       e(Text, { style: styles.areaCount }, `${group.rows.length} item(s)`),
@@ -577,9 +629,9 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode }) {
     ...group.rows.map((line, index) => {
       const rate = rateFor(line);
       const src = imageSrc(line, requestUrl);
-      return e(View, { key: `${line.sku || line.tileCode || index}`, style: styles.tableRow },
+      return e(View, { key: `${line.sku || line.tileCode || index}`, style: [styles.tableRow, compact ? styles.tableRowCompact : null], wrap: false },
         e(View, { style: styles.imageCol },
-          src ? e(Image, { src, style: styles.image }) : e(View, { style: styles.image }, e(Text, { style: { fontSize: 7, color: colors.tan, textAlign: 'center', marginTop: 18 } }, 'No image')),
+          src ? e(Image, { src, style: [styles.image, compact ? styles.imageCompact : null] }) : e(View, { style: [styles.image, compact ? styles.imageCompact : null] }, e(Text, { style: { fontSize: 7, color: colors.tan, textAlign: 'center', marginTop: compact ? 12 : 18 } }, 'No image')),
         ),
         e(View, { style: styles.descCol },
           e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
@@ -603,6 +655,7 @@ function PricedDocumentBody(payload, requestUrl) {
   const lines = asArray(quote.lines);
   const quoteMeta = safeJson(quote.quoteMeta, {});
   const groups = groupByArea(lines);
+  const compact = lines.length <= 4;
   const taxMode = quoteMeta.taxMode === 'non_gst' ? 'non_gst' : 'gst';
   assertQuoteCommercialReady(quote, taxMode);
   const pricedLines = lines.map((line) => rateFor(line));
@@ -627,7 +680,7 @@ function PricedDocumentBody(payload, requestUrl) {
   const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.png', requestUrl);
   const contactLine = [settings.companyAddress, settings.gstNumber ? `GSTIN ${settings.gstNumber}` : '', settings.supportPhone, settings.supportEmail].filter(Boolean).join(' · ');
 
-  return e(Page, { size: 'A4', style: styles.page },
+  return e(Page, { size: 'A4', style: [styles.page, compact ? styles.pageCompact : null] },
     e(View, { style: styles.topRule }),
     e(View, { style: styles.header },
       e(View, { style: styles.brandWrap },
@@ -643,8 +696,8 @@ function PricedDocumentBody(payload, requestUrl) {
         e(Text, { style: styles.quoteDate }, `Date: ${fmtDate(quote.createdAt) || fmtDate(new Date())}`),
       ),
     ),
-    e(View, { style: styles.panels },
-      e(View, { style: styles.panel },
+    e(View, { style: [styles.panels, compact ? styles.panelsCompact : null] },
+      e(View, { style: [styles.panel, compact ? styles.panelCompact : null] },
         e(Text, { style: styles.label }, 'Quotation To'),
         e(Text, { style: styles.value }, quote.customer?.name || 'Premium Client'),
         e(Text, { style: styles.text }, quote.customer?.siteAddress || quote.customer?.city || 'Site address pending'),
@@ -653,7 +706,7 @@ function PricedDocumentBody(payload, requestUrl) {
           : null,
         quote.customer?.designerName ? e(Text, { style: styles.text }, `Designer: ${quote.customer.designerName}`) : null,
       ),
-      e(View, { style: styles.panel },
+      e(View, { style: [styles.panel, compact ? styles.panelCompact : null] },
         e(Text, { style: styles.label }, 'Quote Reference'),
         e(Text, { style: styles.value }, quote.quoteNumber || 'QT/PENDING'),
         e(Text, { style: [styles.label, { marginTop: 9 }] }, 'Valid Until'),
@@ -662,13 +715,13 @@ function PricedDocumentBody(payload, requestUrl) {
         e(Text, { style: styles.value }, quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team'),
       ),
     ),
-    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode })),
-    e(View, { style: styles.totalsWrap },
-      e(View, { style: styles.notesBox },
+    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode, compact })),
+    e(View, { style: [styles.totalsWrap, compact ? styles.totalsWrapCompact : null], wrap: false },
+      e(View, { style: [styles.notesBox, compact ? styles.notesBoxCompact : null] },
         e(Text, { style: styles.label }, 'Remarks'),
         e(Text, { style: styles.text }, remarks),
       ),
-      e(View, { style: styles.totalsBox },
+      e(View, { style: [styles.totalsBox, compact ? styles.totalsBoxCompact : null] },
         savingFromMrp > 0 ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Saving from MRP'), e(Text, { style: [styles.totalValue, { color: '#087f5b' }] }, money(savingFromMrp))) : null,
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal))),
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, `Discount ${Number(quote.discountPercent || 0)}%`), e(Text, { style: styles.totalValue }, money(discountAmount))),
@@ -676,9 +729,9 @@ function PricedDocumentBody(payload, requestUrl) {
         e(View, { style: [styles.totalRow, styles.grand] }, e(Text, { style: styles.grandText }, 'Total'), e(Text, { style: styles.grandText }, money(total))),
       ),
     ),
-    e(View, { style: styles.bottomGrid },
-      e(View, { style: styles.halfBox }, e(Text, { style: styles.label }, 'Terms and Conditions'), e(Text, { style: styles.text }, terms)),
-      e(View, { style: styles.halfBox }, e(Text, { style: styles.label }, 'Bank Details'), e(Text, { style: styles.text }, bank)),
+    e(View, { style: [styles.bottomGrid, compact ? styles.bottomGridCompact : null], wrap: false },
+      e(View, { style: [styles.halfBox, compact ? styles.halfBoxCompact : null] }, e(Text, { style: styles.label }, 'Terms and Conditions'), e(Text, { style: styles.text }, terms)),
+      e(View, { style: [styles.halfBox, compact ? styles.halfBoxCompact : null] }, e(Text, { style: styles.label }, 'Bank Details'), e(Text, { style: styles.text }, bank)),
     ),
     e(BrandStrip, { payload, quoteMeta, requestUrl }),
     e(View, { style: styles.footer },
@@ -703,6 +756,9 @@ function buildDocument(payload, requestUrl) {
   if (isSelection) {
     const terms = quoteMeta.terms || settings?.defaultTerms || 'Selection summary is for design coordination only. Final pricing, taxes, and delivery terms will be confirmed when the order is placed. Tile codes and shades may have small lot variations.';
     const bank = quoteMeta.bankDetails || settings?.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
+    if (lines.length <= 4) {
+      return e(Document, null, e(CompactSelectionDocument, { payload, requestUrl }));
+    }
     return e(Document, null,
       e(CoverPage, { quote, settings, requestUrl, quoteMeta }),
       ...groups.flatMap((group) => SelectionAreaPage({ group, requestUrl })),

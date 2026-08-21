@@ -1,6 +1,6 @@
 import { Args, Context, Field, ID, InputType, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requireAnyPermission, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProcurementService } from './procurement.service';
 
@@ -149,7 +149,7 @@ export class ProcurementResolver {
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
+    await requirePermission(this.prisma, ctx, 'procurement.manage', ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
     return this.procurement.purchaseDemandPage({ search, status, sort, skip, take });
   }
 
@@ -164,7 +164,7 @@ export class ProcurementResolver {
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
+    await requirePermission(this.prisma, ctx, 'procurement.manage', ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
     return this.procurement.purchaseOrderPage({ search, status, sort, dateFrom, dateTo, skip, take });
   }
 
@@ -179,7 +179,7 @@ export class ProcurementResolver {
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
+    await requireAnyPermission(this.prisma, ctx, ['procurement.manage', 'goods_receipts.manage'], ['admin', 'owner', 'inventory_manager', 'sales_manager', 'office_staff', 'dispatch_ops']);
     return this.procurement.goodsReceiptPage({ search, source, sort, dateFrom, dateTo, skip, take });
   }
 

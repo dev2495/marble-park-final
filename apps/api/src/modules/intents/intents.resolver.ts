@@ -2,7 +2,7 @@ import { Args, Context, Field, ID, InputType, Mutation, Query, Resolver } from '
 import { GraphQLJSON } from 'graphql-scalars';
 import { IntentsService } from './intents.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 
 @InputType()
 export class CreateIntentInputDto {
@@ -42,8 +42,8 @@ export class IntentsResolver {
     @Args('pendingOnly', { nullable: true }) pendingOnly?: boolean,
     @Args('mineOnly', { nullable: true }) mineOnly?: boolean,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
-    const isPrivileged = ['admin', 'owner', 'sales_manager', 'office_staff'].includes(user.role);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const isPrivileged = ['admin', 'owner', 'sales_manager', 'office_staff'].includes(user.role) || user.effectivePermissions.includes('quotes.manage');
     return this.intents.list({
       status,
       leadId,
@@ -67,7 +67,7 @@ export class IntentsResolver {
     @Args('input') input: UpdateIntentInputDto,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
     return this.intents.update(id, input as any, { id: user.id, role: user.role });
   }
 
@@ -79,8 +79,8 @@ export class IntentsResolver {
 
   @Mutation(() => GraphQLJSON)
   async pickUpIntent(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
-    return this.intents.pickUp(id, { id: user.id, role: user.role });
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', ['admin', 'owner', 'sales_manager', 'office_staff']);
+    return this.intents.pickUp(id, { id: user.id, role: user.role, canManageQuotes: true });
   }
 
   @Mutation(() => GraphQLJSON)
@@ -89,7 +89,7 @@ export class IntentsResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('force', { nullable: true }) force?: boolean,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', ['admin', 'owner', 'sales_manager', 'office_staff']);
     return this.intents.release(id, { id: user.id, role: user.role }, !!force);
   }
 

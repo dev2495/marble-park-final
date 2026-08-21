@@ -1,7 +1,7 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context, ResolveField, Parent } from '@nestjs/graphql';
 import { LeadsService } from './leads.service';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, isPrivileged, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, isPrivileged, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { loadOrNull } from '../common/dataloaders';
 
@@ -245,7 +245,7 @@ export class LeadsResolver {
     @Args('note', { nullable: true }) note?: string,
     @Args('displayMode', { nullable: true }) displayMode?: string,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', ['admin', 'owner', 'sales_manager', 'office_staff']);
     return this.leads.generateQuoteFromIntent(intentId, user.id, note, displayMode);
   }
 

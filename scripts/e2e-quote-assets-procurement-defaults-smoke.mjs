@@ -37,6 +37,10 @@ function asLines(value) {
   return [];
 }
 
+function pdfPageCount(buffer) {
+  return (buffer.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length;
+}
+
 function absoluteAssetUrl(value) {
   return /^https?:\/\//i.test(String(value || '')) ? String(value) : new URL(String(value || ''), WEB).href;
 }
@@ -263,6 +267,8 @@ async function main() {
   const salesImageObjects = (salesPdf.toString('latin1').match(/\/Subtype\s*\/Image/g) || []).length;
   assert(imageObjects >= 2, 'Quote PDF must embed company/product artwork instead of blank image boxes');
   assert(salesImageObjects >= 1, 'Sales order PDF must embed the persisted quote image');
+  assert(pdfPageCount(quoteInline) === 1, 'A short priced quotation must fit on one A4 page');
+  assert(pdfPageCount(poPdf) === 1, 'A short purchase order must fit on one A4 page');
 
   await mkdir(OUTPUT_DIR, { recursive: true });
   const artifacts = {
@@ -284,9 +290,10 @@ async function main() {
     ok: true,
     product: { sku: product.sku, defaultCost: product.costPrice },
     procurement: { poNumber: po.poNumber, poCost: po.lines[0].unitCost, grnNumber: grn.grnNumber, resolvedCost: receiptLine.unitCost, costSource: receiptLine.metadata.costSource },
-    quote: { quoteNumber: quote.quoteNumber, managedImage: quoteLine.quoteImage, servedBrands: expectedBrands.length, imageObjects },
+    quote: { quoteNumber: quote.quoteNumber, managedImage: quoteLine.quoteImage, servedBrands: expectedBrands.length, imageObjects, pages: pdfPageCount(quoteInline) },
     sharing: { publicPage: `${WEB}/share/quotes/${share.token}`, publicPdfBytes: sharedPdf.length },
     salesOrder: { orderNumber: order.orderNumber, pdfBytes: salesPdf.length, imageObjects: salesImageObjects },
+    purchaseOrder: { pages: pdfPageCount(poPdf) },
     artifacts,
   }, null, 2));
 }

@@ -1,9 +1,14 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context, ResolveField, Parent } from '@nestjs/graphql';
 import { QuotesService } from './quotes.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { GraphqlRequestContext, isPrivileged, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, isPrivileged, requirePermission, requireRoles, requireSession, type SessionUser } from '../auth/session-context';
 import { GraphQLJSON } from 'graphql-scalars';
 import { loadOrNull } from '../common/dataloaders';
+
+const QUOTE_ROLES = ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'];
+function canManageQuotes(user: SessionUser) {
+  return isPrivileged(user) || user.role === 'office_staff' || user.effectivePermissions.includes('quotes.manage');
+}
 
 @ObjectType()
 export class QuoteOutput {
@@ -248,7 +253,7 @@ export class QuotesResolver {
 
   @Query(() => [GraphQLJSON])
   async salesAssignees(@Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     return this.prisma.user.findMany({
       where: { active: true, role: { in: ['sales', 'sales_manager', 'owner', 'admin'] } as any },
       orderBy: { name: 'asc' },
@@ -303,7 +308,7 @@ export class QuotesResolver {
     @Args('skip', { type: () => Number, nullable: true }) skip?: number,
   ) {
     return requireSession(this.prisma, ctx).then((user) =>
-      this.quotes.findAll({ leadId, customerId, ownerId: isPrivileged(user) ? ownerId : user.id, status, architectId, take, skip }),
+      this.quotes.findAll({ leadId, customerId, ownerId: canManageQuotes(user) ? ownerId : user.id, status, architectId, take, skip }),
     );
   }
 
@@ -311,7 +316,7 @@ export class QuotesResolver {
   async quote(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
     const user = await requireSession(this.prisma, ctx);
     const quote = await this.quotes.findById(id);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return quote;
   }
 
@@ -320,9 +325,9 @@ export class QuotesResolver {
     @Args('input') input: CreateQuoteInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const sessionUser = await requireSession(this.prisma, ctx);
+    const sessionUser = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quoteInput = { ...input };
-    const canAssignOwner = ['admin', 'owner', 'sales_manager', 'office_staff'].includes(sessionUser.role);
+    const canAssignOwner = canManageQuotes(sessionUser);
     quoteInput.ownerId = canAssignOwner && input.ownerId ? input.ownerId : sessionUser.id;
     return this.quotes.create(quoteInput as any, sessionUser.id);
   }
@@ -333,9 +338,9 @@ export class QuotesResolver {
     @Args('input') input: UpdateQuoteInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(id);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.update(id, input as any, user.id);
   }
 
@@ -345,9 +350,9 @@ export class QuotesResolver {
     @Args('input') input: UpdateQuotePresentationInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(id);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.updatePresentation(id, input as any, user.id);
   }
 
@@ -358,17 +363,17 @@ export class QuotesResolver {
     @Args('expiresInDays', { nullable: true }) expiresInDays?: number,
     @Args('allowDownload', { nullable: true }) allowDownload?: boolean,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(quoteId);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.createShare(quoteId, user.id, expiresInDays, allowDownload ?? true);
   }
 
   @Query(() => [GraphQLJSON])
   async quoteShares(@Args('quoteId', { type: () => ID }) quoteId: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(quoteId);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.quoteShares(quoteId);
   }
 
@@ -378,9 +383,9 @@ export class QuotesResolver {
     @Args('shareId', { type: () => ID }) shareId: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(quoteId);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.revokeShare(quoteId, shareId, user.id);
   }
 
@@ -395,25 +400,25 @@ export class QuotesResolver {
     @Args('status') status: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(id);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.updateStatus(id, status);
   }
 
   @Mutation(() => QuoteOutput)
   async sendQuote(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(id);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.sendQuote(id);
   }
 
   @Mutation(() => QuoteOutput)
   async confirmQuote(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(id);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.confirmQuote(id);
   }
 
@@ -521,9 +526,9 @@ export class QuotesResolver {
 
   @Mutation(() => QuoteOutput)
   async createQuoteVersion(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(id);
-    if (!isPrivileged(user) && user.role !== 'office_staff' && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
     return this.quotes.createVersion(id);
   }
 

@@ -67,7 +67,9 @@ export default function IntentDeskPage() {
   const [generate, { loading: generating, error: generateError }] = useMutation(GENERATE, { onCompleted: () => refetch() });
 
   const role = me?.role || '';
-  const isOfficeOrManager = ['admin', 'owner', 'sales_manager', 'office_staff'].includes(role);
+  const isOfficeOrManager =
+    ['admin', 'owner', 'sales_manager', 'office_staff'].includes(role) ||
+    Boolean(me?.effectivePermissions?.includes('quotes.manage'));
 
   const intents = (data?.intents || []).filter((intent: any) => {
     if (typeFilter && intent.intentType !== typeFilter) return false;

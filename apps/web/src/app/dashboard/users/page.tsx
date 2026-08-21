@@ -98,6 +98,7 @@ const permissionGroups = [
     title: 'Operations',
     description: 'Dispatch, returns, payments, reports and duplicate-customer override.',
     items: [
+      ['quotes.manage', 'Build and manage quotations'],
       ['dispatch.manage', 'Dispatch/challan'],
       ['returns.manage', 'Returns'],
       ['payments.manage', 'Payments'],

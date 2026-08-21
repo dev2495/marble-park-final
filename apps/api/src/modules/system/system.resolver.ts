@@ -1,6 +1,6 @@
 import { Args, Context, Field, InputType, Mutation, ObjectType, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requireAnyPermission, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemService } from './system.service';
 
@@ -221,7 +221,7 @@ export class SystemResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'dispatch_ops']);
+    await requireAnyPermission(this.prisma, ctx, ['procurement.manage', 'quotes.manage'], ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'dispatch_ops', 'office_staff']);
     return this.system.vendors({ search, status, take });
   }
 
@@ -238,7 +238,7 @@ export class SystemResolver {
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff']);
+    await requirePermission(this.prisma, ctx, 'quotes.manage', ['admin', 'owner', 'inventory_manager', 'sales_manager', 'sales', 'office_staff']);
     return this.system.architects({ search, status, take });
   }
 

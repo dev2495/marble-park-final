@@ -14,6 +14,7 @@ export type PermissionKey =
   | 'dispatch.manage'
   | 'returns.manage'
   | 'payments.manage'
+  | 'quotes.manage'
   | 'reports.view'
   | 'reports.executive'
   | 'reports.sales'
@@ -43,6 +44,7 @@ export const PERMISSION_KEYS: PermissionKey[] = [
   'dispatch.manage',
   'returns.manage',
   'payments.manage',
+  'quotes.manage',
   'reports.view',
   'reports.executive',
   'reports.sales',
@@ -72,6 +74,7 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     'customers.force_create',
     'documents.view',
     'documents.manage',
+    'quotes.manage',
   ],
   sales: ['documents.view', 'documents.manage', 'reports.sales'],
   inventory_manager: [
@@ -102,6 +105,7 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     'reports.fulfilment',
     'documents.view',
     'documents.manage',
+    'quotes.manage',
   ],
 };
 

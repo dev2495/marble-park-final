@@ -69,8 +69,8 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
     title: 'Pipeline',
     items: [
       { name: 'Leads', href: '/dashboard/leads', icon: PackageSearch, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
-      { name: 'Intents', href: '/dashboard/intents', icon: ListChecks, roles: ['admin', 'owner', 'sales_manager', 'office_staff'] },
-      { name: 'Quotes', href: '/dashboard/quotes', icon: FileSpreadsheet, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
+      { name: 'Intents', href: '/dashboard/intents', icon: ListChecks, roles: ['admin', 'owner', 'sales_manager', 'office_staff'], permission: 'quotes.manage' },
+      { name: 'Quotes', href: '/dashboard/quotes', icon: FileSpreadsheet, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'], permission: 'quotes.manage' },
       { name: 'Orders', href: '/dashboard/orders', icon: Receipt, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops'] },
       { name: 'Customer Accounts', href: '/dashboard/payments', icon: CreditCard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'], permission: 'payments.manage' },
       { name: 'Documents', href: '/dashboard/documents', icon: FileText, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'], permission: 'documents.view' },
