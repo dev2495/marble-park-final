@@ -272,6 +272,7 @@ class TileVariantInput {
   @Field({ nullable: true }) mrpSource?: string;
   @Field({ nullable: true }) pricingEffectiveFrom?: string;
   @Field({ nullable: true }) status?: string;
+  @Field({ nullable: true }) alias?: string;
 }
 
 @Resolver()

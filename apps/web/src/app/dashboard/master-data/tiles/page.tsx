@@ -85,11 +85,6 @@ const SAVE_VARIANT = gql`
     }
   }
 `;
-const SAVE_ALIAS = gql`
-  mutation SaveVariantAlias($input: ProductAliasInput!) {
-    saveProductAlias(input: $input)
-  }
-`;
 const CREATE_DISPLAY = gql`
   mutation CreateDisplay($input: DisplaySampleInput!) {
     createDisplaySample(input: $input)
@@ -349,7 +344,6 @@ export default function TileWorkspacePage() {
       await refetch();
     },
   });
-  const [saveAlias, aliasState] = useMutation(SAVE_ALIAS);
   const [createDisplay, createDisplayState] = useMutation(CREATE_DISPLAY);
   const [updateDisplay, updateDisplayState] = useMutation(UPDATE_DISPLAY);
   const [transition, transitionState] = useMutation(TRANSITION_DISPLAY);
@@ -384,7 +378,6 @@ export default function TileWorkspacePage() {
     error,
     designState.error,
     variantState.error,
-    aliasState.error,
     createDisplayState.error,
     updateDisplayState.error,
     transitionState.error,
@@ -458,17 +451,7 @@ export default function TileWorkspacePage() {
         },
       },
     });
-    const saved = response.data?.saveTileVariant;
-    if (saved?.id && variant.alias.trim())
-      await saveAlias({
-        variables: {
-          input: {
-            productId: saved.id,
-            type: "supplier_sku",
-            value: variant.alias.trim(),
-          },
-        },
-      });
+    return response.data?.saveTileVariant;
   }
   async function submitDisplay(event: any) {
     event.preventDefault();

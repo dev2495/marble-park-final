@@ -34,6 +34,7 @@ export interface CreateProductInput {
   coveragePerPack?: number;
   hsnCode?: string;
   allowLoose?: boolean;
+  supplierAlias?: string;
 }
 
 export interface UpdateProductInput {
@@ -65,6 +66,7 @@ export interface UpdateProductInput {
   coveragePerPack?: number;
   hsnCode?: string;
   allowLoose?: boolean;
+  supplierAlias?: string;
 }
 
 @Injectable()
@@ -137,6 +139,11 @@ export class ProductsService {
     const existingInternal = await this.prisma.product.findFirst({ where: { internalCode } });
     if (existingInternal) throw new BadRequestException('This internal product code is already assigned');
     await this.assertCodeAvailable(internalCode, '');
+    const supplierAlias = String(data.supplierAlias || '').trim();
+    const normalizedSupplierAlias = supplierAlias ? this.normalizeInternalCode(supplierAlias) : '';
+    if (normalizedSupplierAlias && normalizedSupplierAlias !== internalCode) {
+      await this.assertCodeAvailable(normalizedSupplierAlias, '');
+    }
     const tileDefaults = category.toLowerCase() === 'tiles';
     const uoms = [data.baseUom || (tileDefaults ? 'PC' : data.unit) || 'PC', data.purchaseUom || data.unit || (tileDefaults ? 'BOX' : 'PC'), data.salesUom || data.unit || (tileDefaults ? 'BOX' : 'PC')]
       .map((value) => String(value).trim().toUpperCase());
@@ -206,6 +213,15 @@ export class ProductsService {
         data: { id: ulid(), productId: product.id, type: 'internal_code', value: internalCode,
           normalizedValue: internalCode, status: 'active', isPrimary: true, metadata: {}, updatedAt: new Date() },
       });
+      if (normalizedSupplierAlias && normalizedSupplierAlias !== internalCode) {
+        await tx.productAlias.create({
+          data: {
+            id: ulid(), productId: product.id, type: 'supplier_sku', value: supplierAlias,
+            normalizedValue: normalizedSupplierAlias, status: 'active', isPrimary: false,
+            metadata: { source: 'tile_variant' }, updatedAt: new Date(),
+          },
+        });
+      }
       await tx.auditEvent.create({
         data: {
           id: ulid(),
@@ -214,7 +230,7 @@ export class ProductsService {
           entityType: 'Product',
           entityId: product.id,
           summary: `Created product ${product.sku}`,
-          metadata: { sku: product.sku, name: product.name, defaultMrpInclusive: product.defaultMrpInclusive, defaultNrpInclusive: product.defaultNrpInclusive, priceRateBasis: product.priceRateBasis, priceUom: product.priceUom },
+          metadata: { sku: product.sku, name: product.name, supplierAlias: supplierAlias || null, defaultMrpInclusive: product.defaultMrpInclusive, defaultNrpInclusive: product.defaultNrpInclusive, priceRateBasis: product.priceRateBasis, priceUom: product.priceUom },
         },
       });
       return product;
@@ -274,6 +290,11 @@ export class ProductsService {
     if (data.coveragePerPack !== undefined) update.coveragePerPack = this.numberAtLeastZero(data.coveragePerPack, 'Coverage per pack');
     if (data.hsnCode !== undefined) update.hsnCode = String(data.hsnCode || '').trim() || null;
     if (data.allowLoose !== undefined) update.allowLoose = Boolean(data.allowLoose);
+    const supplierAlias = data.supplierAlias === undefined ? undefined : String(data.supplierAlias || '').trim();
+    const normalizedSupplierAlias = supplierAlias ? this.normalizeInternalCode(supplierAlias) : '';
+    if (normalizedSupplierAlias && normalizedSupplierAlias !== current.internalCode) {
+      await this.assertCodeAvailable(normalizedSupplierAlias, id);
+    }
     const updatedAt = new Date();
     update.updatedAt = updatedAt;
     return this.prisma.$transaction(async (tx) => {
@@ -292,6 +313,17 @@ export class ProductsService {
             normalizedValue: product.internalCode, status: 'active', isPrimary: true, metadata: {}, updatedAt: new Date() },
         });
       }
+      if (normalizedSupplierAlias && normalizedSupplierAlias !== product.internalCode) {
+        await tx.productAlias.upsert({
+          where: { type_normalizedValue: { type: 'supplier_sku', normalizedValue: normalizedSupplierAlias } },
+          update: { productId: product.id, value: supplierAlias || normalizedSupplierAlias, status: 'active', isPrimary: false, updatedAt: new Date() },
+          create: {
+            id: ulid(), productId: product.id, type: 'supplier_sku', value: supplierAlias || normalizedSupplierAlias,
+            normalizedValue: normalizedSupplierAlias, status: 'active', isPrimary: false,
+            metadata: { source: 'tile_variant' }, updatedAt: new Date(),
+          },
+        });
+      }
       await tx.auditEvent.create({
         data: {
           id: ulid(),
@@ -300,7 +332,7 @@ export class ProductsService {
           entityType: 'Product',
           entityId: id,
           summary: `Updated product ${product.sku}`,
-          metadata: { before: this.auditProduct(current), after: this.auditProduct(product) },
+          metadata: { before: this.auditProduct(current), after: this.auditProduct(product), supplierAlias: supplierAlias || null },
         },
       });
       return product;
@@ -590,6 +622,7 @@ export class ProductsService {
         tileDesignId: design.id, tileSizeId: size.id,
         baseUom: 'PC', purchaseUom: String(input.purchaseUom || size.uom || 'BOX').toUpperCase(), salesUom: String(input.salesUom || size.uom || 'BOX').toUpperCase(),
         piecesPerPack, coveragePerPack, allowLoose: input.allowLoose === undefined ? true : Boolean(input.allowLoose), hsnCode: input.hsnCode,
+        supplierAlias: input.alias,
       }, actorUserId);
     }
     return this.update(existing.id, {
@@ -612,6 +645,7 @@ export class ProductsService {
       mrpSource: input.mrpSource === undefined ? existing.mrpSource : input.mrpSource,
       pricingEffectiveFrom: input.pricingEffectiveFrom === undefined ? existing.pricingEffectiveFrom : input.pricingEffectiveFrom,
       status: input.status || existing.status,
+      supplierAlias: input.alias,
     }, actorUserId);
   }
 
