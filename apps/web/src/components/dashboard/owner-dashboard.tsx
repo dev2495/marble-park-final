@@ -4,8 +4,8 @@ import { useMemo } from 'react';
 import { gql, useQuery } from '@apollo/client';
 import Link from 'next/link';
 import {
-  ArrowUpRight, CalendarClock, CheckCircle2, ClipboardCheck, FileSpreadsheet, IndianRupee,
-  PackageSearch, Plus, ShoppingBag, TrendingUp, Truck, Users, AlertTriangle, Boxes,
+  ArrowUpRight, CalendarClock, CheckCircle2, FileSpreadsheet, IndianRupee,
+  PackageSearch, Plus, ShoppingBag, TrendingUp, Truck, Users, AlertTriangle, Boxes, ShieldCheck,
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -33,9 +33,10 @@ const OWNER = gql`
       pendingFollowups
     }
     inventoryDashboard { stats summary }
-    quotes(status: "pending_approval") {
-      id quoteNumber status approvalStatus lines customer owner
-    }
+    stockReconciliation(take: 50)
+    stockAdjustmentRequests(status: "pending", take: 20)
+    stockCountSessions(take: 20)
+    stockTransfers(take: 50)
     leads {
       id stage expectedValue
     }
@@ -64,10 +65,17 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
   const recentQuotes = useMemo<any[]>(() => data?.ownerDashboard?.recentQuotes || [], [data?.ownerDashboard?.recentQuotes]);
   const recentLeads = useMemo<any[]>(() => data?.ownerDashboard?.recentLeads || [], [data?.ownerDashboard?.recentLeads]);
   const orderStats = useMemo(() => data?.salesOrderStats || {}, [data?.salesOrderStats]);
-  const approvalsQueue = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
   const leads = useMemo<any[]>(() => data?.leads || [], [data?.leads]);
   const followups = useMemo<any[]>(() => data?.salesDashboard?.pendingFollowups || [], [data?.salesDashboard?.pendingFollowups]);
   const lowStock = useMemo<any[]>(() => data?.lowStockBalances || [], [data?.lowStockBalances]);
+  const stock = data?.inventoryDashboard?.stats || {};
+  const reconciliation = data?.stockReconciliation?.summary || {};
+  const pendingAdjustments = useMemo<any[]>(() => data?.stockAdjustmentRequests || [], [data?.stockAdjustmentRequests]);
+  const countSessions = useMemo<any[]>(() => data?.stockCountSessions || [], [data?.stockCountSessions]);
+  const stockTransfers = useMemo<any[]>(() => data?.stockTransfers || [], [data?.stockTransfers]);
+  const openCounts = countSessions.filter((row) => !['posted', 'cancelled'].includes(row.status));
+  const openTransfers = stockTransfers.filter((row) => ['submitted', 'approved', 'in_transit'].includes(row.status));
+  const ownerStatus = Number(reconciliation.critical || 0) ? 'Stock action required' : Number(stats.pendingDispatchJobs || 0) || followups.length || openCounts.length || pendingAdjustments.length ? 'Operating work due' : 'Store controls clear';
 
   // ── Derived: pipeline by stage ────────────────────────────────────
   const pipelineByStage = useMemo(() => {
@@ -127,7 +135,7 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
     { label: 'Order bookings · this month', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} orders · avg ${moneyShort((orderStats.totalValue || 0) / Math.max(orderStats.totalOrders || 1, 1))}`, icon: IndianRupee, tone: 'success', href: '/dashboard/orders', numeric: true, format: moneyShort },
     { label: 'Pipeline value', value: Number(stats.totalQuoteValue || totalLeadsValue || 0), caption: `${stats.totalQuotes || 0} quotes · ${stats.quoteConversionRate || 0}% confirmed share`, icon: TrendingUp, tone: 'brand', href: '/dashboard/quotes', numeric: true, format: moneyShort },
-    { label: 'Approvals waiting', value: approvalsQueue.length, caption: approvalsQueue.length ? 'Quotes need your sign-off' : 'Inbox zero', icon: ClipboardCheck, tone: approvalsQueue.length ? 'warning' : 'neutral', href: '/dashboard/approvals', numeric: true },
+    { label: 'Stock at recorded cost', value: Number(stock.totalValue || 0), caption: `${Number(stock.totalQuantity || 0).toLocaleString('en-IN')} on hand · ${Number(stock.totalReserved || 0).toLocaleString('en-IN')} reserved`, icon: Boxes, tone: 'violet', href: '/dashboard/inventory/control', numeric: true, format: moneyShort },
     { label: 'Dispatch backlog', value: stats.pendingDispatchJobs || 0, caption: `${stats.activeDispatchJobs || 0} active jobs · ${followups.length} follow-ups today`, icon: Truck, tone: (stats.pendingDispatchJobs || 0) > 5 ? 'warning' : 'neutral', href: '/dashboard/dispatch', numeric: true },
   ];
 
@@ -135,7 +143,7 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
     { label: 'Active leads', value: leads.length, caption: `${pipelineByStage.find((s) => s.stage === 'new')?.count || 0} new this period`, icon: PackageSearch, tone: 'brand', href: '/dashboard/leads', numeric: true },
     { label: 'Orders booked', value: orderStats.totalOrders || 0, caption: `${moneyShort(orderStats.cashValue || 0)} cash-mode · ${moneyShort(orderStats.creditValue || 0)} credit-mode`, icon: CheckCircle2, tone: 'success', href: '/dashboard/orders', numeric: true },
     { label: 'Customers', value: stats.totalCustomers || 0, caption: `${stats.totalUsers || 0} team members`, icon: Users, tone: 'violet', href: '/dashboard/customers', numeric: true },
-    { label: 'Low-stock SKUs', value: lowStock.length, caption: lowStock.length ? 'Need re-ordering' : 'Inventory healthy', icon: AlertTriangle, tone: lowStock.length ? 'danger' : 'neutral', href: '/dashboard/inventory/stock-alerts', numeric: true },
+    { label: 'Low-stock SKUs', value: Number(stock.lowStock || 0), caption: Number(stock.lowStock || 0) ? 'Need re-ordering' : 'Inventory healthy', icon: AlertTriangle, tone: Number(stock.lowStock || 0) ? 'danger' : 'neutral', href: '/dashboard/inventory/stock-alerts', numeric: true },
   ];
 
   return (
@@ -151,10 +159,20 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
           <>
             <Button asChild size="sm"><Link href="/dashboard/quotes/new"><Plus className="mr-1.5 h-4 w-4" /> New quote</Link></Button>
             <Button asChild variant="outline" size="sm"><Link href="/dashboard/leads/new">New lead</Link></Button>
-            <Button asChild variant="outline" size="sm"><Link href="/dashboard/approvals">Approvals · {approvalsQueue.length}</Link></Button>
+            <Button asChild variant="outline" size="sm"><Link href="/dashboard/inventory/control"><Boxes className="mr-1.5 h-4 w-4" />Stock control</Link></Button>
           </>
         }
       />
+
+      <section className="relative overflow-hidden rounded-r6 border border-[#59231f] bg-[linear-gradient(118deg,#211516_0%,#572520_58%,#9d2a24_100%)] p-5 text-white shadow-[0_18px_42px_rgba(74,27,24,0.20)] sm:p-6">
+        <div className="pointer-events-none absolute -right-14 -top-20 h-56 w-56 rounded-full border border-white/10"/><div className="pointer-events-none absolute -right-2 -top-10 h-40 w-40 rounded-full border border-white/10"/>
+        <div className="relative flex flex-col justify-between gap-5 xl:flex-row xl:items-center"><div className="max-w-xl"><p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#edb7b1]">Owner operating pulse</p><h2 className="mt-2 font-display text-3xl font-black tracking-[-0.03em]">{ownerStatus}</h2><p className="mt-2 text-sm font-medium leading-6 text-white/70">This is an action summary, not an approval inbox. Open the exact desk that can change today’s outcome.</p></div><div className="grid gap-2 sm:grid-cols-2 xl:min-w-[42rem] xl:grid-cols-4">{[
+          { label: 'Sales follow-up', value: followups.length, note: 'overdue', href: '/dashboard/sales', tone: followups.length ? 'text-amber-200' : 'text-emerald-200' },
+          { label: 'Dispatch work', value: Number(stats.pendingDispatchJobs || 0), note: 'pending jobs', href: '/dashboard/dispatch', tone: Number(stats.pendingDispatchJobs || 0) ? 'text-amber-200' : 'text-emerald-200' },
+          { label: 'Stock exceptions', value: Number(reconciliation.critical || 0), note: 'critical mismatch', href: '/dashboard/inventory/reconciliation', tone: Number(reconciliation.critical || 0) ? 'text-red-200' : 'text-emerald-200' },
+          { label: 'Control queue', value: openCounts.length + pendingAdjustments.length + openTransfers.length, note: 'counts · corrections · transfers', href: '/dashboard/inventory/control', tone: openCounts.length + pendingAdjustments.length + openTransfers.length ? 'text-amber-200' : 'text-emerald-200' },
+        ].map((item) => <Link key={item.label} href={item.href} className="group rounded-r3 border border-white/12 bg-white/[0.075] p-3.5 backdrop-blur-sm transition-colors hover:bg-white/[0.13]"><span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-white/55">{item.label}<ArrowUpRight className="h-3.5 w-3.5 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"/></span><span className={`mt-2 block text-2xl font-black tabular-nums ${item.tone}`}>{item.value}</span><span className="mt-0.5 block truncate text-[10px] font-semibold text-white/55">{item.note}</span></Link>)}</div></div>
+      </section>
 
       <MotionGrid className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {tiles.map((tile) => (
@@ -298,29 +316,23 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
       </section>
 
       <section className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
-        <Panel title="Approval queue" subtitle="Quotes awaiting owner sign-off" tone="warning" rightAction={<Link href="/dashboard/approvals" className="text-xs font-medium text-[#1d4ed8] hover:underline">Open desk</Link>}>
-          {approvalsQueue.length ? (
-            <ul className="divide-y divide-[#f4f4f5]">
-              {approvalsQueue.slice(0, 6).map((quote: any) => {
-                const total = quoteTotal(quote.lines);
-                return (
-                  <li key={quote.id} className="flex items-center justify-between py-2.5">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <UserAvatar user={quote.owner} size="sm" />
-                      <div className="min-w-0">
-                        <Link href={`/dashboard/quotes/${quote.id}`} className="text-sm font-semibold text-[#18181b] hover:underline">{quote.quoteNumber}</Link>
-                        <p className="truncate text-[11px] text-[#71717a]">{quote.customer?.name || 'Customer'} · {quote.owner?.name || 'Sales'}</p>
-                      </div>
-                    </div>
-                    <div className="ml-3 flex shrink-0 items-center gap-2">
-                      <span className="text-sm font-semibold tabular-nums text-[#18181b]">{moneyShort(total)}</span>
-                      <span className="rounded-full bg-[#fde68a] px-2 py-0.5 text-[10px] font-semibold uppercase text-[#b45309]">Pending</span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : <EmptyState>No approvals pending. Inbox zero.</EmptyState>}
+        <Panel title="Owner action board" subtitle="Live work that can delay sales, stock or fulfilment" tone="warning" rightAction={<Link href="/dashboard/reports" className="text-xs font-medium text-[#1d4ed8] hover:underline">Open reports</Link>}>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {[
+              { label: 'Dispatches waiting', value: Number(stats.pendingDispatchJobs || 0), note: `${Number(stats.activeDispatchJobs || 0)} active jobs`, href: '/dashboard/dispatch', icon: Truck, tone: 'bg-amber-50 text-amber-800' },
+              { label: 'Overdue follow-ups', value: followups.length, note: 'Sales actions due now', href: '/dashboard/sales', icon: CalendarClock, tone: 'bg-blue-50 text-blue-800' },
+              { label: 'Low-stock SKUs', value: Number(stock.lowStock || 0), note: `${Number(stock.outOfStock || 0)} out of stock`, href: '/dashboard/inventory/stock-alerts', icon: AlertTriangle, tone: 'bg-red-50 text-red-800' },
+              { label: 'New leads', value: Number(stats.newLeads || 0), note: 'Awaiting first response', href: '/dashboard/leads', icon: PackageSearch, tone: 'bg-violet-50 text-violet-800' },
+              { label: 'Stock controls', value: openCounts.length + pendingAdjustments.length, note: `${openCounts.length} counts · ${pendingAdjustments.length} corrections`, href: '/dashboard/inventory/control', icon: ShieldCheck, tone: 'bg-amber-50 text-amber-800' },
+              { label: 'Transfers open', value: openTransfers.length, note: 'Must clear before period close', href: '/dashboard/inventory/transfers', icon: Boxes, tone: 'bg-sky-50 text-sky-800' },
+            ].map((item) => (
+              <Link key={item.label} href={item.href} className="group flex min-h-20 items-center gap-3 rounded-r3 border border-[#f4f4f5] bg-white p-3 transition-colors hover:border-[#d4d4d8] hover:bg-[#fafafa]">
+                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-r3 ${item.tone}`}><item.icon className="h-5 w-5"/></span>
+                <span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-[#71717a]">{item.label}</span><span className="mt-0.5 block text-xl font-black tabular-nums text-[#18181b]">{item.value}</span><span className="block truncate text-[11px] text-[#71717a]">{item.note}</span></span>
+                <ArrowUpRight className="h-4 w-4 shrink-0 text-[#a1a1aa] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[#9d2a24]"/>
+              </Link>
+            ))}
+          </div>
         </Panel>
 
         <Panel title="Recent activity" subtitle="Latest quotes & leads" tone="sky">

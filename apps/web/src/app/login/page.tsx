@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, gql } from '@apollo/client';
-import { ArrowRight, Bath, Boxes, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck, Users } from 'lucide-react';
+import { ArrowRight, BarChart3, Boxes, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CompanyLogo } from '@/components/company-logo';
 
@@ -92,10 +92,10 @@ export default function LoginPage() {
               <CheckCircle2 className="h-3.5 w-3.5" /> Built for sanitaryware & tile retail
             </span>
             <h1 className="mt-8 max-w-4xl text-5xl font-black leading-[1.04] tracking-[-0.035em] text-white xl:text-[4.45rem]">
-              One system for every quote, every SKU, every sale.
+              Run the showroom, warehouse and sales floor from one calm command center.
             </h1>
             <p className="mt-6 max-w-xl text-lg font-medium leading-8 text-slate-300">
-              Leads → Quotes → Orders → Dispatch, with real-time stock truth and procurement control under one roof.
+              Start with the owner’s operating pulse, then drill into leads, quotes, orders, procurement, stock and dispatch without losing the source record.
             </p>
           </div>
 
@@ -114,9 +114,9 @@ export default function LoginPage() {
 
           <div className="relative z-10 grid grid-cols-3 gap-3">
             {[
-              [Bath, 'Catalogue', 'Image-led SKU browsing before quoting'],
-              [Boxes, 'Inventory', 'GRN, reserve and dispatch with trace'],
-              [Users, 'CRM', 'Lead to confirmed order in one flow'],
+              [BarChart3, 'Owner cockpit', 'Bookings, pipeline, stock health and fulfilment actions'],
+              [Boxes, 'Stock control', 'Count, reconcile, trace and close from one governed flow'],
+              [Users, 'Sales workspace', 'Lead to quote, order and customer follow-up in one flow'],
             ].map(([Icon, title, label]: any) => (
               <div key={title} className="rounded-xl border border-white/10 bg-white/[0.045] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
                 <Icon className="h-5 w-5 text-[#d7aaa6]" />
