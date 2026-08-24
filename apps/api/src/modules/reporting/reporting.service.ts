@@ -183,7 +183,9 @@ export class ReportingService {
     const allowed = new Set(['locationId', 'ownerId', 'customerId', 'category', 'brand', 'status', 'vendorId']);
     for (const [key, value] of Object.entries(raw.filters || {})) if (allowed.has(key) && value != null && String(value).trim()) filters[key] = String(value).trim().slice(0, 160);
     const page = Math.max(1, Math.floor(n(raw.page) || 1));
-    const pageSize = Math.min(pageSizeLimit, Math.max(10, Math.floor(n(raw.pageSize) || 50)));
+    // Honour small explicit page sizes used by compact owner widgets and
+    // release probes; only the upper bound is a scaling/safety concern.
+    const pageSize = Math.min(pageSizeLimit, Math.max(1, Math.floor(n(raw.pageSize) || 50)));
     const sortDirection = String(raw.sortDirection || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
     return { reportId: String(raw.reportId || '').trim(), from: raw.from || '', to: raw.to || '', search: String(raw.search || '').trim().slice(0, 120), page, pageSize, sortBy: String(raw.sortBy || '').trim().slice(0, 60), sortDirection, filters };
   }
