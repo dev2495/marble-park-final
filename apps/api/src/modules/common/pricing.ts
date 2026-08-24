@@ -92,9 +92,18 @@ export function priceQuoteLines(lines: any[], quoteDiscountInput: any = {}, opti
       discount,
       { requireComplete: options.requireComplete ?? options.requireMrp ?? true, allowSpecialAboveNrp: options.allowSpecialAboveNrp, preserveAllocatedDiscount: options.preserveAllocatedDiscount },
     );
+    const floorBreaches = result.lines.flatMap((line: any, index: number) => {
+      const floor = Number(line.floorPriceInclusive || 0);
+      const quantity = Number(line.pricingQuantity ?? line.quantity ?? line.qty ?? 0);
+      const finalUnit = quantity > 0 ? Number(line.grossLineTotal || 0) / quantity : 0;
+      return floor > 0 && finalUnit + 0.005 < floor
+        ? [{ index, lineKey: line.lineKey || String(index), sku: line.sku, floorPriceInclusive: floor, finalUnitPayable: Number(finalUnit.toFixed(2)) }]
+        : [];
+    });
     return {
       ...result,
-      requiresApproval: false,
+      requiresApproval: floorBreaches.length > 0,
+      floorBreaches,
       quoteDiscountType: result.quoteDiscountMode,
       quoteDiscountPercent: result.quoteDiscountMode === 'PERCENT' ? result.quoteDiscountValue : 0,
       pricingErrors: result.lines.flatMap((line: any, index: number) => {

@@ -32,6 +32,7 @@ type NormalizedProductRow = {
   taxClass: string;
   defaultMrpInclusive: number;
   defaultNrpInclusive: number;
+  floorPriceInclusive: number;
   priceRateBasis: string;
   priceUom: string;
   mrpSource: string;
@@ -42,6 +43,7 @@ type NormalizedProductRow = {
   hasUnit: boolean;
   hasDefaultMrpInclusive: boolean;
   hasDefaultNrpInclusive: boolean;
+  hasFloorPriceInclusive: boolean;
   hasPriceRateBasis: boolean;
   hasPriceUom: boolean;
   hasMrpSource: boolean;
@@ -78,6 +80,7 @@ type ProductImportReviewRow = {
   coveragePerPack?: unknown;
   defaultMrpInclusive?: unknown;
   defaultNrpInclusive?: unknown;
+  floorPriceInclusive?: unknown;
   priceRateBasis?: unknown;
   priceUom?: unknown;
   mrpSource?: unknown;
@@ -94,12 +97,12 @@ type ProductImportReviewRow = {
 
 const PRODUCT_IMPORT_HEADERS = [
   'SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Material', 'Tile Size / Dimensions',
-  'Base UOM', 'Purchase UOM', 'Sales UOM', 'Pieces Per Pack', 'Coverage Per Pack', 'Default MRP Incl GST', 'Default NRP Incl GST',
+  'Base UOM', 'Purchase UOM', 'Sales UOM', 'Pieces Per Pack', 'Coverage Per Pack', 'Default MRP Incl GST', 'Default NRP Incl GST', 'Floor Price Incl GST',
   'Price Basis', 'Price UOM', 'MRP Source', 'Pricing Effective From', 'Tax Code', 'HSN Code', 'Allow Loose', 'Range / Series', 'Image URL', 'Product Image', 'Description',
   'Tile Design Code', 'Tile Design Name',
 ];
 const PRODUCT_IMPORT_DISPLAY_HEADERS = PRODUCT_IMPORT_HEADERS.map((header) =>
-  ['SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Tax Code'].includes(header)
+  ['SKU', 'Internal Code', 'Product Name', 'Category', 'Brand', 'Finish', 'Default MRP Incl GST', 'Price Basis', 'Price UOM', 'MRP Source', 'Pricing Effective From', 'Tax Code'].includes(header)
     ? `${header} *`
     : `${header} (Optional)`,
 );
@@ -158,16 +161,16 @@ export class ImportsService {
     sheet.getRow(1).height = 32;
     sheet.getRow(1).alignment = { vertical: 'middle', wrapText: true };
     sheet.views = [{ state: 'frozen', ySplit: 1 }];
-    sheet.autoFilter = { from: 'A1', to: 'Y1' };
-    const widths = [18, 18, 32, 20, 20, 18, 20, 24, 13, 15, 13, 15, 18, 14, 14, 20, 14, 13, 13, 20, 34, 18, 38, 22, 30];
+    sheet.autoFilter = { from: 'A1', to: 'AC1' };
+    const widths = [18, 18, 32, 20, 20, 18, 20, 24, 13, 15, 13, 15, 18, 14, 14, 14, 20, 14, 13, 18, 20, 18, 18, 38, 22, 24, 30, 20, 24];
     sheet.columns.forEach((column: any, index: number) => { column.width = widths[index] || 18; });
     sheet.getColumn(1).numFmt = '@';
     sheet.getColumn(2).numFmt = '@';
     sheet.getColumn(14).numFmt = '[$₹-en-IN]#,##0.00';
     sheet.getColumn(15).numFmt = '[$₹-en-IN]#,##0.00';
     sheet.getColumn(16).numFmt = '[$₹-en-IN]#,##0.00';
-    sheet.getColumn(21).alignment = { wrapText: true };
-    sheet.getColumn(23).alignment = { wrapText: true };
+    sheet.getColumn(22).alignment = { wrapText: true };
+    sheet.getColumn(24).alignment = { wrapText: true };
     PRODUCT_IMPORT_HEADERS.forEach((header, index) => {
       const required = !PRODUCT_IMPORT_DISPLAY_HEADERS[index].includes('(Optional)');
       const cell = sheet.getCell(1, index + 1);
@@ -186,8 +189,8 @@ export class ImportsService {
     instructions.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
     const instructionRows = [
       ['1', 'Use the Product Master tab', 'Enter one new saleable design/SKU per row. Do not rename the sheet or headers.'],
-      ['2', 'Read the column labels', 'A red header with * is required. A grey header marked Optional may be left blank. Optional prices default to zero; optional units and box details use safe defaults.'],
-      ['3', 'Choose governed values', 'Dropdowns come from live master data at download time. Category, brand, finish and tax are required. Tile rows also require Tile Design Code so every size/finish SKU links to one governed design.'],
+      ['2', 'Read the column labels', 'A red header with * is required. Every SKU needs a positive MRP and governed price basis/UOM/source/effective date. NRP and floor price are optional.'],
+      ['3', 'Choose governed values', 'Dropdowns come from live master data at download time. Category, brand, finish and tax are required. Tile rows also require Tile Design Code and must use AREA / SQFT pricing.'],
       ['4', 'Add a product image', 'Optional: paste a public HTTPS image URL or use Excel Insert > Pictures > Place over cells. Keep one JPG/PNG/WebP picture inside the Product Image cell on that row. Do not use Place in Cell.'],
       ['5', 'Preview before creation', 'Upload the workbook in Excel Import Center. Nothing is written until every row passes and you explicitly confirm.'],
       ['6', 'Existing SKUs are protected', 'Bulk import creates new SKUs only. Edit existing products individually in Product Master; the SKU code itself remains locked.'],
@@ -208,6 +211,7 @@ export class ImportsService {
       ['Finishes', finishes.map((row) => row.name)], ['Materials', materials.map((row) => row.name)],
       ['TileSizes', tileSizes.map((row) => row.name)], ['UOMs', uoms.map((row) => row.code)],
       ['TaxCodes', taxCodes.map((row) => row.code)], ['YesNo', ['No', 'Yes']],
+      ['PriceBasis', ['PIECE', 'BOX', 'AREA']], ['MrpSources', ['MANUAL', 'PACKAGE', 'BRAND_LIST']],
     ] as Array<[string, string[]]>;
     listColumns.forEach(([name, values], index) => {
       const column = index + 1;
@@ -219,14 +223,15 @@ export class ImportsService {
     });
     lists.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
     lists.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF242424' } };
-    lists.autoFilter = { from: 'A1', to: 'H1' };
+    lists.autoFilter = { from: 'A1', to: 'J1' };
 
     const validationByColumn: Record<number, { name: string; allowBlank: boolean }> = {
       4: { name: 'Categories', allowBlank: false }, 5: { name: 'Brands', allowBlank: false },
       6: { name: 'Finishes', allowBlank: false }, 7: { name: 'Materials', allowBlank: true },
       8: { name: 'TileSizes', allowBlank: true }, 9: { name: 'UOMs', allowBlank: true },
       10: { name: 'UOMs', allowBlank: true }, 11: { name: 'UOMs', allowBlank: true },
-      17: { name: 'TaxCodes', allowBlank: false }, 19: { name: 'YesNo', allowBlank: true },
+      17: { name: 'PriceBasis', allowBlank: false }, 18: { name: 'UOMs', allowBlank: false }, 19: { name: 'MrpSources', allowBlank: false },
+      21: { name: 'TaxCodes', allowBlank: false }, 23: { name: 'YesNo', allowBlank: true },
     };
     for (let rowNumber = 2; rowNumber <= MAX_IMPORT_ROWS + 1; rowNumber += 1) {
       Object.entries(validationByColumn).forEach(([column, config]) => {
@@ -236,7 +241,8 @@ export class ImportsService {
         };
       });
       sheet.getCell(rowNumber, 12).dataValidation = { type: 'whole', operator: 'greaterThanOrEqual', formulae: [1], allowBlank: true, showErrorMessage: true, error: 'When entered, pieces per pack must be at least 1.' };
-      for (const column of [13, 14, 15, 16]) sheet.getCell(rowNumber, column).dataValidation = { type: 'decimal', operator: 'greaterThanOrEqual', formulae: [0], allowBlank: true, showErrorMessage: true, error: 'When entered, use zero or a positive number.' };
+      sheet.getCell(rowNumber, 14).dataValidation = { type: 'decimal', operator: 'greaterThan', formulae: [0], allowBlank: false, showErrorMessage: true, error: 'MRP is required and must be greater than zero.' };
+      for (const column of [13, 15, 16]) sheet.getCell(rowNumber, column).dataValidation = { type: 'decimal', operator: 'greaterThanOrEqual', formulae: [0], allowBlank: true, showErrorMessage: true, error: 'When entered, use zero or a positive number.' };
     }
 
     const reference = workbook.addWorksheet('Reference details');
@@ -255,7 +261,7 @@ export class ImportsService {
     reference.columns = [{ width: 16 }, { width: 18 }, { width: 34 }, { width: 34 }];
 
     sheet.getCell('A2').note = 'Required. New immutable SKU code. Existing SKU codes are blocked.';
-    sheet.getCell('V2').note = 'Optional. Use Insert > Pictures > Place over cells (not Place in Cell). Keep one JPG, PNG or WebP image with its top-left corner inside this row.';
+    sheet.getCell('Z2').note = 'Optional. Use Insert > Pictures > Place over cells (not Place in Cell). Keep one JPG, PNG or WebP image with its top-left corner inside this row.';
     const buffer = await workbook.xlsx.writeBuffer();
     return {
       filename: `marble-park-product-master-live-${new Date().toISOString().slice(0, 10)}.xlsx`,
@@ -438,7 +444,7 @@ export class ImportsService {
     const headerByField: Record<string, string> = {
       sku: 'SKU', internalCode: 'Internal Code', name: 'Product Name', category: 'Category', brand: 'Brand', finish: 'Finish',
       material: 'Material', dimensions: 'Tile Size / Dimensions', baseUom: 'Base UOM', purchaseUom: 'Purchase UOM', salesUom: 'Sales UOM',
-      piecesPerPack: 'Pieces Per Pack', coveragePerPack: 'Coverage Per Pack', defaultMrpInclusive: 'Default MRP Incl GST', defaultNrpInclusive: 'Default NRP Incl GST', priceRateBasis: 'Price Basis', priceUom: 'Price UOM', mrpSource: 'MRP Source', pricingEffectiveFrom: 'Pricing Effective From',
+      piecesPerPack: 'Pieces Per Pack', coveragePerPack: 'Coverage Per Pack', defaultMrpInclusive: 'Default MRP Incl GST', defaultNrpInclusive: 'Default NRP Incl GST', floorPriceInclusive: 'Floor Price Incl GST', priceRateBasis: 'Price Basis', priceUom: 'Price UOM', mrpSource: 'MRP Source', pricingEffectiveFrom: 'Pricing Effective From',
       taxClass: 'Tax Code', hsnCode: 'HSN Code', allowLoose: 'Allow Loose', range: 'Range / Series', imageUrl: 'Image URL', description: 'Description', designCode: 'Tile Design Code', designName: 'Tile Design Name',
     };
     for (const review of reviewed) {
@@ -458,7 +464,7 @@ export class ImportsService {
     if (value.length > MAX_IMPORT_ROWS) throw new BadRequestException(`A review can contain at most ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} rows.`);
     const allowed = new Set([
       'sku', 'internalCode', 'name', 'category', 'brand', 'finish', 'material', 'dimensions', 'baseUom', 'purchaseUom', 'salesUom',
-      'piecesPerPack', 'coveragePerPack', 'defaultMrpInclusive', 'defaultNrpInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description', 'designCode', 'designName',
+      'piecesPerPack', 'coveragePerPack', 'defaultMrpInclusive', 'defaultNrpInclusive', 'floorPriceInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom', 'taxClass', 'hsnCode', 'allowLoose', 'range', 'imageUrl', 'description', 'designCode', 'designName',
     ]);
     const identities = new Set<string>();
     const rows = value.map((input: any) => {
@@ -613,6 +619,7 @@ export class ImportsService {
         coveragePerPack: row.normalized.coveragePerPack,
         defaultMrpInclusive: row.normalized.defaultMrpInclusive,
         defaultNrpInclusive: row.normalized.defaultNrpInclusive,
+        floorPriceInclusive: row.normalized.floorPriceInclusive,
         priceRateBasis: row.normalized.priceRateBasis,
         priceUom: row.normalized.priceUom,
         mrpSource: row.normalized.mrpSource,
@@ -632,6 +639,7 @@ export class ImportsService {
           coveragePerPack: row.normalized.hasCoveragePerPack,
           defaultMrpInclusive: row.normalized.hasDefaultMrpInclusive,
           defaultNrpInclusive: row.normalized.hasDefaultNrpInclusive,
+          floorPriceInclusive: row.normalized.hasFloorPriceInclusive,
           priceRateBasis: row.normalized.hasPriceRateBasis,
           priceUom: row.normalized.hasPriceUom,
           mrpSource: row.normalized.hasMrpSource,
@@ -727,12 +735,14 @@ export class ImportsService {
     if (!row.hasTaxClass) errors.push('Tax Code is required');
     if (this.key(row.category) === 'tiles' && (!row.hasDesignCode || !row.designCode)) errors.push('Tile Design Code is required for Tiles so all size and finish variants share one governed design');
     if (this.key(row.category) === 'tiles' && (!row.hasDesignName || !row.designName)) errors.push('Tile Design Name is required for Tiles and remains independent of the size/finish variant name');
-    if (row.hasDefaultMrpInclusive && (!Number.isFinite(row.defaultMrpInclusive) || row.defaultMrpInclusive <= 0)) errors.push('Default MRP incl GST must be greater than zero');
+    if (!row.hasDefaultMrpInclusive || !Number.isFinite(row.defaultMrpInclusive) || row.defaultMrpInclusive <= 0) errors.push('Default MRP incl GST is required and must be greater than zero for every new SKU');
     if (row.hasDefaultNrpInclusive && (!Number.isFinite(row.defaultNrpInclusive) || row.defaultNrpInclusive <= 0)) errors.push('Default NRP incl GST must be greater than zero');
-    if (row.hasDefaultMrpInclusive !== row.hasDefaultNrpInclusive) errors.push('Default MRP and Default NRP must be supplied together or both left blank');
     if (row.hasDefaultMrpInclusive && row.defaultNrpInclusive > row.defaultMrpInclusive) errors.push('Default NRP cannot exceed Default MRP');
+    if (row.hasFloorPriceInclusive && (!Number.isFinite(row.floorPriceInclusive) || row.floorPriceInclusive < 0)) errors.push('Floor price incl GST must be zero or greater');
+    if (row.hasFloorPriceInclusive && row.floorPriceInclusive > row.defaultMrpInclusive) errors.push('Floor price cannot exceed Default MRP');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !['BOX', 'PIECE', 'AREA'].includes(row.priceRateBasis)) errors.push('Price Basis must be BOX, PIECE, or AREA when defaults are supplied');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !row.priceUom) errors.push('Price UOM is required when defaults are supplied');
+    if (this.key(row.category) === 'tiles' && (row.priceRateBasis !== 'AREA' || row.priceUom !== 'SQFT')) errors.push('Tile MRP must use AREA basis and SQFT UOM');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !row.mrpSource) errors.push('MRP Source is required when price defaults are supplied');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && (!row.pricingEffectiveFrom || !Number.isFinite(new Date(row.pricingEffectiveFrom).getTime()))) errors.push('Pricing Effective From must be a valid date when defaults are supplied');
     if (!Number.isInteger(row.piecesPerPack) || row.piecesPerPack <= 0) errors.push('Pieces per pack must be a positive whole number');
@@ -812,6 +822,7 @@ export class ImportsService {
     };
     const defaultMrpInclusive = pick('Default MRP Incl GST');
     const defaultNrpInclusive = pick('Default NRP Incl GST');
+    const floorPriceInclusive = pick('Floor Price Incl GST');
     const priceRateBasis = pick('Price Basis');
     const priceUom = pick('Price UOM');
     const mrpSource = pick('MRP Source');
@@ -860,6 +871,7 @@ export class ImportsService {
       taxClass: this.normalizeTaxClass(taxClassValue),
       defaultMrpInclusive: this.money(defaultMrpInclusive),
       defaultNrpInclusive: this.money(defaultNrpInclusive),
+      floorPriceInclusive: this.money(floorPriceInclusive),
       priceRateBasis: String(priceRateBasis || '').trim().toUpperCase(),
       priceUom: String(priceUom || '').trim().toUpperCase(),
       mrpSource: this.cleanText(mrpSource),
@@ -870,6 +882,7 @@ export class ImportsService {
       hasUnit: unit !== undefined,
       hasDefaultMrpInclusive: defaultMrpInclusive !== undefined,
       hasDefaultNrpInclusive: defaultNrpInclusive !== undefined,
+      hasFloorPriceInclusive: floorPriceInclusive !== undefined,
       hasPriceRateBasis: priceRateBasis !== undefined,
       hasPriceUom: priceUom !== undefined,
       hasMrpSource: mrpSource !== undefined,
@@ -931,6 +944,11 @@ export class ImportsService {
         costPrice: 0,
         defaultMrpInclusive: normalized.hasDefaultMrpInclusive ? normalized.defaultMrpInclusive : null,
         defaultNrpInclusive: normalized.hasDefaultNrpInclusive ? normalized.defaultNrpInclusive : null,
+        floorPriceInclusive: normalized.hasFloorPriceInclusive ? normalized.floorPriceInclusive : null,
+        mrp: normalized.defaultMrpInclusive,
+        mrpRateBasis: normalized.priceRateBasis,
+        mrpVerifiedAt: new Date(),
+        mrpVerifiedById: uploadedBy,
         priceRateBasis: normalized.hasPriceRateBasis ? normalized.priceRateBasis : null,
         priceUom: normalized.hasPriceUom ? normalized.priceUom : null,
         mrpSource: normalized.hasMrpSource ? normalized.mrpSource : null,
@@ -1114,6 +1132,11 @@ export class ImportsService {
       costPrice: 0,
       defaultMrpInclusive: normalized.hasDefaultMrpInclusive ? normalized.defaultMrpInclusive : null,
       defaultNrpInclusive: normalized.hasDefaultNrpInclusive ? normalized.defaultNrpInclusive : null,
+      floorPriceInclusive: normalized.hasFloorPriceInclusive ? normalized.floorPriceInclusive : null,
+      mrp: normalized.defaultMrpInclusive,
+      mrpRateBasis: normalized.priceRateBasis,
+      mrpVerifiedAt: new Date(),
+      mrpVerifiedById: uploadedBy,
       priceRateBasis: normalized.hasPriceRateBasis ? normalized.priceRateBasis : null,
       priceUom: normalized.hasPriceUom ? normalized.priceUom : null,
       mrpSource: normalized.hasMrpSource ? normalized.mrpSource : null,

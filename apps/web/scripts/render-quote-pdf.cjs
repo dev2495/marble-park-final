@@ -255,10 +255,14 @@ async function hydrateImages(payload, requestUrl, apiUrl) {
 function rateFor(line) {
   const qty = Number(line.qty || line.quantity || 0);
   const basis = String(line.priceRateBasis || line.rateBasis || 'BOX').toUpperCase().replace('PACK', 'BOX');
+  const isTile = String(line.category || '').toLowerCase() === 'tiles';
+  if (isTile && basis !== 'AREA') {
+    throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'tile'} uses legacy non-area pricing. Open the quote and save a revision so Product Master MRP is applied per SQFT.`);
+  }
   const pricingQuantity = Number(line.pricingQuantity || (basis === 'AREA'
     ? qty * Number(line.coveragePerPack || 0)
     : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
-  const pricingUom = String(line.pricingUom || (basis === 'PIECE' ? 'PC' : line.unit || line.uom || 'BOX')).toUpperCase();
+  const pricingUom = isTile ? 'SQFT' : String(line.pricingUom || (basis === 'PIECE' ? 'PC' : line.unit || line.uom || 'BOX')).toUpperCase();
   if (String(line.pricingVersion || '') !== PRICING_VERSION) throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'line'} uses unverified legacy pricing. Open the quote and confirm MRP and NRP.`);
   const priced = priceQuoteLines([{ ...line, pricingQuantity, priceRateBasis: basis, lineRateBasis: basis }], {
     mode: line.quoteDiscountMode || 'PERCENT', value: line.quoteDiscountValue || 0,
@@ -268,7 +272,7 @@ function rateFor(line) {
   const taxAmount = Number(priced.taxAmount || 0);
   const amount = Number(priced.grossLineTotal || 0);
   const mrp = Number(priced.mrpInclusive);
-  const mrpUom = basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
+  const mrpUom = isTile ? 'SQFT' : basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
   const grossMrp = Number(priced.mrpValueInclusive || 0);
   const finalUnitPayable = pricingQuantity > 0 ? amount / pricingQuantity : 0;
   return { qty, basis, pricingQuantity, pricingUom, unitRate: priced.specialRateExclusive, lineSubtotal: priced.specialValueInclusive, grossBeforeQuoteDiscount: priced.specialValueInclusive, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, nrp: priced.nrpInclusive, netSellingPrice: priced.specialRateInclusive, finalUnitPayable, mrpUom, grossMrp };
@@ -608,7 +612,6 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
         ),
         e(View, { style: styles.descCol },
           e(Text, { style: styles.td }, `${line.name || line.description || line.sku || line.tileCode || 'Selection item'}${brandCode ? ` · ${brandCode}` : ''}`),
-          line.notes || line.description ? e(Text, { style: styles.meta }, line.notes || line.description) : null,
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,

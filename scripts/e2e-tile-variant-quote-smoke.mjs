@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { writeFile } from 'node:fs/promises';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
 
 if (process.env.ALLOW_MUTATING_ACCEPTANCE !== 'true') {
@@ -6,6 +7,7 @@ if (process.env.ALLOW_MUTATING_ACCEPTANCE !== 'true') {
 }
 
 const API = process.env.API_URL || 'http://127.0.0.1:4100/graphql';
+const APP_URL = process.env.APP_URL || 'http://127.0.0.1:3100';
 const TEST_EMAIL = process.env.TEST_EMAIL || '';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || '';
 const prisma = new PrismaClient();
@@ -56,8 +58,8 @@ async function main() {
       allowLoose: false,
       defaultMrpInclusive: 688,
       defaultNrpInclusive: 640,
-      priceRateBasis: 'BOX',
-      priceUom: 'BOX',
+      priceRateBasis: 'AREA',
+      priceUom: 'SQFT',
       mrpSource: 'MANUAL',
       pricingEffectiveFrom: new Date().toISOString(),
       alias,
@@ -67,6 +69,7 @@ async function main() {
   cleanup.productIds.push(variant.id);
   assert(variant.tileDesignId === design.id && variant.tileSizeId === size.id, 'Variant must keep the governed design and size');
   assert(Number(variant.defaultMrpInclusive) === 688 && Number(variant.defaultNrpInclusive) === 640, 'Variant must retain quote-ready MRP and NRP defaults');
+  assert(variant.priceRateBasis === 'AREA' && variant.priceUom === 'SQFT', 'Tile variants must always govern MRP per SQFT');
 
   const aliases = (await gql('query($productId:ID!){productAliases(productId:$productId)}', { productId: variant.id }, token)).productAliases;
   assert(aliases.some((row) => row.type === 'internal_code' && row.status === 'active'), 'Variant must have its permanent internal-code alias');
@@ -82,7 +85,7 @@ async function main() {
   designIds.push(duplicateDesign.id);
   const duplicateError = await gql(
     'mutation($input:TileVariantInput!){saveTileVariant(input:$input){id}}',
-    { input: { tileDesignId: duplicateDesign.id, tileSizeId: size.id, finish, purchaseUom: 'BOX', salesUom: 'BOX', alias } }, token, true,
+    { input: { tileDesignId: duplicateDesign.id, tileSizeId: size.id, finish, purchaseUom: 'BOX', salesUom: 'BOX', defaultMrpInclusive: 688, priceRateBasis: 'AREA', priceUom: 'SQFT', mrpSource: 'MANUAL', pricingEffectiveFrom: new Date().toISOString(), alias } }, token, true,
   );
   assert(/already assigned|already exists/i.test(duplicateError), 'A duplicate supplier alias must be rejected before variant creation');
   assert(await prisma.product.count() === productCountBeforeDuplicate, 'Rejected aliases must not leave a partial Product Master or inventory record');
@@ -112,9 +115,11 @@ async function main() {
         quantity: 2,
         unit: 'BOX',
         inventoryUom: 'BOX',
-        pricingUom: 'BOX',
-        rateBasis: 'BOX',
-        priceRateBasis: 'BOX',
+        pricingUom: 'SQFT',
+        rateBasis: 'AREA',
+        priceRateBasis: 'AREA',
+        requestedArea: Number(variant.coveragePerPack) * 2,
+        wastagePercent: 0,
         piecesPerPack: variant.piecesPerPack,
         coveragePerPack: variant.coveragePerPack,
         mrpInclusive: 688,
@@ -131,11 +136,20 @@ async function main() {
   if (quote.leadId) cleanup.leadIds.push(quote.leadId);
   assert(quote.status === 'draft' && quote.pricingStatus === 'complete', 'A fully priced tile line must create a validated quote');
   assert(quote.lines.length === 1 && quote.lines[0].type === 'tile' && quote.lines[0].productId === variant.id, 'Quote must preserve the exact Product Master tile variant');
-  assert(quote.lines[0].qty === 2 && quote.lines[0].pricingUom === 'BOX', 'Quote must keep the physical box quantity and pricing basis');
-  close(quote.lines[0].grossLineTotal, 1280, 'Tile line total');
-  close(quote.commercialTotal, 1280, 'Materialized quote total');
+  assert(quote.lines[0].qty === 2 && quote.lines[0].pricingUom === 'SQFT' && quote.lines[0].rateBasis === 'AREA', 'Quote must keep physical boxes while pricing the tile per SQFT');
+  const expectedTotal = Number(variant.coveragePerPack) * 2 * 640;
+  close(quote.lines[0].grossLineTotal, expectedTotal, 'Tile line total');
+  close(quote.commercialTotal, expectedTotal, 'Materialized quote total');
 
-  console.log(JSON.stringify({ ok: true, variant: variant.sku, alias, quote: quote.quoteNumber, quoteTotal: quote.commercialTotal, atomicAliasGuard: true }, null, 2));
+  const pdfResponse = await fetch(`${APP_URL}/api/pdf/quote/${quote.id}?download=1`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const pdf = Buffer.from(await pdfResponse.arrayBuffer());
+  assert(pdfResponse.ok, `Tile quote PDF failed (${pdfResponse.status}): ${pdf.toString('utf8')}`);
+  assert(pdfResponse.headers.get('content-type') === 'application/pdf' && pdf.subarray(0, 4).toString() === '%PDF' && pdf.length > 1_000, 'Tile quote PDF did not return a valid customer document');
+  if (process.env.PDF_OUTPUT) await writeFile(process.env.PDF_OUTPUT, pdf);
+
+  console.log(JSON.stringify({ ok: true, variant: variant.sku, alias, quote: quote.quoteNumber, quoteTotal: quote.commercialTotal, pdfBytes: pdf.length, atomicAliasGuard: true }, null, 2));
 }
 
 main()

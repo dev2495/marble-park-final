@@ -1344,6 +1344,10 @@ export class OperationsService {
     const selection = new Set((selectedIds || []).map(String));
     const printable = job.instances.filter((instance: any) => instance.status === 'active' && (!selection.size || selection.has(instance.id)));
     if (!printable.length) throw new BadRequestException('No active labels were selected');
+    const missingMrp = printable.find((instance: any) => !Number.isFinite(Number(instance.product?.defaultMrpInclusive)) || Number(instance.product?.defaultMrpInclusive) <= 0);
+    if (missingMrp) {
+      throw new BadRequestException(`${missingMrp.product?.sku || 'This SKU'} needs a verified Product Master MRP before its physical label can be printed. Complete it in MRP Readiness.`);
+    }
     const labels = await Promise.all(printable.flatMap((instance: any) => Array.from({ length: Math.max(1, copies) }, (_, copyIndex) => ({ instance, copyIndex }))).map(async ({ instance, copyIndex }: any) => {
       const payload = {
         version: 1,
@@ -1355,6 +1359,9 @@ export class OperationsService {
         brandCode: instance.product?.brandMaster?.code || null,
         brand: instance.product?.brand || null,
         category: instance.product?.category || null,
+        mrpInclusive: instance.product?.defaultMrpInclusive == null ? null : Number(instance.product.defaultMrpInclusive),
+        priceRateBasis: String(instance.product?.category || '').toLowerCase() === 'tiles' ? 'AREA' : instance.product?.priceRateBasis || null,
+        priceUom: String(instance.product?.category || '').toLowerCase() === 'tiles' ? 'SQFT' : instance.product?.priceUom || instance.product?.salesUom || instance.product?.unit || null,
         finish: instance.product?.finish || null,
         dimensions: instance.product?.dimensions || null,
         lotNumber: instance.lot?.lotNumber || null,

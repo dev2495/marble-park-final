@@ -16,13 +16,13 @@ const MASTER_DATA = gql`
 const GET_PRODUCTS = gql`
   query ProductRegister($search: String, $take: Int, $skip: Int, $includeInactive: Boolean) {
     products(search: $search, take: $take, skip: $skip, includeInactive: $includeInactive) {
-      id sku internalCode name category brand finish dimensions unit defaultMrpInclusive defaultNrpInclusive priceRateBasis priceUom mrpVerifiedAt mrpVerifiedById mrpSource pricingEffectiveFrom pricingVersion taxClass status description media updatedAt
+      id sku internalCode name category brand finish dimensions unit defaultMrpInclusive defaultNrpInclusive floorPriceInclusive priceRateBasis priceUom mrpVerifiedAt mrpVerifiedById mrpSource pricingEffectiveFrom pricingVersion taxClass status description media updatedAt
       categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
     }
   }
 `;
 const CREATE_PRODUCT = gql`mutation CreateProduct($input: CreateProductInput!) { createProduct(input: $input) {
-  id sku internalCode name category brand finish dimensions unit defaultMrpInclusive defaultNrpInclusive priceRateBasis priceUom mrpVerifiedAt mrpVerifiedById mrpSource pricingEffectiveFrom pricingVersion taxClass status description media updatedAt
+  id sku internalCode name category brand finish dimensions unit defaultMrpInclusive defaultNrpInclusive floorPriceInclusive priceRateBasis priceUom mrpVerifiedAt mrpVerifiedById mrpSource pricingEffectiveFrom pricingVersion taxClass status description media updatedAt
   categoryId brandId finishId materialId tileSizeId baseUom purchaseUom salesUom piecesPerPack coveragePerPack hsnCode allowLoose
 } }`;
 const UPDATE_PRODUCT = gql`mutation UpdateProduct($id: ID!, $input: UpdateProductInput!) { updateProduct(id: $id, input: $input) { id sku updatedAt status } }`;
@@ -36,7 +36,7 @@ const UPLOAD_ASSET = gql`
 const emptyProduct = {
   sku: '', internalCode: '', name: '', category: '', brand: '', finish: '', dimensions: '', unit: 'PC',
   materialId: '', tileSizeId: '', baseUom: 'PC', purchaseUom: 'PC', salesUom: 'PC', piecesPerPack: '1', coveragePerPack: '', hsnCode: '', allowLoose: false,
-  defaultMrpInclusive: '', defaultNrpInclusive: '', priceRateBasis: 'PIECE', priceUom: 'PC', mrpSource: 'MANUAL', mrpVerifiedAt: '', pricingEffectiveFrom: '', taxClass: 'GST_18', description: '', status: 'active',
+  defaultMrpInclusive: '', defaultNrpInclusive: '', floorPriceInclusive: '', priceRateBasis: 'PIECE', priceUom: 'PC', mrpSource: 'MANUAL', mrpVerifiedAt: '', pricingEffectiveFrom: '', taxClass: 'GST_18', description: '', status: 'active',
   updatedAt: '', images: [] as string[],
 };
 
@@ -107,14 +107,14 @@ export default function ProductMasterPage() {
   const isEditing = Boolean(selectedId);
   const saving = creating || updating;
   const isTile = String(form.category || '').trim().toLowerCase() === 'tiles';
-  const areaPriced = isTile && ['SQFT', 'SQM', 'M2'].includes(String(form.salesUom || '').toUpperCase());
-  const canSave = Boolean(form.name.trim() && form.category.trim() && form.internalCode.trim() && (isEditing || form.sku.trim()));
+  const areaPriced = isTile;
+  const canSave = Boolean(form.name.trim() && form.category.trim() && form.internalCode.trim() && (isEditing || form.sku.trim()) && Number(form.defaultMrpInclusive) > 0);
 
   function chooseProduct(product: any) {
     setSelectedId(product.id);
     setForm({
       sku: product.sku || '', internalCode: product.internalCode || product.sku || '', name: product.name || '', category: product.category || '', brand: product.brand || '', finish: product.finish || '',
-      dimensions: product.dimensions || '', unit: product.unit || 'PC', defaultMrpInclusive: product.defaultMrpInclusive == null ? '' : String(product.defaultMrpInclusive), defaultNrpInclusive: product.defaultNrpInclusive == null ? '' : String(product.defaultNrpInclusive),
+      dimensions: product.dimensions || '', unit: product.unit || 'PC', defaultMrpInclusive: product.defaultMrpInclusive == null ? '' : String(product.defaultMrpInclusive), defaultNrpInclusive: product.defaultNrpInclusive == null ? '' : String(product.defaultNrpInclusive), floorPriceInclusive: product.floorPriceInclusive == null ? '' : String(product.floorPriceInclusive),
       priceRateBasis: product.priceRateBasis || 'PIECE', priceUom: product.priceUom || product.salesUom || 'PC', mrpSource: product.mrpSource || 'MANUAL', mrpVerifiedAt: product.mrpVerifiedAt || '', pricingEffectiveFrom: product.pricingEffectiveFrom ? String(product.pricingEffectiveFrom).slice(0, 10) : '',
       taxClass: product.taxClass || 'GST_18', description: product.description || '', status: product.status || 'active', updatedAt: product.updatedAt || '',
       materialId: product.materialId || '', tileSizeId: product.tileSizeId || '', baseUom: product.baseUom || 'PC', purchaseUom: product.purchaseUom || 'PC',
@@ -144,6 +144,8 @@ export default function ProductMasterPage() {
         baseUom: wasTile ? current.baseUom : 'PC',
         purchaseUom: wasTile ? current.purchaseUom : 'BOX',
         salesUom: wasTile ? current.salesUom : 'BOX',
+        priceRateBasis: 'AREA',
+        priceUom: 'SQFT',
       };
       const unit = wasTile ? 'PC' : current.unit || 'PC';
       return {
@@ -157,6 +159,8 @@ export default function ProductMasterPage() {
         piecesPerPack: '1',
         coveragePerPack: '',
         allowLoose: false,
+        priceRateBasis: 'PIECE',
+        priceUom: unit,
       };
     });
   }
@@ -171,15 +175,11 @@ export default function ProductMasterPage() {
       hsnCode: form.hsnCode || (isEditing ? '' : undefined),
     };
     if (isEditing || form.images.length) shared.media = mediaPayload(form.images);
-    if (form.defaultMrpInclusive !== '') {
-      shared.defaultMrpInclusive = Number(form.defaultMrpInclusive);
-      shared.priceRateBasis = form.priceRateBasis;
-      shared.priceUom = form.priceUom;
-      shared.mrpSource = form.mrpSource;
-      shared.pricingEffectiveFrom = form.pricingEffectiveFrom || undefined;
-    } else if (isEditing) {
-      shared.defaultMrpInclusive = null;
-    }
+    shared.defaultMrpInclusive = Number(form.defaultMrpInclusive);
+    shared.priceRateBasis = isTile ? 'AREA' : form.priceRateBasis;
+    shared.priceUom = isTile ? 'SQFT' : form.priceUom;
+    shared.mrpSource = form.mrpSource;
+    shared.pricingEffectiveFrom = form.pricingEffectiveFrom || undefined;
     if (form.defaultNrpInclusive !== '') {
       shared.defaultNrpInclusive = Number(form.defaultNrpInclusive);
       shared.priceRateBasis = form.priceRateBasis;
@@ -188,6 +188,7 @@ export default function ProductMasterPage() {
     } else if (isEditing) {
       shared.defaultNrpInclusive = null;
     }
+    shared.floorPriceInclusive = form.floorPriceInclusive === '' ? null : Number(form.floorPriceInclusive);
     if (isTile) {
       Object.assign(shared, {
         tileSizeId: form.tileSizeId || (isEditing ? null : undefined),
@@ -324,11 +325,12 @@ export default function ProductMasterPage() {
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Tax class</span><select value={form.taxClass} onChange={(event) => setForm({ ...form, taxClass: event.target.value, hsnCode: taxCodes.find((item: any) => item.code === event.target.value)?.hsnCode || form.hsnCode })} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm">{taxCodes.map((item: any) => <option key={item.code} value={item.code}>{item.name} · {item.rate}%</option>)}</select></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">HSN code <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input value={form.hsnCode} onChange={(event) => setForm({ ...form, hsnCode: event.target.value })} /></label>
           <div className="grid gap-3 rounded-xl bg-[#f8f4ef] p-4 md:col-span-2 md:grid-cols-2 xl:grid-cols-3">
-            <div className="md:col-span-2 xl:col-span-3"><p className="text-xs font-black uppercase tracking-[0.18em] text-[#9f342d]">Optional selling defaults</p><p className="mt-1 text-xs leading-5 text-[#52525b]">MRP and Normal Retail Price (NRP) are tax-inclusive suggestions for a matching UOM. Procurement and lot cost never come from Product Master.</p></div>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Default MRP ₹ incl. GST</span><Input type="number" min={0.01} step="0.01" value={form.defaultMrpInclusive} onChange={(event) => setForm({ ...form, defaultMrpInclusive: event.target.value })} placeholder="Optional" /></label>
+            <div className="md:col-span-2 xl:col-span-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-black uppercase tracking-[0.18em] text-[#9f342d]">Governed selling policy</p><Link href="/dashboard/master-data/pricing-readiness" className="text-xs font-black text-[#9f342d] underline underline-offset-4">Complete missing MRP</Link></div><p className="mt-1 text-xs leading-5 text-[#52525b]">MRP is required. NRP and floor are optional. Tile rates are always tax-inclusive per sq ft. Actual cost comes only from received inventory lots.</p></div>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP ₹ incl. GST *</span><Input required type="number" min={0.01} step="0.01" value={form.defaultMrpInclusive} onChange={(event) => setForm({ ...form, defaultMrpInclusive: event.target.value })} placeholder={isTile ? 'Required per sq ft' : 'Required'} /></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Default NRP ₹ incl. GST</span><Input type="number" min={0.01} step="0.01" value={form.defaultNrpInclusive} onChange={(event) => setForm({ ...form, defaultNrpInclusive: event.target.value })} placeholder="Optional · must be ≤ MRP" /></label>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price basis</span><select value={form.priceRateBasis} onChange={(event) => setForm({ ...form, priceRateBasis: event.target.value })} disabled={!form.defaultMrpInclusive && !form.defaultNrpInclusive} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="BOX">Box</option><option value="PIECE">Piece</option><option value="AREA">Area</option></select></label>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price UOM</span><select value={form.priceUom} onChange={(event) => setForm({ ...form, priceUom: event.target.value })} disabled={!form.defaultMrpInclusive && !form.defaultNrpInclusive} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50">{uoms.map((item: any) => <option key={item.code} value={item.code}>{item.code} · {item.name}</option>)}</select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Floor price ₹ incl. GST</span><Input type="number" min={0.01} step="0.01" value={form.floorPriceInclusive} onChange={(event) => setForm({ ...form, floorPriceInclusive: event.target.value })} placeholder="Optional · below this needs owner approval" /></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price basis</span><select value={isTile ? 'AREA' : form.priceRateBasis} onChange={(event) => setForm({ ...form, priceRateBasis: event.target.value })} disabled={isTile} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70"><option value="BOX">Box</option><option value="PIECE">Piece</option><option value="AREA">Area</option></select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price UOM</span><select value={isTile ? 'SQFT' : form.priceUom} onChange={(event) => setForm({ ...form, priceUom: event.target.value })} disabled={isTile} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70">{uoms.map((item: any) => <option key={item.code} value={item.code}>{item.code} · {item.name}</option>)}</select></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP source</span><select value={form.mrpSource} onChange={(event) => setForm({ ...form, mrpSource: event.target.value })} disabled={!form.defaultMrpInclusive} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Effective from</span><Input type="date" value={form.pricingEffectiveFrom} onChange={(event) => setForm({ ...form, pricingEffectiveFrom: event.target.value })} disabled={!form.defaultMrpInclusive && !form.defaultNrpInclusive} /></label>
             <p className="text-[11px] leading-5 text-[#71717a] md:col-span-2 xl:col-span-3">A quote must still confirm its immutable MRP and NRP snapshot. Changing these defaults never changes an existing quote, order, invoice or credit note.{form.mrpVerifiedAt ? ` Last MRP verification ${new Date(form.mrpVerifiedAt).toLocaleString('en-IN')}.` : ''}</p>
@@ -338,7 +340,7 @@ export default function ProductMasterPage() {
         </div>
         <div className="mt-5 rounded-lg border border-dashed border-[#2563eb]/40 bg-[#f7faff] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><span className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-[#52525b]"><ImagePlus className="h-4 w-4" /> Product gallery <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><label className="cursor-pointer rounded-lg bg-[#18181b] px-3 py-2 text-xs font-bold text-white"><input type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" disabled={uploading} onChange={(event) => uploadImages(event.target.files)} />{uploading ? 'Uploading...' : 'Add images'}</label></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{form.images.map((url: string, index: number) => <div key={url} className="relative overflow-hidden rounded-lg border bg-white"><img src={url} alt={`Product image ${index + 1}`} className="h-28 w-full object-contain p-1" /><div className="flex justify-between border-t p-1"><button type="button" title="Move image earlier" onClick={() => moveImage(index, -1)} disabled={index === 0} className="rounded p-1 disabled:opacity-30"><ArrowLeft className="h-3.5 w-3.5" /></button><button type="button" title="Remove image" onClick={() => setForm((current: any) => ({ ...current, images: current.images.filter((_: string, i: number) => i !== index) }))} className="rounded p-1 text-red-700"><Trash2 className="h-3.5 w-3.5" /></button><button type="button" title="Move image later" onClick={() => moveImage(index, 1)} disabled={index === form.images.length - 1} className="rounded p-1 disabled:opacity-30"><ArrowRight className="h-3.5 w-3.5" /></button></div>{index === 0 ? <span className="absolute left-1 top-1 rounded bg-[#2563eb] px-1.5 py-0.5 text-[10px] font-bold text-white">Primary</span> : null}</div>)}</div></div>
         {message ? <p role={messageTone === 'error' ? 'alert' : 'status'} className={`mt-4 rounded-lg border p-3 text-sm font-semibold ${messageTone === 'error' ? 'border-red-200 bg-red-50 text-red-800' : messageTone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-blue-200 bg-[#eff6ff] text-[#1d4ed8]'}`}>{message}</p> : null}
-        <p className="mt-4 text-xs font-medium text-[#71717a]">* Required: SKU code, internal code, name, and category. All other fields may be completed later.</p>
+        <p className="mt-4 text-xs font-medium text-[#71717a]">* Required: SKU code, internal code, name, category and a positive MRP. Tile MRP is always per sq ft.</p>
         <div className="mt-3 flex flex-wrap gap-3"><Button disabled={saving || uploading || !canSave} onClick={saveProduct}><Save className="mr-2 h-4 w-4" /> {saving ? 'Saving...' : isEditing ? 'Save changes' : 'Create SKU'}</Button>{isEditing && form.status !== 'archived' ? <Button variant="outline" disabled={archiving} onClick={archiveCurrent}><Archive className="mr-2 h-4 w-4" /> Archive SKU</Button> : null}</div>
       </div>
 

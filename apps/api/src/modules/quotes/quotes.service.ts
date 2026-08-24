@@ -222,7 +222,7 @@ export class QuotesService {
 
     const saveAsDraft = Boolean((data as any).saveAsDraft);
     const rawQuoteMeta = this.parseQuoteMeta(data.quoteMeta);
-    const assertedLines = await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote'));
+    const assertedLines = await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote', true));
     const pricing = priceQuoteLines(assertedLines, this.quoteDiscountInput(rawQuoteMeta, data.discountPercent || 0), { requireMrp: !saveAsDraft });
     const normalizedLines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || ownerId));
     const incompletePricing = pricing.pricingErrors.length > 0;
@@ -393,7 +393,7 @@ export class QuotesService {
     delete updateData.saveAsDraft;
     if (data.discountPercent !== undefined || data.lines !== undefined) {
       const assertedLines = await this.persistQuoteLineImages(data.lines !== undefined
-        ? await this.assertQuoteLines(data.lines, 'updating a quote')
+        ? await this.assertQuoteLines(data.lines, 'updating a quote', true)
         : await this.assertQuoteLines(current.lines, 'updating a quote'));
       const nextMeta = this.parseQuoteMeta(data.quoteMeta ?? current.quoteMeta);
       const pricing = priceQuoteLines(assertedLines, this.quoteDiscountInput(nextMeta, data.discountPercent ?? current.discountPercent ?? 0), { requireMrp: !saveAsDraft });
@@ -901,7 +901,7 @@ export class QuotesService {
     if (!owner || !owner.active || !['sales', 'sales_manager', 'owner', 'admin'].includes(owner.role)) {
       throw new BadRequestException('Select an active sales user.');
     }
-    const asserted = await this.persistQuoteLineImages(await this.assertQuoteLines(input.lines, 'creating a direct sales order'));
+    const asserted = await this.persistQuoteLineImages(await this.assertQuoteLines(input.lines, 'creating a direct sales order', true));
     const commercial = priceQuoteLines(asserted, 0, { requireMrp: true });
     const lines = this.withMrpConfirmation(commercial.lines, actorUserId);
     if (commercial.totals.grandTotal <= 0) throw new BadRequestException('A direct sales order must have a positive value.');
@@ -2000,7 +2000,7 @@ export class QuotesService {
     };
   }
 
-  private async assertQuoteLines(linesInput: any, action: string) {
+  private async assertQuoteLines(linesInput: any, action: string, useProductPricing = false) {
     const lines = this.normalizeLines(linesInput);
     if (!lines.length) {
       throw new BadRequestException(`At least one Product Master SKU or tile row is required before ${action}`);
@@ -2027,30 +2027,25 @@ export class QuotesService {
       if (this.isTileLine(line) || String(product.category || '').toLowerCase() === 'tiles') {
         const inventoryUom = String(product.purchaseUom || product.unit || 'BOX').trim().toUpperCase();
         const productSalesUom = String(product.salesUom || product.unit || inventoryUom).trim().toUpperCase();
-        const requestedBasis = String(line.rateBasis || '').trim().toUpperCase();
-        const inferredBasis = ['SQFT', 'SQM', 'M2'].includes(productSalesUom)
-          ? 'AREA'
-          : productSalesUom === 'PC' && inventoryUom !== 'PC' ? 'PIECE' : 'BOX';
-        const normalizedRequestedBasis = requestedBasis === 'PACK' ? 'BOX' : requestedBasis;
-        const rateBasis = ['AREA', 'PIECE', 'BOX'].includes(normalizedRequestedBasis) ? normalizedRequestedBasis : inferredBasis;
-        const pricingUom = rateBasis === 'AREA'
-          ? (['SQFT', 'SQM', 'M2'].includes(String(line.pricingUom || '').toUpperCase()) ? String(line.pricingUom).toUpperCase() : (['SQFT', 'SQM', 'M2'].includes(productSalesUom) ? productSalesUom : 'SQFT'))
-          : rateBasis === 'PIECE' ? 'PC' : inventoryUom;
-        const productBasis = String(product.priceRateBasis || '').toUpperCase() === 'PACK' ? 'BOX' : String(product.priceRateBasis || '').toUpperCase();
-        const basisMatches = productBasis === rateBasis;
-        const defaultMrp = basisMatches && product.defaultMrpInclusive != null ? Number(product.defaultMrpInclusive) : null;
-        const defaultNrp = basisMatches && product.defaultNrpInclusive != null ? Number(product.defaultNrpInclusive) : null;
+        const rateBasis = 'AREA';
+        const pricingUom = 'SQFT';
+        const defaultMrp = product.defaultMrpInclusive != null ? Number(product.defaultMrpInclusive) : null;
+        const defaultNrp = product.defaultNrpInclusive != null ? Number(product.defaultNrpInclusive) : null;
+        if (useProductPricing && (!Number.isFinite(defaultMrp) || Number(defaultMrp) <= 0)) {
+          throw new BadRequestException(`${product.sku} needs a verified Product Master MRP per sq ft before ${action}`);
+        }
         return this.normalizeTileLine({
           ...line, productId: product.id, sku: product.sku, name: product.name, brand: product.brand,
           tileSize: line.tileSize || product.dimensions, dimensions: product.dimensions,
           media: line.media || product.media || {},
           inventoryUom, pricingUom, rateBasis, sourceSalesUom: productSalesUom,
-          mrpInclusive: line.mrpInclusive ?? line.mrp ?? defaultMrp,
+          mrpInclusive: useProductPricing ? defaultMrp : line.mrpInclusive ?? line.mrp ?? defaultMrp,
+          floorPriceInclusive: useProductPricing ? (product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive)) : line.floorPriceInclusive,
           nrpMode: line.nrpMode || (defaultNrp != null ? 'FIXED_NRP' : 'PERCENT_OFF_MRP'),
           nrpInput: line.nrpInput ?? (defaultNrp != null ? defaultNrp : 0),
           specialMode: line.specialMode || 'NONE',
           specialInput: line.specialInput ?? 0,
-          mrpSource: line.mrpSource || product.mrpSource || (defaultMrp != null ? 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
+          mrpSource: useProductPricing ? 'PRODUCT_MASTER' : line.mrpSource || product.mrpSource || (defaultMrp != null ? 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
           piecesPerPack: product.piecesPerPack, coveragePerPack: product.coveragePerPack,
         }, index);
       }
@@ -2064,6 +2059,9 @@ export class QuotesService {
       const basisMatches = productBasis === rateBasis;
       const defaultMrp = basisMatches && product.defaultMrpInclusive != null ? Number(product.defaultMrpInclusive) : null;
       const defaultNrp = basisMatches && product.defaultNrpInclusive != null ? Number(product.defaultNrpInclusive) : null;
+      if (useProductPricing && (!basisMatches || !Number.isFinite(defaultMrp) || Number(defaultMrp) <= 0)) {
+        throw new BadRequestException(`${product.sku} needs a verified Product Master MRP in its ${rateBasis} basis before ${action}`);
+      }
       const media = line.media || product.media || {};
       return {
         ...line,
@@ -2081,12 +2079,13 @@ export class QuotesService {
         rateBasis,
         priceRateBasis: rateBasis,
         mrpRateBasis: rateBasis,
-        mrpInclusive: line.mrpInclusive ?? line.mrp ?? defaultMrp,
+        mrpInclusive: useProductPricing ? defaultMrp : line.mrpInclusive ?? line.mrp ?? defaultMrp,
+        floorPriceInclusive: useProductPricing ? (product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive)) : line.floorPriceInclusive,
         nrpMode: line.nrpMode || (defaultNrp != null ? 'FIXED_NRP' : 'PERCENT_OFF_MRP'),
         nrpInput: line.nrpInput ?? (defaultNrp != null ? defaultNrp : 0),
         specialMode: line.specialMode || 'NONE',
         specialInput: line.specialInput ?? 0,
-        mrpSource: line.mrpSource || product.mrpSource || (defaultMrp != null ? 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
+        mrpSource: useProductPricing ? 'PRODUCT_MASTER' : line.mrpSource || product.mrpSource || (defaultMrp != null ? 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
         taxRate: Number(line.taxRate ?? 18),
         media,
         area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',

@@ -18,18 +18,22 @@ async function gql(query, variables = {}, token, expectError = false) {
 async function main() {
   const suffix = Date.now().toString(36).toUpperCase();
   const token = (await gql(`mutation($input: LoginInput!) { login(input: $input) { token } }`, { input: { email: EMAIL, password: PASSWORD } })).login.token;
+  const missingMrpError = await gql(`mutation($input: CreateProductInput!) { createProduct(input: $input) { id } }`, { input: { sku: `MISSING-MRP-${suffix}`, internalCode: `MM-${suffix}`, name: 'MRP guard acceptance', category: 'Sanitaryware', unit: 'PC' } }, token, true);
+  assert(/MRP is required/i.test(missingMrpError), 'Every new Product Master SKU must be rejected without a positive MRP');
   const masters = (await gql(`query { productMasters }`, {}, token)).productMasters;
   const tileSize = masters.tileSizes[0] || (await gql(`mutation($input: TileSizeInput!) { saveTileSize(input: $input) { data } }`, { input: { name: `600 x 1200 mm ${suffix}`, code: `600X1200${suffix}`, uom: 'BOX', pcsPerBox: 2 } }, token)).saveTileSize.data;
   assert(tileSize?.id, 'Tile Size Master must expose a controlled tile size');
   const duplicateSizeError = await gql(`mutation($input: TileSizeInput!) { saveTileSize(input: $input) { data } }`, { input: { name: `Duplicate ${suffix}`, code: tileSize.code } }, token, true);
   assert(/already used/i.test(duplicateSizeError), 'Duplicate Tile Size codes must be blocked');
 
-  const tile = (await gql(`mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku internalCode tileSizeId piecesPerPack purchaseUom salesUom } }`, { input: {
+  const tile = (await gql(`mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku internalCode tileSizeId piecesPerPack purchaseUom salesUom defaultMrpInclusive priceRateBasis priceUom } }`, { input: {
     sku: `WH-TILE-${suffix}`, internalCode: `DISPLAY-${suffix}`, name: `Tile design ${suffix}`, category: 'Tiles', brand: 'Smoke', finish: 'Matt', tileSizeId: tileSize.id,
-    dimensions: tileSize.name, baseUom: 'PC', purchaseUom: 'BOX', salesUom: 'BOX', piecesPerPack: 2, coveragePerPack: 15.5, sellPrice: 100, floorPrice: 80,
+    dimensions: tileSize.name, baseUom: 'PC', purchaseUom: 'BOX', salesUom: 'BOX', piecesPerPack: 2, coveragePerPack: 15.5,
+    defaultMrpInclusive: 125, defaultNrpInclusive: 100, priceRateBasis: 'AREA', priceUom: 'SQFT', mrpSource: 'MANUAL', pricingEffectiveFrom: new Date().toISOString(),
   } }, token)).createProduct;
   assert(tile.tileSizeId === tileSize.id && tile.sku === `WH-TILE-${suffix}`, 'Tile SKU must retain immutable warehouse SKU and controlled Tile Size');
-  const generic = (await gql(`mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku tileSizeId piecesPerPack } }`, { input: { sku: `WH-GEN-${suffix}`, internalCode: `GEN-${suffix}`, name: `Generic SKU ${suffix}`, category: 'Sanitaryware', unit: 'PC', sellPrice: 50 } }, token)).createProduct;
+  assert(tile.priceRateBasis === 'AREA' && tile.priceUom === 'SQFT', 'Tile Product Master MRP must be governed per SQFT');
+  const generic = (await gql(`mutation($input: CreateProductInput!) { createProduct(input:$input) { id sku tileSizeId piecesPerPack } }`, { input: { sku: `WH-GEN-${suffix}`, internalCode: `GEN-${suffix}`, name: `Generic SKU ${suffix}`, category: 'Sanitaryware', unit: 'PC', defaultMrpInclusive: 50, priceRateBasis: 'PIECE', priceUom: 'PC', mrpSource: 'MANUAL', pricingEffectiveFrom: new Date().toISOString() } }, token)).createProduct;
   assert(!generic.tileSizeId && generic.piecesPerPack === 1, 'Generic products must not be forced into tile-only fields');
 
   await gql(`mutation($input: ProductAliasInput!) { saveProductAlias(input: $input) }`, { input: { productId: tile.id, type: 'supplier_sku', value: `SUP-${suffix}` } }, token);
@@ -81,6 +85,7 @@ async function main() {
   const lotRun = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: lotJob.id, templateCode: 'a4_70x37', labelIds: [lotJob.instances[0].id], copies: 1, reason: 'Lot acceptance' } }, token)).prepareInternalLabelPrintRun;
   run = (await gql(`query($id: ID!) { internalLabelPrintRun(id: $id) }`, { id: lotRun.id }, token)).internalLabelPrintRun;
   assert(run.labels[0].payload.lotNumber === lot.lotNumber, 'Lot label must retain exact inward-lot identity');
+  assert(Number(run.labels[0].payload.mrpInclusive) === 125 && run.labels[0].payload.priceUom === 'SQFT', 'Tile lot labels must use Product Master MRP per SQFT');
 
   await gql(`mutation($id: ID!, $reason: String!) { voidInternalLabel(id: $id, reason: $reason) }`, { id: productJob.instances[0].id, reason: 'Acceptance void' }, token);
   const voidScan = (await gql(`mutation($code: String!) { scanInternalLabel(labelCode: $code) }`, { code: `MP-LABEL:${productJob.instances[0].labelCode}` }, token)).scanInternalLabel;

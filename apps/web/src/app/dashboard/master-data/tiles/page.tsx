@@ -176,8 +176,9 @@ const emptyVariant: any = {
   hsnCode: "",
   defaultMrpInclusive: "",
   defaultNrpInclusive: "",
-  priceRateBasis: "BOX",
-  priceUom: "BOX",
+  floorPriceInclusive: "",
+  priceRateBasis: "AREA",
+  priceUom: "SQFT",
   mrpSource: "MANUAL",
   pricingEffectiveFrom: "",
   status: "active",
@@ -427,8 +428,9 @@ export default function TileWorkspacePage() {
       piecesPerPack: String(row.piecesPerPack || ""),
       defaultMrpInclusive: row.defaultMrpInclusive == null ? "" : String(row.defaultMrpInclusive),
       defaultNrpInclusive: row.defaultNrpInclusive == null ? "" : String(row.defaultNrpInclusive),
-      priceRateBasis: row.priceRateBasis || "BOX",
-      priceUom: row.priceUom || row.salesUom || "BOX",
+      floorPriceInclusive: row.floorPriceInclusive == null ? "" : String(row.floorPriceInclusive),
+      priceRateBasis: "AREA",
+      priceUom: "SQFT",
       pricingEffectiveFrom: row.pricingEffectiveFrom ? String(row.pricingEffectiveFrom).slice(0, 10) : "",
     });
   }
@@ -444,8 +446,9 @@ export default function TileWorkspacePage() {
           piecesPerPack: Number(variant.piecesPerPack || 1),
           defaultMrpInclusive: variant.defaultMrpInclusive === "" ? undefined : Number(variant.defaultMrpInclusive),
           defaultNrpInclusive: variant.defaultNrpInclusive === "" ? undefined : Number(variant.defaultNrpInclusive),
-          priceRateBasis: variant.defaultMrpInclusive !== "" || variant.defaultNrpInclusive !== "" ? variant.priceRateBasis : undefined,
-          priceUom: variant.defaultMrpInclusive !== "" || variant.defaultNrpInclusive !== "" ? variant.priceUom : undefined,
+          floorPriceInclusive: variant.floorPriceInclusive === "" ? null : Number(variant.floorPriceInclusive),
+          priceRateBasis: "AREA",
+          priceUom: "SQFT",
           mrpSource: variant.defaultMrpInclusive !== "" ? variant.mrpSource : undefined,
           pricingEffectiveFrom: variant.pricingEffectiveFrom || undefined,
         },
@@ -1268,11 +1271,11 @@ export default function TileWorkspacePage() {
                 Allow loose-piece inward and sale
               </label>
               <div className="rounded-xl bg-[#f8f4ef] p-4">
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#9f342d]">Optional selling defaults</p>
-                <p className="mt-1 text-xs text-[var(--ink-4)]">Tax-inclusive suggestions only. Actual cost comes from PO → GRN → inventory lot.</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#9f342d]">Governed tile selling policy</p>
+                <p className="mt-1 text-xs text-[var(--ink-4)]">MRP is required and always entered per sq ft. NRP and floor are optional. Actual cost comes from PO → GRN → inventory lot.</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Default MRP ₹ incl. GST
+                  MRP ₹ incl. GST / sq ft *
                   <Input
                     className="mt-1"
                     type="number"
@@ -1298,10 +1301,14 @@ export default function TileWorkspacePage() {
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Price basis
-                  <select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.priceRateBasis} onChange={(e) => setVariant({ ...variant, priceRateBasis: e.target.value })}><option value="BOX">Box</option><option value="PIECE">Piece</option><option value="AREA">Area</option></select>
+                  Floor price ₹ incl. GST / sq ft
+                  <Input className="mt-1" type="number" min="0.01" step="0.01" value={variant.floorPriceInclusive} onChange={(e) => setVariant({ ...variant, floorPriceInclusive: e.target.value })} placeholder="Optional · owner approval below floor" />
                 </label>
-                <label className="block text-xs font-semibold text-[var(--ink-4)]">Price UOM<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.priceUom} onChange={(e) => setVariant({ ...variant, priceUom: e.target.value })}><option value="BOX">BOX</option><option value="PC">PC</option><option value="SQFT">SQFT</option><option value="SQM">SQM</option></select></label>
+                <label className="block text-xs font-semibold text-[var(--ink-4)]">
+                  Price basis
+                  <Input className="mt-1" value="Area" disabled />
+                </label>
+                <label className="block text-xs font-semibold text-[var(--ink-4)]">Price UOM<Input className="mt-1" value="SQFT" disabled /></label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">MRP source<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.mrpSource} onChange={(e) => setVariant({ ...variant, mrpSource: e.target.value })}><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">Effective from<Input className="mt-1" type="date" value={variant.pricingEffectiveFrom} onChange={(e) => setVariant({ ...variant, pricingEffectiveFrom: e.target.value })}/></label>
                 </div>
@@ -1326,7 +1333,8 @@ export default function TileWorkspacePage() {
                   variantState.loading ||
                   !variant.tileDesignId ||
                   !variant.tileSizeId ||
-                  !variant.finish
+                  !variant.finish ||
+                  Number(variant.defaultMrpInclusive) <= 0
                 }
               >
                 {variantState.loading ? "Saving…" : "Save and clear variant"}

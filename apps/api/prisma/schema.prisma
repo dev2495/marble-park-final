@@ -645,6 +645,7 @@ model Product {
   mrpSource            String?
   defaultMrpInclusive  Decimal?                  @db.Decimal(18, 2)
   defaultNrpInclusive  Decimal?                  @db.Decimal(18, 2)
+  floorPriceInclusive  Decimal?                  @db.Decimal(18, 2)
   priceRateBasis       String?
   priceUom             String?
   pricingEffectiveFrom DateTime?
@@ -706,6 +707,7 @@ model Product {
   @@index([mrp])
   @@index([mrpRateBasis])
   @@index([defaultMrpInclusive])
+  @@index([status, defaultMrpInclusive])
   @@index([defaultNrpInclusive])
   @@index([priceRateBasis])
 }

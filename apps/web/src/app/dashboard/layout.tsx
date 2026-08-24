@@ -158,6 +158,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/audit': 'System Audit',
   '/dashboard/master-data': 'Master Data',
   '/dashboard/master-data/products': 'Product Master',
+  '/dashboard/master-data/pricing-readiness': 'MRP Readiness Desk',
   '/dashboard/master-data/brands': 'Brand Master',
   '/dashboard/master-data/finishes': 'Finish Master',
   '/dashboard/master-data/imports': 'Excel Import',

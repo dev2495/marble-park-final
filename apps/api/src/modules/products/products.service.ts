@@ -15,6 +15,7 @@ export interface CreateProductInput {
   unit?: string;
   defaultMrpInclusive?: number;
   defaultNrpInclusive?: number;
+  floorPriceInclusive?: number;
   priceRateBasis?: string;
   priceUom?: string;
   mrpSource?: string;
@@ -46,6 +47,7 @@ export interface UpdateProductInput {
   unit?: string;
   defaultMrpInclusive?: number;
   defaultNrpInclusive?: number;
+  floorPriceInclusive?: number;
   priceRateBasis?: string;
   priceUom?: string;
   mrpSource?: string;
@@ -120,7 +122,11 @@ export class ProductsService {
     const brand = String(data.brand || '').trim();
     const finish = String(data.finish || '').trim();
     const status = String(data.status || 'active').trim().toLowerCase();
-    const defaults = this.validateSellingDefaults(data, data.salesUom || data.unit);
+    const tileDefaults = category.toLowerCase() === 'tiles';
+    const defaults = this.validateSellingDefaults({
+      ...data,
+      ...(tileDefaults ? { priceRateBasis: 'AREA', priceUom: 'SQFT' } : {}),
+    }, data.salesUom || data.unit, true);
     if (!sku) throw new BadRequestException('SKU is required');
     if (!name) throw new BadRequestException('Product name is required');
     if (!category) throw new BadRequestException('Category is required');
@@ -144,7 +150,6 @@ export class ProductsService {
     if (normalizedSupplierAlias && normalizedSupplierAlias !== internalCode) {
       await this.assertCodeAvailable(normalizedSupplierAlias, '');
     }
-    const tileDefaults = category.toLowerCase() === 'tiles';
     const uoms = [data.baseUom || (tileDefaults ? 'PC' : data.unit) || 'PC', data.purchaseUom || data.unit || (tileDefaults ? 'BOX' : 'PC'), data.salesUom || data.unit || (tileDefaults ? 'BOX' : 'PC')]
       .map((value) => String(value).trim().toUpperCase());
     const coveragePerPack = this.numberAtLeastZero(data.coveragePerPack || 0, 'Coverage per pack');
@@ -170,6 +175,7 @@ export class ProductsService {
           mrpRateBasis: defaults.priceRateBasis,
           defaultMrpInclusive: defaults.defaultMrpInclusive,
           defaultNrpInclusive: defaults.defaultNrpInclusive,
+          floorPriceInclusive: defaults.floorPriceInclusive,
           priceRateBasis: defaults.priceRateBasis,
           priceUom: defaults.priceUom,
           mrpSource: defaults.mrpSource,
@@ -230,7 +236,7 @@ export class ProductsService {
           entityType: 'Product',
           entityId: product.id,
           summary: `Created product ${product.sku}`,
-          metadata: { sku: product.sku, name: product.name, supplierAlias: supplierAlias || null, defaultMrpInclusive: product.defaultMrpInclusive, defaultNrpInclusive: product.defaultNrpInclusive, priceRateBasis: product.priceRateBasis, priceUom: product.priceUom },
+          metadata: { sku: product.sku, name: product.name, supplierAlias: supplierAlias || null, defaultMrpInclusive: product.defaultMrpInclusive, defaultNrpInclusive: product.defaultNrpInclusive, floorPriceInclusive: product.floorPriceInclusive, priceRateBasis: product.priceRateBasis, priceUom: product.priceUom },
         },
       });
       return product;
@@ -254,12 +260,17 @@ export class ProductsService {
     if (update.status !== undefined && !['active', 'inactive', 'archived'].includes(update.status)) {
       throw new BadRequestException('Product status must be active, inactive, or archived');
     }
-    if (['defaultMrpInclusive', 'defaultNrpInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom'].some((key) => (data as any)[key] !== undefined)) {
+    if (['defaultMrpInclusive', 'defaultNrpInclusive', 'floorPriceInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom'].some((key) => (data as any)[key] !== undefined)) {
+      if (data.defaultMrpInclusive === null && current.defaultMrpInclusive != null) {
+        throw new BadRequestException('MRP cannot be cleared after it is verified. Enter a replacement MRP or archive the SKU.');
+      }
+      const isTile = String(data.category === undefined ? current.category : data.category).toLowerCase() === 'tiles';
       const defaults = this.validateSellingDefaults({
         defaultMrpInclusive: data.defaultMrpInclusive === undefined ? current.defaultMrpInclusive : data.defaultMrpInclusive,
         defaultNrpInclusive: data.defaultNrpInclusive === undefined ? current.defaultNrpInclusive : data.defaultNrpInclusive,
-        priceRateBasis: data.priceRateBasis === undefined ? current.priceRateBasis : data.priceRateBasis,
-        priceUom: data.priceUom === undefined ? current.priceUom : data.priceUom,
+        floorPriceInclusive: data.floorPriceInclusive === undefined ? current.floorPriceInclusive : data.floorPriceInclusive,
+        priceRateBasis: isTile ? 'AREA' : data.priceRateBasis === undefined ? current.priceRateBasis : data.priceRateBasis,
+        priceUom: isTile ? 'SQFT' : data.priceUom === undefined ? current.priceUom : data.priceUom,
         mrpSource: data.mrpSource === undefined ? current.mrpSource : data.mrpSource,
         pricingEffectiveFrom: data.pricingEffectiveFrom === undefined ? current.pricingEffectiveFrom : data.pricingEffectiveFrom,
       }, data.salesUom || current.salesUom);
@@ -613,8 +624,9 @@ export class ProductsService {
         unit: String(input.purchaseUom || size.uom || 'BOX').toUpperCase(),
         defaultMrpInclusive: input.defaultMrpInclusive,
         defaultNrpInclusive: input.defaultNrpInclusive,
-        priceRateBasis: input.priceRateBasis,
-        priceUom: input.priceUom,
+        floorPriceInclusive: input.floorPriceInclusive,
+        priceRateBasis: 'AREA',
+        priceUom: 'SQFT',
         mrpSource: input.mrpSource,
         pricingEffectiveFrom: input.pricingEffectiveFrom,
         status: input.status || 'active',
@@ -640,8 +652,9 @@ export class ProductsService {
       hsnCode: input.hsnCode === undefined ? existing.hsnCode || undefined : input.hsnCode,
       defaultMrpInclusive: input.defaultMrpInclusive === undefined ? existing.defaultMrpInclusive : input.defaultMrpInclusive,
       defaultNrpInclusive: input.defaultNrpInclusive === undefined ? existing.defaultNrpInclusive : input.defaultNrpInclusive,
-      priceRateBasis: input.priceRateBasis === undefined ? existing.priceRateBasis : input.priceRateBasis,
-      priceUom: input.priceUom === undefined ? existing.priceUom : input.priceUom,
+      floorPriceInclusive: input.floorPriceInclusive === undefined ? existing.floorPriceInclusive : input.floorPriceInclusive,
+      priceRateBasis: 'AREA',
+      priceUom: 'SQFT',
       mrpSource: input.mrpSource === undefined ? existing.mrpSource : input.mrpSource,
       pricingEffectiveFrom: input.pricingEffectiveFrom === undefined ? existing.pricingEffectiveFrom : input.pricingEffectiveFrom,
       status: input.status || existing.status,
@@ -960,6 +973,96 @@ export class ProductsService {
     return /^https:\/\//i.test(url) || /^\/catalogue-images\/manual\/[A-Za-z0-9_-]+\.(?:jpe?g|png|webp)$/i.test(url);
   }
 
+  async pricingReadinessPage(args?: { search?: string; status?: string; sort?: string; skip?: number; take?: number }) {
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const take = Math.min(100, Math.max(1, Number(args?.take || 25)));
+    const search = String(args?.search || '').trim();
+    const missingOnly = String(args?.status || 'missing').toLowerCase() !== 'all';
+    const missingMrp = { OR: [{ defaultMrpInclusive: null }, { defaultMrpInclusive: { lte: 0 } }] };
+    const where: any = {
+      status: { not: 'archived' },
+      ...(missingOnly ? missingMrp : {}),
+      ...(search ? { AND: [{ OR: [
+        { sku: { contains: search, mode: 'insensitive' } },
+        { internalCode: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { brand: { contains: search, mode: 'insensitive' } },
+      ] }] } : {}),
+    };
+    const orderBy: any = args?.sort === 'brand'
+      ? [{ brand: 'asc' }, { name: 'asc' }]
+      : args?.sort === 'recent'
+        ? [{ updatedAt: 'desc' }, { id: 'desc' }]
+        : [{ sku: 'asc' }, { id: 'asc' }];
+    const [totalActive, totalMissing, filtered, products] = await Promise.all([
+      this.prisma.product.count({ where: { status: { not: 'archived' } } }),
+      this.prisma.product.count({ where: { status: { not: 'archived' }, ...missingMrp } }),
+      this.prisma.product.count({ where }),
+      this.prisma.product.findMany({
+        where, orderBy, skip, take,
+        include: {
+          brandMaster: { select: { code: true, name: true } },
+          inventoryLots: {
+            where: { status: 'active' },
+            select: { unitCost: true, costStatus: true, balances: { select: { onHand: true } } },
+          },
+        },
+      }),
+    ]);
+    const rows = products.map((product: any) => {
+      let costQuantity = 0;
+      let costValue = 0;
+      let onHand = 0;
+      let completeCostLots = 0;
+      for (const lot of product.inventoryLots || []) {
+        const quantity = (lot.balances || []).reduce((sum: number, balance: any) => sum + Number(balance.onHand || 0), 0);
+        onHand += quantity;
+        if (quantity > 0 && lot.costStatus === 'complete' && Number(lot.unitCost || 0) > 0) {
+          costQuantity += quantity;
+          costValue += quantity * Number(lot.unitCost);
+          completeCostLots += 1;
+        }
+      }
+      return {
+        id: product.id, sku: product.sku, internalCode: product.internalCode, name: product.name,
+        category: product.category, brand: product.brand, brandCode: product.brandMaster?.code || product.brand,
+        dimensions: product.dimensions, finish: product.finish, media: product.media, status: product.status,
+        unit: product.unit, purchaseUom: product.purchaseUom, salesUom: product.salesUom,
+        defaultMrpInclusive: product.defaultMrpInclusive == null ? null : Number(product.defaultMrpInclusive),
+        defaultNrpInclusive: product.defaultNrpInclusive == null ? null : Number(product.defaultNrpInclusive),
+        floorPriceInclusive: product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive),
+        priceRateBasis: product.priceRateBasis, priceUom: product.priceUom,
+        mrpSource: product.mrpSource, pricingEffectiveFrom: product.pricingEffectiveFrom,
+        updatedAt: product.updatedAt,
+        cost: {
+          onHand, coveredQuantity: costQuantity, completeCostLots,
+          weightedUnitCost: costQuantity > 0 ? Number((costValue / costQuantity).toFixed(4)) : null,
+          coveragePercent: onHand > 0 ? Number(Math.min(100, costQuantity / onHand * 100).toFixed(1)) : null,
+          authority: 'INVENTORY_LOT',
+        },
+      };
+    });
+    return {
+      totalActive, totalMissing, ready: Math.max(0, totalActive - totalMissing), filtered,
+      skip, take, hasPreviousPage: skip > 0, hasNextPage: skip + rows.length < filtered, rows,
+    };
+  }
+
+  async completePricing(input: any, actorUserId: string) {
+    const id = String(input?.productId || '').trim();
+    if (!id) throw new BadRequestException('Choose a Product Master SKU');
+    return this.update(id, {
+      defaultMrpInclusive: input.defaultMrpInclusive,
+      defaultNrpInclusive: input.defaultNrpInclusive,
+      floorPriceInclusive: input.floorPriceInclusive,
+      priceRateBasis: input.priceRateBasis,
+      priceUom: input.priceUom,
+      mrpSource: input.mrpSource,
+      pricingEffectiveFrom: input.pricingEffectiveFrom,
+      expectedUpdatedAt: input.expectedUpdatedAt,
+    }, actorUserId);
+  }
+
   private auditProduct(product: any) {
     return {
       sku: product.sku,
@@ -971,6 +1074,7 @@ export class ProductsService {
       unit: product.unit,
       defaultMrpInclusive: product.defaultMrpInclusive,
       defaultNrpInclusive: product.defaultNrpInclusive,
+      floorPriceInclusive: product.floorPriceInclusive,
       priceRateBasis: product.priceRateBasis,
       priceUom: product.priceUom,
       mrpSource: product.mrpSource,
@@ -982,7 +1086,7 @@ export class ProductsService {
     };
   }
 
-  private validateSellingDefaults(data: any, fallbackUom?: string) {
+  private validateSellingDefaults(data: any, fallbackUom?: string, requireMrp = false) {
     const parseOptional = (value: unknown, label: string) => {
       if (value === undefined || value === null || value === '') return null;
       const amount = Number(value);
@@ -991,8 +1095,14 @@ export class ProductsService {
     };
     const defaultMrpInclusive = parseOptional(data.defaultMrpInclusive, 'Default MRP');
     const defaultNrpInclusive = parseOptional(data.defaultNrpInclusive, 'Default NRP');
+    const floorPriceInclusive = parseOptional(data.floorPriceInclusive, 'Floor price');
+    if (requireMrp && defaultMrpInclusive === null) throw new BadRequestException('MRP is required before a new SKU can be created');
     if (defaultMrpInclusive !== null && defaultNrpInclusive !== null && defaultNrpInclusive > defaultMrpInclusive) {
       throw new BadRequestException('Default Normal Retail Price (NRP) cannot exceed Default MRP');
+    }
+    const normalRate = defaultNrpInclusive ?? defaultMrpInclusive;
+    if (floorPriceInclusive !== null && normalRate !== null && floorPriceInclusive > normalRate) {
+      throw new BadRequestException('Floor price cannot exceed the normal retail price or MRP');
     }
     const hasPrice = defaultMrpInclusive !== null || defaultNrpInclusive !== null;
     const priceRateBasis = hasPrice ? this.normalizeMrpBasis(data.priceRateBasis || this.basisForUom(data.priceUom || fallbackUom)) : null;
@@ -1003,6 +1113,7 @@ export class ProductsService {
     return {
       defaultMrpInclusive,
       defaultNrpInclusive,
+      floorPriceInclusive,
       priceRateBasis,
       priceUom,
       mrpSource: defaultMrpInclusive === null ? null : this.normalizeMrpSource(data.mrpSource || 'MANUAL'),

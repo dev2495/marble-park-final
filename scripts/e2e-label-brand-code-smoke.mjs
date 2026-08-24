@@ -42,7 +42,9 @@ try {
   assert(run.labels?.length === 1, 'Prepared run must contain one label');
   assert(run.labels[0].payload.brandCode === brand.code, `Label must use Brand Master code ${brand.code}`);
   assert(run.labels[0].payload.brand === brand.name, 'Full brand name must remain in governed payload for traceability');
-  console.log(JSON.stringify({ ok: true, brandName: brand.name, printedBrandCode: run.labels[0].payload.brandCode }));
+  assert(Number(run.labels[0].payload.mrpInclusive) === 1000, 'Label must use the governed Product Master MRP');
+  assert(run.labels[0].payload.priceUom === 'PC', 'Generic product label must retain its governed pricing UOM');
+  console.log(JSON.stringify({ ok: true, brandName: brand.name, printedBrandCode: run.labels[0].payload.brandCode, mrpInclusive: run.labels[0].payload.mrpInclusive, priceUom: run.labels[0].payload.priceUom }));
 } finally {
   if (jobId) {
     await prisma.internalLabelPrintRun.deleteMany({ where: { labelJobId: jobId } }).catch(() => null);

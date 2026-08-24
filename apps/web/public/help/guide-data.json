@@ -28,7 +28,9 @@
         "Create brand, category, finish, UOM, tax and tile-size masters first.",
         "In Tile Workspace, create the design once with only permanent code, design name, a Brand Master dropdown value and images.",
         "Use Design Excel sample for bulk creation. Download it fresh so its Brand dropdown reflects live Brand Master, preview every row, then confirm the all-or-nothing import.",
-        "Create each sellable design × size × finish variant; choose finish from Finish Master and review pieces per box, UOM, loose-piece policy, pricing and the permanent warehouse SKU.",
+        "Create each sellable design × size × finish variant; choose finish from Finish Master, enter its mandatory MRP per SQFT, then review pieces per box, stock UOM, loose-piece policy and the permanent warehouse SKU.",
+        "For every generic SKU, enter its mandatory MRP and pricing unit in Product Master. Use MRP Readiness to complete older products that predate this rule.",
+        "Floor price is optional and routes any lower negotiated price for approval. Actual cost is not entered on a quote; owner/admin users see the weighted received-lot cost where it exists.",
         "Add supplier, legacy, barcode or showroom codes as aliases instead of renaming the warehouse SKU.",
         "Record opening stock or a PO/manual GRN against the variant to create exact lots; for tiles enter boxes plus optional loose pieces, batch, shade, caliber and grade.",
         "Register a display as a separate asset. Choose a source lot only when physical stock is consumed, then print the display label."
@@ -36,6 +38,8 @@
       "checks": [
         "Design and size are reusable catalogue masters; Product-backed variant is the only stock identity.",
         "Warehouse SKU and design code are immutable after creation.",
+        "A new SKU cannot be saved without a positive MRP.",
+        "Tile MRP is always governed per SQFT even when stock is received and fulfilled in boxes or pieces.",
         "An imported variant starts with zero stock.",
         "Display stock changes only through issue-to-display or return-to-lot actions.",
         "Stock exists only after a posted opening session or GRN."
@@ -48,35 +52,45 @@
     },
     {
       "id": "tile-pricing",
-      "title": "Quote tiles by area, piece or box",
-      "duration": "8 min",
+      "title": "Build a governed retail quotation",
+      "duration": "10 min",
       "href": "/dashboard/quotes/new",
       "roles": [
         "Sales",
         "Owner",
         "Office"
       ],
-      "summary": "Choose the commercial rate basis per quote line while the system continues to reserve and dispatch whole physical boxes.",
+      "summary": "Use the Product Master MRP, then apply the retail ladder in the correct order: NRP discount, optional special discount and optional whole-quote discount. Tiles are always priced per SQFT.",
       "video": "/help/videos/02-tile-pricing-and-quotes.mp4",
       "image": "/help/images/quote-editor-tile-and-sanitaryware.png",
       "flow": [
-        "Find display code",
-        "Choose Area / Pieces / Boxes",
-        "Enter need",
-        "System rounds boxes",
-        "Customer sees billed UOM"
+        "Find / scan item",
+        "Master MRP",
+        "NRP discount",
+        "Special discount",
+        "Quote discount",
+        "Final total"
+      ],
+      "examples": [
+        "Training example: the Tile Variant Master MRP is ₹100 per SQFT. For 50 SQFT, enter a 10% NRP discount to reach ₹90 per SQFT, then a further 5% special discount on NRP to reach ₹85.50 per SQFT. A final 2% whole-quote discount is allocated proportionally across all lines. The customer PDF shows only MRP, final selling rate and total—never the internal ladder or a savings claim."
       ],
       "steps": [
-        "Search the internal showroom code or SKU in Quote Studio.",
-        "Select Area, Pieces or Boxes on the tile line.",
-        "For Area, enter required area and wastage percentage.",
-        "For Pieces, enter requested pieces; the system rounds to full boxes.",
-        "For Boxes, enter the physical box count directly.",
-        "Review the billed quantity, physical boxes, rate/UOM, GST and quote image before saving."
+        "Search or scan the internal showroom code or SKU in Quote Studio.",
+        "For a tile, enter required area and wastage. Pricing remains fixed to SQFT while the system derives the physical boxes and pieces needed for fulfilment.",
+        "Review MRP. It is read-only and comes from Product or Tile Variant Master; use MRP Readiness if it is missing or correct the master if it is wrong.",
+        "Enter the NRP/base discount as % or ₹. Percent is the default and always applies to MRP.",
+        "If authorised, enter the special discount as % or ₹. It applies to NRP, not back to MRP.",
+        "After all items are ready, enter the optional whole-quote discount as % or ₹. It is allocated proportionally so PDF, register and Sales Order use one reconciled total.",
+        "Use Tab to move through fields, / to focus product search, Cmd/Ctrl+S to save draft, Cmd/Ctrl+Enter to validate, and Esc to close a scan panel.",
+        "Review the billed quantity, physical boxes, read-only MRP, final selling price, GST and final quote value before saving."
       ],
       "checks": [
-        "Area pricing needs positive coverage per box.",
-        "Piece pricing needs pieces per box.",
+        "MRP is required in Product Master and must be at least the final tax-inclusive unit payable.",
+        "NRP discount cannot exceed MRP; special discount cannot exceed NRP; quote discount cannot exceed the line-net total.",
+        "Tile pricing always needs positive SQFT coverage per box and pieces per box.",
+        "A final rate below optional floor price routes for approval.",
+        "The customer PDF shows only MRP, final selling price and total; it never shows NRP, floor, cost or savings.",
+        "The Quote Register, PDF and Sales Order conversion must show the same governed total.",
         "Orders, reservations and dispatch always use the physical inventory quantity shown."
       ],
       "related": [
@@ -110,7 +124,8 @@
         "Record site, budget, timeline and requirement notes.",
         "Create an intent and add Product Master SKUs room by room.",
         "Open Quote Studio from the intent or create a direct quote.",
-        "Edit the room, customer-facing image, internal design code, rate, discount and GST.",
+        "Edit the room, physical quantity or tile area, NRP discount, optional special discount and GST. MRP and pricing UOM are governed by Product Master and remain read-only.",
+        "Add an optional whole-quote discount only after all line prices are reviewed.",
         "In Quotation footer, select only the served-brand logos that belong on this customer document.",
         "Save a new revision when commercial lines must change after discussion.",
         "Download the priced quotation or selection-only PDF and mark it sent."
@@ -295,6 +310,8 @@
       ],
       "checks": [
         "Creating or printing labels never posts stock; only a GRN, opening session or governed movement changes inventory.",
+        "Every label shows the governed Brand Master code and Product Master MRP; tile labels always show MRP per SQFT.",
+        "Printing is blocked when the selected product has no positive MRP, with a linkable correction path through MRP Readiness.",
         "Every QR encodes MP-LABEL:<unique label code>; the MP centre mark is branding and the human-readable code remains the fallback.",
         "Reprints retain the same physical identity and add print audit history.",
         "A display label identifies a non-sellable showroom asset and must never be treated as available stock.",
@@ -562,8 +579,9 @@
         "Open Data readiness from Reports; only owners and administrators can manage this page.",
         "For Targets, select the governed metric and month, enter the approved amount and retain an approval or planning note.",
         "Saving the same metric and month creates a new version and supersedes the old one; use Void only with a clear reason.",
-        "For product and tile exceptions, follow Correct Product Master and update the authoritative category, brand, finish, UOM, HSN, cost, size or pack fields.",
-        "Do not backfill historical quote or invoice cost using today’s cost. New quote lines snapshot Product Master cost and new invoice lines snapshot the dispatched lot cost automatically.",
+        "For missing product MRP, open Master Data -> MRP Readiness. Enter a positive MRP, confirm the pricing unit, and optionally enter the floor price; tile prices are always per SQFT.",
+        "For other product and tile exceptions, correct the authoritative category, brand, finish, UOM, HSN, size and pack in Product, Tile or Size Master.",
+        "Record actual cost only through an owner/admin-authorized PO, GRN, opening-stock exception or lot correction. Quotes never invent cost; invoices snapshot the exact dispatched lot cost.",
         "Treat purchase orders and GRNs as commitments and receipts—not supplier bills or payments.",
         "Connect a governed accounting source or implement a dedicated AP/GL subledger before enabling supplier aging, P&L, cash flow or balance sheet.",
         "Return to the report and review its coverage label; uncovered historical rows remain explicit."

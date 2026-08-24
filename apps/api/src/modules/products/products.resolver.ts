@@ -1,7 +1,7 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int, Context, GraphQLISODateTime } from '@nestjs/graphql';
 import { ProductsService } from './products.service';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ObjectType()
@@ -34,6 +34,7 @@ export class ProductOutput {
 
   @Field(() => Number, { nullable: true }) defaultMrpInclusive?: number;
   @Field(() => Number, { nullable: true }) defaultNrpInclusive?: number;
+  @Field(() => Number, { nullable: true }) floorPriceInclusive?: number;
   @Field({ nullable: true }) priceRateBasis?: string;
   @Field({ nullable: true }) priceUom?: string;
   @Field(() => GraphQLISODateTime, { nullable: true }) mrpVerifiedAt?: Date;
@@ -97,6 +98,7 @@ export class CreateProductInput {
 
   @Field(() => Number, { nullable: true }) defaultMrpInclusive?: number;
   @Field(() => Number, { nullable: true }) defaultNrpInclusive?: number;
+  @Field(() => Number, { nullable: true }) floorPriceInclusive?: number;
   @Field({ nullable: true }) priceRateBasis?: string;
   @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) mrpSource?: string;
@@ -150,6 +152,7 @@ export class UpdateProductInput {
 
   @Field(() => Number, { nullable: true }) defaultMrpInclusive?: number;
   @Field(() => Number, { nullable: true }) defaultNrpInclusive?: number;
+  @Field(() => Number, { nullable: true }) floorPriceInclusive?: number;
   @Field({ nullable: true }) priceRateBasis?: string;
   @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) mrpSource?: string;
@@ -267,12 +270,26 @@ class TileVariantInput {
   @Field({ nullable: true }) hsnCode?: string;
   @Field({ nullable: true }) defaultMrpInclusive?: number;
   @Field({ nullable: true }) defaultNrpInclusive?: number;
+  @Field({ nullable: true }) floorPriceInclusive?: number;
   @Field({ nullable: true }) priceRateBasis?: string;
   @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) mrpSource?: string;
   @Field({ nullable: true }) pricingEffectiveFrom?: string;
   @Field({ nullable: true }) status?: string;
   @Field({ nullable: true }) alias?: string;
+}
+
+@InputType()
+class ProductPricingCompletionInput {
+  @Field() productId!: string;
+  @Field(() => Number) defaultMrpInclusive!: number;
+  @Field(() => Number, { nullable: true }) defaultNrpInclusive?: number;
+  @Field(() => Number, { nullable: true }) floorPriceInclusive?: number;
+  @Field({ nullable: true }) priceRateBasis?: string;
+  @Field({ nullable: true }) priceUom?: string;
+  @Field({ nullable: true }) mrpSource?: string;
+  @Field({ nullable: true }) pricingEffectiveFrom?: string;
+  @Field({ nullable: true }) expectedUpdatedAt?: string;
 }
 
 @Resolver()
@@ -407,6 +424,25 @@ export class ProductsResolver {
   async saveTileVariant(@Args('input') input: TileVariantInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'products.manage');
     return this.products.saveTileVariant(input, user.id);
+  }
+
+  @Query(() => GraphQLJSON)
+  async productPricingReadinessPage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('status', { nullable: true }) status?: string,
+    @Args('sort', { nullable: true }) sort?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.products.pricingReadinessPage({ search, status, sort, skip, take });
+  }
+
+  @Mutation(() => ProductOutput)
+  async completeProductPricing(@Args('input') input: ProductPricingCompletionInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.products.completePricing(input, user.id);
   }
 
   @Query(() => [GraphQLJSON])

@@ -28,6 +28,16 @@ assert.equal(fixed.lines[0].specialRateInclusive, 850);
 assert.equal(fixed.lines[0].grossLineTotal, 750);
 assert.equal(fixed.lines[0].taxableValue, 750);
 assert.equal(fixed.lines[0].taxAmount, 0);
+assert.equal(fixed.requiresApproval, false);
+
+const belowFloor = priceQuoteLines([{
+  lineKey: 'floor', sku: 'FLOOR', quantity: 2, pricingQuantity: 2,
+  mrpInclusive: 1000, floorPriceInclusive: 800, priceRateBasis: 'PIECE', rateBasis: 'PIECE',
+  nrpMode: 'FIXED_NRP', nrpInput: 850, specialMode: 'NONE', specialInput: 0, taxRate: 0,
+}], { mode: 'FIXED_AMOUNT', value: 200 }, { requireMrp: true });
+assert.equal(belowFloor.lines[0].grossLineTotal, 1500);
+assert.equal(belowFloor.requiresApproval, true);
+assert.deepEqual(belowFloor.floorBreaches, [{ index: 0, lineKey: 'floor', sku: 'FLOOR', floorPriceInclusive: 800, finalUnitPayable: 750 }]);
 
 const allocation = priceQuoteLines([
   { lineKey: 'a', sku: 'A', quantity: 1, mrpInclusive: 1000, priceRateBasis: 'PIECE', rateBasis: 'PIECE', nrpMode: 'FIXED_NRP', nrpInput: 1000, specialMode: 'NONE', specialInput: 0, taxRate: 18 },
