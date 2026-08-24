@@ -4,6 +4,7 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import { Clock3, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { isSessionAuthenticationError } from '@/lib/session-errors';
 
 const SESSION_STATUS = gql`
   query SessionStatus {
@@ -68,6 +69,7 @@ export function SessionTimeoutGuard() {
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const endingRef = useRef(false);
   const lastKeepAliveRef = useRef(0);
+  const keepAliveInFlightRef = useRef(false);
   const trailingRef = useRef<number | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
 
@@ -99,13 +101,20 @@ export function SessionTimeoutGuard() {
   }, [endSession]);
 
   const refreshFromMeaningfulActivity = useCallback(async () => {
-    if (endingRef.current) return;
-    lastKeepAliveRef.current = Date.now();
+    if (endingRef.current || keepAliveInFlightRef.current) return;
+    keepAliveInFlightRef.current = true;
     try {
       const result = await keepAlive();
+      lastKeepAliveRef.current = Date.now();
       applyStatus(result.data?.keepSessionAlive, true);
-    } catch {
-      await finishSession('idle', false);
+    } catch (error) {
+      // A short network interruption or a busy PDF renderer is not proof that
+      // the server session expired. Keep the existing server-issued deadline
+      // and retry on the next meaningful interaction. Explicit authentication
+      // rejection still ends the browser session immediately.
+      if (isSessionAuthenticationError(error)) await finishSession('idle', false);
+    } finally {
+      keepAliveInFlightRef.current = false;
     }
   }, [applyStatus, finishSession, keepAlive]);
 

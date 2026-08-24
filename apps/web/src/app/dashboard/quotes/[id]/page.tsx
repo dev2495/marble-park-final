@@ -41,6 +41,10 @@ async function fileBase64(file: File) {
 }
 
 function money(value: number) { return `₹${Math.round(Number(value || 0)).toLocaleString('en-IN')}`; }
+function masterBrandCode(brands: any[], name: unknown) {
+  const normalized = String(name || '').trim().toLowerCase();
+  return String(brands.find((brand: any) => String(brand.name || '').trim().toLowerCase() === normalized)?.code || '').trim();
+}
 function productImage(line: any) {
   if (line.quoteImage || line.customImageUrl) return line.quoteImage || line.customImageUrl;
   const media = line.media;
@@ -435,7 +439,7 @@ export default function QuoteDetailPage() {
       </section>
     ) : null}
 
-    <section className="grid gap-5 xl:grid-cols-[1fr_0.42fr]">
+    <section className="space-y-5">
       <div className="space-y-5">
         <div className="mp-card rounded-r5 p-5">
           <div className="grid gap-4 md:grid-cols-5">
@@ -452,7 +456,7 @@ export default function QuoteDetailPage() {
             [BadgeIndianRupee, 'Gross MRP', money(grossMrp), mrpIssues.length ? () => focusQuoteLine(mrpIssues[0].line) : null],
             [BadgeIndianRupee, 'NRP value', money(nrpValue), missingNrpCount ? () => focusQuoteLine(editLines.find((line) => Number(rateForLine(line).nrpInclusive || 0) <= 0)) : null],
             [BadgeIndianRupee, 'Special value', money(specialValue), null],
-            [BadgeIndianRupee, 'Saving from MRP', money(Math.max(0, grossMrp - total)), null],
+            [BadgeIndianRupee, 'Quote discount', money(quoteDiscount), null],
             [BadgeIndianRupee, 'GST', money(tax), null],
             [AlertTriangle, 'Exceptions', `${pricingIssueCount + missingNrpCount}`, () => focusQuoteLine(mrpIssues[0]?.line || discountIssues[0]?.line || editLines.find((line) => Number(rateForLine(line).nrpInclusive || 0) <= 0))],
             [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : 'Draft only', null],
@@ -470,7 +474,7 @@ export default function QuoteDetailPage() {
                 <div className="space-y-2">
                   <input value={line.area || ''} onChange={(event)=>updateLine(index,{area:event.target.value})} className="h-9 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]" placeholder="Area / room" />
                   <p className="text-lg font-semibold text-[var(--ink)]">{line.name}</p>
-                  <p className="text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{line.sku || line.tileCode} · {line.brand || line.category || ''}</p>
+                  <p className="text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{line.sku || line.tileCode}{masterBrandCode(brands, line.brand) ? ` · ${masterBrandCode(brands, line.brand)}` : ''}</p>
                   <div className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-[var(--brand-700)]"/><input value={line.quoteImage || ''} onChange={(event)=>updateLine(index,{quoteImage:event.target.value})} placeholder="Optional HTTPS quote image URL" className="h-9 flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold" /></div><p className="text-[10px] text-[var(--ink-5)]">Saved URLs are copied into Marble Park for reliable PDFs.</p>
                 </div>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty</span><input disabled={commercialLocked} type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
@@ -484,7 +488,7 @@ export default function QuoteDetailPage() {
         </div>)}
       </div>
 
-      <aside className="space-y-5">
+      <aside className="grid items-start gap-5 lg:grid-cols-2 2xl:grid-cols-3">
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Customer</h2><p className="mt-4 text-lg font-semibold text-[var(--ink)]">{quote.customer?.name || 'Customer'}</p><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">{quote.customer?.mobile || quote.customer?.phone}</p><p className="mt-2 text-sm font-bold text-[var(--ink-4)]">{quote.customer?.siteAddress || quote.customer?.city}</p></div>
         <div className="mp-card rounded-r5 p-6">
           <h2 className="text-2xl font-black tracking-tight">Consulting architect</h2>

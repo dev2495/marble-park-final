@@ -192,7 +192,7 @@ export class ReportingService {
     if (['admin', 'owner'].includes(user.role)) return true;
     const costSensitive = ['inventory.stock', 'procurement.vendor'].includes(definition.bookId)
       || /margin|cost|commitment/i.test(definition.title);
-    if (costSensitive) return false;
+    if (costSensitive && user.role !== 'inventory_manager') return false;
     return user.effectivePermissions.includes(definition.permission);
   }
 
@@ -319,7 +319,7 @@ export class ReportingService {
       (this.prisma as any).customerPayment.findMany({ where: { receivedAt: prior, status: 'posted' }, select: { amount: true } }),
       (this.prisma as any).creditNote.findMany({ where: { issuedAt: current, status: 'issued' }, select: { amount: true, issuedAt: true } }),
       (this.prisma as any).creditNote.findMany({ where: { issuedAt: prior, status: 'issued' }, select: { amount: true } }),
-      this.prisma.salesOrder.findMany({ where: { createdAt: current, status: { not: 'cancelled' } }, select: { id: true, totalAmount: true, createdAt: true } }),
+      this.prisma.salesOrder.findMany({ where: { createdAt: current, status: { not: 'cancelled' } }, select: { id: true, orderNumber: true, customerId: true, status: true, paymentStatus: true, totalAmount: true, createdAt: true } }),
       this.prisma.salesOrder.findMany({ where: { createdAt: prior, status: { not: 'cancelled' } }, select: { totalAmount: true } }),
       (this.prisma as any).inventoryLotBalance.findMany({ include: { lot: { include: { product: true } }, location: true } }),
       (this.prisma as any).purchaseOrder.findMany({ where: { status: { in: ['draft', 'ordered', 'partial_received'] } }, select: { id: true } }),
@@ -339,12 +339,20 @@ export class ReportingService {
     invoices.forEach((row: any) => bucket(row.issueDate).netSales += n(row.totalAmount)); credits.forEach((row: any) => { const b = bucket(row.issuedAt); b.credits += n(row.amount); b.netSales -= n(row.amount); }); payments.forEach((row: any) => bucket(row.receivedAt).collections += n(row.amount)); orders.forEach((row: any) => bucket(row.createdAt).bookings += n(row.totalAmount));
     const productIds = Array.from(new Set(lotBalances.map((row: any) => row.lot?.productId).filter(Boolean)));
     const stockMix = new Map<string, any>(); lotBalances.forEach((row: any) => { const label = row.lot?.product?.category || 'Uncategorised'; const item = stockMix.get(label) || { label, value: 0, quantity: 0 }; item.value += n(row.onHand) * n(row.lot?.unitCost); item.quantity += n(row.onHand); stockMix.set(label, item); });
-    const customerIds = Array.from(new Set<string>(invoices.map((row: any) => String(row.customerId))));
+    const customerIds = Array.from(new Set<string>([
+      ...invoices.map((row: any) => String(row.customerId)),
+      ...orders.map((row: any) => String(row.customerId)),
+    ].filter(Boolean)));
     const customers = customerIds.length ? await this.prisma.customer.findMany({ where: { id: { in: customerIds } }, select: { id: true, name: true } }) : [];
     const customerMap = new Map(customers.map((row: any) => [row.id, row.name]));
-    const rowItems = invoices.map((row: any) => ({ document: row.invoiceNumber, customer: customerMap.get(row.customerId) || row.customerId, issueDate: indiaDay(row.issueDate), dueDate: row.dueDate ? indiaDay(row.dueDate) : '', total: currency(n(row.totalAmount)), open: currency(n(row.openAmount)), status: row.status, href: `/dashboard/payments?invoice=${row.id}` }));
+    const rowItems = [
+      ...invoices.map((row: any) => ({ document: row.invoiceNumber, type: 'Invoice', customer: customerMap.get(row.customerId) || row.customerId, businessDate: indiaDay(row.issueDate), value: currency(n(row.totalAmount)), status: row.status, href: `/dashboard/payments?invoice=${row.id}` })),
+      ...orders.map((row: any) => ({ document: row.orderNumber, type: 'Order booking', customer: customerMap.get(row.customerId) || row.customerId, businessDate: indiaDay(row.createdAt), value: currency(n(row.totalAmount)), status: `${row.status} · ${row.paymentStatus}`, href: '/dashboard/orders' })),
+    ].sort((a: any, b: any) => b.businessDate.localeCompare(a.businessDate));
+    const warnings: string[] = productIds.length ? [] : ['No costed inventory lots are currently available'];
+    if (!invoices.length && orders.length) warnings.push('No invoices were posted in this period. Order bookings remain visible as demand, but are not reported as revenue.');
     return {
-      meta: this.meta(definition, { coverage: stockValue ? round((costedValue / stockValue) * 100, 1) : 100, coverageLabel: 'Inventory value with positive lot cost', warnings: productIds.length ? [] : ['No costed inventory lots are currently available'] }),
+      meta: this.meta(definition, { coverage: stockValue ? round((costedValue / stockValue) * 100, 1) : 100, coverageLabel: 'Inventory value with positive lot cost', warnings, valueBasis: invoices.length ? 'Posted invoices and order bookings' : 'Order bookings and collections; no posted invoices in period' }),
       range: range.labels, filters: args.filters,
       summary: [
         this.summary('net_sales', 'Net invoiced sales', sales - credit, priorSales - priorCredit, 'currency', 'Posted invoice total less issued credit notes in the selected period.'),
@@ -352,10 +360,16 @@ export class ReportingService {
         this.summary('bookings', 'Order bookings', bookings, priorBookings, 'currency', 'Non-cancelled sales orders created in period; this is not revenue.'),
         this.summary('stock_value', 'Stock at lot cost', stockValue, null, 'currency', 'Current lot on-hand quantity multiplied by lot unit cost; no historical snapshot is implied.'),
         this.summary('po_commitment', 'Open PO commitment', poCommitment, null, 'currency', 'Remaining open PO quantity multiplied by line unit cost; this is not accounts payable.'),
+        this.summary('active_orders', 'Orders booked', orders.length, priorOrders.length, 'number', 'Non-cancelled sales orders created in the selected period.'),
+        this.summary('dispatch_documents', 'Dispatch documents', challans.length, null, 'number', 'Dispatch challans created in the selected period.'),
       ],
       trend: Array.from(trend.values()).sort((a, b) => a.date.localeCompare(b.date)),
-      breakdowns: [{ id: 'stock_category', title: 'Stock value by category', kind: 'composition', rows: Array.from(stockMix.values()).sort((a: any, b: any) => b.value - a.value) }, { id: 'fulfilment', title: 'Dispatch status', kind: 'ranking', rows: Object.entries(challans.reduce((acc: any, row: any) => { acc[row.status] = (acc[row.status] || 0) + 1; return acc; }, {})).map(([label, value]) => ({ label, value })) }],
-      rows: this.paginate(rowItems, args, [{ key: 'document', label: 'Invoice' }, { key: 'customer', label: 'Customer' }, { key: 'issueDate', label: 'Issue date' }, { key: 'dueDate', label: 'Due date' }, { key: 'total', label: 'Invoice total', format: 'currency' }, { key: 'open', label: 'Open amount', format: 'currency' }, { key: 'status', label: 'Status' }], ['issueDate', 'total', 'open', 'document']),
+      breakdowns: [
+        { id: 'commercial_pulse', title: 'Commercial value composition', kind: 'composition', rows: [{ label: 'Net invoiced sales', value: sales - credit }, { label: 'Order bookings', value: bookings }, { label: 'Collections', value: collections }].filter((row) => row.value > 0) },
+        { id: 'stock_category', title: 'Stock value by category', kind: 'composition', rows: Array.from(stockMix.values()).sort((a: any, b: any) => b.value - a.value) },
+        { id: 'fulfilment', title: 'Dispatch status', kind: 'ranking', rows: Object.entries(challans.reduce((acc: any, row: any) => { acc[row.status] = (acc[row.status] || 0) + 1; return acc; }, {})).map(([label, value]) => ({ label, value })) },
+      ],
+      rows: this.paginate(rowItems, args, [{ key: 'document', label: 'Document' }, { key: 'type', label: 'Business event' }, { key: 'customer', label: 'Customer' }, { key: 'businessDate', label: 'Business date' }, { key: 'value', label: 'Value', format: 'currency' }, { key: 'status', label: 'Status' }], ['businessDate', 'value', 'document', 'customer']),
     };
   }
 
@@ -376,9 +390,9 @@ export class ReportingService {
       (this.prisma as any).salesOrderLine.findMany({ where: { salesOrderId: { in: orderIds } }, select: { id: true, salesOrderId: true, productId: true, sku: true, name: true, category: true, brand: true, finish: true, orderedQuantity: true, returnedQuantity: true, mrpInclusive: true, taxRate: true, taxableValue: true, taxAmount: true, grossLineTotal: true, lineTotal: true, metadata: true } }),
       this.prisma.user.findMany({ select: { id: true, name: true } }),
       this.prisma.quote.findMany({ where: { id: { in: linkedQuoteIds } }, select: { id: true, customerId: true, ownerId: true, architectId: true, architectName: true, status: true, sentAt: true, supersededByQuoteId: true } }),
-      this.prisma.quote.findMany({ where: { createdAt: current, ...(ownerScope ? { ownerId: ownerScope } : {}) }, select: { id: true, customerId: true, ownerId: true, architectId: true, architectName: true, status: true, sentAt: true, confirmedAt: true, supersededByQuoteId: true } }),
+      this.prisma.quote.findMany({ where: { createdAt: current, ...(ownerScope ? { ownerId: ownerScope } : {}) }, select: { id: true, customerId: true, ownerId: true, architectId: true, architectName: true, status: true, sentAt: true, confirmedAt: true, supersededByQuoteId: true, createdAt: true } }),
       this.prisma.quote.findMany({ where: { createdAt: prior, ...(ownerScope ? { ownerId: ownerScope } : {}) }, select: { id: true, sentAt: true, supersededByQuoteId: true } }),
-      this.prisma.lead.findMany({ where: { createdAt: current, ...(ownerScope ? { ownerId: ownerScope } : {}) }, select: { id: true, ownerId: true, source: true, stage: true } }),
+      this.prisma.lead.findMany({ where: { createdAt: current, ...(ownerScope ? { ownerId: ownerScope } : {}) }, select: { id: true, ownerId: true, source: true, stage: true, createdAt: true } }),
       (this.prisma as any).creditNote.findMany({ where: { issuedAt: current, status: 'issued', ...(ownerScope ? { salesOrderId: { in: orderIds } } : {}) }, select: { customerId: true, salesOrderId: true, amount: true } }),
       (this.prisma as any).creditNote.findMany({ where: { issuedAt: prior, status: 'issued', ...(ownerScope ? { salesOrderId: { in: orderIds } } : {}) }, select: { amount: true } }),
       (this.prisma as any).returnOrder.findMany({ where: { createdAt: current, ...(ownerScope ? { salesOrderId: { in: orderIds } } : {}) }, select: { id: true, salesOrderId: true, customerId: true, status: true, refundAmount: true } }),
@@ -397,7 +411,7 @@ export class ReportingService {
       priorReturnIds.length ? (this.prisma as any).returnLine.findMany({ where: { returnOrderId: { in: priorReturnIds } }, select: { quantity: true, acceptedQuantity: true } }) : [],
       customerIds.length ? this.prisma.customer.findMany({ where: { id: { in: customerIds } }, select: { id: true, name: true, city: true, state: true } }) : [],
       architectIds.length ? (this.prisma as any).architect.findMany({ where: { id: { in: architectIds } }, select: { id: true, name: true, firmName: true, city: true } }) : [],
-      customerIds.length ? (this.prisma as any).customerPayment.findMany({ where: { customerId: { in: customerIds }, receivedAt: current, status: 'posted' }, select: { amount: true, paymentMode: true } }) : [],
+      customerIds.length ? (this.prisma as any).customerPayment.findMany({ where: { customerId: { in: customerIds }, receivedAt: current, status: 'posted' }, select: { amount: true, paymentMode: true, receivedAt: true } }) : [],
       customerIds.length ? (this.prisma as any).customerPayment.findMany({ where: { customerId: { in: customerIds }, receivedAt: prior, status: 'posted' }, select: { amount: true } }) : [],
       (this.prisma as any).inventoryLotBalance.findMany({ select: { available: true, lot: { select: { productId: true } } } }),
     ]);
@@ -416,12 +430,38 @@ export class ReportingService {
     const architect = new Map<string, any>();
     const ownerBucket = (ownerId: string) => { const label = userMap.get(ownerId) || 'Unassigned'; const item = owner.get(ownerId) || { label, ownerId, leads: 0, quotes: 0, orders: 0, customers: new Set<string>(), bookings: 0, invoiced: 0, credits: 0, returns: 0 }; owner.set(ownerId, item); return item; };
     const customerBucket = (customerId: string) => { const master: any = customerMap.get(customerId); const item = customer.get(customerId) || { label: master?.name || customerId || 'Unassigned', customerId, city: master?.city || '', state: master?.state || '', orders: 0, bookings: 0, invoices: 0, invoiced: 0, credits: 0, returns: 0 }; customer.set(customerId, item); return item; };
-    const architectBucket = (quote: any) => { const master: any = architectMap.get(quote?.architectId); const key = quote?.architectId || quote?.architectName || 'Unmapped'; const item = architect.get(key) || { label: master?.name || quote?.architectName || 'Unmapped architect', firm: master?.firmName || '', city: master?.city || '', quotes: 0, orders: 0, customers: new Set<string>(), invoiced: 0 }; architect.set(key, item); return item; };
+    const architectBucket = (quote: any) => { const master: any = architectMap.get(quote?.architectId); const key = quote?.architectId || quote?.architectName || 'Unmapped'; const item = architect.get(key) || { label: master?.name || quote?.architectName || 'Unmapped architect', firm: master?.firmName || '', city: master?.city || '', quotes: 0, orders: 0, customers: new Set<string>(), bookings: 0, invoiced: 0 }; architect.set(key, item); return item; };
     const currentOrders = scopedOrders.filter((row: any) => row.createdAt >= range.from && row.createdAt <= range.to);
     const activeOrders = currentOrders.filter((row: any) => row.status !== 'cancelled');
-    currentOrders.forEach((row: any) => { const own = ownerBucket(row.ownerId); own.orders += 1; own.customers.add(row.customerId); if (row.status !== 'cancelled') own.bookings += n(row.totalAmount); const cust = customerBucket(row.customerId); cust.orders += 1; if (row.status !== 'cancelled') cust.bookings += n(row.totalAmount); const quote: any = quoteMap.get(row.quoteId); if (quote) { const arch = architectBucket(quote); arch.orders += 1; arch.customers.add(row.customerId); } });
+    currentOrders.forEach((row: any) => { const own = ownerBucket(row.ownerId); own.orders += 1; own.customers.add(row.customerId); if (row.status !== 'cancelled') own.bookings += n(row.totalAmount); const cust = customerBucket(row.customerId); cust.orders += 1; if (row.status !== 'cancelled') cust.bookings += n(row.totalAmount); const quote: any = quoteMap.get(row.quoteId); if (quote) { const arch = architectBucket(quote); arch.orders += 1; arch.customers.add(row.customerId); if (row.status !== 'cancelled') arch.bookings += n(row.totalAmount); } });
     currentQuotes.filter((row: any) => !row.supersededByQuoteId).forEach((row: any) => { ownerBucket(row.ownerId).quotes += 1; architectBucket(row).quotes += 1; });
     leads.forEach((row: any) => { ownerBucket(row.ownerId).leads += 1; });
+    const productBucket = (key: string, source: any = {}) => {
+      const item = product.get(key) || {
+        label: key,
+        productId: source.productId,
+        name: source.name,
+        category: source.category || 'Uncategorised',
+        brand: source.brand || 'Unspecified',
+        finish: source.finish || '',
+        bookedValue: 0,
+        bookedQuantity: 0,
+        value: 0,
+        taxable: 0,
+        tax: 0,
+        quantity: 0,
+        returned: 0,
+      };
+      if (!item.productId && source.productId) item.productId = source.productId;
+      product.set(key, item);
+      return item;
+    };
+    const activeOrderIds = new Set(activeOrders.map((row: any) => row.id));
+    orderLines.filter((row: any) => activeOrderIds.has(row.salesOrderId)).forEach((row: any) => {
+      const item = productBucket(row.sku || 'Unknown', row);
+      item.bookedValue += n(row.grossLineTotal || row.lineTotal);
+      item.bookedQuantity += n(row.orderedQuantity);
+    });
     let weightedDiscountValue = 0;
     let weightedBase = 0;
     for (const line of invoiceLines) {
@@ -430,8 +470,8 @@ export class ReportingService {
       const source: any = orderLineMap.get(line.salesOrderLineId);
       const value = n(line.grossLineTotal);
       const key = line.sku || source?.sku || 'Unknown';
-      const item = product.get(key) || { label: key, productId: line.productId || source?.productId, name: line.name || source?.name, category: source?.category || 'Uncategorised', brand: line.brand || source?.brand || 'Unspecified', finish: line.finish || source?.finish || '', value: 0, taxable: 0, tax: 0, quantity: 0, returned: 0 };
-      item.value += value; item.taxable += n(line.taxableValue); item.tax += n(line.taxAmount); item.quantity += n(line.quantity); product.set(key, item);
+      const item = productBucket(key, { ...source, productId: line.productId || source?.productId, name: line.name || source?.name, brand: line.brand || source?.brand, finish: line.finish || source?.finish });
+      item.value += value; item.taxable += n(line.taxableValue); item.tax += n(line.taxAmount); item.quantity += n(line.quantity);
       if (order) { ownerBucket(order.ownerId).invoiced += value; const cust = customerBucket(order.customerId); cust.invoices += 1; cust.invoiced += value; const quote: any = quoteMap.get(order.quoteId); if (quote) architectBucket(quote).invoiced += value; }
       const sourcePricingQuantity = n((source?.metadata as any)?.snapshot?.pricingQuantity) || n(source?.orderedQuantity);
       const base = source && n(source.orderedQuantity) > 0 ? n(source.mrpInclusive) * sourcePricingQuantity * n(line.quantity) / n(source.orderedQuantity) : 0;
@@ -445,18 +485,67 @@ export class ReportingService {
     const netSales = grossSales - credits; const priorNetSales = priorGrossSales - priorCredit; const quantity = invoiceLines.reduce((t: number, row: any) => t + n(row.quantity), 0); const priorQuantity=priorInvoiceLines.reduce((t:number,row:any)=>t+n(row.quantity),0); const returned = returnLines.reduce((t: number, row: any) => t + n(row.acceptedQuantity || row.quantity), 0); const priorReturned=priorReturnLines.reduce((t:number,row:any)=>t+n(row.acceptedQuantity||row.quantity),0); const avgDiscount = weightedBase ? (weightedDiscountValue / weightedBase) * 100 : 0; const priorAvgDiscount=priorWeightedBase?(priorWeightedDiscount/priorWeightedBase)*100:0;
     const bookings = activeOrders.reduce((total: number, row: any) => total + n(row.totalAmount), 0); const priorBookings=priorActiveOrders.reduce((total:number,row:any)=>total+n(row.totalAmount),0); const collections = sum(payments, 'amount'); const priorCollections = sum(priorPayments, 'amount'); const invoiceTax = sum(invoices, 'taxAmount'); const priorInvoiceTax=sum(priorInvoices,'taxAmount');
     const mappedArchitects = activeOrders.filter((row: any) => { const quote: any = quoteMap.get(row.quoteId); return quote?.architectId; }).length;
-    const productRows = Array.from(product.values()).map((row: any) => ({ sku: row.label, product: row.name, category: row.category, brand: row.brand, finish: row.finish, invoicedQuantity: row.quantity, returnedQuantity: row.returned, availableStock: row.productId ? availableByProduct.get(row.productId) || 0 : null, taxableValue: currency(row.taxable), tax: currency(row.tax), invoicedValue: currency(row.value), contribution: grossSales ? round((row.value / grossSales) * 100, 1) : 0, href: `/dashboard/products?search=${encodeURIComponent(row.label)}` }));
-    const ownerRows = Array.from(owner.values()).map((row: any) => ({ owner: row.label, leads: row.leads, quotes: row.quotes, orders: row.orders, customers: row.customers.size, bookings: currency(row.bookings), invoiced: currency(row.invoiced), credits: currency(row.credits), netInvoiced: currency(row.invoiced - row.credits), returnedQuantity: row.returns, href: '/dashboard/sales' }));
+    const useInvoiceValue = grossSales > 0;
+    const decisionValueLabel = useInvoiceValue ? 'posted invoice value' : 'non-cancelled order booking value';
+    const productRows = Array.from(product.values()).map((row: any) => {
+      const decisionValue = useInvoiceValue ? row.value : row.bookedValue;
+      const decisionTotal = useInvoiceValue ? grossSales : bookings;
+      return { sku: row.label, product: row.name, category: row.category, brand: row.brand, finish: row.finish, bookedQuantity: row.bookedQuantity, bookedValue: currency(row.bookedValue), invoicedQuantity: row.quantity, returnedQuantity: row.returned, availableStock: row.productId ? availableByProduct.get(row.productId) || 0 : null, taxableValue: currency(row.taxable), tax: currency(row.tax), invoicedValue: currency(row.value), decisionValue: currency(decisionValue), contribution: decisionTotal ? round((decisionValue / decisionTotal) * 100, 1) : 0, href: `/dashboard/products?search=${encodeURIComponent(row.label)}` };
+    });
+    const ownerRows = Array.from(owner.values()).map((row: any) => ({ owner: row.label, leads: row.leads, quotes: row.quotes, orders: row.orders, customers: row.customers.size, quoteToOrder: row.quotes ? round(row.orders / row.quotes * 100, 1) : null, bookings: currency(row.bookings), invoiced: currency(row.invoiced), credits: currency(row.credits), netInvoiced: currency(row.invoiced - row.credits), returnedQuantity: row.returns, href: '/dashboard/sales' }));
     const customerRows = Array.from(customer.values()).map((row: any) => ({ customer: row.label, city: row.city, state: row.state, orders: row.orders, invoices: row.invoices, bookings: currency(row.bookings), invoiced: currency(row.invoiced), credits: currency(row.credits), netInvoiced: currency(row.invoiced - row.credits), returnedQuantity: row.returns, href: `/dashboard/customers?search=${encodeURIComponent(row.label)}` }));
-    const architectRows = Array.from(architect.values()).map((row: any) => ({ architect: row.label, firm: row.firm, city: row.city, quotes: row.quotes, orders: row.orders, customers: row.customers.size, invoiced: currency(row.invoiced), href: '/dashboard/master-data/architects' }));
-    const productBreakdowns = [{ id:'product_pareto',title:'Product contribution Pareto',kind:'pareto',rows:Array.from(product.values()).sort((a:any,b:any)=>b.value-a.value).slice(0,20) },{ id:'category_mix',title:'Sales mix by category',kind:'composition',rows:Array.from(product.values()).reduce((rows:any[],item:any)=>{const row=rows.find((entry:any)=>entry.label===item.category);if(row)row.value+=item.value;else rows.push({label:item.category,value:item.value});return rows},[]).sort((a:any,b:any)=>b.value-a.value) },{ id:'brand_mix',title:'Sales mix by brand',kind:'ranking',rows:Array.from(product.values()).reduce((rows:any[],item:any)=>{const row=rows.find((entry:any)=>entry.label===item.brand);if(row)row.value+=item.value;else rows.push({label:item.brand,value:item.value});return rows},[]).sort((a:any,b:any)=>b.value-a.value) }];
-    const ownerBreakdowns = [{ id:'owner_mix',title:'Net invoiced sales by owner',kind:'ranking',rows:ownerRows.map((row:any)=>({label:row.owner,value:row.netInvoiced})).sort((a:any,b:any)=>b.value-a.value) },{ id:'lead_source',title:'Lead source mix',kind:'composition',rows:Object.entries(leads.reduce((acc:any,row:any)=>{acc[row.source||'Unspecified']=(acc[row.source||'Unspecified']||0)+1;return acc},{})).map(([label,value])=>({label,value})) },{ id:'order_status',title:'Order status mix',kind:'composition',rows:Object.entries(currentOrders.reduce((acc:any,row:any)=>{acc[row.status]=(acc[row.status]||0)+1;return acc},{})).map(([label,value])=>({label,value})) }];
-    const relationshipBreakdowns = [{ id:'architect',title:'Architect attributed invoiced value',kind:'ranking',rows:architectRows.map((row:any)=>({label:row.architect,value:row.invoiced})).sort((a:any,b:any)=>b.value-a.value) },{ id:'customer',title:'Customer contribution',kind:'pareto',rows:customerRows.map((row:any)=>({label:row.customer,value:row.netInvoiced})).sort((a:any,b:any)=>b.value-a.value).slice(0,20) },{ id:'city',title:'Customer mix by city',kind:'composition',rows:Object.entries(customerRows.reduce((acc:any,row:any)=>{const key=row.city||'Unspecified';acc[key]=(acc[key]||0)+row.netInvoiced;return acc},{})).map(([label,value])=>({label,value})) }];
-    const relationshipView = definition.domain === 'Architect & customer'; const ownerView = definition.domain === 'Sales';
-    const rows = relationshipView ? (definition.title.toLowerCase().includes('architect') ? architectRows : customerRows) : ownerView ? ownerRows : productRows;
-    const columns = relationshipView ? (definition.title.toLowerCase().includes('architect') ? [{key:'architect',label:'Architect'},{key:'firm',label:'Firm'},{key:'city',label:'City'},{key:'quotes',label:'Quotes',format:'number'},{key:'orders',label:'Orders',format:'number'},{key:'customers',label:'Customers',format:'number'},{key:'invoiced',label:'Invoiced',format:'currency'}] : [{key:'customer',label:'Customer'},{key:'city',label:'City'},{key:'state',label:'State'},{key:'orders',label:'Orders',format:'number'},{key:'invoices',label:'Invoices',format:'number'},{key:'bookings',label:'Bookings',format:'currency'},{key:'netInvoiced',label:'Net invoiced',format:'currency'},{key:'returnedQuantity',label:'Returned',format:'number'}]) : ownerView ? [{key:'owner',label:'Owner'},{key:'leads',label:'Leads',format:'number'},{key:'quotes',label:'Quotes',format:'number'},{key:'orders',label:'Orders',format:'number'},{key:'customers',label:'Customers',format:'number'},{key:'bookings',label:'Bookings',format:'currency'},{key:'netInvoiced',label:'Net invoiced',format:'currency'},{key:'returnedQuantity',label:'Returned',format:'number'}] : [{key:'sku',label:'SKU'},{key:'product',label:'Product'},{key:'category',label:'Category'},{key:'brand',label:'Brand'},{key:'finish',label:'Finish'},{key:'invoicedQuantity',label:'Invoiced qty',format:'number'},{key:'returnedQuantity',label:'Returned qty',format:'number'},{key:'availableStock',label:'Available stock',format:'number'},{key:'taxableValue',label:'Taxable value',format:'currency'},{key:'tax',label:'Tax',format:'currency'},{key:'invoicedValue',label:'Gross invoiced',format:'currency'},{key:'contribution',label:'Contribution %',format:'percent'}];
-    const warnings: string[] = []; if (!weightedBase) warnings.push('Weighted discount is unavailable where the immutable order-line MRP snapshot is missing.'); if (activeOrders.length && mappedArchitects < activeOrders.length) warnings.push('Architect attribution is shown only where the quote is linked to an architect master.'); warnings.push('Gross margin is isolated in the Realised gross margin view, where uncovered historical lines remain explicit instead of being estimated.');
-    return { meta: this.meta(definition, { coverage: activeOrders.length ? round((mappedArchitects / activeOrders.length) * 100, 1) : 100, coverageLabel: 'Current non-cancelled orders with architect-master attribution', warnings }), range: range.labels, filters: { ...args.filters, ...(user.role === 'sales' ? { ownerId: user.id, rowScope: 'self' } : {}) }, summary: [this.summary('net_sales','Net invoiced sales',netSales,priorNetSales,'currency','Posted invoice total less issued credit notes in the selected period.'),this.summary('bookings','Order bookings',bookings,priorBookings,'currency','Non-cancelled orders created in period; this is not revenue.'),this.summary('collections','Collections',collections,priorCollections,'currency','Posted customer payments for customers in the permitted sales scope.'),this.summary('tax','Invoice tax',invoiceTax,priorInvoiceTax,'currency','Tax amount on posted invoices in the selected period.'),this.summary('discount','Weighted discount',avgDiscount,priorAvgDiscount,'percent','MRP snapshot value less the final GST-inclusive invoice value, divided by eligible MRP snapshot value.','governed_calculation'),this.summary('orders','Orders created',activeOrders.length,priorActiveOrders.length,'number','Non-cancelled sales orders created in period.'),this.summary('cancelled','Cancelled orders',currentOrders.length-activeOrders.length,priorCurrentOrders.length-priorActiveOrders.length,'number','Orders with cancelled status created in period.'),this.summary('quotes','Quotes sent',currentQuotes.filter((row:any)=>row.sentAt&&!row.supersededByQuoteId).length,priorQuotes.filter((row:any)=>row.sentAt&&!row.supersededByQuoteId).length,'number','Non-superseded quotes sent from the selected creation cohort.'),this.summary('customers','Active customers',new Set(activeOrders.map((row:any)=>row.customerId)).size,new Set(priorActiveOrders.map((row:any)=>row.customerId)).size,'number','Distinct customers with a non-cancelled order created in period.'),this.summary('returns','Accepted return quantity',returned,priorReturned,'number','Accepted return-line quantity created in period.'),this.summary('units','Invoiced quantity',quantity,priorQuantity,'number','Posted invoice-line quantity in the selected period.')], trend: invoices.map((row: any) => ({ date: indiaDay(row.issueDate), invoiced: n(row.totalAmount), taxable: n(row.taxableValue), tax: n(row.taxAmount), document: row.invoiceNumber })), breakdowns: relationshipView ? relationshipBreakdowns : ownerView ? ownerBreakdowns : productBreakdowns, rows: this.paginate(rows,args,columns,['netInvoiced','invoicedValue','bookings','invoiced','orders','quantity','contribution','sku','owner','customer','architect']) };
+    const architectRows = Array.from(architect.values()).map((row: any) => ({ architect: row.label, firm: row.firm, city: row.city, quotes: row.quotes, orders: row.orders, customers: row.customers.size, bookings: currency(row.bookings), invoiced: currency(row.invoiced), href: '/dashboard/master-data/architects' }));
+    const productBreakdowns = [
+      { id:'product_pareto',title:`Product contribution Pareto · ${decisionValueLabel}`,kind:'pareto',rows:productRows.map((row:any)=>({label:row.sku,value:row.decisionValue})).filter((row:any)=>row.value>0).sort((a:any,b:any)=>b.value-a.value).slice(0,20) },
+      { id:'category_mix',title:`Category mix · ${decisionValueLabel}`,kind:'composition',rows:productRows.reduce((rows:any[],item:any)=>{const row=rows.find((entry:any)=>entry.label===item.category);if(row)row.value+=item.decisionValue;else rows.push({label:item.category,value:item.decisionValue});return rows},[]).filter((row:any)=>row.value>0).sort((a:any,b:any)=>b.value-a.value) },
+      { id:'brand_mix',title:`Brand ranking · ${decisionValueLabel}`,kind:'ranking',rows:productRows.reduce((rows:any[],item:any)=>{const row=rows.find((entry:any)=>entry.label===item.brand);if(row)row.value+=item.decisionValue;else rows.push({label:item.brand,value:item.decisionValue});return rows},[]).filter((row:any)=>row.value>0).sort((a:any,b:any)=>b.value-a.value) },
+    ];
+    const ownerBreakdowns = [
+      { id:'owner_mix',title:`${useInvoiceValue?'Net invoiced sales':'Order bookings'} by owner`,kind:'ranking',rows:ownerRows.map((row:any)=>({label:row.owner,value:useInvoiceValue?row.netInvoiced:row.bookings})).filter((row:any)=>row.value>0).sort((a:any,b:any)=>b.value-a.value) },
+      { id:'lead_source',title:'Lead source mix',kind:'composition',rows:Object.entries(leads.reduce((acc:any,row:any)=>{acc[row.source||'Unspecified']=(acc[row.source||'Unspecified']||0)+1;return acc},{})).map(([label,value])=>({label,value})) },
+      { id:'order_status',title:'Order status mix',kind:'composition',rows:Object.entries(currentOrders.reduce((acc:any,row:any)=>{acc[row.status]=(acc[row.status]||0)+1;return acc},{})).map(([label,value])=>({label,value})) },
+    ];
+    const relationshipBreakdowns = [
+      { id:'architect',title:`Architect attributed ${useInvoiceValue?'invoiced value':'bookings'}`,kind:'ranking',rows:architectRows.map((row:any)=>({label:row.architect,value:useInvoiceValue?row.invoiced:row.bookings})).filter((row:any)=>row.value>0).sort((a:any,b:any)=>b.value-a.value) },
+      { id:'customer',title:`Customer contribution · ${useInvoiceValue?'net invoiced':'booked'}`,kind:'pareto',rows:customerRows.map((row:any)=>({label:row.customer,value:useInvoiceValue?row.netInvoiced:row.bookings})).filter((row:any)=>row.value>0).sort((a:any,b:any)=>b.value-a.value).slice(0,20) },
+      { id:'city',title:`Customer mix by city · ${useInvoiceValue?'net invoiced':'booked'}`,kind:'composition',rows:Object.entries(customerRows.reduce((acc:any,row:any)=>{const key=row.city||'Unspecified';acc[key]=(acc[key]||0)+(useInvoiceValue?row.netInvoiced:row.bookings);return acc},{})).map(([label,value])=>({label,value})).filter((row:any)=>n(row.value)>0) },
+    ];
+    const relationshipView = definition.domain === 'Architect & customer'; const ownerView = definition.domain === 'Sales'; const architectView = relationshipView && definition.title.toLowerCase().includes('architect');
+    const rows = relationshipView ? (architectView ? architectRows : customerRows) : ownerView ? ownerRows : productRows;
+    const columns = relationshipView ? (architectView ? [{key:'architect',label:'Architect'},{key:'firm',label:'Firm'},{key:'city',label:'City'},{key:'quotes',label:'Quotes',format:'number'},{key:'orders',label:'Orders',format:'number'},{key:'customers',label:'Customers',format:'number'},{key:'bookings',label:'Bookings',format:'currency'},{key:'invoiced',label:'Invoiced',format:'currency'}] : [{key:'customer',label:'Customer'},{key:'city',label:'City'},{key:'state',label:'State'},{key:'orders',label:'Orders',format:'number'},{key:'invoices',label:'Invoices',format:'number'},{key:'bookings',label:'Bookings',format:'currency'},{key:'netInvoiced',label:'Net invoiced',format:'currency'},{key:'returnedQuantity',label:'Returned',format:'number'}]) : ownerView ? [{key:'owner',label:'Owner'},{key:'leads',label:'Leads',format:'number'},{key:'quotes',label:'Quotes',format:'number'},{key:'orders',label:'Orders',format:'number'},{key:'quoteToOrder',label:'Quote → order',format:'percent'},{key:'customers',label:'Customers',format:'number'},{key:'bookings',label:'Bookings',format:'currency'},{key:'netInvoiced',label:'Net invoiced',format:'currency'},{key:'returnedQuantity',label:'Returned',format:'number'}] : [{key:'sku',label:'SKU'},{key:'product',label:'Product'},{key:'category',label:'Category'},{key:'brand',label:'Brand'},{key:'finish',label:'Finish'},{key:'bookedQuantity',label:'Booked qty',format:'number'},{key:'bookedValue',label:'Booked value',format:'currency'},{key:'invoicedQuantity',label:'Invoiced qty',format:'number'},{key:'invoicedValue',label:'Gross invoiced',format:'currency'},{key:'returnedQuantity',label:'Returned qty',format:'number'},{key:'availableStock',label:'Available stock',format:'number'},{key:'taxableValue',label:'Taxable value',format:'currency'},{key:'tax',label:'Tax',format:'currency'},{key:'contribution',label:'Contribution %',format:'percent'}];
+    const warnings: string[] = [];
+    if (!weightedBase) warnings.push('Weighted discount is unavailable where the immutable order-line MRP snapshot is missing.');
+    if (activeOrders.length && mappedArchitects < activeOrders.length) warnings.push('Architect attribution is shown only where the quote is linked to an architect master.');
+    if (!invoices.length && activeOrders.length) warnings.push('No invoices were posted in this period. Product, owner, customer and architect charts use order bookings and label that basis explicitly; bookings are not revenue.');
+    const activeOrderLines = orderLines.filter((row: any) => activeOrderIds.has(row.salesOrderId));
+    if (activeOrderLines.some((row: any) => !row.productId)) warnings.push('Available-stock context is omitted for booking lines that are not linked to Product Master; their saved SKU/name booking facts remain visible.');
+    warnings.push('Gross margin is isolated in the Realised gross margin view, where uncovered historical lines remain explicit instead of being estimated.');
+    const identifiedLines = activeOrderLines.filter((row: any) => row.sku && row.name).length;
+    const attributedOwners = activeOrders.filter((row: any) => row.ownerId).length;
+    const mappedCustomers = activeOrders.filter((row: any) => customerMap.has(row.customerId)).length;
+    const sourceCoverage = architectView
+      ? { coverage: activeOrders.length ? round((mappedArchitects / activeOrders.length) * 100, 1) : 100, coverageLabel: 'Current non-cancelled orders with architect-master attribution' }
+      : relationshipView
+        ? { coverage: activeOrders.length ? round((mappedCustomers / activeOrders.length) * 100, 1) : 100, coverageLabel: 'Current non-cancelled orders linked to Customer Master' }
+        : ownerView
+          ? { coverage: activeOrders.length ? round((attributedOwners / activeOrders.length) * 100, 1) : 100, coverageLabel: 'Current non-cancelled orders with an assigned sales owner' }
+          : { coverage: activeOrderLines.length ? round((identifiedLines / activeOrderLines.length) * 100, 1) : 100, coverageLabel: 'Current booking lines with saved SKU and product name' };
+    const trend = new Map<string, any>();
+    const trendBucket = (date: Date) => { const key=indiaDay(date); const item=trend.get(key)||{date:key,leads:0,quotes:0,orders:0,bookings:0,invoiced:0,collections:0}; trend.set(key,item); return item; };
+    leads.forEach((row:any)=>{trendBucket(row.createdAt).leads+=1;});
+    currentQuotes.filter((row:any)=>!row.supersededByQuoteId).forEach((row:any)=>{trendBucket(row.createdAt).quotes+=1;});
+    currentOrders.forEach((row:any)=>{const item=trendBucket(row.createdAt);item.orders+=1;if(row.status!=='cancelled')item.bookings+=n(row.totalAmount);});
+    invoices.forEach((row:any)=>{trendBucket(row.issueDate).invoiced+=n(row.totalAmount);});
+    payments.forEach((row:any)=>{trendBucket(row.receivedAt).collections+=n(row.amount);});
+    return {
+      meta: this.meta(definition, { ...sourceCoverage, warnings, valueBasis: decisionValueLabel }),
+      range: range.labels,
+      filters: { ...args.filters, ...(user.role === 'sales' ? { ownerId: user.id, rowScope: 'self' } : {}) },
+      summary: [this.summary('net_sales','Net invoiced sales',netSales,priorNetSales,'currency','Posted invoice total less issued credit notes in the selected period.'),this.summary('bookings','Order bookings',bookings,priorBookings,'currency','Non-cancelled orders created in period; this is not revenue.'),this.summary('collections','Collections',collections,priorCollections,'currency','Posted customer payments for customers in the permitted sales scope.'),this.summary('tax','Invoice tax',invoiceTax,priorInvoiceTax,'currency','Tax amount on posted invoices in the selected period.'),this.summary('credits','Issued credit notes',credits,priorCredit,'currency','Issued customer credit notes in the selected period; kept separate from gross invoice value.'),this.summary('avg_booking','Average order booking',activeOrders.length?bookings/activeOrders.length:0,priorActiveOrders.length?priorBookings/priorActiveOrders.length:0,'currency','Non-cancelled order booking value divided by non-cancelled orders created in period.','governed_calculation'),this.summary('discount','Weighted discount',avgDiscount,priorAvgDiscount,'percent','MRP snapshot value less the final GST-inclusive invoice value, divided by eligible MRP snapshot value.','governed_calculation'),this.summary('leads','Leads created',leads.length,null,'number','Leads created in the selected period and permitted owner scope.'),this.summary('orders','Orders created',activeOrders.length,priorActiveOrders.length,'number','Non-cancelled sales orders created in period.'),this.summary('cancelled','Cancelled orders',currentOrders.length-activeOrders.length,priorCurrentOrders.length-priorActiveOrders.length,'number','Orders with cancelled status created in period.'),this.summary('quotes','Quotes sent',currentQuotes.filter((row:any)=>row.sentAt&&!row.supersededByQuoteId).length,priorQuotes.filter((row:any)=>row.sentAt&&!row.supersededByQuoteId).length,'number','Non-superseded quotes sent from the selected creation cohort.'),this.summary('customers','Active customers',new Set(activeOrders.map((row:any)=>row.customerId)).size,new Set(priorActiveOrders.map((row:any)=>row.customerId)).size,'number','Distinct customers with a non-cancelled order created in period.'),this.summary('returns','Accepted return quantity',returned,priorReturned,'number','Accepted return-line quantity created in period.'),this.summary('units','Invoiced quantity',quantity,priorQuantity,'number','Posted invoice-line quantity in the selected period.')],
+      trend: Array.from(trend.values()).sort((a:any,b:any)=>a.date.localeCompare(b.date)),
+      breakdowns: relationshipView ? relationshipBreakdowns : ownerView ? ownerBreakdowns : productBreakdowns,
+      rows: this.paginate(rows,args,columns,['decisionValue','bookedValue','netInvoiced','invoicedValue','bookings','invoiced','orders','quoteToOrder','contribution','sku','owner','customer','architect']),
+    };
   }
 
   private async inventoryStock({ args, definition, range }: any) {

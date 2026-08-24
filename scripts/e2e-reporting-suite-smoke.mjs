@@ -38,6 +38,7 @@ try {
   assert(service.catalog(sales).every((row) => row.permission === 'reports.sales'), 'Sales catalog leaked a non-sales domain');
   assert(service.catalog(sales).some((row) => row.title === 'Quote-to-order conversion'), 'Sales catalog must include quote/order conversion');
   assert(!service.catalog(sales).some((row) => row.title === 'Dispatch backlog'), 'Sales catalog must not expose operational dispatch controls');
+  assert(service.catalog(inventory).length > 0, 'Inventory manager was denied every explicitly assigned report');
   assert(service.catalog(inventory).every((row) => ['reports.inventory', 'reports.procurement'].includes(row.permission)), 'Inventory catalog leaked a restricted domain');
   assert(service.catalog(dispatch).every((row) => row.permission === 'reports.fulfilment'), 'Dispatch catalog leaked a restricted domain');
   assert(service.catalog(office).every((row) => ['reports.procurement', 'reports.fulfilment'].includes(row.permission)), 'Office catalog leaked a restricted domain');
@@ -78,8 +79,16 @@ try {
   const salesReport = await service.report(sales, { reportId: salesDefinition.id, from, to, pageSize: 10 });
   assert.equal(salesReport.filters.rowScope, 'self');
   assert.equal(salesReport.filters.ownerId, sales.id);
-  for (const metricId of ['net_sales', 'bookings', 'collections', 'tax', 'discount', 'orders', 'cancelled', 'quotes', 'customers', 'returns', 'units']) {
+  for (const metricId of ['net_sales', 'bookings', 'collections', 'tax', 'credits', 'avg_booking', 'discount', 'leads', 'orders', 'cancelled', 'quotes', 'customers', 'returns', 'units']) {
     assert(salesReport.summary.some((row) => row.id === metricId), `Sales report is missing ${metricId}`);
+  }
+  const netSalesMetric = salesReport.summary.find((row) => row.id === 'net_sales');
+  const bookingMetric = salesReport.summary.find((row) => row.id === 'bookings');
+  if (Number(netSalesMetric.current) === 0 && Number(bookingMetric.current) > 0) {
+    assert.equal(salesReport.meta.valueBasis, 'non-cancelled order booking value', 'Invoice-empty sales view did not disclose its booking basis');
+    assert(salesReport.rows.items.some((row) => Number(row.bookedValue) > 0), 'Invoice-empty sales view hid the real booking lines');
+    assert(salesReport.breakdowns.some((row) => row.id === 'product_pareto' && row.title.includes('order booking value') && row.rows.some((item) => Number(item.value) > 0)), 'Invoice-empty product chart did not fall back to explicitly labelled bookings');
+    assert(salesReport.meta.warnings.some((warning) => warning.includes('bookings are not revenue')), 'Invoice-empty view must prevent bookings from being mistaken for revenue');
   }
   assert.deepEqual(salesReport.breakdowns.map((row) => row.id), ['product_pareto', 'category_mix', 'brand_mix']);
   assert(salesReport.meta.warnings.some((warning) => warning.includes('Realised gross margin')), 'Sales report must direct users to governed margin coverage');

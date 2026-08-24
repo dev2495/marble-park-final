@@ -39,6 +39,11 @@ function money(value: number) {
   return `₹${Math.round(value || 0).toLocaleString('en-IN')}`;
 }
 
+function masterBrandCode(brands: any[], name: unknown) {
+  const normalized = String(name || '').trim().toLowerCase();
+  return String(brands.find((brand: any) => String(brand.name || '').trim().toLowerCase() === normalized)?.code || '').trim();
+}
+
 function productImage(media: any) {
   if (!media) return '/catalogue-art/faucet.svg';
   if (typeof media === 'string') {
@@ -299,8 +304,6 @@ export default function QuoteBuilderPage() {
   });
   const invalidQuoteDiscount = Number(quoteDiscountValue || 0) < 0 || (quoteDiscountType === 'PERCENT' ? Number(quoteDiscountValue || 0) > 100 : Number(quoteDiscountValue || 0) > lineNetValue);
   const pricingReady = lines.length > 0 && missingMrpCount === 0 && missingNrpCount === 0 && invalidMrpCount === 0 && !invalidDiscountLine && !invalidQuoteDiscount;
-  const selectedCustomer = customerData?.customers?.find((customer: any) => customer.id === selectedCustomerId);
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -399,7 +402,7 @@ export default function QuoteBuilderPage() {
 
   const queryError = customerError || searchError || preloadError || scanState.error;
   return (
-    <div className="grid gap-4 pb-24 xl:h-[calc(100vh-10rem)] xl:overflow-hidden xl:pb-4 xl:grid-cols-[1fr_0.52fr]">
+    <div className="pb-24 xl:h-[calc(100vh-10rem)] xl:overflow-hidden xl:pb-4">
       {queryError ? <div className="xl:col-span-2"><QueryErrorBanner error={queryError} /></div> : null}
       {saveError ? <div className="xl:col-span-2"><QueryErrorBanner error={saveError} /></div> : null}
       {validationError ? (
@@ -407,7 +410,7 @@ export default function QuoteBuilderPage() {
       ) : null}
       <AnimatePresence>{success && <motion.div initial={{ opacity: 0, y: -18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="fixed right-8 top-24 z-50 flex flex-wrap items-center gap-3 rounded-2xl bg-[#059669] px-4 py-3 text-sm font-medium text-white shadow-md-soft"><CheckCircle className="h-5 w-5" /> {success} created {savedQuote?.id && <><a className="rounded-xl bg-white/15 px-3 py-2" href={`/dashboard/quotes/${savedQuote.id}`}>Open</a><a className="rounded-xl bg-white/15 px-3 py-2" href={`/api/pdf/quote/${savedQuote.id}`} target="_blank" rel="noreferrer"><Download className="mr-1 inline h-4 w-4" /> PDF</a></>}</motion.div>}</AnimatePresence>
 
-      <section className="flex min-w-0 flex-col overflow-hidden rounded-r6 bg-white/72 shadow-2xl shadow-[#475569]/10 backdrop-blur-xl">
+      <section className="flex h-full min-w-0 flex-col overflow-hidden rounded-r6 bg-white/72 shadow-2xl shadow-[#475569]/10 backdrop-blur-xl">
         <div className="border-b border-[#e4e4e7]/10 p-5 lg:p-6">
           <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
             <div>
@@ -539,7 +542,7 @@ export default function QuoteBuilderPage() {
               [BadgeIndianRupee, 'Gross MRP', money(grossMrp), missingMrpCount ? () => focusLine(lines.find((line) => lineCommercial(line).mrpMissing)) : null],
               [BadgeIndianRupee, 'NRP value', money(nrpValue), missingNrpCount ? () => focusLine(lines.find((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0)) : null],
               [BadgeIndianRupee, 'Special value', money(specialValue), null],
-              [Percent, 'Saving from MRP', money(lines.reduce((sum, line) => sum + lineCommercial(line).savingFromMrp, 0)), null],
+              [Percent, 'Quote discount', money(quoteDiscountAmount), null],
               [BadgeIndianRupee, 'GST', money(tax), null],
               [AlertTriangle, 'Pricing exceptions', `${missingMrpCount + missingNrpCount + invalidMrpCount + (invalidDiscountLine ? 1 : 0)}`, () => focusLine(lines.find((line) => { const rate = lineCommercial(line); return rate.mrpMissing || !rate.mrpValid || Number(rate.nrpInclusive || 0) <= 0 || rate.pricingError; }))],
               [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : lines.length ? 'Draft only' : 'No lines', null],
@@ -557,7 +560,7 @@ export default function QuoteBuilderPage() {
                     <button key={product.id} onClick={() => addProduct(product)} className="flex w-full items-center justify-between gap-4 rounded-2xl p-3 text-left transition hover:bg-[#eff6ff]/65">
                       <div className="flex min-w-0 items-center gap-3">
                         <ProductImageFrame src={productImage(product.media)} alt={product.name} className="h-20 w-24 shrink-0 rounded-2xl" imageClassName="p-1.5" />
-                        <div className="min-w-0"><p className="truncate text-sm font-black">{product.internalCode || product.sku} · {product.name}</p><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{product.sku} · {product.brand}</p>{Number(product.coveragePerPack || 0) > 0 ? <p className="mt-1 text-xs text-[#52525b]">{product.coveragePerPack} {product.salesUom || 'area'} / {product.purchaseUom || product.unit || 'pack'} · {product.piecesPerPack || 1} pcs</p> : null}</div>
+                        <div className="min-w-0"><p className="truncate text-sm font-black">{product.internalCode || product.sku} · {product.name}</p><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{product.sku}{masterBrandCode(brands, product.brand) ? ` · ${masterBrandCode(brands, product.brand)}` : ''}</p>{Number(product.coveragePerPack || 0) > 0 ? <p className="mt-1 text-xs text-[#52525b]">{product.coveragePerPack} {product.salesUom || 'area'} / {product.purchaseUom || product.unit || 'pack'} · {product.piecesPerPack || 1} pcs</p> : null}</div>
                       </div>
                       <span className="shrink-0 text-right text-xs font-black text-[#059669]">{Number(product.defaultNrpInclusive || 0) > 0 ? <>Default NRP<br/>{money(product.defaultNrpInclusive)}</> : 'Enter price in quote'}</span>
                     </button>
@@ -579,7 +582,7 @@ export default function QuoteBuilderPage() {
               {lines.map((line) => { const commercial = lineCommercial(line); return <article id={`quote-line-${line.id}`} key={line.id} className="scroll-mt-24 p-4 sm:p-5">
                 <div className="flex items-start gap-3">
                   <ProductImageFrame src={line.quoteImage || productImage(line.media)} alt={line.name} className="h-24 w-24 shrink-0 rounded-md sm:h-28 sm:w-32" imageClassName="p-1.5" />
-                  <div className="min-w-0 flex-1"><input list="mp-area-list" value={line.area || ''} onChange={(event)=>updateLine(line.id,{area:event.target.value})} placeholder="Area / room" className="h-8 max-w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-xs font-medium uppercase tracking-wider text-[#2563eb]"/><p className="mt-2 text-base font-black text-[#18181b] sm:text-lg">{line.internalCode || line.sku} · {line.name}</p><p className="mt-1 text-xs font-bold uppercase tracking-wider text-[#71717a]">{line.sku} · {line.brand || line.category} · {line.unit}</p></div>
+                  <div className="min-w-0 flex-1"><input list="mp-area-list" value={line.area || ''} onChange={(event)=>updateLine(line.id,{area:event.target.value})} placeholder="Area / room" className="h-8 max-w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-xs font-medium uppercase tracking-wider text-[#2563eb]"/><p className="mt-2 text-base font-black text-[#18181b] sm:text-lg">{line.internalCode || line.sku} · {line.name}</p><p className="mt-1 text-xs font-bold uppercase tracking-wider text-[#71717a]">{line.sku}{masterBrandCode(brands, line.brand) ? ` · ${masterBrandCode(brands, line.brand)}` : ''} · {line.unit}</p></div>
                   <button type="button" title="Remove line" onClick={() => removeLine(line.id)} className="shrink-0 rounded-lg p-2 text-[#71717a] hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4"/></button>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.25fr_0.85fr_1.05fr_1.1fr_0.65fr_1fr]">
@@ -600,24 +603,6 @@ export default function QuoteBuilderPage() {
         </div>
       </section>
 
-      <aside className="hidden overflow-hidden rounded-r6 bg-[#18181b] p-5 text-white shadow-2xl shadow-[#0e1a3d]/15 xl:flex xl:flex-col">
-        <div className="rounded-r4 bg-white p-5 text-[#18181b]">
-          <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#52525b]">Live preview</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.01em] text-[#18181b]">{projectTitle || 'Retail quotation'}</h2>
-          <p className="mt-2 text-sm font-bold text-[#52525b]">{selectedCustomer?.name || 'Select a customer'}</p>
-        </div>
-        <div className="mt-5 flex-1 overflow-y-auto rounded-r4 border border-white/10 bg-white/[0.08] p-4 custom-scrollbar">
-          {lines.slice(0, 8).map((line) => <div key={line.id} className="mb-4 rounded-r4 bg-white/10 p-3"><ProductImageFrame src={productImage(line.media)} alt={line.name} className="mb-3 h-36 w-full rounded-[1.25rem]" imageClassName="p-2" /><div className="min-w-0"><p className="line-clamp-2 text-sm font-black">{line.name}</p><p className="mt-1 text-xs font-medium uppercase text-[#71717a]">{line.sku} · {lineCommercial(line).pricingQuantity} {line.pricingUom || line.unit} × {money(lineCommercial(line).specialRateInclusive)}</p><p className="mt-1 text-[11px] text-white/65">MRP {money(lineCommercial(line).mrpInclusive)} → NRP {money(lineCommercial(line).nrpInclusive)} → Special {money(lineCommercial(line).specialRateInclusive)}</p>{isTileLine(line) ? <p className="mt-1 text-[11px] text-white/65">Physical fulfilment: {line.qty} {line.inventoryUom}</p> : null}</div></div>)}
-          {lines.length === 0 && <div className="grid h-full place-items-center text-center text-[#52525b]"><div><ImageIcon className="mx-auto mb-3 h-10 w-10" /><p className="text-sm font-bold">Product image preview appears after adding items.</p></div></div>}
-        </div>
-        <div className="mt-5 rounded-r4 bg-white p-5 text-[#18181b]">
-          <div className="flex justify-between text-sm font-bold"><span>Line net value</span><span>{money(lineNetValue)}</span></div>
-          {quoteDiscountAmount > 0 ? <div className="mt-2 flex justify-between text-sm font-bold text-[#a52b23]"><span>Additional quote discount</span><span>− {money(quoteDiscountAmount)}</span></div> : null}
-          <div className="mt-2 flex justify-between text-sm font-bold"><span>Taxable value</span><span>{money(subtotal)}</span></div>
-          {taxMode === 'gst' ? <div className="mt-2 flex justify-between text-sm font-bold"><span>GST</span><span>{money(tax)}</span></div> : <div className="mt-2 flex justify-between text-sm font-bold text-[#52525b]"><span>Tax treatment</span><span>Without GST</span></div>}
-          <div className="mt-4 flex justify-between border-t border-[#e4e4e7]/12 pt-4 text-2xl font-black"><span>Total</span><span>{money(total)}</span></div>
-        </div>
-      </aside>
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#e4e4e7] bg-white/95 p-3 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur xl:hidden">
         <div className="mx-auto grid max-w-xl grid-cols-[1fr_auto_1fr] items-center gap-2"><Button disabled={saving || !selectedCustomerId || !selectedOwnerId || !lines.length} variant="outline" onClick={() => handleSave(true)}><Save className="mr-2 h-4 w-4"/>Draft</Button><button type="button" onClick={() => { const line = lines.find((row) => { const rate = lineCommercial(row); return rate.mrpMissing || !rate.mrpValid; }); focusLine(line); }} className={`grid h-10 min-w-14 place-items-center rounded-md px-2 text-xs font-black ${pricingReady ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{pricingReady ? 'Ready' : `${missingMrpCount + invalidMrpCount} errors`}</button><Button disabled={saving || !selectedCustomerId || !selectedOwnerId || !lines.length || !pricingReady} onClick={() => handleSave(false)}><ShieldCheck className="mr-2 h-4 w-4"/>Validate</Button></div>
       </div>

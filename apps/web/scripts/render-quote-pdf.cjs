@@ -12,8 +12,9 @@
  *
  *  2. PRICED mode (default for normal commercial quotes):
  *     - Compact branded header.
- *     - Area-grouped tables with image / description / qty / MRP / discount /
- *       special / total columns and a totals box.
+ *     - Area-grouped tables with image / description / qty / MRP / final
+ *       selling price / total columns and a totals box. Internal price-ladder
+ *       stages never appear in the customer document.
  *
  * The renderer is a child process invoked from the Next.js route handler
  * with `node scripts/render-quote-pdf.cjs <quoteId> <requestUrl> <apiUrl>`.
@@ -110,13 +111,11 @@ const styles = StyleSheet.create({
   imageCol: { width: '13%' },
   image: { width: 46, height: 46, objectFit: 'contain', borderRadius: 6, backgroundColor: colors.cream },
   imageCompact: { width: 34, height: 34 },
-  descCol: { width: '33%', paddingRight: 6 },
+  descCol: { width: '39%', paddingRight: 6 },
   qtyCol: { width: '10%', textAlign: 'center' },
-  rateCol: { width: '13%', textAlign: 'right' },
-  discountCol: { width: '10%', textAlign: 'right' },
-  specialCol: { width: '11%', textAlign: 'right' },
-  amountCol: { width: '10%', textAlign: 'right' },
-  sku: { marginTop: 4, fontSize: 7.2, color: colors.tan, letterSpacing: 0.8 },
+  rateCol: { width: '14%', textAlign: 'right' },
+  finalRateCol: { width: '13%', textAlign: 'right' },
+  amountCol: { width: '11%', textAlign: 'right' },
   meta: { marginTop: 3, fontSize: 7.6, color: colors.muted },
   totalsWrap: { marginTop: 9, flexDirection: 'row', gap: 12, alignItems: 'stretch' },
   totalsWrapCompact: { marginTop: 5, gap: 7 },
@@ -271,10 +270,8 @@ function rateFor(line) {
   const mrp = Number(priced.mrpInclusive);
   const mrpUom = basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
   const grossMrp = Number(priced.mrpValueInclusive || 0);
-  const savingFromMrp = grossMrp === null ? null : Math.max(0, grossMrp - amount);
   const finalUnitPayable = pricingQuantity > 0 ? amount / pricingQuantity : 0;
-  const displayOffPercent = mrp > 0 && finalUnitPayable < mrp ? Math.round((1 - finalUnitPayable / mrp) * 100) : 0;
-  return { qty, basis, pricingQuantity, pricingUom, displayOffPercent, unitRate: priced.specialRateExclusive, lineSubtotal: priced.specialValueInclusive, grossBeforeQuoteDiscount: priced.specialValueInclusive, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, nrp: priced.nrpInclusive, netSellingPrice: priced.specialRateInclusive, finalUnitPayable, mrpUom, grossMrp, savingFromMrp };
+  return { qty, basis, pricingQuantity, pricingUom, unitRate: priced.specialRateExclusive, lineSubtotal: priced.specialValueInclusive, grossBeforeQuoteDiscount: priced.specialValueInclusive, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, nrp: priced.nrpInclusive, netSellingPrice: priced.specialRateInclusive, finalUnitPayable, mrpUom, grossMrp };
 }
 
 function assertQuoteCommercialReady(quote, taxMode) {
@@ -328,6 +325,14 @@ function selectedBrands(payload, quoteMeta) {
     return brands.filter((brand) => defaults.has(String(brand.id)));
   }
   return brands;
+}
+
+function brandCodeFor(line, brands) {
+  if (line.brandCode) return String(line.brandCode).trim();
+  const brandName = String(line.brand || '').trim().toLowerCase();
+  if (!brandName) return '';
+  const master = asArray(brands).find((brand) => String(brand.name || '').trim().toLowerCase() === brandName);
+  return String(master?.code || '').trim();
 }
 
 function BrandStrip({ payload, quoteMeta, requestUrl }) {
@@ -578,7 +583,7 @@ function ClosingPage({ payload, settings, terms, bank, quoteMeta, requestUrl }) 
 
 // ============= Priced layout (inherited compact style) =============
 
-function PricedAreaTable({ group, showPrices, requestUrl, taxMode, compact = false }) {
+function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compact = false }) {
   const e = React.createElement;
   return e(View, { style: [styles.areaBlock, compact ? styles.areaBlockCompact : null], wrap: true },
     e(View, { style: styles.areaHeader },
@@ -590,26 +595,24 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, compact = fal
       e(Text, { style: [styles.th, styles.descCol] }, 'Description'),
       e(Text, { style: [styles.th, styles.qtyCol] }, 'Qty'),
       showPrices ? e(Text, { style: [styles.th, styles.rateCol] }, 'MRP') : null,
-      showPrices ? e(Text, { style: [styles.th, styles.discountCol] }, 'NRP') : null,
-      showPrices ? e(Text, { style: [styles.th, styles.specialCol] }, 'Net selling') : null,
+      showPrices ? e(Text, { style: [styles.th, styles.finalRateCol] }, 'Selling price') : null,
       showPrices ? e(Text, { style: [styles.th, styles.amountCol] }, 'Total') : null,
     ),
     ...group.rows.map((line, index) => {
       const rate = rateFor(line);
       const src = imageSrc(line, requestUrl);
+      const brandCode = brandCodeFor(line, brands);
       return e(View, { key: `${line.sku || line.tileCode || index}`, style: [styles.tableRow, compact ? styles.tableRowCompact : null], wrap: false },
         e(View, { style: styles.imageCol },
           src ? e(Image, { src, style: [styles.image, compact ? styles.imageCompact : null] }) : e(View, { style: [styles.image, compact ? styles.imageCompact : null] }, e(Text, { style: { fontSize: 7, color: colors.tan, textAlign: 'center', marginTop: compact ? 12 : 18 } }, 'No image')),
         ),
         e(View, { style: styles.descCol },
-          e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
-          e(Text, { style: styles.sku }, [line.sku || line.tileCode || '', line.brand || '', line.finish || '', line.tileSize || ''].filter(Boolean).join(' · ')),
+          e(Text, { style: styles.td }, `${line.name || line.description || line.sku || line.tileCode || 'Selection item'}${brandCode ? ` · ${brandCode}` : ''}`),
           line.notes || line.description ? e(Text, { style: styles.meta }, line.notes || line.description) : null,
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.discountCol] }, money(rate.nrp === null ? rate.mrp : rate.nrp)) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.specialCol] }, `${money(rate.netSellingPrice)}${rate.displayOffPercent ? `\n${rate.displayOffPercent}% off` : ''}${rate.savingFromMrp !== null && rate.savingFromMrp > 0 ? `\nSave ${money(rate.savingFromMrp)}` : ''}`) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.finalRateCol] }, `${money(rate.finalUnitPayable)}\nper ${rate.pricingUom}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.amount)) : null,
       );
     }),
@@ -633,7 +636,6 @@ function PricedDocumentBody(payload, requestUrl) {
   const taxable = pricedLines.reduce((sum, rate) => sum + rate.taxableValue, 0);
   const tax = taxMode === 'non_gst' ? 0 : pricedLines.reduce((sum, rate) => sum + rate.taxAmount, 0);
   const total = pricedLines.reduce((sum, rate) => sum + rate.amount, 0);
-  const savingFromMrp = pricedLines.reduce((sum, rate) => sum + Number(rate.savingFromMrp || 0), 0);
   const DEFAULT_TERMS = 'Prices are valid until the quote validity date. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
   const rawTermsSource = quoteMeta.terms || settings.defaultTerms || DEFAULT_TERMS;
   const rawTerms = String(rawTermsSource)
@@ -684,14 +686,13 @@ function PricedDocumentBody(payload, requestUrl) {
         e(Text, { style: styles.value }, quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team'),
       ),
     ),
-    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode, compact })),
+    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode, brands: payload.brands, compact })),
     e(View, { style: [styles.totalsWrap, compact ? styles.totalsWrapCompact : null], wrap: false },
       e(View, { style: [styles.notesBox, compact ? styles.notesBoxCompact : null] },
         e(Text, { style: styles.label }, 'Remarks'),
         e(Text, { style: styles.text }, remarks),
       ),
       e(View, { style: [styles.totalsBox, compact ? styles.totalsBoxCompact : null] },
-        savingFromMrp > 0 ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Saving from MRP'), e(Text, { style: [styles.totalValue, { color: '#087f5b' }] }, money(savingFromMrp))) : null,
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Line net value'), e(Text, { style: styles.totalValue }, money(lineNetValue))),
         discountAmount > 0 ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, `Additional quote discount ${String(quoteDiscount.mode || quoteDiscount.type || 'PERCENT').toUpperCase() === 'FIXED_AMOUNT' ? money(quoteDiscount.value || 0) : `${Number(quoteDiscount.value ?? quote.discountPercent ?? 0)}%`}`), e(Text, { style: styles.totalValue }, money(discountAmount))) : null,
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Taxable value'), e(Text, { style: styles.totalValue }, money(taxable))),

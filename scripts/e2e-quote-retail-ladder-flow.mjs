@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
 
 if (process.env.ALLOW_MUTATING_ACCEPTANCE !== 'true') {
@@ -120,6 +121,7 @@ async function main() {
   const pdf = Buffer.from(await pdfResponse.arrayBuffer());
   assert(pdfResponse.ok && (pdfResponse.headers.get('content-type') || '').includes('application/pdf'), `Quote PDF must render (${pdfResponse.status})`);
   assert(pdf.subarray(0, 4).toString() === '%PDF' && pdf.length > 7000, 'Quote PDF must be a substantive PDF');
+  if (process.env.PDF_OUTPUT) await writeFile(process.env.PDF_OUTPUT, pdf);
 
   const fulfillment = (await gql('query($id:ID!){quoteFulfillment(quoteId:$id)}', { id: quote.id }, token)).quoteFulfillment;
   const firstLine = fulfillment.lines.find((line) => line.sku === firstProduct.sku);

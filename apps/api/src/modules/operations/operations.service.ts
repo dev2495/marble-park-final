@@ -1255,7 +1255,7 @@ export class OperationsService {
       where,
       include: {
         instances: {
-          include: { product: true, lot: true, displaySample: true },
+          include: { product: { include: { brandMaster: true } }, lot: true, displaySample: true },
           orderBy: { unitNumber: 'asc' },
         },
       },
@@ -1328,7 +1328,7 @@ export class OperationsService {
       include: {
         instances: {
           include: {
-            product: true,
+            product: { include: { brandMaster: true } },
             lot: { include: { balances: { include: { location: true } } } },
             displaySample: true,
           },
@@ -1352,6 +1352,7 @@ export class OperationsService {
         sku: instance.product?.sku || null,
         internalCode: instance.displaySample?.internalCode || instance.product?.internalCode || null,
         productName: instance.product?.name || null,
+        brandCode: instance.product?.brandMaster?.code || null,
         brand: instance.product?.brand || null,
         category: instance.product?.category || null,
         finish: instance.product?.finish || null,
@@ -1469,7 +1470,7 @@ export class OperationsService {
       const instance = await tx.internalLabelInstance.findUnique({
         where: { labelCode: normalizedCode },
         include: {
-          product: { include: { tileDesignMaster: true, tileSizeMaster: true, balances: true, aliases: { where: { status: 'active' }, orderBy: { isPrimary: 'desc' } } } },
+          product: { include: { brandMaster: true, tileDesignMaster: true, tileSizeMaster: true, balances: true, aliases: { where: { status: 'active' }, orderBy: { isPrimary: 'desc' } } } },
           lot: { include: { balances: { include: { location: true } } } },
           displaySample: true,
           labelJob: true,
@@ -1524,6 +1525,7 @@ export class OperationsService {
             ? { tileDesignId: instance.product.tileDesignId, status: 'active' }
             : { id: instance.product.id, status: 'active' },
           include: {
+            brandMaster: true,
             tileDesignMaster: true,
             tileSizeMaster: true,
             balances: true,
