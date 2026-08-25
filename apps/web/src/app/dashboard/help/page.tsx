@@ -40,6 +40,7 @@ export default function HelpCenterPage() {
           <p className="mt-3 text-sm leading-6 text-[var(--ink-3)]">Task-by-task instructions for showroom sales, quotation, purchasing, physical stock, dispatch, returns, finance and control. Use the help icon on any page to open the matching guide.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <a href="/help/Marble-Park-Purchasing-Pricing-Cost-Guide.pdf" target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-md bg-[var(--brand-700)] px-4 text-sm font-semibold text-white"><Download className="mr-2 h-4 w-4"/>Purchasing &amp; cost guide</a>
           <a href="/help/Marble-Park-Tile-Inward-Display-Scan-Client-Handover.pdf" target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-md bg-[var(--brand-700)] px-4 text-sm font-semibold text-white"><Download className="mr-2 h-4 w-4"/>Client handover</a>
           <a href="/help/Marble-Park-ERP-User-Guide.pdf" target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-md bg-[var(--ink)] px-4 text-sm font-semibold text-white"><Download className="mr-2 h-4 w-4"/>PDF manual</a>
           <a href="/help/user-guide.html" target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--ink)]"><ExternalLink className="mr-2 h-4 w-4"/>Offline HTML</a>

@@ -48,7 +48,9 @@ async function main() {
   } }, token)).saveTileDesign;
   const variant = (await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id sku internalCode tileDesignId tileSizeId piecesPerPack purchaseUom allowLoose } }', { input: {
     tileDesignId: design.id, tileSizeId: size.id, sku: `WH-${suffix}`, internalCode: `SHOW-${suffix}`, finish: governedFinish,
-    piecesPerPack, purchaseUom: 'BOX', salesUom: 'BOX', allowLoose: true, sellPrice: 200, floorPrice: 180, costPrice: 120,
+    piecesPerPack, purchaseUom: 'BOX', salesUom: 'BOX', allowLoose: true,
+    defaultMrpInclusive: 200, defaultNrpInclusive: 190, floorPriceInclusive: 180,
+    priceRateBasis: 'AREA', priceUom: 'SQFT', mrpSource: 'MANUAL', pricingEffectiveFrom: new Date().toISOString(),
   } }, token)).saveTileVariant;
   assert(variant.sku === `WH-${suffix}` && variant.tileDesignId === design.id && variant.tileSizeId === size.id, 'Variant must retain immutable warehouse SKU, design and governed size');
   const duplicateError = await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id } }', { input: { tileDesignId: design.id, tileSizeId: size.id, finish: governedFinish } }, token, true);
@@ -58,7 +60,9 @@ async function main() {
   const siblingSize = sizes.find((row) => row.id !== size.id);
   const siblingVariant = (await gql('mutation($input: TileVariantInput!) { saveTileVariant(input:$input) { id sku internalCode tileDesignId tileSizeId } }', { input: {
     tileDesignId: design.id, tileSizeId: siblingSize.id, sku: `WH-${suffix}-ALT`, internalCode: `SHOW-${suffix}-ALT`, finish: governedFinish,
-    piecesPerPack: Math.max(1, Number(siblingSize.pcsPerBox || 1)), purchaseUom: 'BOX', salesUom: 'BOX', sellPrice: 210, floorPrice: 185, costPrice: 122,
+    piecesPerPack: Math.max(1, Number(siblingSize.pcsPerBox || 1)), purchaseUom: 'BOX', salesUom: 'BOX',
+    defaultMrpInclusive: 210, defaultNrpInclusive: 195, floorPriceInclusive: 185,
+    priceRateBasis: 'AREA', priceUom: 'SQFT', mrpSource: 'MANUAL', pricingEffectiveFrom: new Date().toISOString(),
   } }, token)).saveTileVariant;
   assert(siblingVariant.tileDesignId === design.id && siblingVariant.tileSizeId === siblingSize.id, 'A second active size must remain governed by the same Tile Design');
   await gql('mutation($input: ProductAliasInput!) { saveProductAlias(input:$input) }', { input: { productId: variant.id, type: 'supplier_sku', value: `SUP-${suffix}` } }, token);
@@ -87,9 +91,9 @@ async function main() {
   const importDesignCode = `IMP-${suffix}`;
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Product Master');
-  sheet.addRow(['SKU','Internal Code','Product Name','Category','Brand','Finish','Material','Tile Size / Dimensions','Base UOM','Purchase UOM','Sales UOM','Pieces Per Pack','Coverage Per Pack','Sell Price','Floor Price','Default Purchase Cost','Tax Code','HSN Code','Allow Loose','Range / Series','Image URL','Product Image','Description','Tile Design Code','Tile Design Name']);
+  sheet.addRow(['SKU','Internal Code','Product Name','Category','Brand','Finish','Material','Tile Size / Dimensions','Base UOM','Purchase UOM','Sales UOM','Pieces Per Pack','Coverage Per Pack','Default MRP Incl GST','Default NRP Incl GST','Floor Price Incl GST','Price Basis','Price UOM','MRP Source','Pricing Effective From','Tax Code','HSN Code','Allow Loose','Range / Series','Image URL','Product Image','Description','Tile Design Code','Tile Design Name']);
   for (const [index, importSize] of sizes.slice(0, 2).entries()) {
-    sheet.addRow([`IMP-${suffix}-${index + 1}`,`IMPC-${suffix}-${index + 1}`,`Imported variant ${index + 1}`,tileCategory,readiness.options.brands[0],readiness.options.finishes[0],'',importSize.name,'PC','BOX','BOX',Math.max(1, Number(importSize.pcsPerBox || 1)),0,100,90,70,readiness.options.taxCodes[0],'','Yes','Acceptance','','','Clone-only governed tile import',importDesignCode,`Imported design ${suffix}`]);
+    sheet.addRow([`IMP-${suffix}-${index + 1}`,`IMPC-${suffix}-${index + 1}`,`Imported variant ${index + 1}`,tileCategory,readiness.options.brands[0],readiness.options.finishes[0],'',importSize.name,'PC','BOX','BOX',Math.max(1, Number(importSize.pcsPerBox || 1)),0,100,90,80,'AREA','SQFT','MANUAL',new Date().toISOString(),readiness.options.taxCodes[0],'','Yes','Acceptance','','','Clone-only governed tile import',importDesignCode,`Imported design ${suffix}`]);
   }
   const workbookBytes = Buffer.from(await workbook.xlsx.writeBuffer());
   const filename = `tile-design-import-${suffix}.xlsx`;
@@ -105,7 +109,8 @@ async function main() {
   assert(location?.id, 'An active stock location is required');
   const po = (await gql('mutation($input:CreatePurchaseOrderInput!){createPurchaseOrder(input:$input)}', { input: {
     vendorName: `Gate supplier ${suffix}`, notes: 'Clone-only procurement acceptance',
-    lines: JSON.stringify([{ productId: variant.id, boxes: 3, loosePieces: 0, piecesPerPack, unitCost: 120 }]),
+    discountPercent: 10, taxRate: 0,
+    lines: JSON.stringify([{ productId: variant.id, boxes: 3, loosePieces: 0, piecesPerPack, enteredUnitCost: 480, rateUom: 'BOX', rateUomFactor: piecesPerPack }]),
   } }, token)).createPurchaseOrder;
   assert(Number(po.lines[0].orderedQuantity) === piecesPerPack * 3 && po.lines[0].metadata?.orderedInput?.boxes === 3, 'PO must convert tile boxes to base pieces and retain the input snapshot');
   const poPage = (await gql('query($search:String){purchaseOrderPage(search:$search,status:"all",sort:"newest",skip:0,take:1)}', { search: po.poNumber }, token)).purchaseOrderPage;
@@ -114,7 +119,7 @@ async function main() {
   const poLine = po.lines[0];
   const receive = (boxes, key) => gql('mutation($input:ReceivePurchaseOrderInput!){receivePurchaseOrder(input:$input)}', { input: {
     purchaseOrderId: po.id, supplierChallan: `PO-${key}-${suffix}`, locationId: location.id, idempotencyKey: `PO-${key}-${suffix}`,
-    lines: JSON.stringify([{ purchaseOrderLineId: poLine.id, boxes, loosePieces: 0, piecesPerPack, unitCost: 120, supplierBatch: `PO-${key}`, shade: 'S1', caliber: 'C1', grade: 'A' }]),
+    lines: JSON.stringify([{ purchaseOrderLineId: poLine.id, boxes, loosePieces: 0, piecesPerPack, supplierBatch: `PO-${key}`, shade: 'S1', caliber: 'C1', grade: 'A' }]),
   } }, token);
   await receive(1, 'PART');
   let poRead = (await gql('query($id:ID!){purchaseOrder(id:$id)}', { id: po.id }, token)).purchaseOrder;
@@ -126,7 +131,7 @@ async function main() {
   const manual = (await gql('mutation($input:ManualGoodsReceiptInput!){createManualGoodsReceipt(input:$input)}', { input: {
     vendorName: `Gate supplier ${suffix}`, supplierChallan: `MAN-${suffix}`, reason: 'Clone-only manual inward acceptance',
     locationId: location.id, idempotencyKey: `MAN-${suffix}`,
-    lines: JSON.stringify([{ productId: variant.id, boxes: 2, loosePieces: 1, piecesPerPack, unitCost: 125, supplierBatch: `MAN-${suffix}`, shade: 'S2', caliber: 'C2', grade: 'A' }]),
+    lines: JSON.stringify([{ productId: variant.id, boxes: 2, loosePieces: 1, piecesPerPack, enteredUnitCost: 500, rateUom: 'BOX', rateUomFactor: piecesPerPack, supplierBatch: `MAN-${suffix}`, shade: 'S2', caliber: 'C2', grade: 'A' }]),
   } }, token)).createManualGoodsReceipt;
   const grnPage = (await gql('query($search:String){goodsReceiptPage(search:$search,source:"manual",sort:"newest",skip:0,take:1)}', { search: `MAN-${suffix}` }, token)).goodsReceiptPage;
   assert(grnPage.total === 1 && grnPage.items[0].id === manual.id, 'Manual GRN history must be searchable and server-paged');

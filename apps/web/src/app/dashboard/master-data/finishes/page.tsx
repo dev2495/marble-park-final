@@ -18,7 +18,7 @@ export default function FinishMasterPage() {
   const [save, { loading: saving, error: saveError }] = useMutation(SAVE, { onCompleted: () => { void refetch(); setForm(empty); } });
   const rows = useMemo<any[]>(() => data?.masterProductFinishes || [], [data?.masterProductFinishes]);
   const filtered = rows.filter((row) => `${row.name} ${row.code} ${row.description}`.toLowerCase().includes(search.toLowerCase()));
-  const submit = () => save({ variables: { input: { ...form, id: form.id || undefined, sortOrder: Number(form.sortOrder || 0) } } });
+  const submit = () => save({ variables: { input: { ...form, id: form.id || undefined, expectedUpdatedAt: form.id ? form.updatedAt : undefined, sortOrder: Number(form.sortOrder || 0) } } });
 
   return (
     <div className="space-y-7 pb-10">

@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { QueryErrorBanner } from '@/components/query-state';
 import { SelectMenu, SelectMenuTrigger, SelectMenuContent, SelectMenuItem, SelectMenuValue } from '@/components/ui/select-menu';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { describeApolloError } from '@/lib/apollo-errors';
 import { PhysicalQrScanner } from '@/components/physical-qr-scanner';
 import { ScanProductSelector } from '@/components/scan-product-selector';
@@ -37,6 +38,10 @@ const CREATE_QUOTE = gql`
 
 function money(value: number) {
   return `₹${Math.round(value || 0).toLocaleString('en-IN')}`;
+}
+
+function pricedDisplay(value: number, blocked: boolean) {
+  return blocked ? 'Setup needed' : money(value);
 }
 
 function masterBrandCode(brands: any[], name: unknown) {
@@ -399,37 +404,15 @@ export default function QuoteBuilderPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <label className="block space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Customer</span>
-              <SelectMenu value={selectedCustomerId || undefined} onValueChange={(v) => setSelectedCustomerId(v)}>
-                <SelectMenuTrigger className="h-11 text-sm" placeholder="Select customer…" />
-                <SelectMenuContent>
-                  {customerData?.customers?.map((customer: any) => (
-                    <SelectMenuItem key={customer.id} value={customer.id}>{customer.name}</SelectMenuItem>
-                  ))}
-                </SelectMenuContent>
-              </SelectMenu>
+              <SearchableSelect className="h-11" value={selectedCustomerId} onValueChange={setSelectedCustomerId} options={(customerData?.customers || []).map((customer: any) => ({ value: customer.id, label: customer.name, description: [customer.mobile, customer.city || customer.siteAddress].filter(Boolean).join(' · '), keywords: `${customer.email || ''} ${customer.mobile || ''} ${customer.siteAddress || ''}` }))} placeholder="Select customer…" searchPlaceholder="Search customer, mobile, email or site…" />
             </label>
             <label className="block space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Responsible sales user</span>
-              <SelectMenu value={selectedOwnerId || undefined} onValueChange={setSelectedOwnerId}>
-                <SelectMenuTrigger className="h-11 text-sm" placeholder="Select sales user…" />
-                <SelectMenuContent>
-                  {(customerData?.salesAssignees || []).map((user: any) => <SelectMenuItem key={user.id} value={user.id}>{user.name} · {String(user.role || '').replace('_', ' ')}</SelectMenuItem>)}
-                </SelectMenuContent>
-              </SelectMenu>
+              <SearchableSelect className="h-11" value={selectedOwnerId} onValueChange={setSelectedOwnerId} options={(customerData?.salesAssignees || []).map((user: any) => ({ value: user.id, label: user.name, description: String(user.role || '').replace('_', ' '), keywords: user.email }))} placeholder="Select sales user…" searchPlaceholder="Search user or role…" />
             </label>
             <label className="block space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Consulting architect</span>
-              <SelectMenu value={selectedArchitectId || '__none__'} onValueChange={(v) => setSelectedArchitectId(v === '__none__' ? '' : v)}>
-                <SelectMenuTrigger className="h-11 text-sm" placeholder="Optional — select architect…" />
-                <SelectMenuContent>
-                  <SelectMenuItem value="__none__">No architect</SelectMenuItem>
-                  {(customerData?.architects || []).map((architect: any) => (
-                    <SelectMenuItem key={architect.id} value={architect.id}>
-                      {architect.name}{architect.firmName ? ` · ${architect.firmName}` : ''}
-                    </SelectMenuItem>
-                  ))}
-                </SelectMenuContent>
-              </SelectMenu>
+              <SearchableSelect className="h-11" value={selectedArchitectId} onValueChange={setSelectedArchitectId} options={[{ value: '', label: 'No architect' }, ...(customerData?.architects || []).map((architect: any) => ({ value: architect.id, label: architect.name, description: architect.firmName || undefined, keywords: `${architect.mobile || ''} ${architect.email || ''}` }))]} placeholder="Optional — select architect…" searchPlaceholder="Search architect or firm…" />
             </label>
             <label className="block space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Valid until</span>
@@ -508,11 +491,11 @@ export default function QuoteBuilderPage() {
           <section aria-label="Pricing readiness" className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
             {[
               [FileText, 'Lines / items', `${lines.length} / ${totalItems}`, null],
-              [BadgeIndianRupee, 'Gross MRP', money(grossMrp), missingMrpCount ? () => focusLine(lines.find((line) => lineCommercial(line).mrpMissing)) : null],
-              [BadgeIndianRupee, 'NRP value', money(nrpValue), missingNrpCount ? () => focusLine(lines.find((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0)) : null],
-              [BadgeIndianRupee, 'Special value', money(specialValue), null],
-              [Percent, 'Quote discount', money(quoteDiscountAmount), null],
-              [BadgeIndianRupee, 'GST', money(tax), null],
+              [BadgeIndianRupee, 'Gross MRP', pricedDisplay(grossMrp, missingMrpCount > 0), missingMrpCount ? () => focusLine(lines.find((line) => lineCommercial(line).mrpMissing)) : null],
+              [BadgeIndianRupee, 'NRP value', pricedDisplay(nrpValue, missingMrpCount > 0), missingNrpCount ? () => focusLine(lines.find((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0)) : null],
+              [BadgeIndianRupee, 'Special value', pricedDisplay(specialValue, missingMrpCount > 0), null],
+              [Percent, 'Quote discount', pricedDisplay(quoteDiscountAmount, missingMrpCount > 0), null],
+              [BadgeIndianRupee, 'GST', pricedDisplay(tax, missingMrpCount > 0), null],
               [AlertTriangle, 'Pricing exceptions', `${missingMrpCount + missingNrpCount + invalidMrpCount + missingTileCoverageCount + floorBreachCount + (invalidDiscountLine ? 1 : 0)}`, () => focusLine(lines.find((line) => { const rate = lineCommercial(line); return rate.mrpMissing || !rate.mrpValid || Number(rate.nrpInclusive || 0) <= 0 || rate.pricingError || (isTileLine(line) && Number(line.coveragePerPack || 0) <= 0) || (Number(line.floorPriceInclusive || 0) > 0 && rate.finalUnitPayable < Number(line.floorPriceInclusive)); }))],
               [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : lines.length ? 'Draft only' : 'No lines', null],
             ].map(([Icon, label, value, action]: any) => <button key={label} type="button" onClick={action || undefined} className={`min-w-0 rounded-lg border p-3 text-left transition ${action ? 'border-amber-200 bg-amber-50 hover:border-amber-400' : 'border-[#e4e4e7] bg-white'} ${label === 'Readiness' && pricingReady ? 'border-emerald-200 bg-emerald-50' : ''}`}><Icon className="h-4 w-4 text-[#a52b23]"/><p className="mt-2 truncate text-base font-black text-[#18181b]">{value}</p><p className="mt-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#71717a]">{label}</p></button>)}
@@ -555,12 +538,13 @@ export default function QuoteBuilderPage() {
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.25fr_0.85fr_1.05fr_1.1fr_0.65fr_1fr]">
                   <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Quantity / fulfilment</p>{isTileLine(line) ? <TileQuantityEditor line={line} onChange={(patch) => updateLine(line.id, patch)}/> : <div className="flex h-10 items-center gap-2"><input type="number" value={line.qty} min={1} onChange={(event)=>updateQty(line.id,Number(event.target.value)||0)} className="h-10 w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-right text-sm font-semibold"/><span className="text-xs font-bold text-[#52525b]">{line.unit}</span></div>}</div>
-                  <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">MRP / {commercial.mrpUom}</p><input data-pricing-error={commercial.mrpMissing || !commercial.mrpValid ? 'true' : undefined} aria-label={`MRP per ${commercial.mrpUom} for ${line.name}`} readOnly tabIndex={-1} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-md border px-3 text-right text-sm font-black ${commercial.mrpMissing || !commercial.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`}/><p className="mt-1 text-[10px] font-semibold text-[#71717a]">Tax-inclusive · Product Master</p></div>
-                  <div className="rounded-md border border-[#f1d5d1] bg-[#fff8f7] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8f2f28]">Base pricing → NRP</p><div className="grid grid-cols-[1fr_7.5rem] gap-1"><input data-pricing-error={Number(commercial.nrpInclusive || 0) <= 0 ? 'true' : undefined} aria-label={`NRP input for ${line.name}`} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} step="0.01" value={line.nrpInput ?? 0} onChange={(event)=>updateLine(line.id,{nrpInput:event.target.value})} className="h-10 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-black"/><select aria-label={`NRP mode for ${line.name}`} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(line.id,{nrpMode:event.target.value,nrpInput:0})} className="h-10 rounded-md border border-[#e4e4e7] bg-white px-1 text-[10px] font-black"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#8f2f28]">NRP {money(commercial.nrpInclusive)}</p></div>
-                  <div className="rounded-md border border-[#d9e6fb] bg-[#f5f8ff] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#1d4ed8]">Optional special pricing</p><div className="grid grid-cols-[1fr_7.8rem] gap-1"><input aria-label={`Special pricing input for ${line.name}`} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} step="0.01" disabled={(line.specialMode || 'NONE') === 'NONE'} value={line.specialInput ?? 0} onChange={(event)=>updateLine(line.id,{specialInput:event.target.value})} className="h-10 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-black disabled:bg-[#f4f4f5]"/><select aria-label={`Special pricing mode for ${line.name}`} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(line.id,{specialMode:event.target.value,specialInput:0})} className="h-10 rounded-md border border-[#e4e4e7] bg-white px-1 text-[10px] font-black"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#1d4ed8]">Special rate {money(commercial.specialRateInclusive)}</p></div>
+                  <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">MRP / {commercial.mrpUom}</p><input data-pricing-error={commercial.mrpMissing || !commercial.mrpValid ? 'true' : undefined} aria-label={`MRP per ${commercial.mrpUom} for ${line.name}`} readOnly tabIndex={-1} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-md border px-3 text-right text-sm font-black ${commercial.mrpMissing || !commercial.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`}/><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'Required before pricing' : 'Tax-inclusive · Product Master'}</p></div>
+                  <div className="rounded-md border border-[#f1d5d1] bg-[#fff8f7] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8f2f28]">Base pricing → NRP</p><div className="grid grid-cols-[1fr_7.5rem] gap-1"><input data-pricing-error={Number(commercial.nrpInclusive || 0) <= 0 ? 'true' : undefined} aria-label={`NRP input for ${line.name}`} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing} value={line.nrpInput ?? 0} onChange={(event)=>updateLine(line.id,{nrpInput:event.target.value})} className="h-10 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-black disabled:bg-[#f4f4f5]"/><select aria-label={`NRP mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(line.id,{nrpMode:event.target.value,nrpInput:0})} className="h-10 rounded-md border border-[#e4e4e7] bg-white px-1 text-[10px] font-black disabled:bg-[#f4f4f5]"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#8f2f28]">{commercial.mrpMissing ? 'Waiting for MRP' : `NRP ${money(commercial.nrpInclusive)}`}</p></div>
+                  <div className="rounded-md border border-[#d9e6fb] bg-[#f5f8ff] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#1d4ed8]">Optional special pricing</p><div className="grid grid-cols-[1fr_7.8rem] gap-1"><input aria-label={`Special pricing input for ${line.name}`} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} value={line.specialInput ?? 0} onChange={(event)=>updateLine(line.id,{specialInput:event.target.value})} className="h-10 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-black disabled:bg-[#f4f4f5]"/><select aria-label={`Special pricing mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(line.id,{specialMode:event.target.value,specialInput:0})} className="h-10 rounded-md border border-[#e4e4e7] bg-white px-1 text-[10px] font-black disabled:bg-[#f4f4f5]"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#1d4ed8]">{commercial.mrpMissing ? 'Waiting for MRP' : `Special rate ${money(commercial.specialRateInclusive)}`}</p></div>
                   <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">GST</p>{taxMode==='gst'?<><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate??18} onChange={(event)=>updateLine(line.id,{taxRate:event.target.value})} className="h-10 w-full rounded-md border border-[#e4e4e7] px-3 text-right text-sm font-black"/><p className="mt-1 text-right text-[10px] font-semibold text-[#71717a]">{money(commercial.taxAmount)}</p></>:<span className="inline-flex rounded bg-[#f4f4f5] px-2 py-2 text-xs font-semibold text-[#52525b]">Without GST</span>}</div>
-                  <div className="rounded-md bg-[#f8fafc] p-3 text-right"><p className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Final payable</p><p className="mt-2 text-xl font-black text-[#059669]">{money(commercial.total)}</p><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{money(commercial.finalUnitPayable)} / {commercial.mrpUom}</p></div>
+                  <div className={`rounded-md p-3 text-right ${commercial.mrpMissing ? 'border border-amber-200 bg-amber-50' : 'bg-[#f8fafc]'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Final payable</p><p className={`mt-2 font-black ${commercial.mrpMissing ? 'text-sm text-amber-900' : 'text-xl text-[#059669]'}`}>{commercial.mrpMissing ? 'MRP setup needed' : money(commercial.total)}</p><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'No false ₹0 total shown' : `${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}`}</p></div>
                 </div>
+                {commercial.mrpMissing ? <p role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900"><span>This SKU has no governed MRP, so discounts and totals are intentionally paused.</span><Link href={`/dashboard/master-data/pricing-readiness?search=${encodeURIComponent(line.sku || '')}`} className="rounded-md bg-amber-900 px-3 py-1.5 text-white">Add MRP</Link></p> : null}
                 {!commercial.mrpMissing && !commercial.mrpValid ? <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs font-bold text-red-800">Final payable {money(commercial.finalUnitPayable)} per {commercial.mrpUom} exceeds MRP. Reduce the negotiated rate or verify MRP.</p> : null}
                 {Number(line.floorPriceInclusive || 0) > 0 && commercial.finalUnitPayable + 0.005 < Number(line.floorPriceInclusive) ? <p role="status" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">Below floor: {money(commercial.finalUnitPayable)} / {commercial.mrpUom} is below the owner-approved floor {money(line.floorPriceInclusive)}. Saving will route this quote for approval.</p> : null}
               </article>;})}

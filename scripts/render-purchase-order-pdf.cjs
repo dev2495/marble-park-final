@@ -89,7 +89,7 @@ function build({ order, settings }, requestUrl) {
   const lines = Array.isArray(order.lines) ? order.lines : [];
   const totals = commercialTotals(order, lines);
   const compact = lines.length <= 6;
-  const hasPendingCost = lines.some((line) => Number(line.unitCost || 0) <= 0);
+  const hasPendingCost = lines.some((line) => Number(line.enteredUnitCost || line.unitCost || 0) <= 0 || String(line.costStatus || 'complete') === 'missing');
   const vendorGst = order.vendor?.gstNo || order.vendor?.gstNumber || '';
   const logo = absolute(settings.logoUrl, requestUrl);
   return e(Document, null, e(Page, { size: 'A4', style: [s.page, compact ? s.pageCompact : null] },
@@ -104,7 +104,24 @@ function build({ order, settings }, requestUrl) {
     ),
     e(View, { style: [s.table, compact ? s.tableCompact : null] },
       e(View, { style: [s.tr, compact ? s.trCompact : null, s.th], fixed: !compact }, e(Text, { style: s.c1 }, '#'), e(Text, { style: s.c2 }, 'SKU / CODE'), e(Text, { style: s.c3 }, 'DESCRIPTION'), e(Text, { style: s.c4 }, 'QTY'), e(Text, { style: s.c5 }, 'UNIT COST'), e(Text, { style: s.c6 }, 'VALUE')),
-      ...lines.map((line, index) => { const known = Number(line.unitCost || 0) > 0; const lineValue = Number(line.lineTotal || 0) > 0 ? Number(line.lineTotal) : Number(line.orderedQuantity || 0) * Number(line.unitCost || 0); return e(View, { key: line.id || index, style: [s.tr, compact ? s.trCompact : null], wrap: false }, e(Text, { style: s.c1 }, String(index + 1)), e(Text, { style: s.c2 }, line.metadata?.internalCode || line.sku || ''), e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')), e(Text, { style: s.c4 }, `${line.orderedQuantity || 0} ${line.unit || 'PC'}`), e(Text, { style: s.c5 }, known ? money(line.unitCost) : 'At GRN'), e(Text, { style: s.c6 }, known ? money(lineValue) : 'Pending')); }),
+      ...lines.map((line, index) => {
+        const enteredRate = Number(line.enteredUnitCost || line.unitCost || 0);
+        const known = enteredRate > 0 && String(line.costStatus || 'complete') !== 'missing';
+        const factor = Math.max(1, Number(line.rateUomFactor || 1));
+        const baseQuantity = Number(line.orderedQuantity || 0);
+        const displayQuantity = factor > 1 && baseQuantity % factor === 0 ? baseQuantity / factor : baseQuantity;
+        const displayUom = factor > 1 && baseQuantity % factor === 0 ? (line.rateUom || line.unit || 'PC') : (line.unit || 'PC');
+        const displayRate = factor > 1 && baseQuantity % factor !== 0 ? Number(line.unitCost || 0) : enteredRate;
+        const lineValue = Number(line.metadata?.lineGross || 0) > 0 ? Number(line.metadata.lineGross) : baseQuantity * Number(line.unitCost || 0);
+        return e(View, { key: line.id || index, style: [s.tr, compact ? s.trCompact : null], wrap: false },
+          e(Text, { style: s.c1 }, String(index + 1)),
+          e(Text, { style: s.c2 }, line.metadata?.internalCode || line.sku || ''),
+          e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')),
+          e(Text, { style: s.c4 }, `${displayQuantity} ${displayUom}`),
+          e(Text, { style: s.c5 }, known ? `${money(displayRate)} / ${displayUom}` : 'Setup required'),
+          e(Text, { style: s.c6 }, known ? money(lineValue) : 'Blocked'),
+        );
+      }),
     ),
     e(View, { style: s.totalBlock },
       e(View, { style: s.totalRow }, e(Text, null, 'Subtotal'), e(Text, null, money(totals.subtotal))),
@@ -112,7 +129,7 @@ function build({ order, settings }, requestUrl) {
       totals.taxAmount > 0 ? e(View, { style: s.totalRow }, e(Text, null, `GST ${totals.taxRate}%`), e(Text, null, money(totals.taxAmount))) : null,
       e(View, { style: s.totalStrong }, e(Text, null, hasPendingCost ? 'Known order value' : 'Order value'), e(Text, null, money(totals.grandTotal))),
     ),
-    e(View, { style: [s.notes, compact ? s.notesCompact : null], wrap: false }, e(Text, { style: s.label }, 'Instructions / terms'), e(Text, { style: s.small }, [order.notes || 'Supply against this purchase order only. Quantity and condition are subject to GRN verification.', hasPendingCost ? 'Pending line costs must be captured from the supplier document at GRN before stock is posted.' : '', totals.discountAmount > 0 || totals.taxAmount > 0 ? 'Discount and GST shown are commercial document totals; GRN stock cost uses the verified receipt cost.' : ''].filter(Boolean).join('\n'))),
+    e(View, { style: [s.notes, compact ? s.notesCompact : null], wrap: false }, e(Text, { style: s.label }, 'Instructions / terms'), e(Text, { style: s.small }, [order.notes || 'Supply against this purchase order only. Quantity and condition are subject to GRN verification.', hasPendingCost ? 'Rate setup is incomplete. Complete the legacy PO rate queue before receiving; PO-linked GRN never accepts a receipt-level cost override.' : '', 'Stock cost is the PO net pre-tax base-unit snapshot after header discount. GST is recorded on the commercial document and never capitalized into inventory cost.'].filter(Boolean).join('\n'))),
     e(View, { style: [s.signatures, compact ? s.signaturesCompact : null], wrap: false }, e(Text, { style: s.sign }, 'Supplier acceptance'), e(Text, { style: s.sign }, `For ${settings.companyName || 'Marble Park'}`)),
     e(View, { style: s.footer }, e(Text, null, settings.supportPhone || settings.supportEmail || ''), e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}` })),
   ));

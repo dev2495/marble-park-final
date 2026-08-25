@@ -112,6 +112,16 @@ export class AuditResolver {
     return this.audit.getStats(range || 'week');
   }
 
+  @Query(() => GraphQLJSON)
+  async auditFacets(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('from', { nullable: true }) from?: Date,
+    @Args('to', { nullable: true }) to?: Date,
+  ) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.audit.getFacets(from, to);
+  }
+
   @Query(() => String, { description: 'CSV export of audit events. Filtered identically to auditEvents.' })
   async auditEventsCsv(
     @Context() ctx: GraphqlRequestContext,

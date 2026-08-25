@@ -16,6 +16,7 @@ type RenderPdfInput = {
   errorMessage: string;
   includeApiUrl?: boolean;
   publicShareToken?: string;
+  validationRedirectPath?: string;
 };
 
 function rendererPath(scriptName: string) {
@@ -48,6 +49,13 @@ function errorCode(status: number) {
   if (status === 404) return 'NOT_FOUND';
   if (status === 422) return 'COMMERCIAL_VALIDATION_FAILED';
   return 'PDF_GENERATION_FAILED';
+}
+
+function rendererUserMessage(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error || '');
+  const firstLine = raw.split(/\n\s*at\s+/i)[0].replace(/^Error:\s*/i, '').trim();
+  if (!firstLine) return 'Complete quote pricing and MRP before generating this document.';
+  return firstLine.length > 360 ? `${firstLine.slice(0, 357)}...` : firstLine;
 }
 
 async function executeRenderer(input: RenderPdfInput, sessionToken: string) {
@@ -116,12 +124,20 @@ export async function servePdf(input: RenderPdfInput) {
   } catch (error) {
     const status = rendererErrorStatus(error);
     console.error(`[${input.action}] ref=${requestId}`, error);
+    if (status === 422 && input.validationRedirectPath && input.request.headers.get('accept')?.includes('text/html')) {
+      const redirectUrl = new URL(input.validationRedirectPath, input.request.url);
+      redirectUrl.searchParams.set('pdfError', 'commercial-pricing');
+      const response = NextResponse.redirect(redirectUrl, 303);
+      response.headers.set('Cache-Control', 'private, no-store');
+      response.headers.set('X-Request-Id', requestId);
+      return response;
+    }
     return NextResponse.json(
       {
         error: status === 401
           ? 'Your session expired. Sign in again and retry.'
           : status === 422
-            ? (error instanceof Error ? error.message : 'Complete quote pricing and MRP before generating this document.')
+            ? rendererUserMessage(error)
             : input.errorMessage,
         code: errorCode(status),
         action: input.action,

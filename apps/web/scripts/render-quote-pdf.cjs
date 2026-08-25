@@ -339,6 +339,14 @@ function brandCodeFor(line, brands) {
   return String(master?.code || '').trim();
 }
 
+function productCodeFor(line) {
+  return String(line.internalCode || line.productCode || line.sku || line.tileCode || '').trim();
+}
+
+function identityCodesFor(line, brands) {
+  return [...new Set([productCodeFor(line), brandCodeFor(line, brands)].filter(Boolean))].join(' · ');
+}
+
 function BrandStrip({ payload, quoteMeta, requestUrl }) {
   const e = React.createElement;
   const brands = selectedBrands(payload, quoteMeta);
@@ -489,11 +497,12 @@ function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
  * from the user's sample. Kept on a 2-column grid so 4 cards fit per page on
  * portrait A4 (with the area title above).
  */
-function SelectionCard({ row, requestUrl, compact = false }) {
+function SelectionCard({ row, requestUrl, brands, compact = false }) {
   const e = React.createElement;
   const utilize = row.area || row.room || 'General Selection';
   const size = row.tileSize || row.size || row.dimensions || (row.unit && row.qty ? `${row.qty} ${row.unit}` : '—');
   const designName = row.tileCode || row.sku || row.name || row.designName || '—';
+  const identityCodes = identityCodesFor(row, brands);
   const src = imageSrc(row, requestUrl);
   return e(View, { style: [styles.selectionCard, compact ? styles.selectionCardCompact : null], wrap: false },
     e(Text, { style: styles.cardLabelRow },
@@ -508,6 +517,7 @@ function SelectionCard({ row, requestUrl, compact = false }) {
       e(Text, { style: styles.cardLabelKey }, 'Design Name '), ':- ',
       e(Text, { style: styles.cardLabelValueBlack }, designName),
     ),
+    identityCodes ? e(Text, { style: styles.meta }, identityCodes) : null,
     e(View, { style: [styles.cardImageWrap, compact ? styles.cardImageWrapCompact : null] },
       src
         ? e(Image, { src, style: styles.cardImage })
@@ -541,7 +551,7 @@ function CompactSelectionDocument({ payload, requestUrl }) {
       ].filter(Boolean).join('\n')),
     ),
     e(View, { style: styles.cardGrid },
-      ...rows.map((row, index) => e(SelectionCard, { key: row.sku || row.tileCode || index, row, requestUrl, compact: true })),
+      ...rows.map((row, index) => e(SelectionCard, { key: row.sku || row.tileCode || index, row, requestUrl, brands: payload.brands, compact: true })),
     ),
     e(Text, { style: styles.compactSelectionTerms }, terms),
     e(View, { style: styles.footer },
@@ -551,7 +561,7 @@ function CompactSelectionDocument({ payload, requestUrl }) {
   );
 }
 
-function SelectionAreaPage({ group, requestUrl }) {
+function SelectionAreaPage({ group, requestUrl, brands }) {
   const e = React.createElement;
   // 2 cards per row; up to 4 cards per page so the layout breathes.
   const pageChunks = chunk(group.rows, 4);
@@ -559,7 +569,7 @@ function SelectionAreaPage({ group, requestUrl }) {
     e(Page, { key: `${group.area}-${pageIdx}`, size: 'A4', style: styles.pagePadded },
       e(Text, { style: styles.areaPageHeader }, `${group.area}${pageChunks.length > 1 ? ` (${pageIdx + 1}/${pageChunks.length})` : ''}`),
       e(View, { style: styles.cardGrid },
-        ...rowsForPage.map((row, idx) => e(SelectionCard, { key: `${row.sku || row.tileCode || idx}`, row, requestUrl })),
+        ...rowsForPage.map((row, idx) => e(SelectionCard, { key: `${row.sku || row.tileCode || idx}`, row, requestUrl, brands })),
       ),
       e(View, { style: styles.footer },
         e(Text, null, 'Marble Park · Premium Bath Solutions'),
@@ -605,13 +615,14 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
     ...group.rows.map((line, index) => {
       const rate = rateFor(line);
       const src = imageSrc(line, requestUrl);
-      const brandCode = brandCodeFor(line, brands);
+      const identityCodes = identityCodesFor(line, brands);
       return e(View, { key: `${line.sku || line.tileCode || index}`, style: [styles.tableRow, compact ? styles.tableRowCompact : null], wrap: false },
         e(View, { style: styles.imageCol },
           src ? e(Image, { src, style: [styles.image, compact ? styles.imageCompact : null] }) : e(View, { style: [styles.image, compact ? styles.imageCompact : null] }, e(Text, { style: { fontSize: 7, color: colors.tan, textAlign: 'center', marginTop: compact ? 12 : 18 } }, 'No image')),
         ),
         e(View, { style: styles.descCol },
-          e(Text, { style: styles.td }, `${line.name || line.description || line.sku || line.tileCode || 'Selection item'}${brandCode ? ` · ${brandCode}` : ''}`),
+          e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
+          identityCodes ? e(Text, { style: styles.meta }, identityCodes) : null,
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
@@ -735,7 +746,7 @@ function buildDocument(payload, requestUrl) {
     }
     return e(Document, null,
       e(CoverPage, { quote, settings, requestUrl, quoteMeta }),
-      ...groups.flatMap((group) => SelectionAreaPage({ group, requestUrl })),
+      ...groups.flatMap((group) => SelectionAreaPage({ group, requestUrl, brands: payload.brands })),
       e(ClosingPage, { payload, settings, terms, bank, quoteMeta, requestUrl }),
     );
   }
@@ -752,7 +763,11 @@ async function main() {
   process.stdout.write(buffer);
 }
 
-main().catch((error) => {
-  console.error(error?.stack || error?.message || error);
-  process.exit(1);
-});
+module.exports = { brandCodeFor, productCodeFor, identityCodesFor };
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error?.stack || error?.message || error);
+    process.exit(1);
+  });
+}

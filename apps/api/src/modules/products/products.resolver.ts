@@ -156,6 +156,7 @@ export class UpdateProductInput {
   @Field({ nullable: true }) priceRateBasis?: string;
   @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) mrpSource?: string;
+  @Field({ nullable: true }) mrpChangeReason?: string;
   @Field(() => String, { nullable: true }) pricingEffectiveFrom?: string;
 
   @Field(() => String, { nullable: true })
@@ -274,7 +275,9 @@ class TileVariantInput {
   @Field({ nullable: true }) priceRateBasis?: string;
   @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) mrpSource?: string;
+  @Field({ nullable: true }) mrpChangeReason?: string;
   @Field({ nullable: true }) pricingEffectiveFrom?: string;
+  @Field({ nullable: true }) expectedUpdatedAt?: string;
   @Field({ nullable: true }) status?: string;
   @Field({ nullable: true }) alias?: string;
 }
@@ -288,6 +291,7 @@ class ProductPricingCompletionInput {
   @Field({ nullable: true }) priceRateBasis?: string;
   @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) mrpSource?: string;
+  @Field({ nullable: true }) mrpChangeReason?: string;
   @Field({ nullable: true }) pricingEffectiveFrom?: string;
   @Field({ nullable: true }) expectedUpdatedAt?: string;
 }
@@ -437,6 +441,21 @@ export class ProductsResolver {
   ) {
     await requireRoles(this.prisma, ctx, ['admin', 'owner']);
     return this.products.pricingReadinessPage({ search, status, sort, skip, take });
+  }
+
+  @Query(() => GraphQLJSON)
+  async productMrpHistoryPage(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('productId', { nullable: true }) productId?: string,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('actorUserId', { nullable: true }) actorUserId?: string,
+    @Args('from', { nullable: true }) from?: string,
+    @Args('to', { nullable: true }) to?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requireSession(this.prisma, ctx);
+    return this.products.mrpHistoryPage({ productId, search, actorUserId, from, to, skip, take });
   }
 
   @Mutation(() => ProductOutput)

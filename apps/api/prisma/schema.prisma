@@ -329,7 +329,17 @@ model PurchaseOrderLine {
   orderedQuantity   Int
   receivedQuantity  Int           @default(0)
   cancelledQuantity Int           @default(0)
+  /// Supplier rate exactly as entered on the PO, before header discount and GST.
+  enteredUnitCost   Decimal       @default(0) @db.Decimal(18, 4)
+  /// UOM for enteredUnitCost (for example BOX or PC).
+  rateUom           String        @default("PC")
+  /// Number of base units represented by one rate UOM at PO issue time.
+  rateUomFactor     Decimal       @default(1) @db.Decimal(18, 6)
+  /// Pre-discount cost normalized to one base unit. Kept in unitCost for compatibility.
   unitCost          Decimal       @default(0) @db.Decimal(18, 4)
+  /// Net pre-tax acquisition cost per base unit after the PO discount.
+  netUnitCost       Decimal       @default(0) @db.Decimal(18, 4)
+  costStatus        String        @default("complete")
   discountPercent   Decimal       @default(0) @db.Decimal(8, 4)
   taxRate           Decimal       @default(0) @db.Decimal(8, 4)
   taxableValue      Decimal       @default(0) @db.Decimal(18, 2)
@@ -344,6 +354,7 @@ model PurchaseOrderLine {
   @@index([purchaseDemandId])
   @@index([productId])
   @@index([status])
+  @@index([costStatus, createdAt(sort: Desc)])
 }
 
 model GoodsReceiptNote {
@@ -692,6 +703,7 @@ model Product {
   adjustmentApprovals  StockAdjustmentApproval[]
   returnLines          ReturnLine[]
   periodSnapshots      InventoryPeriodSnapshot[]
+  mrpHistory          ProductMrpHistory[]
 
   @@index([brand])
   @@index([category])
@@ -710,6 +722,30 @@ model Product {
   @@index([status, defaultMrpInclusive])
   @@index([defaultNrpInclusive])
   @@index([priceRateBasis])
+}
+
+/// Append-only MRP history for one permanent Product Master SKU.
+/// Other commercial/default-price edits remain available through AuditEvent;
+/// this table is deliberately limited to MRP so the statutory price trail is
+/// easy to read and cannot be confused with NRP, floor policy, or lot cost.
+model ProductMrpHistory {
+  id                   String   @id
+  product              Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productId            String
+  previousMrpInclusive Decimal? @db.Decimal(18, 2)
+  newMrpInclusive      Decimal  @db.Decimal(18, 2)
+  priceRateBasis       String
+  priceUom             String
+  source               String?
+  reason               String
+  changedById          String
+  effectiveFrom        DateTime?
+  metadata             Json     @default("{}")
+  createdAt            DateTime @default(now())
+
+  @@index([productId, createdAt(sort: Desc)], map: "ProductMrpHistory_product_created_idx")
+  @@index([changedById, createdAt(sort: Desc)], map: "ProductMrpHistory_actor_created_idx")
+  @@index([createdAt(sort: Desc)], map: "ProductMrpHistory_created_idx")
 }
 
 model ProductAlias {

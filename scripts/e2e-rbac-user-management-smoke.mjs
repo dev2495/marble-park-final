@@ -113,7 +113,9 @@ async function main() {
 
     const skuSession = await login(skuManager.email, password);
     const product = (await gql(
-      `mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku name } }`,
+      `mutation($input: CreateProductInput!) {
+        createProduct(input: $input) { id sku name defaultMrpInclusive defaultNrpInclusive }
+      }`,
       {
         input: {
           sku: unique('RBAC-SKU'),
@@ -121,8 +123,10 @@ async function main() {
           category: 'Accessories',
           brand: 'Marble Park',
           unit: 'PC',
-          sellPrice: 999,
-          floorPrice: 800,
+          defaultMrpInclusive: 999,
+          defaultNrpInclusive: 900,
+          floorPriceInclusive: 800,
+          priceRateBasis: 'PIECE',
         },
       },
       skuSession.token,
@@ -153,13 +157,12 @@ async function main() {
     const quoteSetup = await gql(
       `query {
         customers(take: 1) { id }
-        products(take: 1) { id sku name sellPrice mrp }
       }`,
       {},
       quoteSession.token,
     );
-    assert(quoteSetup.customers[0]?.id && quoteSetup.products[0]?.id, 'quote-building override needs an existing customer and Product Master SKU');
-    const quoteProduct = quoteSetup.products[0];
+    assert(quoteSetup.customers[0]?.id && product.id, 'quote-building override needs an existing customer and Product Master SKU');
+    const quoteProduct = product;
     const overrideQuote = (await gql(
       `mutation($input: CreateQuoteInput!) {
         createQuote(input: $input) { id quoteNumber status owner }
@@ -174,8 +177,8 @@ async function main() {
             sku: quoteProduct.sku,
             name: quoteProduct.name,
             qty: 1,
-            price: Number(quoteProduct.sellPrice || 1),
-            mrp: Number(quoteProduct.mrp || quoteProduct.sellPrice || 1),
+            price: Number(quoteProduct.defaultNrpInclusive || quoteProduct.defaultMrpInclusive || 1),
+            mrp: Number(quoteProduct.defaultMrpInclusive || 1),
           }]),
         },
       },

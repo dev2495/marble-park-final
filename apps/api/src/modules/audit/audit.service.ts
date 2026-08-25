@@ -84,9 +84,30 @@ export class AuditService {
     if (filters?.actionPrefix) where.action = { startsWith: filters.actionPrefix };
     if (filters?.entityType) where.entityType = filters.entityType;
     if (filters?.entityId) where.entityId = filters.entityId;
+    const and: any[] = [];
     if (filters?.search) {
-      where.summary = { contains: filters.search, mode: 'insensitive' as const };
+      const search = String(filters.search).trim();
+      if (search) and.push({ OR: [
+        { summary: { contains: search, mode: 'insensitive' as const } },
+        { action: { contains: search, mode: 'insensitive' as const } },
+        { entityType: { contains: search, mode: 'insensitive' as const } },
+        { entityId: { contains: search, mode: 'insensitive' as const } },
+      ] });
     }
+    if (filters?.criticalOnly) {
+      and.push({ OR: [
+        { action: { endsWith: '.delete', mode: 'insensitive' as const } },
+        { action: { endsWith: '.approve', mode: 'insensitive' as const } },
+        { action: { endsWith: '.reject', mode: 'insensitive' as const } },
+        { action: { endsWith: '.confirm', mode: 'insensitive' as const } },
+        { action: { endsWith: '.apply', mode: 'insensitive' as const } },
+        { action: { contains: 'role.change', mode: 'insensitive' as const } },
+        { action: { contains: 'password.change', mode: 'insensitive' as const } },
+        { action: { contains: 'user.disable', mode: 'insensitive' as const } },
+        { action: { contains: 'user.delete', mode: 'insensitive' as const } },
+      ] });
+    }
+    if (and.length) where.AND = and;
     const fromTo: any = {};
     if (filters?.from) fromTo.gte = new Date(filters.from);
     if (filters?.to) fromTo.lte = new Date(filters.to);
@@ -136,11 +157,7 @@ export class AuditService {
       critical: isCritical(row.action),
     }));
 
-    // Post-filter for criticalOnly because the regex set is too rich for
-    // Prisma's where clause. Volumes are bounded by `take`.
-    const filtered = args.filters?.criticalOnly ? events.filter((e) => e.critical) : events;
-
-    return { events: filtered, nextCursor, total };
+    return { events, nextCursor, total };
   }
 
   /**
@@ -162,19 +179,22 @@ export class AuditService {
     else if (range === 'month') days = 30;
     else if (range === 'quarter') days = 90;
     else if (range === 'all') days = 365;
-    from.setDate(now.getDate() - days);
+    if (range === 'all') from.setTime(0);
+    else from.setDate(now.getDate() - days);
     from.setHours(0, 0, 0, 0);
 
     const where = { createdAt: { gte: from, lte: now } };
-    const rows = (await this.prisma.auditEvent.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: 5000,
-    } as any)) as any[];
+    const [rows, totalEvents, actorGroups, criticalCount] = await Promise.all([
+      this.prisma.auditEvent.findMany({ where, orderBy: { createdAt: 'desc' }, take: 5000 } as any),
+      this.prisma.auditEvent.count({ where }),
+      this.prisma.auditEvent.groupBy({ by: ['actorUserId'], where } as any),
+      this.prisma.auditEvent.count({ where: this.whereFromFilters({ from, to: now, criticalOnly: true }) }),
+    ]) as [any[], number, any[], number];
 
     // Per-day buckets.
     const buckets = new Map<string, number>();
-    for (let i = days; i >= 0; i -= 1) {
+    const graphDays = range === 'all' ? 90 : days;
+    for (let i = graphDays; i >= 0; i -= 1) {
       const d = new Date(now); d.setDate(now.getDate() - i); d.setHours(0, 0, 0, 0);
       buckets.set(d.toISOString().slice(0, 10), 0);
     }
@@ -222,12 +242,12 @@ export class AuditService {
       .map(([entityType, count]) => ({ entityType, count }));
 
     // Critical & active counts.
-    const criticalCount = rows.filter((r) => isCritical(r.action)).length;
-    const activeActors = actorCounts.size;
+    const activeActors = actorGroups.filter((row: any) => row.actorUserId).length;
 
     return {
       range,
-      totalEvents: rows.length,
+      totalEvents,
+      sampledEvents: rows.length,
       eventsByDay,
       topActors,
       topActions,
@@ -236,6 +256,26 @@ export class AuditService {
       activeActors,
       from,
       to: now,
+    };
+  }
+
+  async getFacets(from?: Date | string, to?: Date | string): Promise<any> {
+    const where = this.whereFromFilters({ from, to });
+    const [entityGroups, actionGroups, actorGroups] = await Promise.all([
+      this.prisma.auditEvent.groupBy({ by: ['entityType'], where, _count: { _all: true }, orderBy: { _count: { entityType: 'desc' } } } as any),
+      this.prisma.auditEvent.groupBy({ by: ['action'], where, _count: { _all: true }, orderBy: { _count: { action: 'desc' } }, take: 200 } as any),
+      this.prisma.auditEvent.groupBy({ by: ['actorUserId'], where, _count: { _all: true }, orderBy: { _count: { actorUserId: 'desc' } } } as any),
+    ]) as [any[], any[], any[]];
+    const actorIds = actorGroups.map((row) => row.actorUserId).filter(Boolean);
+    const actors = actorIds.length ? await this.prisma.user.findMany({
+      where: { id: { in: actorIds } },
+      select: { id: true, name: true, email: true, role: true },
+    }) : [];
+    const actorById = new Map(actors.map((actor) => [actor.id, actor]));
+    return {
+      entityTypes: entityGroups.map((row) => ({ value: row.entityType, count: row._count?._all || 0 })),
+      actions: actionGroups.map((row) => ({ value: row.action, count: row._count?._all || 0, critical: isCritical(row.action) })),
+      actors: actorGroups.map((row) => ({ ...actorById.get(row.actorUserId), id: row.actorUserId, count: row._count?._all || 0 })),
     };
   }
 

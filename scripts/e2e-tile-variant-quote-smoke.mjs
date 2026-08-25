@@ -13,6 +13,7 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD || '';
 const prisma = new PrismaClient();
 const cleanup = { productIds: [], customerIds: [], quoteIds: [], leadIds: [] };
 const designIds = [];
+let acceptanceSizeId = '';
 
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const close = (actual, expected, message) => assert(Math.abs(Number(actual) - Number(expected)) <= 0.02, `${message}: expected ${expected}, received ${actual}`);
@@ -35,7 +36,30 @@ async function main() {
   const token = (await gql('mutation($input:LoginInput!){login(input:$input){token}}', { input: { email: TEST_EMAIL, password: TEST_PASSWORD } })).login.token;
   const suffix = Date.now().toString(36).toUpperCase();
   const masters = await gql('query{tileSizes(status:"active") masterProductBrands(status:"active") masterProductFinishes(status:"active")}', {}, token);
-  const size = masters.tileSizes[0];
+  let size = masters.tileSizes.find((row) => Number(row.areaPerBoxSqFt || 0) > 0 || Number(row.areaPerPieceSqFt || 0) > 0);
+  if (!size) {
+    const widthMm = 300;
+    const heightMm = 300;
+    const piecesPerBox = 4;
+    const areaPerPieceSqM = (widthMm * heightMm) / 1_000_000;
+    const areaPerPieceSqFt = areaPerPieceSqM * 10.76391041671;
+    acceptanceSizeId = `tile-size-${suffix.toLowerCase()}`;
+    await prisma.tileSize.create({ data: {
+      id: acceptanceSizeId,
+      name: `Acceptance ${suffix} 300 x 300 mm`,
+      code: `ACC-${suffix}`,
+      widthMm,
+      heightMm,
+      pcsPerBox: piecesPerBox,
+      areaPerPieceSqM,
+      areaPerPieceSqFt,
+      areaPerBoxSqM: areaPerPieceSqM * piecesPerBox,
+      areaPerBoxSqFt: areaPerPieceSqFt * piecesPerBox,
+      status: 'active',
+      updatedAt: new Date(),
+    } });
+    size = (await gql('query{tileSizes(status:"active")}', {}, token)).tileSizes.find((row) => row.id === acceptanceSizeId);
+  }
   const brand = masters.masterProductBrands[0]?.name;
   const finish = masters.masterProductFinishes[0]?.name;
   assert(size?.id && brand && finish, 'Active Tile Size, Brand and Finish masters are required');
@@ -160,5 +184,6 @@ main()
       await prisma.auditEvent.deleteMany({ where: { entityType: 'TileDesign', entityId: { in: designIds } } }).catch(() => null);
       await prisma.tileDesign.deleteMany({ where: { id: { in: designIds } } }).catch(() => null);
     }
+    if (acceptanceSizeId) await prisma.tileSize.delete({ where: { id: acceptanceSizeId } }).catch(() => null);
     await prisma.$disconnect();
   });

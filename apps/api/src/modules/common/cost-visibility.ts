@@ -1,5 +1,5 @@
 const INVENTORY_COST_KEYS = new Set([
-  'unitCost', 'effectiveUnitCost', 'skuCost', 'onHandValue', 'availableValue',
+  'unitCost', 'netUnitCost', 'enteredUnitCost', 'rateUomFactor', 'effectiveUnitCost', 'skuCost', 'onHandValue', 'availableValue',
   'valueAtCost', 'costSnapshot', 'costSnapshotSource', 'costSnapshotAt',
   'capturedCost', 'margin', 'marginPercent', 'grossMargin',
   'stockValue', 'totalValue', 'varianceValue', 'inventoryValue', 'activePurchaseOrderValue',
@@ -9,7 +9,7 @@ const INVENTORY_COST_KEYS = new Set([
 const PROCUREMENT_VALUE_KEYS = new Set([
   ...INVENTORY_COST_KEYS,
   'subtotal', 'discountAmount', 'taxableValue', 'taxAmount', 'grandTotal',
-  'lineGross', 'lineDiscount', 'poUnitCost',
+  'lineGross', 'lineDiscount', 'poUnitCost', 'poNetUnitCost', 'poEnteredRate', 'enteredRate', 'normalizedBaseUnitCost', 'netBaseUnitCost',
 ]);
 
 function redact(value: any, blocked: Set<string>): any {
@@ -26,17 +26,22 @@ export function canViewCommercialCost(user: { role?: string } | null | undefined
   return user?.role === 'admin' || user?.role === 'owner';
 }
 
+export function canManageProcurementRates(user: { role?: string; effectivePermissions?: string[] } | null | undefined) {
+  return canViewCommercialCost(user)
+    || Boolean(user?.effectivePermissions?.some((permission) => ['procurement.manage', 'goods_receipts.manage'].includes(permission)));
+}
+
 export function inventoryCostView<T>(value: T, user: { role?: string }): T {
   return canViewCommercialCost(user) ? value : redact(value, INVENTORY_COST_KEYS);
 }
 
-export function procurementCostView<T>(value: T, user: { role?: string }): T {
-  return canViewCommercialCost(user) ? value : redact(value, PROCUREMENT_VALUE_KEYS);
+export function procurementCostView<T>(value: T, user: { role?: string; effectivePermissions?: string[] }): T {
+  return canManageProcurementRates(user) ? value : redact(value, PROCUREMENT_VALUE_KEYS);
 }
 
-export function assertNoCostInput(value: unknown, user: { role?: string }, errorFactory: (message: string) => Error) {
-  if (canViewCommercialCost(user)) return;
+export function assertNoCostInput(value: unknown, user: { role?: string; effectivePermissions?: string[] }, errorFactory: (message: string) => Error) {
+  if (canManageProcurementRates(user)) return;
   const rows = typeof value === 'string' ? (() => { try { return JSON.parse(value); } catch { return []; } })() : value;
-  const containsCost = Array.isArray(rows) && rows.some((row: any) => row?.unitCost !== undefined && row?.unitCost !== null && String(row.unitCost).trim() !== '');
-  if (containsCost) throw errorFactory('Only an owner or administrator may enter or change purchase and lot cost.');
+  const containsCost = Array.isArray(rows) && rows.some((row: any) => [row?.unitCost, row?.enteredUnitCost].some((cost) => cost !== undefined && cost !== null && String(cost).trim() !== ''));
+  if (containsCost) throw errorFactory('Your role does not allow supplier-rate entry. Ask an administrator to grant Purchase orders or Goods receipts access.');
 }

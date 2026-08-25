@@ -174,7 +174,7 @@ export class QuotesService {
             ...commercial,
             itemCount: lines.length,
             quantity: lines.reduce((sum: number, line: any) => sum + Number(line.qty || line.quantity || 0), 0),
-            pricingReady: !['incomplete_pricing'].includes(String(quote.status || '')),
+            pricingReady: this.isQuoteCommercialReady(quote, lines),
           },
         };
       }),
@@ -185,6 +185,27 @@ export class QuotesService {
       page: Math.floor(skip / take) + 1,
       pageSize: take,
     };
+  }
+
+  private isQuoteCommercialReady(quote: any, linesInput?: any[]) {
+    const lines = linesInput || this.normalizeLines(quote?.lines);
+    const quoteVersion = String(quote?.pricingVersion || this.parseQuoteMeta(quote?.quoteMeta)?.pricingVersion || '');
+    if (!lines.length
+      || quote?.status === 'incomplete_pricing'
+      || quote?.pricingStatus === 'incomplete'
+      || quoteVersion !== RETAIL_LADDER_VERSION
+      || lines.some((line: any) => String(line?.pricingVersion || '') !== RETAIL_LADDER_VERSION
+        || !Number.isFinite(Number(line?.mrpInclusive))
+        || Number(line?.mrpInclusive) <= 0
+        || !line?.mrpConfirmedAt
+        || !line?.mrpConfirmedById)) {
+      return false;
+    }
+    try {
+      return priceQuoteLines(lines, this.quoteDiscountForQuote(quote), { requireMrp: true }).pricingErrors.length === 0;
+    } catch {
+      return false;
+    }
   }
 
   /**

@@ -19,7 +19,7 @@ export default function CategoryMasterPage() {
   const rows = useMemo<any[]>(() => data?.masterProductCategories || [], [data?.masterProductCategories]);
   const filtered = useMemo(() => rows.filter((row) => `${row.name} ${row.code} ${row.description}`.toLowerCase().includes(search.toLowerCase())), [rows, search]);
   const active = rows.filter((row) => row.status === 'active').length;
-  const submit = () => save({ variables: { input: { ...form, id: form.id || undefined, sortOrder: Number(form.sortOrder || 0) } } });
+  const submit = () => save({ variables: { input: { ...form, id: form.id || undefined, expectedUpdatedAt: form.id ? form.updatedAt : undefined, sortOrder: Number(form.sortOrder || 0) } } });
 
   return (
     <div className="space-y-7 pb-10">

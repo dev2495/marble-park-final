@@ -37,6 +37,10 @@ function listValues(sheet, column) {
   return values;
 }
 
+function rowFromHeaders(headers, values) {
+  return headers.map((header) => values[String(header).replace(/\s*\*\s*$/, '').trim()] ?? '');
+}
+
 async function main() {
   const createdSkus = [];
   const managedImageNames = [];
@@ -50,14 +54,14 @@ async function main() {
     const readiness = (await gql(`query { productImportReadiness }`, {}, token)).productImportReadiness;
     assert(readiness.ready && readiness.blockers.length === 0, `Import preflight must be ready before template download: ${JSON.stringify(readiness.blockers)}`);
     const template = (await gql(`query { productImportTemplate }`, {}, token)).productImportTemplate;
-    assert(template.contentBase64 && template.headers.includes('Internal Code') && template.headers.includes('Coverage Per Pack') && template.headers.includes('Default Purchase Cost') && template.headers.includes('Product Image'), 'Template must expose governed product, optional purchase cost and embedded-image fields');
+    assert(template.contentBase64 && template.headers.includes('Internal Code') && template.headers.includes('Coverage Per Pack') && template.headers.includes('Default MRP Incl GST') && !template.headers.includes('Default Purchase Cost') && template.headers.includes('Product Image'), 'Template must expose governed MRP, packing and embedded-image fields without a Product Master cost column');
 
     const downloaded = new ExcelJS.Workbook();
     await downloaded.xlsx.load(Buffer.from(template.contentBase64, 'base64'));
     const productSheet = downloaded.getWorksheet('Product Master');
     const lists = downloaded.getWorksheet('Live Master Lists');
     assert(productSheet && lists && downloaded.getWorksheet('How to use') && downloaded.getWorksheet('Reference details'), 'Template must include product, instructions, live lists and reference sheets');
-    assert(String(productSheet.getCell('A1').value).includes('*') && /optional/i.test(String(productSheet.getCell('N1').value)), 'Template headers must visibly distinguish required and optional columns');
+    assert(String(productSheet.getCell('A1').value).includes('*') && String(productSheet.getCell('N1').value).includes('*'), 'Template must visibly require SKU and MRP');
     const definedNames = new Set(downloaded.definedNames.model.map((row) => row.name));
     for (const name of ['Categories', 'Brands', 'Finishes', 'Materials', 'TileSizes', 'UOMs', 'TaxCodes', 'YesNo']) assert(definedNames.has(name), `Template is missing ${name} dropdown range`);
     assert(productSheet.getCell('D2').dataValidation?.formulae?.[0] === 'Categories', 'Category cells must use the live Categories dropdown');
@@ -82,17 +86,23 @@ async function main() {
     const cleanSuffix = `${Date.now().toString(36).toUpperCase()}C`;
     const cleanSku = `BULK-CLEAN-${cleanSuffix}`;
     createdSkus.push(cleanSku);
-    cleanSheet.addRow([cleanSku, `BC-${cleanSuffix}`, 'Clean browser confirmation row', categories.find((value) => value !== tileCategory) || categories[0], brands[0], finishes[0], '', '', '', '', '', '', '', '', '', '', taxCodes[0]]);
+    cleanSheet.addRow(rowFromHeaders(template.headers, {
+      SKU: cleanSku, 'Internal Code': `BC-${cleanSuffix}`, 'Product Name': 'Clean browser confirmation row',
+      Category: categories.find((value) => value !== tileCategory) || categories[0], Brand: brands[0], Finish: finishes[0],
+      'Default MRP Incl GST': 1180, 'Default NRP Incl GST': 1062, 'Floor Price Incl GST': 950,
+      'Price Basis': 'PIECE', 'Price UOM': 'PC', 'MRP Source': 'MANUAL', 'Pricing Effective From': '2026-08-25', 'Tax Code': taxCodes[0],
+    }));
     const cleanFilename = `clean-browser-review-${cleanSuffix}.xlsx`;
     const cleanUploadId = await uploadWorkbook(await cleanBook.xlsx.writeBuffer(), cleanFilename, token);
     const cleanPreview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel' }, token)).previewUploadedImport.result;
-    assert(cleanPreview.status === 'ready_to_apply' && cleanPreview.confirmationToken, 'Clean workbook must be ready on its first preview');
+    assert(cleanPreview.status === 'ready_to_apply' && cleanPreview.confirmationToken, `Clean workbook must be ready on its first preview: ${JSON.stringify(cleanPreview)}`);
     const browserRows = cleanPreview.previewRows.map((row) => ({
       sheet: row.sheet, rowNumber: row.rowNumber, sku: row.sku, internalCode: row.internalCode, name: row.name,
       category: row.category, brand: row.brand, finish: row.finish, material: row.material || '', dimensions: row.dimensions || '',
       baseUom: row.provided?.baseUom ? row.baseUom : '', purchaseUom: row.provided?.purchaseUom ? row.purchaseUom : '', salesUom: row.provided?.salesUom ? row.salesUom : '',
       piecesPerPack: row.provided?.piecesPerPack ? row.piecesPerPack : '', coveragePerPack: row.provided?.coveragePerPack ? row.coveragePerPack : '',
-      sellPrice: row.provided?.sellPrice ? row.sellPrice : '', floorPrice: row.provided?.floorPrice ? row.floorPrice : '', costPrice: row.provided?.costPrice ? row.costPrice : '', taxClass: row.taxClass,
+      defaultMrpInclusive: row.provided?.defaultMrpInclusive ? row.defaultMrpInclusive : '', defaultNrpInclusive: row.provided?.defaultNrpInclusive ? row.defaultNrpInclusive : '', floorPriceInclusive: row.provided?.floorPriceInclusive ? row.floorPriceInclusive : '',
+      priceRateBasis: row.priceRateBasis || '', priceUom: row.priceUom || '', mrpSource: row.mrpSource || '', pricingEffectiveFrom: row.pricingEffectiveFrom || '', taxClass: row.taxClass,
       hsnCode: row.hsnCode || '', allowLoose: row.provided?.allowLoose ? (row.allowLoose ? 'Yes' : 'No') : '', range: row.range || '', imageUrl: row.imageUrl || '', description: row.description || '',
     }));
     const cleanRevalidated = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $reviewRows: JSON) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, reviewRows: $reviewRows) { result } }`, { uploadId: cleanUploadId, filename: cleanFilename, kind: 'excel', reviewRows: browserRows }, token)).previewUploadedImport.result;
@@ -105,11 +115,17 @@ async function main() {
     const suffix = Date.now().toString(36).toUpperCase();
     const sku = `BULK-TILE-${suffix}`;
     createdSkus.push(sku);
-    sheet.addRow([sku, `BT-${suffix}`, 'Bulk imported porcelain tile', tileCategory, '', finishes[0] || '', materials[0] || '', '', '', '', '', '', '', '', 115, '', taxCodes[0], '', '', 'Smoke series', '', '', 'Exact tile design row']);
+    sheet.addRow(rowFromHeaders(template.headers, {
+      SKU: sku, 'Internal Code': `BT-${suffix}`, 'Product Name': 'Bulk imported porcelain tile', Category: tileCategory,
+      'Tile Design Code': `DES-${suffix}`, 'Tile Design Name': 'Bulk imported porcelain tile', 'Tile Size / Dimensions': tileSizes[0],
+      Brand: '', Finish: finishes[0] || '', Material: materials[0] || '', 'Default MRP Incl GST': 115,
+      'Default NRP Incl GST': 100, 'Floor Price Incl GST': 90, 'Price Basis': 'AREA', 'Price UOM': 'SQFT',
+      'MRP Source': 'MANUAL', 'Pricing Effective From': '2026-08-25', 'Tax Code': taxCodes[0], 'Range / Series': 'Smoke series', Description: 'Exact tile design row',
+    }));
     sheet.getRow(2).height = 48;
     const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nDMAAAAASUVORK5CYII=', 'base64');
     const imageId = workbook.addImage({ buffer: pixel, extension: 'png' });
-    sheet.addImage(imageId, { tl: { col: 21, row: 1 }, ext: { width: 42, height: 42 } });
+    sheet.addImage(imageId, { tl: { col: template.headers.indexOf('Product Image'), row: 1 }, ext: { width: 42, height: 42 } });
     const buffer = await workbook.xlsx.writeBuffer();
     const filename = `product-master-${suffix}.xlsx`;
     const uploadId = await uploadWorkbook(buffer, filename, token);
@@ -118,11 +134,11 @@ async function main() {
     const reviewRows = [{ sheet: 'Product Master', rowNumber: 2, brand: brands[0] }];
     const preview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $reviewRows: JSON) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, reviewRows: $reviewRows) { result } }`, { uploadId, filename, kind: 'excel', reviewRows }, token)).previewUploadedImport.result;
     assert(preview.status === 'ready_to_apply' && preview.ready === 1 && preview.failed === 0 && preview.confirmationToken, `Edited review must return one confirmed row: ${JSON.stringify(preview)}`);
-    assert(preview.previewRows[0].internalCode === `BT-${suffix}` && preview.previewRows[0].sellPrice === 0 && preview.previewRows[0].imageStatus === 'embedded_image_detected', 'Edited preview must retain identity/image and default an omitted price to zero');
+    assert(preview.previewRows[0].internalCode === `BT-${suffix}` && Number(preview.previewRows[0].defaultMrpInclusive) === 115 && preview.previewRows[0].imageStatus === 'embedded_image_detected', 'Edited preview must retain identity, governed MRP and image');
 
     const unconfirmedUploadId = await uploadWorkbook(buffer, `unconfirmed-${filename}`, token);
     const unconfirmedPreview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $reviewRows: JSON) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, reviewRows: $reviewRows) { result } }`, { uploadId: unconfirmedUploadId, filename: `unconfirmed-${filename}`, kind: 'excel', reviewRows }, token)).previewUploadedImport.result;
-    const changedReviewRows = [{ sheet: 'Product Master', rowNumber: 2, brand: brands[0], sellPrice: 1 }];
+    const changedReviewRows = [{ sheet: 'Product Master', rowNumber: 2, brand: brands[0], defaultMrpInclusive: 1 }];
     const unconfirmedError = await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!, $confirmationToken: String!, $reviewRows: JSON) { applyUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind, confirmationToken: $confirmationToken, reviewRows: $reviewRows) { result } }`, { uploadId: unconfirmedUploadId, filename: `unconfirmed-${filename}`, kind: 'excel', confirmationToken: unconfirmedPreview.confirmationToken, reviewRows: changedReviewRows }, token, true);
     assert(/changed|revalidate/i.test(unconfirmedError), 'Apply must reject review edits that differ from the server-signed preview');
 
@@ -130,8 +146,8 @@ async function main() {
     assert(applied.status === 'applied' && applied.created === 1 && applied.updated === 0 && applied.failed === 0, `Confirmed workbook must create new SKUs atomically without updates: ${JSON.stringify(applied)}`);
 
     const tile = await prisma.product.findUnique({ where: { sku }, include: { balances: true } });
-    assert(tile?.internalCode === `BT-${suffix}` && tile.purchaseUom === 'BOX' && tile.salesUom === 'BOX' && tile.baseUom === 'PC' && tile.piecesPerPack === 1 && tile.coveragePerPack === 0 && Number(tile.sellPrice) === 0, 'Imported tile must use safe defaults when optional unit, box conversion and price fields are blank');
-    assert(tile.categoryId && !tile.tileSizeId && tile.balances?.onHand === 0, 'Imported SKU must link required masters, allow an omitted tile size and start with zero physical stock');
+    assert(tile?.internalCode === `BT-${suffix}` && tile.purchaseUom === 'BOX' && tile.salesUom === 'BOX' && tile.baseUom === 'PC' && tile.piecesPerPack === 1 && tile.coveragePerPack === 0 && Number(tile.defaultMrpInclusive) === 115 && Number(tile.sellPrice) === 0, 'Imported tile must retain governed MRP and safe packing defaults without using deprecated price storage');
+    assert(tile.categoryId && tile.tileSizeId && tile.tileDesignId && tile.balances?.onHand === 0, 'Imported tile SKU must link its governed design and size masters and start with zero physical stock');
     assert(tile.media?.primaryUrl?.includes('/catalogue-images/manual/'), 'Embedded image must become managed Product Master media');
     managedImageNames.push(path.basename(tile.media.primaryUrl));
 
@@ -141,7 +157,7 @@ async function main() {
     const grn = (await gql(`mutation($input: ManualGoodsReceiptInput!) { createManualGoodsReceipt(input: $input) }`, { input: {
       vendorName: 'Product import lifecycle verification', supplierChallan: `IMP-${suffix}`, locationId: location.id,
       reason: 'Imported SKU inward verification', idempotencyKey: `import-lifecycle-${suffix}`,
-      lines: JSON.stringify([{ productId: tile.id, receivedQuantity: 4, damagedQuantity: 0, unitCost: 100, locationId: location.id, location: location.name }]),
+      lines: JSON.stringify([{ productId: tile.id, receivedQuantity: 4, damagedQuantity: 0, enteredUnitCost: 100, rateUom: 'PC', locationId: location.id, location: location.name }]),
     } }, token)).createManualGoodsReceipt;
     lifecycle.grnId = grn.id;
     const lots = (await gql(`query($productId: String) { inventoryLots(productId: $productId, status: "active", take: 10) }`, { productId: tile.id }, token)).inventoryLots;
@@ -151,7 +167,7 @@ async function main() {
     const lotJob = (await gql(`mutation($input: InternalLabelJobInput!) { createInternalLabelJob(input: $input) }`, { input: { lotId: lot.id, quantity: 2, template: 'stock_pack' } }, token)).createInternalLabelJob;
     lifecycle.labelJobIds.push(lotJob.id);
     const lotPrint = (await gql(`mutation($id: ID!) { printInternalLabelJob(id: $id) }`, { id: lotJob.id }, token)).printInternalLabelJob;
-    assert(lotPrint.labels.length === 2 && lotPrint.labels.every((label) => label.payload.lotNumber === lot.lotNumber && label.qrDataUrl.startsWith('data:image/png;base64,')), 'Lot label print must encode exact imported SKU and inward lot');
+    assert(lotPrint.labels.length === 2 && lotPrint.labels.every((label) => label.payload.lotNumber === lot.lotNumber && /^data:image\/(?:png|svg\+xml);base64,/.test(label.qrDataUrl)), 'Lot label print must encode exact imported SKU and inward lot in a renderable branded QR');
     const lotScan = (await gql(`mutation($labelCode: String!) { scanInternalLabel(labelCode: $labelCode) }`, { labelCode: lotPrint.labels[0].labelCode }, token)).scanInternalLabel;
     assert(lotScan.result === 'success' && lotScan.label.lotId === lot.id, 'Printed inward label must scan back to the exact lot');
 
@@ -174,7 +190,11 @@ async function main() {
     const invalidBook = new ExcelJS.Workbook();
     const invalidSheet = invalidBook.addWorksheet('Product Master');
     invalidSheet.addRow(template.headers);
-    invalidSheet.addRow([`BAD-${suffix}`, `BAD-${suffix}`, 'Unknown master row', 'Not A Real Category', '', '', '', '', uoms[0], uoms[0], uoms[0], 1, 0, 100, 90, '', taxCodes[0], '', 'No']);
+    invalidSheet.addRow(rowFromHeaders(template.headers, {
+      SKU: `BAD-${suffix}`, 'Internal Code': `BAD-${suffix}`, 'Product Name': 'Unknown master row', Category: 'Not A Real Category',
+      Brand: brands[0], Finish: finishes[0], 'Default MRP Incl GST': 100, 'Default NRP Incl GST': 90,
+      'Price Basis': 'PIECE', 'Price UOM': 'PC', 'MRP Source': 'MANUAL', 'Pricing Effective From': '2026-08-25', 'Tax Code': taxCodes[0],
+    }));
     const invalidFilename = `invalid-product-master-${suffix}.xlsx`;
     const invalidUploadId = await uploadWorkbook(await invalidBook.xlsx.writeBuffer(), invalidFilename, token);
     const invalidPreview = (await gql(`mutation($uploadId: String!, $filename: String!, $kind: String!) { previewUploadedImport(uploadId: $uploadId, filename: $filename, kind: $kind) { result } }`, { uploadId: invalidUploadId, filename: invalidFilename, kind: 'excel' }, token)).previewUploadedImport.result;
@@ -198,6 +218,7 @@ async function main() {
         if (lifecycle.lotId) await tx.inventoryLot.deleteMany({ where: { id: lifecycle.lotId } });
         if (lifecycle.grnId) await tx.goodsReceiptNote.deleteMany({ where: { id: lifecycle.grnId } });
         await tx.inventoryBalance.deleteMany({ where: { productId: { in: ids } } });
+        await tx.productMrpHistory.deleteMany({ where: { productId: { in: ids } } });
         await tx.productAlias.deleteMany({ where: { productId: { in: ids } } });
         await tx.auditEvent.deleteMany({ where: { OR: [{ entityType: 'Product', entityId: { in: ids } }, ...(lifecycle.grnId ? [{ entityId: lifecycle.grnId }] : []), ...(lifecycle.displayId ? [{ entityId: lifecycle.displayId }] : []), ...(lifecycle.labelJobIds.length ? [{ entityId: { in: lifecycle.labelJobIds } }] : [])] } });
         await tx.product.deleteMany({ where: { id: { in: ids } } });

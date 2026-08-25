@@ -97,6 +97,7 @@ async function cleanup() {
     if (state.poId) await tx.purchaseOrder.deleteMany({ where: { id: state.poId } });
     if (state.productId) {
       await tx.inventoryBalance.deleteMany({ where: { productId: state.productId } });
+      await tx.productMrpHistory.deleteMany({ where: { productId: state.productId } });
       await tx.productAlias.deleteMany({ where: { productId: state.productId } });
       await tx.notification.deleteMany({ where: { entityId: state.productId } });
       await tx.auditEvent.deleteMany({ where: { entityId: { in: [state.productId, state.poId, state.grnId].filter(Boolean) } } });
@@ -130,7 +131,8 @@ async function main() {
   const brands = setup.masterProductBrands.filter((brand) => brand.metadata?.quoteEnabled !== false);
   assert(setup.masterProductCategories.length && setup.masterProductFinishes.length, 'Product category and finish masters are required');
   assert(brands.length > 0, 'At least one active quote-enabled brand is required');
-  assert(setup.productImportTemplate.headers.includes('Default Purchase Cost'), 'Excel template must expose optional Default Purchase Cost');
+  assert(setup.productImportTemplate.headers.includes('Default MRP Incl GST'), 'Excel template must expose governed MRP');
+  assert(!setup.productImportTemplate.headers.includes('Default Purchase Cost'), 'Excel template must not treat Product Master as the source of actual cost');
   state.previousSettings = {
     id: settings.id,
     quoteBrandSelectionMode: settings.quoteBrandSelectionMode || 'all',
@@ -144,7 +146,11 @@ async function main() {
   );
 
   const product = (await gql(
-    `mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku name category brand finish unit sellPrice floorPrice costPrice media } }`,
+    `mutation($input: CreateProductInput!) {
+      createProduct(input: $input) {
+        id sku name category brand finish unit defaultMrpInclusive defaultNrpInclusive floorPriceInclusive priceRateBasis media
+      }
+    }`,
     { input: {
       sku: `COST-IMAGE-${suffix}`,
       internalCode: `CI-${suffix}`,
@@ -153,15 +159,17 @@ async function main() {
       brand: brands[0].name,
       finish: setup.masterProductFinishes[0].name,
       unit: 'PC',
-      sellPrice: 5500,
-      floorPrice: 5000,
-      costPrice: 4321,
+      defaultMrpInclusive: 6500,
+      defaultNrpInclusive: 5500,
+      floorPriceInclusive: 5000,
+      priceRateBasis: 'PIECE',
+      mrpSource: 'BRAND_LIST',
       taxClass: 'GST_18',
     } },
     token,
   )).createProduct;
   state.productId = product.id;
-  assert(Number(product.costPrice) === 4321, 'Product Master default purchase cost was not persisted');
+  assert(Number(product.defaultMrpInclusive) === 6500, 'Product Master MRP was not persisted');
   await prisma.product.update({
     where: { id: product.id },
     data: { media: { primaryUrl: '/catalogue-images/new-style-products-p011-106-98195b773d7d52.png', gallery: ['/catalogue-images/new-style-products-p011-106-98195b773d7d52.png'] } },
@@ -209,12 +217,15 @@ async function main() {
 
   const po = (await gql(
     `mutation($input: CreatePurchaseOrderInput!) { createPurchaseOrder(input: $input) }`,
-    { input: { demandIds: [], vendorName: 'Release gate supplier', notes: 'PO cost intentionally deferred to inward', lines: JSON.stringify([{ productId: product.id, quantity: 2, unit: 'PC' }]) } },
+    { input: {
+      demandIds: [], vendorName: 'Release gate supplier', notes: 'Supplier rate captured on the PO', discountPercent: 0, taxRate: 0,
+      lines: JSON.stringify([{ productId: product.id, quantity: 2, unit: 'PC', enteredUnitCost: 4321, rateUom: 'PC' }]),
+    } },
     token,
   )).createPurchaseOrder;
   state.poId = po.id;
-  assert(po.lines.length === 1 && Number(po.lines[0].unitCost) === 0, 'PO must accept a line without unit cost');
-  assert(Number(po.lines[0].skuCost) === 4321 && Number(po.lines[0].effectiveUnitCost) === 4321, 'PO response must expose the Product Master fallback cost');
+  assert(po.lines.length === 1 && Number(po.lines[0].unitCost) === 4321, 'PO must normalize the positive supplier rate');
+  assert(Number(po.lines[0].netUnitCost) === 4321, 'PO must preserve the completed net pre-tax cost snapshot');
 
   const location = setup.stockLocations.find((row) => row.defaultStockScope) || setup.stockLocations[0];
   assert(location?.id, 'A stock location is required for GRN verification');
@@ -235,9 +246,9 @@ async function main() {
   const ledger = lot
     ? await prisma.stockLedgerEntry.findUnique({ where: { idempotencyKey: `grn:${grn.id}:${lot.id}` } })
     : null;
-  assert(Number(receiptLine?.unitCost) === 4321 && receiptLine?.metadata?.costSource === 'sku_default', 'GRN must fall back to Product Master cost when GRN and PO costs are blank');
-  assert(Number(lot?.unitCost) === 4321 && lot?.metadata?.costSource === 'sku_default', 'Inventory lot must retain the resolved SKU-default cost source');
-  assert(ledger?.type === 'grn_receipt' && Number(ledger?.unitCost) === 4321 && ledger?.metadata?.costSource === 'sku_default', 'Stock ledger must retain the resolved SKU-default cost source');
+  assert(Number(receiptLine?.unitCost) === 4321 && receiptLine?.metadata?.costSource === 'purchase_order_net_snapshot', 'PO-linked GRN must inherit the PO net pre-tax cost');
+  assert(Number(lot?.unitCost) === 4321 && lot?.metadata?.costSource === 'purchase_order_net_snapshot', 'Inventory lot must retain the PO cost source');
+  assert(ledger?.type === 'grn_receipt' && Number(ledger?.unitCost) === 4321 && ledger?.metadata?.costSource === 'purchase_order_net_snapshot', 'Stock ledger must retain the PO cost source');
 
   const fulfillment = (await gql(`query($quoteId: ID!) { quoteFulfillment(quoteId: $quoteId) }`, { quoteId: quote.id }, token)).quoteFulfillment;
   const order = (await gql(
@@ -288,7 +299,7 @@ async function main() {
 
   console.log(JSON.stringify({
     ok: true,
-    product: { sku: product.sku, defaultCost: product.costPrice },
+    product: { sku: product.sku, mrp: product.defaultMrpInclusive, floor: product.floorPriceInclusive },
     procurement: { poNumber: po.poNumber, poCost: po.lines[0].unitCost, grnNumber: grn.grnNumber, resolvedCost: receiptLine.unitCost, costSource: receiptLine.metadata.costSource },
     quote: { quoteNumber: quote.quoteNumber, managedImage: quoteLine.quoteImage, servedBrands: expectedBrands.length, imageObjects, pages: pdfPageCount(quoteInline) },
     sharing: { publicPage: `${WEB}/share/quotes/${share.token}`, publicPdfBytes: sharedPdf.length },

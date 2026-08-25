@@ -28,7 +28,7 @@ try {
   const template = setup.internalLabelTemplates.find((row) => row.code === 'a4_70x37') || setup.internalLabelTemplates[0];
   assert(brand?.name && brand?.code && category?.name && finish?.name && template?.code, 'Governed brand code, category, finish and label template are required');
   const suffix = Date.now().toString(36).toUpperCase();
-  const product = (await gql('mutation($input:CreateProductInput!){createProduct(input:$input){id sku brand}}', { input: {
+  const product = (await gql('mutation($input:CreateProductInput!){createProduct(input:$input){id sku internalCode brand}}', { input: {
     sku: `LABEL-BRAND-${suffix}`, internalCode: `LB-${suffix}`, name: `Label brand-code acceptance ${suffix}`,
     category: category.name, brand: brand.name, finish: finish.name, unit: 'PC', taxClass: 'GST_18',
     defaultMrpInclusive: 1000, defaultNrpInclusive: 900, priceRateBasis: 'PIECE', priceUom: 'PC',
@@ -41,10 +41,11 @@ try {
   const run = (await gql('query($id:ID!){internalLabelPrintRun(id:$id)}', { id: prepared.id }, token)).internalLabelPrintRun;
   assert(run.labels?.length === 1, 'Prepared run must contain one label');
   assert(run.labels[0].payload.brandCode === brand.code, `Label must use Brand Master code ${brand.code}`);
+  assert(run.labels[0].payload.productCode === product.internalCode, 'Label must expose the governed Product Master code');
   assert(run.labels[0].payload.brand === brand.name, 'Full brand name must remain in governed payload for traceability');
   assert(Number(run.labels[0].payload.mrpInclusive) === 1000, 'Label must use the governed Product Master MRP');
   assert(run.labels[0].payload.priceUom === 'PC', 'Generic product label must retain its governed pricing UOM');
-  console.log(JSON.stringify({ ok: true, brandName: brand.name, printedBrandCode: run.labels[0].payload.brandCode, mrpInclusive: run.labels[0].payload.mrpInclusive, priceUom: run.labels[0].payload.priceUom }));
+  console.log(JSON.stringify({ ok: true, productCode: run.labels[0].payload.productCode, brandName: brand.name, printedBrandCode: run.labels[0].payload.brandCode, mrpInclusive: run.labels[0].payload.mrpInclusive, priceUom: run.labels[0].payload.priceUom }));
 } finally {
   if (jobId) {
     await prisma.internalLabelPrintRun.deleteMany({ where: { labelJobId: jobId } }).catch(() => null);

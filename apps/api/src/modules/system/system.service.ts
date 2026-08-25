@@ -266,37 +266,37 @@ export class SystemService {
 
   async upsertProductCategory(input: any, actorUserId: string) {
     const name = String(input.name || '').trim();
-    if (!name) throw new Error('Category name is required');
+    if (!name) throw new BadRequestException('Category name is required');
+    const existing = input.id ? await this.prisma.productCategory.findUnique({ where: { id: String(input.id) } }) : null;
+    if (input.id && !existing) throw new BadRequestException('Category no longer exists');
+    this.assertExpectedUpdatedAt(existing, input.expectedUpdatedAt, 'category');
+    const code = String(input.code || this.slugCode(name)).trim().toUpperCase();
+    const duplicate = await this.prisma.productCategory.findFirst({ where: { OR: [{ name: { equals: name, mode: 'insensitive' } }, { code }], ...(input.id ? { id: { not: String(input.id) } } : {}) } });
+    if (duplicate) throw new BadRequestException(`Category name or code is already used by ${duplicate.name}`);
     const data = {
       name,
-      code: input.code || this.slugCode(name),
+      code,
       description: input.description || '',
       status: input.status || 'active',
       sortOrder: Number(input.sortOrder || 0),
-      metadata: input.metadata || {},
+      metadata: { ...((existing?.metadata as any) || {}), ...(input.metadata || {}) },
       updatedAt: new Date(),
     };
-    const category = input.id
-      ? await this.prisma.productCategory.update({ where: { id: input.id }, data })
-      : await this.prisma.productCategory.upsert({
-          where: { name },
-          update: data,
-          create: { id: ulid(), ...data },
-        });
-    await this.audit(actorUserId, 'master.category.save', 'ProductCategory', category.id, `Saved inventory category ${category.name}`, data);
-    return category;
+    return this.prisma.$transaction(async (tx) => {
+      const category = existing
+        ? await this.updateMasterRow(tx.productCategory, existing.id, existing.updatedAt, data, 'category')
+        : await tx.productCategory.create({ data: { id: ulid(), ...data } });
+      await tx.auditEvent.create({ data: this.auditData(actorUserId, existing ? 'master.category.update' : 'master.category.create', 'ProductCategory', category.id, `${existing ? 'Updated' : 'Created'} inventory category ${category.name}`, { before: existing, after: category }) });
+      return category;
+    });
   }
 
   async upsertProductBrand(input: any, actorUserId: string) {
-    const value = await this.upsertProductMasterValue('brand', input);
-    await this.audit(actorUserId, 'master.brand.save', 'ProductBrand', value.id, `Saved product brand ${value.name}`, value);
-    return value;
+    return this.upsertProductMasterValue('brand', input, actorUserId);
   }
 
   async upsertProductFinish(input: any, actorUserId: string) {
-    const value = await this.upsertProductMasterValue('finish', input);
-    await this.audit(actorUserId, 'master.finish.save', 'ProductFinish', value.id, `Saved product finish ${value.name}`, value);
-    return value;
+    return this.upsertProductMasterValue('finish', input, actorUserId);
   }
 
   async upsertTileSize(input: any, actorUserId: string) {
@@ -304,7 +304,10 @@ export class SystemService {
     const code = String(input.code || '').trim().toUpperCase();
     if (!name) throw new Error('Tile size name is required');
     if (!code) throw new Error('Tile size code is required');
-    const duplicateCode = await (this.prisma as any).tileSize.findFirst({ where: { code, ...(input.id ? { id: { not: input.id } } : {}) } });
+    const existing = input.id ? await this.prisma.tileSize.findUnique({ where: { id: String(input.id) } }) : null;
+    if (input.id && !existing) throw new BadRequestException('Tile size no longer exists');
+    this.assertExpectedUpdatedAt(existing, input.expectedUpdatedAt, 'tile size');
+    const duplicateCode = await (this.prisma as any).tileSize.findFirst({ where: { OR: [{ code }, { name: { equals: name, mode: 'insensitive' } }], ...(input.id ? { id: { not: input.id } } : {}) } });
     if (duplicateCode) throw new Error(`Tile size code ${code} is already used by ${duplicateCode.name}`);
     const uom = String(input.uom || 'BOX').trim().toUpperCase() === 'PC' ? 'PC' : 'BOX';
     const positive = (value: any, label: string) => {
@@ -335,18 +338,16 @@ export class SystemService {
       description: input.description || '',
       status: input.status || 'active',
       sortOrder: Number(input.sortOrder || 0),
-      metadata: input.metadata || {},
+      metadata: { ...((existing?.metadata as any) || {}), ...(input.metadata || {}) },
       updatedAt: new Date(),
     };
-    const tileSize = input.id
-      ? await (this.prisma as any).tileSize.update({ where: { id: input.id }, data })
-      : await (this.prisma as any).tileSize.upsert({
-          where: { name },
-          update: data,
-          create: { id: ulid(), ...data },
-        });
-    await this.audit(actorUserId, 'master.tile_size.save', 'TileSize', tileSize.id, `Saved tile size ${tileSize.name}`, data);
-    return tileSize;
+    return this.prisma.$transaction(async (tx) => {
+      const tileSize = existing
+        ? await this.updateMasterRow(tx.tileSize, existing.id, existing.updatedAt, data, 'tile size')
+        : await tx.tileSize.create({ data: { id: ulid(), ...data } });
+      await tx.auditEvent.create({ data: this.auditData(actorUserId, existing ? 'master.tile_size.update' : 'master.tile_size.create', 'TileSize', tileSize.id, `${existing ? 'Updated' : 'Created'} tile size ${tileSize.name}`, { before: existing, after: tileSize }) });
+      return tileSize;
+    });
   }
 
   async vendors(args?: { search?: string; status?: string; take?: number }) {
@@ -542,26 +543,52 @@ export class SystemService {
     }
   }
 
-  private async upsertProductMasterValue(kind: 'brand' | 'finish', input: any) {
+  private async upsertProductMasterValue(kind: 'brand' | 'finish', input: any, actorUserId: string) {
     const name = String(input.name || '').trim();
-    if (!name) throw new Error(`${kind === 'brand' ? 'Brand' : 'Finish'} name is required`);
+    const label = kind === 'brand' ? 'Brand' : 'Finish';
+    if (!name) throw new BadRequestException(`${label} name is required`);
+    const delegate: any = kind === 'brand' ? this.prisma.productBrand : this.prisma.productFinish;
+    const existing = input.id ? await delegate.findUnique({ where: { id: String(input.id) } }) : null;
+    if (input.id && !existing) throw new BadRequestException(`${label} no longer exists`);
+    this.assertExpectedUpdatedAt(existing, input.expectedUpdatedAt, kind);
+    const code = String(input.code || this.slugCode(name)).trim().toUpperCase();
+    const duplicate = await delegate.findFirst({ where: { OR: [{ name: { equals: name, mode: 'insensitive' } }, { code: { equals: code, mode: 'insensitive' } }], ...(input.id ? { id: { not: String(input.id) } } : {}) } });
+    if (duplicate) throw new BadRequestException(`${label} name or code is already used by ${duplicate.name}`);
     const data = {
       name,
-      code: input.code || this.slugCode(name),
+      code,
       description: input.description || '',
       status: input.status || 'active',
       sortOrder: Number(input.sortOrder || 0),
-      metadata: input.metadata || {},
+      metadata: { ...((existing?.metadata as any) || {}), ...(input.metadata || {}) },
       updatedAt: new Date(),
     };
-    const delegate: any = kind === 'brand' ? this.prisma.productBrand : this.prisma.productFinish;
-    return input.id
-      ? delegate.update({ where: { id: input.id }, data })
-      : delegate.upsert({
-          where: { name },
-          update: data,
-          create: { id: ulid(), ...data },
-        });
+    return this.prisma.$transaction(async (tx: any) => {
+      const txDelegate = kind === 'brand' ? tx.productBrand : tx.productFinish;
+      const value = existing
+        ? await this.updateMasterRow(txDelegate, existing.id, existing.updatedAt, data, kind)
+        : await txDelegate.create({ data: { id: ulid(), ...data } });
+      await tx.auditEvent.create({ data: this.auditData(actorUserId, `master.${kind}.${existing ? 'update' : 'create'}`, kind === 'brand' ? 'ProductBrand' : 'ProductFinish', value.id, `${existing ? 'Updated' : 'Created'} product ${kind} ${value.name}`, { before: existing, after: value }) });
+      return value;
+    });
+  }
+
+  private assertExpectedUpdatedAt(existing: any, expectedUpdatedAt: unknown, label: string) {
+    if (!existing || !expectedUpdatedAt) return;
+    const expected = new Date(String(expectedUpdatedAt));
+    if (!Number.isFinite(expected.getTime()) || new Date(existing.updatedAt).getTime() !== expected.getTime()) {
+      throw new BadRequestException(`This ${label} was changed by another user. Refresh it before saving.`);
+    }
+  }
+
+  private async updateMasterRow(delegate: any, id: string, updatedAt: Date, data: any, label: string) {
+    const result = await delegate.updateMany({ where: { id, updatedAt }, data });
+    if (result.count !== 1) throw new BadRequestException(`This ${label} was changed by another user. Refresh it before saving.`);
+    return delegate.findUniqueOrThrow({ where: { id } });
+  }
+
+  private auditData(actorUserId: string, action: string, entityType: string, entityId: string, summary: string, metadata: any) {
+    return { id: ulid(), actorUserId, action, entityType, entityId, summary, metadata };
   }
 
   private slugCode(value: string) {

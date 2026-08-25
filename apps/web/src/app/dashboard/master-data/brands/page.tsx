@@ -66,6 +66,7 @@ export default function BrandMasterPage() {
     setMessage('');
     await save({ variables: { input: {
       id: form.id || undefined,
+      expectedUpdatedAt: form.id ? form.updatedAt : undefined,
       name: form.name,
       code: form.code || undefined,
       description: form.description || '',

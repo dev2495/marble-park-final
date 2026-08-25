@@ -1355,6 +1355,7 @@ export class OperationsService {
         labelCode: instance.labelCode,
         sku: instance.product?.sku || null,
         internalCode: instance.displaySample?.internalCode || instance.product?.internalCode || null,
+        productCode: instance.displaySample?.internalCode || instance.product?.internalCode || instance.product?.sku || null,
         productName: instance.product?.name || null,
         brandCode: instance.product?.brandMaster?.code || null,
         brand: instance.product?.brand || null,

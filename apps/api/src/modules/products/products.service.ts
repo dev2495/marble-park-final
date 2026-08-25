@@ -51,6 +51,7 @@ export interface UpdateProductInput {
   priceRateBasis?: string;
   priceUom?: string;
   mrpSource?: string;
+  mrpChangeReason?: string;
   pricingEffectiveFrom?: string;
   taxClass?: string;
   description?: string;
@@ -228,6 +229,21 @@ export class ProductsService {
           },
         });
       }
+      await tx.productMrpHistory.create({
+        data: {
+          id: ulid(),
+          productId: product.id,
+          previousMrpInclusive: null,
+          newMrpInclusive: product.defaultMrpInclusive!,
+          priceRateBasis: product.priceRateBasis || this.basisForUom(product.priceUom || product.salesUom),
+          priceUom: product.priceUom || product.salesUom || product.unit || 'PC',
+          source: product.mrpSource,
+          reason: 'Initial MRP at SKU creation',
+          changedById: actorUserId || 'system',
+          effectiveFrom: product.pricingEffectiveFrom,
+          metadata: { changeKind: 'initial', sku: product.sku },
+        },
+      });
       await tx.auditEvent.create({
         data: {
           id: ulid(),
@@ -235,8 +251,8 @@ export class ProductsService {
           action: 'product.create',
           entityType: 'Product',
           entityId: product.id,
-          summary: `Created product ${product.sku}`,
-          metadata: { sku: product.sku, name: product.name, supplierAlias: supplierAlias || null, defaultMrpInclusive: product.defaultMrpInclusive, defaultNrpInclusive: product.defaultNrpInclusive, floorPriceInclusive: product.floorPriceInclusive, priceRateBasis: product.priceRateBasis, priceUom: product.priceUom },
+          summary: `Created product ${product.internalCode || product.sku} (${product.sku})`,
+          metadata: { sku: product.sku, internalCode: product.internalCode, name: product.name, supplierAlias: supplierAlias || null, defaultMrpInclusive: product.defaultMrpInclusive, defaultNrpInclusive: product.defaultNrpInclusive, floorPriceInclusive: product.floorPriceInclusive, priceRateBasis: product.priceRateBasis, priceUom: product.priceUom },
         },
       });
       return product;
@@ -251,6 +267,7 @@ export class ProductsService {
     }
 
     const update: any = {};
+    const currentMrp = current.defaultMrpInclusive == null ? null : Number(current.defaultMrpInclusive);
     for (const key of ['name', 'category', 'brand', 'finish', 'dimensions', 'unit', 'taxClass', 'description', 'status']) {
       if ((data as any)[key] !== undefined) update[key] = String((data as any)[key] || '').trim();
     }
@@ -281,6 +298,14 @@ export class ProductsService {
         mrpVerifiedById: defaults.defaultMrpInclusive === null ? null : actorUserId || 'system',
         pricingVersion: 'unified_retail_v1',
       });
+    }
+    const nextMrp = update.defaultMrpInclusive === undefined
+      ? currentMrp
+      : update.defaultMrpInclusive == null ? null : Number(update.defaultMrpInclusive);
+    const mrpChanged = nextMrp !== null && (currentMrp === null || Math.abs(nextMrp - currentMrp) > 0.0001);
+    const mrpChangeReason = String(data.mrpChangeReason || '').trim();
+    if (mrpChanged && currentMrp !== null && mrpChangeReason.length < 3) {
+      throw new BadRequestException('Enter a short reason for changing an existing MRP. It will be kept in the SKU price history.');
     }
     if (data.media !== undefined) update.media = await this.normalizeMedia(data.media);
     if (update.category) update.categoryId = (await this.ensureCategory(update.category))?.id || null;
@@ -335,6 +360,23 @@ export class ProductsService {
           },
         });
       }
+      if (mrpChanged && product.defaultMrpInclusive != null) {
+        await tx.productMrpHistory.create({
+          data: {
+            id: ulid(),
+            productId: product.id,
+            previousMrpInclusive: current.defaultMrpInclusive,
+            newMrpInclusive: product.defaultMrpInclusive,
+            priceRateBasis: product.priceRateBasis || this.basisForUom(product.priceUom || product.salesUom),
+            priceUom: product.priceUom || product.salesUom || product.unit || 'PC',
+            source: product.mrpSource,
+            reason: mrpChangeReason || 'Initial MRP verification',
+            changedById: actorUserId || 'system',
+            effectiveFrom: product.pricingEffectiveFrom,
+            metadata: { changeKind: currentMrp === null ? 'initial_verification' : 'revision', sku: product.sku },
+          },
+        });
+      }
       await tx.auditEvent.create({
         data: {
           id: ulid(),
@@ -342,8 +384,8 @@ export class ProductsService {
           action: 'product.update',
           entityType: 'Product',
           entityId: id,
-          summary: `Updated product ${product.sku}`,
-          metadata: { before: this.auditProduct(current), after: this.auditProduct(product), supplierAlias: supplierAlias || null },
+          summary: `Updated product ${product.internalCode || product.sku} (${product.sku})`,
+          metadata: { before: this.auditProduct(current), after: this.auditProduct(product), supplierAlias: supplierAlias || null, mrpChanged, mrpChangeReason: mrpChanged ? (mrpChangeReason || 'Initial MRP verification') : null },
         },
       });
       return product;
@@ -656,7 +698,9 @@ export class ProductsService {
       priceRateBasis: 'AREA',
       priceUom: 'SQFT',
       mrpSource: input.mrpSource === undefined ? existing.mrpSource : input.mrpSource,
+      mrpChangeReason: input.mrpChangeReason,
       pricingEffectiveFrom: input.pricingEffectiveFrom === undefined ? existing.pricingEffectiveFrom : input.pricingEffectiveFrom,
+      expectedUpdatedAt: input.expectedUpdatedAt,
       status: input.status || existing.status,
       supplierAlias: input.alias,
     }, actorUserId);
@@ -1058,9 +1102,64 @@ export class ProductsService {
       priceRateBasis: input.priceRateBasis,
       priceUom: input.priceUom,
       mrpSource: input.mrpSource,
+      mrpChangeReason: input.mrpChangeReason,
       pricingEffectiveFrom: input.pricingEffectiveFrom,
       expectedUpdatedAt: input.expectedUpdatedAt,
     }, actorUserId);
+  }
+
+  async mrpHistoryPage(args?: { productId?: string; search?: string; actorUserId?: string; from?: string; to?: string; skip?: number; take?: number }) {
+    const where: any = {};
+    if (args?.productId) where.productId = String(args.productId);
+    if (args?.actorUserId) where.changedById = String(args.actorUserId);
+    const search = String(args?.search || '').trim();
+    if (search) {
+      where.product = { is: { OR: [
+        { sku: { contains: search, mode: 'insensitive' } },
+        { internalCode: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+      ] } };
+    }
+    const createdAt: any = {};
+    if (args?.from) {
+      const from = new Date(args.from);
+      if (!Number.isFinite(from.getTime())) throw new BadRequestException('MRP history start date is invalid');
+      createdAt.gte = from;
+    }
+    if (args?.to) {
+      const to = new Date(args.to);
+      if (!Number.isFinite(to.getTime())) throw new BadRequestException('MRP history end date is invalid');
+      createdAt.lte = to;
+    }
+    if (Object.keys(createdAt).length) where.createdAt = createdAt;
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const take = Math.min(100, Math.max(1, Number(args?.take || 25)));
+    const [items, total] = await Promise.all([
+      this.prisma.productMrpHistory.findMany({
+        where,
+        skip,
+        take,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        include: { product: { select: { id: true, sku: true, internalCode: true, name: true, category: true, brand: true } } },
+      }),
+      this.prisma.productMrpHistory.count({ where }),
+    ]);
+    const actorIds = Array.from(new Set(items.map((row) => row.changedById).filter(Boolean)));
+    const actors = actorIds.length ? await this.prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true, email: true, role: true } }) : [];
+    const actorById = new Map(actors.map((actor) => [actor.id, actor]));
+    return {
+      items: items.map((row) => ({
+        ...row,
+        previousMrpInclusive: row.previousMrpInclusive == null ? null : Number(row.previousMrpInclusive),
+        newMrpInclusive: Number(row.newMrpInclusive),
+        actor: actorById.get(row.changedById) || null,
+      })),
+      total,
+      skip,
+      take,
+      hasPreviousPage: skip > 0,
+      hasNextPage: skip + items.length < total,
+    };
   }
 
   private auditProduct(product: any) {

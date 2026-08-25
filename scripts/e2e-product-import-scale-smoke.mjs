@@ -89,6 +89,7 @@ main().catch((error) => {
   const productIds = products.map((row) => row.id);
   if (productIds.length) {
     await prisma.inventoryBalance.deleteMany({ where: { productId: { in: productIds } } }).catch(() => null);
+    await prisma.productMrpHistory.deleteMany({ where: { productId: { in: productIds } } }).catch(() => null);
     await prisma.productAlias.deleteMany({ where: { productId: { in: productIds } } }).catch(() => null);
     await prisma.auditEvent.deleteMany({ where: { entityType: 'Product', entityId: { in: productIds } } }).catch(() => null);
     await prisma.product.deleteMany({ where: { id: { in: productIds } } }).catch(() => null);

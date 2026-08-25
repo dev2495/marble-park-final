@@ -43,12 +43,14 @@ function PricingRow({ row, onSaved }: { row:any; onSaved:() => Promise<any> }) {
     source: row.mrpSource || 'MANUAL',
   });
   const [message,setMessage]=useState('');
+  const [reason,setReason]=useState('');
   const [save,{loading}]=useMutation(COMPLETE);
-  const invalid = Number(form.mrp) <= 0 || (form.nrp !== '' && Number(form.nrp) > Number(form.mrp)) || (form.floor !== '' && Number(form.floor) > Number(form.nrp || form.mrp));
+  const mrpChanged = row.defaultMrpInclusive != null && Math.abs(Number(form.mrp) - Number(row.defaultMrpInclusive)) > 0.0001;
+  const invalid = Number(form.mrp) <= 0 || (form.nrp !== '' && Number(form.nrp) > Number(form.mrp)) || (form.floor !== '' && Number(form.floor) > Number(form.nrp || form.mrp)) || (mrpChanged && reason.trim().length < 3);
   async function submit() {
     setMessage('');
     try {
-      await save({variables:{input:{productId:row.id,defaultMrpInclusive:Number(form.mrp),defaultNrpInclusive:form.nrp===''?null:Number(form.nrp),floorPriceInclusive:form.floor===''?null:Number(form.floor),priceRateBasis:isTile?'AREA':form.basis,priceUom:isTile?'SQFT':form.uom,mrpSource:form.source,pricingEffectiveFrom:new Date().toISOString(),expectedUpdatedAt:row.updatedAt}}});
+      await save({variables:{input:{productId:row.id,defaultMrpInclusive:Number(form.mrp),defaultNrpInclusive:form.nrp===''?null:Number(form.nrp),floorPriceInclusive:form.floor===''?null:Number(form.floor),priceRateBasis:isTile?'AREA':form.basis,priceUom:isTile?'SQFT':form.uom,mrpSource:form.source,mrpChangeReason:mrpChanged?reason.trim():undefined,pricingEffectiveFrom:new Date().toISOString(),expectedUpdatedAt:row.updatedAt}}});
       setMessage('MRP verified. Loading the next SKU…');
       await onSaved();
     } catch (error:any) { setMessage(error?.message || 'Pricing could not be saved.'); }
@@ -66,6 +68,7 @@ function PricingRow({ row, onSaved }: { row:any; onSaved:() => Promise<any> }) {
       <label className="grid gap-1 text-[10px] font-black uppercase tracking-wider text-[var(--ink-4)]">Basis<select disabled={isTile} value={isTile?'AREA':form.basis} onChange={e=>setForm({...form,basis:e.target.value})} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-xs"><option value="PIECE">Piece</option><option value="BOX">Box</option><option value="AREA">Area</option></select></label>
       <label className="grid gap-1 text-[10px] font-black uppercase tracking-wider text-[var(--ink-4)]">Rate UOM<Input disabled={isTile} value={isTile?'SQFT':form.uom} onChange={e=>setForm({...form,uom:e.target.value.toUpperCase()})}/></label>
       <label className="grid gap-1 text-[10px] font-black uppercase tracking-wider text-[var(--ink-4)]">MRP source<select value={form.source} onChange={e=>setForm({...form,source:e.target.value})} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-xs"><option value="MANUAL">Manual verification</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
+      {mrpChanged?<label className="grid gap-1 text-[10px] font-black uppercase tracking-wider text-[#9f342d] sm:col-span-2 lg:col-span-3">MRP change reason *<Input value={reason} onChange={e=>setReason(e.target.value)} placeholder="Example: Revised brand price list"/></label>:null}
       <div className="sm:col-span-2 lg:col-span-3"><Button onClick={submit} disabled={loading||invalid} className="w-full sm:w-auto">{loading?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<Save className="mr-2 h-4 w-4"/>}Verify and continue</Button>{message?<span className={`ml-3 text-xs font-bold ${message.startsWith('MRP verified')?'text-emerald-700':'text-red-700'}`}>{message}</span>:null}</div>
     </div>
     <aside className="rounded-r3 border border-[var(--line)] bg-[var(--bg-soft)] p-3">

@@ -40,12 +40,15 @@ async function main() {
   const sku = `DIRECT-${stamp}`;
 
   const product = (await gql(`mutation($input: CreateProductInput!) { createProduct(input: $input) { id sku name } }`, {
-    input: { sku, internalCode: sku, name: 'Direct order lifecycle mixer', category: 'Faucets', brand: 'Lifecycle Gate', finish: 'Chrome', unit: 'PC', sellPrice: 1000, floorPrice: 800, costPrice: 700, taxClass: 'GST_18' },
+    input: {
+      sku, internalCode: sku, name: 'Direct order lifecycle mixer', category: 'Faucets', brand: 'Lifecycle Gate', finish: 'Chrome', unit: 'PC',
+      defaultMrpInclusive: 1180, defaultNrpInclusive: 1000, floorPriceInclusive: 800, priceRateBasis: 'PIECE', mrpSource: 'MANUAL', taxClass: 'GST_18',
+    },
   }, token)).createProduct;
   cleanup.productIds.push(product.id);
   const location = await prisma.stockLocation.findFirst({ where: { status: 'active' } });
   assert(location, 'An active stock location is required');
-  await gql(`mutation($input: ManualGoodsReceiptInput!) { createManualGoodsReceipt(input: $input) }`, { input: { vendorName: 'Lifecycle vendor', locationId: location.id, idempotencyKey: `${sku}-GRN`, lines: JSON.stringify([{ productId: product.id, receivedQuantity: 3, unitCost: 700 }]) } }, token);
+  await gql(`mutation($input: ManualGoodsReceiptInput!) { createManualGoodsReceipt(input: $input) }`, { input: { vendorName: 'Lifecycle vendor', locationId: location.id, reason: 'Isolated lifecycle acceptance opening receipt', idempotencyKey: `${sku}-GRN`, lines: JSON.stringify([{ productId: product.id, receivedQuantity: 3, enteredUnitCost: 700, rateUom: 'PC' }]) } }, token);
 
   const customer = (await gql(`mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`, { input: { name: `Direct customer ${stamp}`, phone: '9000000012', email: `direct-${stamp.toLowerCase()}@example.test`, city: 'Vapi', address: 'Lifecycle test', forceCreate: true } }, token)).createCustomer;
   cleanup.customerIds.push(customer.id);
@@ -54,7 +57,7 @@ async function main() {
 
   await gql(
     `mutation($customerId: ID!, $input: CustomerCreditProfileInput!) { updateCustomerCreditProfile(customerId: $customerId, input: $input) }`,
-    { customerId: customer.id, input: { creditLimit: 3000, defaultPaymentTerms: 'Net 30' } },
+    { customerId: customer.id, input: { creditLimit: 2500, defaultPaymentTerms: 'Net 30' } },
     token,
   );
   const committedCreditOrder = (await gql(`mutation($input: CreateDirectSalesOrderInput!) { createDirectSalesOrder(input: $input) }`, { input: {
@@ -63,7 +66,7 @@ async function main() {
   } }, token)).createDirectSalesOrder;
   cleanup.orderIds.push(committedCreditOrder.id);
   if (committedCreditOrder.leadId) cleanup.leadIds.push(committedCreditOrder.leadId);
-  assert(Number(committedCreditOrder.totalAmount) === 1180, 'Credit-limit fixture must create one unbilled commitment within the limit');
+  assert(Number(committedCreditOrder.totalAmount) === 1000, 'Credit-limit fixture must create one tax-inclusive unbilled commitment within the limit');
   let creditLimitBlocked = false;
   try {
     await gql(`mutation($input: CreateDirectSalesOrderInput!) { createDirectSalesOrder(input: $input) }`, { input: {
@@ -87,16 +90,16 @@ async function main() {
   cleanup.orderIds.push(direct.id);
   if (direct.leadId) cleanup.leadIds.push(direct.leadId);
   assert(direct.quoteId === null && direct.ownerId === owners[0].id, 'Direct order must be quote-less and retain the selected sales owner');
-  assert(Number(direct.totalAmount) === 2360 && direct.paymentStatus === 'advance', 'Direct order GST and advance status must be correct');
+  assert(Number(direct.totalAmount) === 2000 && direct.paymentStatus === 'advance', 'Direct order tax-inclusive total and advance status must be correct');
   const orderLine = await prisma.salesOrderLine.findFirst({ where: { salesOrderId: direct.id } });
   const reservation = await prisma.reservation.findFirst({ where: { salesOrderId: direct.id } });
   assert(orderLine?.id && reservation?.salesOrderLineId === orderLine.id && Number(orderLine.reservedQuantity) === 2, 'Direct reservation must remain linked to its order line');
-  assert(Number(orderLine.costSnapshot) === 700 && orderLine.costSnapshotSource === 'Product.costPrice' && orderLine.costSnapshotAt, 'Direct order line must preserve the governed Product Master cost snapshot');
+  assert(orderLine.costSnapshot === null && orderLine.costSnapshotSource === null, 'Direct order must not invent a Product Master cost snapshot before lot fulfilment');
 
-  const receipt = (await gql(`mutation($input: CustomerPaymentInput!) { recordCustomerPayment(input: $input) }`, { input: { customerId: customer.id, salesOrderId: direct.id, paymentMode: 'upi', amount: 1860, autoAllocate: true, idempotencyKey: `${sku}-PAY` } }, token)).recordCustomerPayment;
-  assert(Number(receipt.unappliedAmount) === 1860, 'Pre-invoice order payment must remain available customer credit');
+  const receipt = (await gql(`mutation($input: CustomerPaymentInput!) { recordCustomerPayment(input: $input) }`, { input: { customerId: customer.id, salesOrderId: direct.id, paymentMode: 'upi', amount: 1500, autoAllocate: true, idempotencyKey: `${sku}-PAY` } }, token)).recordCustomerPayment;
+  assert(Number(receipt.unappliedAmount) === 1500, 'Pre-invoice order payment must remain available customer credit');
   const paidOrder = await prisma.salesOrder.findUnique({ where: { id: direct.id } });
-  assert(paidOrder.paymentStatus === 'paid' && Number(paidOrder.advanceAmount) === 2360, 'Order payment status must include all posted pre-invoice receipts');
+  assert(paidOrder.paymentStatus === 'paid' && Number(paidOrder.advanceAmount) === 2000, 'Order payment status must include all posted pre-invoice receipts');
 
   const job = await prisma.dispatchJob.findUnique({ where: { salesOrderId: direct.id } });
   assert(job?.id && job.quoteId === null, 'Direct order must create a quote-less dispatch job');
@@ -123,12 +126,12 @@ async function main() {
   await pdf(`/api/pdf/invoice/${invoice.id}`, token, 'Direct invoice');
   await pdf(`/api/pdf/receipt/${receipt.id}`, token, 'Direct receipt');
 
-  await gql(`mutation($input: ManualGoodsReceiptInput!) { createManualGoodsReceipt(input: $input) }`, { input: { vendorName: 'Lifecycle vendor', locationId: location.id, idempotencyKey: `${sku}-CANCEL-GRN`, lines: JSON.stringify([{ productId: product.id, receivedQuantity: 1, unitCost: 700 }]) } }, token);
+  await gql(`mutation($input: ManualGoodsReceiptInput!) { createManualGoodsReceipt(input: $input) }`, { input: { vendorName: 'Lifecycle vendor', locationId: location.id, reason: 'Isolated lifecycle cancellation receipt', idempotencyKey: `${sku}-CANCEL-GRN`, lines: JSON.stringify([{ productId: product.id, receivedQuantity: 1, enteredUnitCost: 700, rateUom: 'PC' }]) } }, token);
   const draftQuote = (await gql(`mutation($input: CreateQuoteInput!) { createQuote(input: $input) { id status leadId } }`, { input: { customerId: customer.id, ownerId: owners[0].id, title: `Cancellation ${stamp}`, lines: JSON.stringify([{ productId: product.id, sku, name: product.name, category: 'Faucets', brand: 'Lifecycle Gate', unit: 'PC', qty: 1, listPrice: 1000, mrp: 1180, mrpRateBasis: 'PIECE', specialRate: 1000, taxRate: 18 }]) } }, token)).createQuote;
   cleanup.quoteIds.push(draftQuote.id);
   if (draftQuote.leadId) cleanup.leadIds.push(draftQuote.leadId);
   const quotedCostLine = await prisma.quoteLine.findFirst({ where: { quoteId: draftQuote.id } });
-  assert(Number(quotedCostLine?.costSnapshot) === 700 && quotedCostLine?.costSnapshotSource === 'Product.costPrice' && quotedCostLine?.costSnapshotAt, 'Quote line must preserve the governed Product Master cost snapshot');
+  assert(quotedCostLine?.costSnapshot === null && quotedCostLine?.costSnapshotSource === null, 'Quote must not claim realised cost before a lot is dispatched');
   const fulfillment = (await gql(`query($id: ID!) { quoteFulfillment(quoteId: $id) }`, { id: draftQuote.id }, token)).quoteFulfillment;
   const converted = (await gql(`mutation($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`, { input: { quoteId: draftQuote.id, paymentMode: 'credit', lines: JSON.stringify([{ quoteLineId: fulfillment.lines[0].id, quantity: 1 }]), idempotencyKey: `${sku}-CANCEL-SO` } }, token)).createSalesOrderFromQuote;
   const preCancelReservation = await prisma.reservation.findFirst({ where: { salesOrderId: converted.id } });
@@ -159,9 +162,9 @@ async function main() {
   assert(cancelledChallan.status === 'cancelled' && cancelledDispatchLine.status === 'cancelled', 'Quote cancellation must void an unshipped challan and its dispatch rows');
   assert(Number(cancelledQuoteLine.orderedQuantity) + Number(cancelledQuoteLine.cancelledQuantity) + Number(cancelledQuoteLine.closedQuantity) === Number(cancelledQuoteLine.quantity), 'Quote cancellation quantities must not count ordered units twice');
 
-  const po = (await gql(`mutation($input: CreatePurchaseOrderInput!) { createPurchaseOrder(input: $input) }`, { input: { vendorName: 'Lifecycle vendor', lines: JSON.stringify([{ productId: product.id, quantity: 1 }]), discountPercent: 5, taxRate: 18 } }, token)).createPurchaseOrder;
+  const po = (await gql(`mutation($input: CreatePurchaseOrderInput!) { createPurchaseOrder(input: $input) }`, { input: { vendorName: 'Lifecycle vendor', lines: JSON.stringify([{ productId: product.id, quantity: 1, enteredUnitCost: 700, rateUom: 'PC' }]), discountPercent: 5, taxRate: 18 } }, token)).createPurchaseOrder;
   purchaseOrderId = po.id;
-  assert(Number(po.subtotal) === 0 && Number(po.grandTotal) === 0 && Number(po.lines?.[0]?.unitCost) === 0, 'PO unit cost must be optional and preserve a zero estimate');
+  assert(Number(po.subtotal) === 700 && Number(po.discountAmount) === 35 && Number(po.taxAmount) === 119.7 && Number(po.grandTotal) === 784.7 && Number(po.lines?.[0]?.netUnitCost) === 665, 'PO supplier rate, discount and optional GST math must reconcile');
   let silentPoCancellationBlocked = false;
   try {
     await gql(`mutation($id: ID!, $status: String!) { updatePurchaseOrderStatus(id: $id, status: $status) }`, { id: po.id, status: 'cancelled' }, token);

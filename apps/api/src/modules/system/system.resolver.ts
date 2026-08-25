@@ -35,6 +35,7 @@ class UpdateSettingsInput {
 @InputType()
 class ProductCategoryInput {
   @Field({ nullable: true }) id?: string;
+  @Field({ nullable: true }) expectedUpdatedAt?: string;
   @Field() name!: string;
   @Field({ nullable: true }) code?: string;
   @Field({ nullable: true }) description?: string;
@@ -46,6 +47,7 @@ class ProductCategoryInput {
 @InputType()
 class ProductBrandInput {
   @Field({ nullable: true }) id?: string;
+  @Field({ nullable: true }) expectedUpdatedAt?: string;
   @Field() name!: string;
   @Field({ nullable: true }) code?: string;
   @Field({ nullable: true }) description?: string;
@@ -57,6 +59,7 @@ class ProductBrandInput {
 @InputType()
 class ProductFinishInput {
   @Field({ nullable: true }) id?: string;
+  @Field({ nullable: true }) expectedUpdatedAt?: string;
   @Field() name!: string;
   @Field({ nullable: true }) code?: string;
   @Field({ nullable: true }) description?: string;
@@ -68,6 +71,7 @@ class ProductFinishInput {
 @InputType()
 class TileSizeInput {
   @Field({ nullable: true }) id?: string;
+  @Field({ nullable: true }) expectedUpdatedAt?: string;
   @Field() name!: string;
   @Field({ nullable: true }) code?: string;
   @Field({ nullable: true }) uom?: string;

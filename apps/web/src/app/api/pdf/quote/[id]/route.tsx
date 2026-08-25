@@ -14,5 +14,6 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     action: 'GenerateQuotePdf',
     errorMessage: 'Quotation document could not be generated.',
     includeApiUrl: true,
+    validationRedirectPath: `/dashboard/quotes/${encodeURIComponent(id)}`,
   });
 }

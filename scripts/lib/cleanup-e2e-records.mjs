@@ -76,6 +76,7 @@ export async function cleanupE2eRecords(prisma, context = {}) {
   await safeDelete(prisma, 'goodsReceiptLine', grnIds.length ? { goodsReceiptNoteId: { in: grnIds } } : null);
   await safeDelete(prisma, 'goodsReceiptNote', grnIds.length ? { id: { in: grnIds } } : null);
   await safeDelete(prisma, 'productAlias', productIds.length ? { productId: { in: productIds } } : null);
+  await safeDelete(prisma, 'productMrpHistory', productIds.length ? { productId: { in: productIds } } : null);
   await safeDelete(prisma, 'product', productIds.length ? { id: { in: productIds } } : null);
   await safeDelete(prisma, 'customer', customerIds.length ? { id: { in: customerIds } } : null);
   await safeDelete(prisma, 'productBrand', brandIds.length ? { id: { in: brandIds } } : null);

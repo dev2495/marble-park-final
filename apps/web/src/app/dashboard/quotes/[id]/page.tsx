@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowLeft, BadgeCheck, BadgeIndianRupee, Building2, Check, Download, Image as ImageIcon, ImagePlus, PenLine, Printer, Save, Send, Share2, ShieldCheck, Sparkles } from 'lucide-react';
@@ -13,11 +13,21 @@ const QUOTE_DETAIL = gql`
   query QuoteDetail($id: ID!) {
     quote(id: $id) {
       id quoteNumber title projectName status approvalStatus discountPercent displayMode createdAt validUntil sentAt confirmedAt notes lines quoteMeta customer owner lead approval coverImage
-      versionNumber supersedesQuoteId supersededByQuoteId intentId architectId architectName architect
+      versionNumber supersedesQuoteId supersededByQuoteId intentId architectId architectName architect pricingVersion pricingStatus
     }
     architects(status: "active", take: 200)
     documentSettings { data }
     masterProductBrands(status: "active")
+  }
+`;
+
+const QUOTE_PRODUCTS = gql`
+  query QuotePricingProducts($ids: [ID!]!) {
+    productsByIds(ids: $ids) {
+      id sku internalCode name category brand finish dimensions unit purchaseUom salesUom
+      piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive floorPriceInclusive
+      priceRateBasis priceUom mrpVerifiedAt mrpSource pricingVersion media
+    }
   }
 `;
 
@@ -78,9 +88,65 @@ function groupLines(lines: any[]) {
   return Array.from(groups.entries()).map(([area, rows]) => ({ area, rows }));
 }
 
+function legacyNegotiatedRate(line: any, pricingQuantity: number) {
+  const direct = [line.specialRateInclusive, line.netSellingPrice, line.nrpInclusive, line.sellingPrice, line.rate]
+    .map(Number)
+    .find((value) => Number.isFinite(value) && value > 0);
+  if (direct) return direct;
+  const total = Number(line.grossLineTotal ?? line.total ?? line.lineTotal ?? 0);
+  if (Number.isFinite(total) && total > 0 && pricingQuantity > 0) return Number((total / pricingQuantity).toFixed(2));
+  const legacyUnit = Number(line.unitPrice ?? line.price ?? 0);
+  return Number.isFinite(legacyUnit) && legacyUnit > 0 ? legacyUnit : 0;
+}
+
+function prepareLegacyLine(line: any, product: any) {
+  const isTile = String(product?.category || line.category || '').toLowerCase() === 'tiles';
+  const basis = isTile
+    ? 'AREA'
+    : String(product?.priceRateBasis || line.priceRateBasis || line.rateBasis || 'BOX').toUpperCase().replace('PACK', 'BOX');
+  const qty = Number(line.qty || line.quantity || 0);
+  const piecesPerPack = Number(product?.piecesPerPack || line.piecesPerPack || line.pcsPerBox || 1);
+  const coveragePerPack = Number(product?.coveragePerPack || line.coveragePerPack || 0);
+  const pricingQuantity = basis === 'AREA' ? qty * coveragePerPack : basis === 'PIECE' ? qty * piecesPerPack : qty;
+  const legacyRate = legacyNegotiatedRate(line, pricingQuantity);
+  const masterNrp = Number(product?.defaultNrpInclusive || 0);
+  const fallbackRate = legacyRate > 0 ? legacyRate : masterNrp;
+  const mrp = Number(product?.defaultMrpInclusive || 0);
+  return {
+    ...line,
+    productId: product?.id || line.productId,
+    sku: product?.sku || line.sku,
+    name: product?.name || line.name,
+    category: product?.category || line.category,
+    brand: product?.brand || line.brand,
+    finish: product?.finish || line.finish,
+    dimensions: product?.dimensions || line.dimensions,
+    media: product?.media || line.media,
+    pricingVersion: 'legacy_unverified',
+    mrpInclusive: mrp > 0 ? mrp : '',
+    mrpSource: mrp > 0 ? 'PRODUCT_MASTER_PENDING_CONFIRMATION' : 'PRODUCT_MASTER_MRP_MISSING',
+    floorPriceInclusive: product?.floorPriceInclusive == null ? line.floorPriceInclusive : Number(product.floorPriceInclusive),
+    priceRateBasis: basis,
+    rateBasis: basis,
+    pricingUom: isTile ? 'SQFT' : String(product?.priceUom || line.pricingUom || (basis === 'PIECE' ? 'PC' : product?.salesUom || product?.unit || line.unit || 'BOX')).toUpperCase(),
+    inventoryUom: String(product?.purchaseUom || line.inventoryUom || line.purchaseUom || line.unit || 'BOX').toUpperCase(),
+    piecesPerPack,
+    pcsPerBox: piecesPerPack,
+    coveragePerPack,
+    nrpMode: 'FIXED_NRP',
+    nrpInput: fallbackRate > 0 ? fallbackRate : 0,
+    specialMode: 'NONE',
+    specialInput: 0,
+    area: line.area || 'General Selection',
+    quoteImage: line.quoteImage || line.customImageUrl || '',
+    legacyPricingPrepared: Boolean(product),
+  };
+}
+
 export default function QuoteDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = String(params.id);
   const [paymentMode, setPaymentMode] = useState('cash');
   const [advanceAmount, setAdvanceAmount] = useState('0');
@@ -139,18 +205,37 @@ export default function QuoteDetailPage() {
     },
   });
   const quote = data?.quote;
+  const quoteProductIds = useMemo<string[]>(() => Array.from(new Set((Array.isArray(quote?.lines) ? quote.lines : [])
+    .map((line: any) => String(line.productId || '').trim()).filter(Boolean))), [quote?.lines]);
+  const { data: pricingProductsData, loading: pricingProductsLoading } = useQuery(QUOTE_PRODUCTS, {
+    variables: { ids: quoteProductIds },
+    skip: quoteProductIds.length === 0,
+  });
   const documentSettings = data?.documentSettings?.data || {};
   const brands = useMemo<any[]>(() => (data?.masterProductBrands || []).filter((brand: any) => brand.metadata?.quoteEnabled !== false), [data?.masterProductBrands]);
   const fulfillment = fulfillmentData?.quoteFulfillment;
   const commercialLocked = Boolean(fulfillment?.orders?.length);
   const cancelled = quote?.status === 'cancelled';
+  const legacyLineCount = (Array.isArray(quote?.lines) ? quote.lines : []).filter((line: any) => String(line.pricingVersion || '') !== 'unified_retail_v1').length;
+  const persistedPricingReady = Boolean(quote
+    && quote.status !== 'incomplete_pricing'
+    && quote.pricingStatus !== 'incomplete'
+    && String(quote.pricingVersion || '') === 'unified_retail_v1'
+    && Array.isArray(quote.lines)
+    && quote.lines.length > 0
+    && quote.lines.every((line: any) => String(line.pricingVersion || '') === 'unified_retail_v1'
+      && Number(line.mrpInclusive || 0) > 0
+      && line.mrpConfirmedAt
+      && line.mrpConfirmedById));
 
   useEffect(() => {
     if (!quote) return;
+    if (quoteProductIds.length > 0 && pricingProductsLoading) return;
     const meta = quote.quoteMeta || {};
+    const productMap = new Map((pricingProductsData?.productsByIds || []).map((product: any) => [String(product.id), product]));
     setEditLines((Array.isArray(quote.lines) ? quote.lines : []).map((line: any) => {
       if (String(line.pricingVersion || '') === 'unified_retail_v1') return { ...line, area: line.area || 'General Selection', quoteImage: line.quoteImage || line.customImageUrl || '' };
-      return { ...line, pricingVersion: 'legacy_unverified', mrpInclusive: '', priceRateBasis: String(line.rateBasis || 'BOX').toUpperCase().replace('PACK', 'BOX'), nrpMode: 'PERCENT_OFF_MRP', nrpInput: 0, specialMode: 'NONE', specialInput: 0, area: line.area || 'General Selection', quoteImage: line.quoteImage || line.customImageUrl || '' };
+      return prepareLegacyLine(line, productMap.get(String(line.productId || '')));
     }));
     setDisplayMode(quote.displayMode || 'priced');
     setTaxMode(meta.taxMode === 'non_gst' ? 'non_gst' : 'gst');
@@ -168,7 +253,7 @@ export default function QuoteDetailPage() {
       ? meta.selectedBrandIds.map(String)
       : mode === 'none' ? [] : brands.filter((brand: any) => mode === 'all' || defaults.has(String(brand.id))).map((brand: any) => String(brand.id)));
     setSelectedArchitectId(quote.architectId || '');
-  }, [brands, documentSettings.bankDetails, documentSettings.defaultTerms, documentSettings.documentTagline, documentSettings.quoteBrandIds, documentSettings.quoteBrandSelectionMode, quote]);
+  }, [brands, documentSettings.bankDetails, documentSettings.defaultTerms, documentSettings.documentTagline, documentSettings.quoteBrandIds, documentSettings.quoteBrandSelectionMode, pricingProductsData?.productsByIds, pricingProductsLoading, quote, quoteProductIds.length]);
 
   useEffect(() => {
     const lines = fulfillment?.lines;
@@ -301,11 +386,11 @@ export default function QuoteDetailPage() {
 
   async function shareQuote() {
     setShareMessage('');
-    if (!pricingReady && !commercialLocked) {
+    if (!persistedPricingReady) {
       const issue = mrpIssues[0];
       setValidationMessage(issue
         ? (issue.rate.mrpMissing ? `Add MRP for ${issue.line.sku || issue.line.name} before sharing.` : `${issue.line.sku || issue.line.name} exceeds its MRP.`)
-        : discountIssues[0]?.message || quoteDiscountIssue || 'Validate commercial pricing before sharing.');
+        : discountIssues[0]?.message || quoteDiscountIssue || 'Validate and save the governed pricing snapshot before sharing.');
       return;
     }
     const result = await createQuoteShare({ variables: { quoteId: quote.id } });
@@ -327,6 +412,7 @@ export default function QuoteDetailPage() {
   return <div className="space-y-6 pb-24 xl:pb-10">
     {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
     {validationMessage ? <div role="alert" className="rounded-r4 border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">{validationMessage}</div> : null}
+    {searchParams.get('pdfError') === 'commercial-pricing' && !persistedPricingReady ? <section role="alert" className="rounded-r4 border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-black">PDF is waiting for a verified commercial snapshot.</p><p className="mt-1 text-xs font-semibold leading-5">Review the highlighted line pricing below and choose Validate changes. The system will not print an old unverified rate as if it were current.</p></section> : null}
     {updateError ? <QueryErrorBanner error={updateError} /> : null}
     {presentationError ? <QueryErrorBanner error={presentationError} /> : null}
     {sendError ? <QueryErrorBanner error={sendError} /> : null}
@@ -334,6 +420,7 @@ export default function QuoteDetailPage() {
     {closeRemainderError ? <QueryErrorBanner error={closeRemainderError} /> : null}
     {reviseError ? <QueryErrorBanner error={reviseError} /> : null}
     {!commercialLocked && pricingIssueCount ? <section className="flex flex-col gap-2 rounded-r4 border border-red-200 bg-red-50 p-4 text-sm text-red-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">Commercial pricing needs attention.</p><p className="mt-1 text-xs font-semibold">Resolve MRP and discount validation before PDF, share, send or order conversion.</p></div><span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black uppercase tracking-wider">{pricingIssueCount} issue{pricingIssueCount === 1 ? '' : 's'}</span></section> : null}
+    {legacyLineCount ? <section className={`flex flex-col gap-3 rounded-r4 border p-4 text-sm sm:flex-row sm:items-center sm:justify-between ${commercialLocked ? 'border-amber-300 bg-amber-50 text-amber-950' : 'border-blue-200 bg-blue-50 text-blue-950'}`}><div><p className="font-black">{commercialLocked ? 'This order-linked quote keeps its historical legacy pricing.' : 'Legacy quote loaded with current Product Master MRP.'}</p><p className="mt-1 text-xs font-semibold leading-5">{commercialLocked ? 'Commercial rows cannot be rewritten after order conversion. Start an audited revision to confirm current MRP and NRP before producing a new quote PDF.' : 'The customer-negotiated rate is preserved as a fixed NRP for review. Check every line, then Validate changes to create the governed snapshot and unlock PDF, print, share and send.'}</p></div>{commercialLocked ? <Button size="sm" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}><PenLine className="mr-2 h-4 w-4" />Start pricing-safe revision</Button> : <span className="shrink-0 rounded-full bg-blue-100 px-3 py-1 text-xs font-black uppercase tracking-wider">{legacyLineCount} line{legacyLineCount === 1 ? '' : 's'} to validate</span>}</section> : null}
     {commercialLocked ? <section className="flex flex-col gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">Commercial terms are locked after sales-order conversion.</p><p className="mt-1 text-xs leading-5 text-amber-800">You can still save cover, room labels, product images, terms and brand logos. Revise the quote to change quantity, rates, discount or GST.</p></div><Button size="sm" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}><PenLine className="mr-2 h-4 w-4" />Revise commercial terms</Button></section> : null}
     <section className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-6 shadow-md-soft">
       <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
@@ -356,10 +443,10 @@ export default function QuoteDetailPage() {
           ) : null}
           {!commercialLocked && !cancelled ? <Button disabled={savingQuote || quote.status === 'superseded'} onClick={() => saveQuote(true)} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" />Save draft</Button> : null}
           {!cancelled ? <Button disabled={savingQuote || savingPresentation || quote.status === 'superseded' || (!commercialLocked && !pricingReady)} onClick={() => saveQuote(false)} size="lg" variant="outline"><ShieldCheck className="mr-2 h-5 w-5" /> {commercialLocked ? 'Save document presentation' : 'Validate changes'}</Button> : null}
-          {!cancelled && (pricingReady || commercialLocked) ? <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button> : !cancelled ? <Button size="lg" disabled><Download className="mr-2 h-5 w-5"/>PDF waiting</Button> : null}
-          {!cancelled && (pricingReady || commercialLocked) ? <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button> : null}
-          {!cancelled ? <Button size="lg" variant="outline" disabled={sharing || (!pricingReady && !commercialLocked)} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button> : null}
-          {!cancelled && quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending || (!pricingReady && !commercialLocked)} onClick={() => { if (pricingReady || commercialLocked) sendQuote({ variables: { id: quote.id } }); }} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
+          {!cancelled && persistedPricingReady ? <Button asChild size="lg"><a href={`/api/pdf/quote/${quote.id}?download=1`}><Download className="mr-2 h-5 w-5" /> Download PDF</a></Button> : !cancelled ? <Button size="lg" disabled><Download className="mr-2 h-5 w-5"/>PDF waiting</Button> : null}
+          {!cancelled && persistedPricingReady ? <Button asChild size="lg" variant="outline"><a href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-5 w-5" /> Print</a></Button> : null}
+          {!cancelled ? <Button size="lg" variant="outline" disabled={sharing || !persistedPricingReady} onClick={shareQuote}><Share2 className="mr-2 h-5 w-5" />{sharing ? 'Creating link...' : 'Share'}</Button> : null}
+          {!cancelled && quote.status !== 'sent' && quote.status !== 'confirmed' && quote.status !== 'superseded' && <Button disabled={sending || !persistedPricingReady} onClick={() => { if (persistedPricingReady) sendQuote({ variables: { id: quote.id } }); }} variant="warning" size="lg"><Send className="mr-2 h-5 w-5" /> Mark sent</Button>}
           {!cancelled && !['won', 'closed', 'superseded'].includes(quote.status) ? <Button size="lg" variant="outline" disabled={cancelling} onClick={() => { const reason = window.prompt('Cancellation reason. Converted orders can only be cancelled before dispatch, invoice, or receipt activity.'); if (reason?.trim()) cancelQuote({ variables: { id: quote.id, reason: reason.trim() } }); }} className="border-red-200 text-red-700">{cancelling ? 'Cancelling...' : 'Cancel quote'}</Button> : null}
         </div>
       </div>

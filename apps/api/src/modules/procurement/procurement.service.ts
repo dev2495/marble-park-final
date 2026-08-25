@@ -189,6 +189,151 @@ export class ProcurementService {
     return { items, total, skip, take, hasNext: skip + items.length < total };
   }
 
+  async purchaseOrderCostReadinessPage(args?: { search?: string; skip?: number; take?: number }) {
+    const search = String(args?.search || '').trim();
+    const where: any = {
+      status: { in: ['draft', 'ordered', 'partial_received'] },
+      lines: { some: { OR: [{ costStatus: 'missing' }, { unitCost: { lte: 0 } }, { netUnitCost: { lte: 0 } }] } },
+    };
+    if (search) where.AND = [{ OR: [
+      { poNumber: { contains: search, mode: 'insensitive' } },
+      { vendorName: { contains: search, mode: 'insensitive' } },
+      { lines: { some: { OR: [
+        { sku: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+      ] } } },
+    ] }];
+    const take = this.limit(args?.take, 20);
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const [orders, total] = await Promise.all([
+      (this.prisma as any).purchaseOrder.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip, take }),
+      (this.prisma as any).purchaseOrder.count({ where }),
+    ]);
+    const items = await this.attachPoLines(orders);
+    const decorated = items.map((order: any) => {
+      const missingLines = (order.lines || []).filter((line: any) => Number(line.unitCost || 0) <= 0 || Number(line.netUnitCost || 0) <= 0 || line.costStatus === 'missing');
+      return {
+        ...order,
+        missingLineCount: missingLines.length,
+        blockedReceivedLineCount: missingLines.filter((line: any) => Number(line.receivedQuantity || 0) > 0).length,
+        missingLines,
+      };
+    });
+    return { items: decorated, total, skip, take, hasNext: skip + decorated.length < total };
+  }
+
+  async completePurchaseOrderCosts(input: { purchaseOrderId: string; lines?: any; reason?: string }, actorUserId: string) {
+    const purchaseOrderId = String(input.purchaseOrderId || '').trim();
+    const reason = String(input.reason || '').trim();
+    if (!purchaseOrderId) throw new BadRequestException('Purchase order is required');
+    if (reason.length < 3) throw new BadRequestException('Enter a clear reason for completing legacy PO rates');
+    const order = await (this.prisma as any).purchaseOrder.findUnique({ where: { id: purchaseOrderId } });
+    if (!order) throw new NotFoundException('Purchase order not found');
+    if (!['draft', 'ordered', 'partial_received'].includes(String(order.status || ''))) {
+      throw new BadRequestException(`${order.poNumber} is ${order.status} and cannot be repriced`);
+    }
+    const rows = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId }, orderBy: { createdAt: 'asc' } });
+    const missing = rows.filter((row: any) => Number(row.unitCost || 0) <= 0 || Number(row.netUnitCost || 0) <= 0 || row.costStatus === 'missing');
+    if (!missing.length) return this.purchaseOrder(purchaseOrderId);
+    if (missing.some((row: any) => Number(row.receivedQuantity || 0) > 0)) {
+      throw new BadRequestException('A zero-cost line was already received. Use the audited inventory cost-correction workflow; historical lots are never silently repriced.');
+    }
+    const enteredRows = this.normalizeLines(input.lines);
+    const enteredById = new Map(enteredRows.map((row: any) => [String(row.purchaseOrderLineId || row.id || ''), row]));
+    const missingInput = missing.find((row: any) => !enteredById.has(row.id));
+    if (missingInput) throw new BadRequestException(`Enter the supplier rate for ${missingInput.sku}`);
+    const productIds = Array.from(new Set(rows.map((row: any) => row.productId).filter(Boolean))) as string[];
+    const products = productIds.length ? await this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
+    const productMap = new Map(products.map((product: any) => [product.id, product] as const));
+    const normalized = rows.map((row: any) => {
+      if (!missing.includes(row)) {
+        const unitCost = Number(row.unitCost || 0);
+        if (!Number.isFinite(unitCost) || unitCost <= 0) throw new BadRequestException(`${row.sku} has an invalid saved PO rate`);
+        return {
+          row,
+          enteredUnitCost: Number(row.enteredUnitCost || unitCost),
+          rateUom: String(row.rateUom || row.unit || 'PC'),
+          rateUomFactor: Number(row.rateUomFactor || 1),
+          unitCost,
+        };
+      }
+      const product: any = productMap.get(row.productId);
+      if (!product) throw new BadRequestException(`${row.sku} must be linked to Product Master before its PO rate can be completed`);
+      return { row, ...this.normalizePurchaseRate(enteredById.get(row.id), product, `${row.sku} purchase rate`) };
+    });
+    const priced = pricePoLines(
+      normalized.map((item: any) => ({ orderedQuantity: Number(item.row.orderedQuantity || 0), unitCost: item.unitCost })),
+      { discountPercent: order.discountPercent, taxRate: order.taxRate },
+    );
+
+    await this.prisma.$transaction(async (tx: any) => {
+      for (let index = 0; index < normalized.length; index += 1) {
+        const item: any = normalized[index];
+        const commercial = priced.lines[index];
+        const netUnitCost = this.money4(commercial.taxableValue / Math.max(1, commercial.orderedQuantity));
+        await tx.purchaseOrderLine.update({
+          where: { id: item.row.id },
+          data: {
+            enteredUnitCost: item.enteredUnitCost,
+            rateUom: item.rateUom,
+            rateUomFactor: item.rateUomFactor,
+            unitCost: commercial.unitCost,
+            netUnitCost,
+            costStatus: 'complete',
+            discountPercent: commercial.discountPercent,
+            taxRate: commercial.taxRate,
+            taxableValue: commercial.taxableValue,
+            taxAmount: commercial.taxAmount,
+            lineTotal: commercial.lineTotal,
+            metadata: {
+              ...(item.row.metadata || {}),
+              costStatus: 'confirmed_on_legacy_po',
+              enteredRate: item.enteredUnitCost,
+              rateUom: item.rateUom,
+              rateUomFactor: item.rateUomFactor,
+              normalizedBaseUnitCost: commercial.unitCost,
+              netBaseUnitCost: netUnitCost,
+              lineGross: commercial.lineGross,
+              lineDiscount: commercial.lineDiscount,
+              legacyCostCompletedAt: new Date().toISOString(),
+              legacyCostCompletionReason: reason,
+            },
+            updatedAt: new Date(),
+          },
+        });
+      }
+      await tx.purchaseOrder.update({
+        where: { id: purchaseOrderId },
+        data: {
+          subtotal: priced.totals.subtotal,
+          discountAmount: priced.totals.discountAmount,
+          taxableValue: priced.totals.taxableValue,
+          taxAmount: priced.totals.taxAmount,
+          grandTotal: priced.totals.grandTotal,
+          metadata: {
+            ...(order.metadata || {}),
+            legacyCostCompletedAt: new Date().toISOString(),
+            legacyCostCompletedBy: actorUserId,
+            legacyCostCompletionReason: reason,
+          },
+          updatedAt: new Date(),
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(),
+          actorUserId,
+          action: 'purchase_order.cost_complete',
+          entityType: 'PurchaseOrder',
+          entityId: purchaseOrderId,
+          summary: `Completed missing supplier rates for ${order.poNumber}`,
+          metadata: { reason, lineIds: missing.map((row: any) => row.id), totals: priced.totals },
+        },
+      });
+    }, { timeout: 15000 });
+    return this.purchaseOrder(purchaseOrderId);
+  }
+
   async createPurchaseOrder(input: CreatePurchaseOrderInput, actorUserId: string) {
     const demandIds = Array.from(new Set((input.demandIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
     const lineInputs = this.normalizeLines(input.lines);
@@ -208,26 +353,30 @@ export class ProcurementService {
     if (unknownDemandCost) throw new BadRequestException('A demand cost override does not belong to the selected purchase demand');
     const invalidDemand = demands.find((demand: any) => !demand.productId);
     if (invalidDemand) throw new BadRequestException(`${invalidDemand.sku} must be linked to a Product Master SKU before purchase ordering`);
-    const demandCostById = new Map(demandCostInputs.map((line: any) => [String(line.purchaseDemandId), Number(line.unitCost || 0)]));
-    const demandLines = demands.map((demand: any) => {
-      const unitCost = demandCostById.has(demand.id)
-        ? Number(demandCostById.get(demand.id))
-        : Number((demand.metadata || {})?.unitCost || 0);
-      if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${demand.sku} unit cost must be zero or greater`);
-      return { demand, unitCost };
-    });
-
     if (directInputs.some((line: any) => !String(line.productId || '').trim())) throw new BadRequestException('Every direct PO line must select a Product Master SKU');
-    const directProductIds = Array.from(new Set(directInputs.map((line: any) => String(line.productId).trim())));
-    const products = directProductIds.length ? await this.prisma.product.findMany({ where: { id: { in: directProductIds }, status: 'active' } }) : [];
+    const directProductIds = directInputs.map((line: any) => String(line.productId).trim());
+    const demandProductIds = demands.map((demand: any) => String(demand.productId || '').trim()).filter(Boolean);
+    const productIds = Array.from(new Set([...directProductIds, ...demandProductIds]));
+    const products = productIds.length ? await this.prisma.product.findMany({ where: { id: { in: productIds }, status: 'active' } }) : [];
     const productById = new Map(products.map((product: any) => [product.id, product]));
+    const demandCostById = new Map(demandCostInputs.map((line: any) => [String(line.purchaseDemandId), line]));
+    const demandLines = demands.map((demand: any) => {
+      const product: any = productById.get(String(demand.productId || ''));
+      if (!product) throw new BadRequestException(`${demand.sku} is not an active Product Master SKU`);
+      const captured: any = demandCostById.get(demand.id) || {};
+      const legacyCost = Number((demand.metadata || {})?.unitCost || 0);
+      const rate = this.normalizePurchaseRate({
+        ...captured,
+        enteredUnitCost: captured.enteredUnitCost ?? captured.unitCost ?? legacyCost,
+      }, product, `${demand.sku} purchase rate`);
+      return { demand, product, ...rate };
+    });
     const directLines = directInputs.map((line: any, index: number) => {
       const product: any = productById.get(String(line.productId || ''));
       if (!product) throw new BadRequestException(`Direct PO line ${index + 1} is not an active Product Master SKU`);
       const orderedQuantity = this.baseQuantity(line, product, `${product.sku} quantity`);
-      const unitCost = Number(line.unitCost || 0);
-      if (!Number.isFinite(unitCost) || unitCost < 0) throw new BadRequestException(`${product.sku} unit cost must be zero or greater`);
-      return { product, orderedQuantity, unitCost, unit: 'PC', note: String(line.note || '').trim(), orderedInput: this.uomSnapshot(line, product) };
+      const rate = this.normalizePurchaseRate(line, product, `${product.sku} purchase rate`);
+      return { product, orderedQuantity, ...rate, unit: String(product.baseUom || 'PC'), note: String(line.note || '').trim(), orderedInput: this.uomSnapshot(line, product) };
     });
 
     const selectedPreferredVendors = new Set(
@@ -256,6 +405,9 @@ export class ProcurementService {
       product?: any;
       orderedQuantity: number;
       unitCost: number;
+      enteredUnitCost: number;
+      rateUom: string;
+      rateUomFactor: number;
       unit: string;
       note?: string;
       sku: string;
@@ -267,12 +419,16 @@ export class ProcurementService {
       purchaseDemandId?: string;
       orderedInput?: any;
     }> = [
-      ...demandLines.map(({ demand, unitCost }) => ({
+      ...demandLines.map(({ demand, product, unitCost, enteredUnitCost, rateUom, rateUomFactor }) => ({
         kind: 'demand' as const,
         demand,
+        product,
         orderedQuantity: Math.max(0, Number(demand.quantity || 0) - Number(demand.receivedQuantity || 0)),
         unitCost,
-        unit: demand.unit || 'PC',
+        enteredUnitCost,
+        rateUom,
+        rateUomFactor,
+        unit: String(product.baseUom || 'PC'),
         sku: demand.sku,
         name: demand.name,
         category: demand.category,
@@ -286,6 +442,9 @@ export class ProcurementService {
         product: row.product,
         orderedQuantity: row.orderedQuantity,
         unitCost: row.unitCost,
+        enteredUnitCost: row.enteredUnitCost,
+        rateUom: row.rateUom,
+        rateUomFactor: row.rateUomFactor,
         unit: row.unit,
         note: row.note,
         orderedInput: row.orderedInput,
@@ -340,6 +499,7 @@ export class ProcurementService {
       for (let index = 0; index < commercialDrafts.length; index += 1) {
         const draft = commercialDrafts[index];
         const commercial = priced.lines[index];
+        const netUnitCost = this.money4(commercial.taxableValue / Math.max(1, commercial.orderedQuantity));
         if (draft.kind === 'demand') {
           const demand = draft.demand;
           await tx.purchaseOrderLine.create({
@@ -355,7 +515,12 @@ export class ProcurementService {
               finish: demand.finish || null,
               unit: demand.unit || 'PC',
               orderedQuantity: commercial.orderedQuantity,
+              enteredUnitCost: draft.enteredUnitCost,
+              rateUom: draft.rateUom,
+              rateUomFactor: draft.rateUomFactor,
               unitCost: commercial.unitCost,
+              netUnitCost,
+              costStatus: 'complete',
               discountPercent: commercial.discountPercent,
               taxRate: commercial.taxRate,
               taxableValue: commercial.taxableValue,
@@ -368,7 +533,12 @@ export class ProcurementService {
                 sourceQuoteId: demand.sourceQuoteId,
                 customerId: demand.customerId,
                 ownerId: demand.ownerId,
-                costStatus: commercial.unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn',
+                costStatus: 'confirmed_on_po',
+                enteredRate: draft.enteredUnitCost,
+                rateUom: draft.rateUom,
+                rateUomFactor: draft.rateUomFactor,
+                normalizedBaseUnitCost: commercial.unitCost,
+                netBaseUnitCost: netUnitCost,
                 lineGross: commercial.lineGross,
                 lineDiscount: commercial.lineDiscount,
               },
@@ -441,7 +611,12 @@ export class ProcurementService {
             finish: product.finish || null,
             unit: draft.unit,
             orderedQuantity: commercial.orderedQuantity,
+            enteredUnitCost: draft.enteredUnitCost,
+            rateUom: draft.rateUom,
+            rateUomFactor: draft.rateUomFactor,
             unitCost: commercial.unitCost,
+            netUnitCost,
+            costStatus: 'complete',
             discountPercent: commercial.discountPercent,
             taxRate: commercial.taxRate,
             taxableValue: commercial.taxableValue,
@@ -453,7 +628,12 @@ export class ProcurementService {
               internalCode: product.internalCode || null,
               note: draft.note || null,
               orderedInput: (draft as any).orderedInput || null,
-              costStatus: commercial.unitCost > 0 ? 'confirmed_on_po' : 'pending_at_grn',
+              costStatus: 'confirmed_on_po',
+              enteredRate: draft.enteredUnitCost,
+              rateUom: draft.rateUom,
+              rateUomFactor: draft.rateUomFactor,
+              normalizedBaseUnitCost: commercial.unitCost,
+              netBaseUnitCost: netUnitCost,
               lineGross: commercial.lineGross,
               lineDiscount: commercial.lineDiscount,
             },
@@ -647,6 +827,9 @@ export class ProcurementService {
       for (const [lineIndex, row] of selected.entries()) {
         const line = lineMap.get(String(row.purchaseOrderLineId || '')) as any;
         if (!line) throw new BadRequestException('One GRN line does not belong to this purchase order');
+        if (row.unitCost !== undefined || row.enteredUnitCost !== undefined || row.rateUom !== undefined) {
+          throw new BadRequestException('PO-linked GRN cost is locked to the approved purchase order. Remove receipt-level rate fields.');
+        }
         const product = line.productId ? productMap.get(line.productId) as any : null;
         const received = this.baseQuantity(row, product, `${line.sku} received quantity`);
         const damaged = Math.max(0, Math.trunc(Number(row.damagedQuantity || 0)));
@@ -658,7 +841,7 @@ export class ProcurementService {
         if (received > remaining) {
           throw new BadRequestException(`${line.sku} receipt ${received} exceeds remaining PO quantity ${remaining}`);
         }
-        const receiptCost = this.resolveReceiptCost(row.unitCost, line.unitCost);
+        const receiptCost = this.resolvePoReceiptCost(line);
 
         const receiptLine = await tx.goodsReceiptLine.create({
           data: {
@@ -680,6 +863,10 @@ export class ProcurementService {
               locationId: receiptLocation.id,
               costSource: receiptCost.source,
               poUnitCost: Number(line.unitCost || 0),
+              poNetUnitCost: Number(line.netUnitCost || 0),
+              poEnteredRate: Number(line.enteredUnitCost || 0),
+              poRateUom: line.rateUom,
+              poRateUomFactor: Number(line.rateUomFactor || 1),
               uomConversion: this.uomSnapshot(row, product),
             },
           },
@@ -694,7 +881,21 @@ export class ProcurementService {
               supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
               receivedAt: note.receivedDate, unitCost: receiptCost.unitCost, status: 'active',
               attributes: { ...(row.attributes || {}), shade: row.shade || null, caliber: row.caliber || null, grade: row.grade || null },
-              metadata: { purchaseOrderId: po.id, purchaseOrderLineId: line.id, costSource: receiptCost.source, uomConversion: this.uomSnapshot(row, product) },
+              metadata: {
+                purchaseOrderId: po.id,
+                purchaseOrderLineId: line.id,
+                costSource: receiptCost.source,
+                poCostSnapshot: {
+                  enteredRate: Number(line.enteredUnitCost || 0),
+                  rateUom: line.rateUom,
+                  rateUomFactor: Number(line.rateUomFactor || 1),
+                  preDiscountBaseUnitCost: Number(line.unitCost || 0),
+                  netBaseUnitCost: Number(line.netUnitCost || 0),
+                  discountPercent: Number(line.discountPercent || 0),
+                  taxRate: Number(line.taxRate || 0),
+                },
+                uomConversion: this.uomSnapshot(row, product),
+              },
               createdBy: actorUserId, updatedAt: new Date(),
             },
           });
@@ -807,7 +1008,8 @@ export class ProcurementService {
         const damaged = Math.max(0, Math.trunc(Number(row.damagedQuantity || 0)));
         if (damaged > received) throw new BadRequestException(`${product.sku} damaged quantity cannot exceed received quantity`);
         const accepted = received - damaged;
-        const receiptCost = this.resolveReceiptCost(row.unitCost);
+        const manualRate = this.normalizePurchaseRate(row, product, `${product.sku} manual GRN rate`);
+        const receiptCost = { unitCost: manualRate.unitCost, source: 'manual_grn_entered_rate' };
 
         const receiptLine = await tx.goodsReceiptLine.create({
           data: {
@@ -822,7 +1024,15 @@ export class ProcurementService {
             damagedQuantity: damaged,
             location: row.location || receiptLocation.name,
             unitCost: receiptCost.unitCost,
-            metadata: { manualReason: input.reason || '', locationId: receiptLocation.id, costSource: receiptCost.source, uomConversion: this.uomSnapshot(row, product) },
+            metadata: {
+              manualReason: input.reason || '',
+              locationId: receiptLocation.id,
+              costSource: receiptCost.source,
+              enteredRate: manualRate.enteredUnitCost,
+              rateUom: manualRate.rateUom,
+              rateUomFactor: manualRate.rateUomFactor,
+              uomConversion: this.uomSnapshot(row, product),
+            },
           },
         });
 
@@ -833,7 +1043,14 @@ export class ProcurementService {
             supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
             receivedAt: note.receivedDate, unitCost: receiptCost.unitCost, status: 'active',
             attributes: { ...(row.attributes || {}), shade: row.shade || null, caliber: row.caliber || null, grade: row.grade || null },
-            metadata: { manualReason: input.reason || '', costSource: receiptCost.source, uomConversion: this.uomSnapshot(row, product) },
+            metadata: {
+              manualReason: input.reason || '',
+              costSource: receiptCost.source,
+              enteredRate: manualRate.enteredUnitCost,
+              rateUom: manualRate.rateUom,
+              rateUomFactor: manualRate.rateUomFactor,
+              uomConversion: this.uomSnapshot(row, product),
+            },
             createdBy: actorUserId, updatedAt: new Date(),
           },
         });
@@ -1066,15 +1283,24 @@ export class ProcurementService {
     const customerIds = Array.from(new Set(rows.map((row) => row.customerId).filter(Boolean))) as string[];
     const ownerIds = Array.from(new Set(rows.map((row) => row.ownerId).filter(Boolean))) as string[];
     const orderIds = Array.from(new Set(rows.map((row) => row.sourceOrderId).filter(Boolean))) as string[];
-    const [customers, owners, orders] = await Promise.all([
+    const productIds = Array.from(new Set(rows.map((row) => row.productId).filter(Boolean))) as string[];
+    const [customers, owners, orders, products] = await Promise.all([
       customerIds.length ? this.prisma.customer.findMany({ where: { id: { in: customerIds } } }) : [],
       ownerIds.length ? this.prisma.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true, email: true, role: true, phone: true } }) : [],
       orderIds.length ? (this.prisma as any).salesOrder.findMany({ where: { id: { in: orderIds } } }) : [],
+      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, sku: true, internalCode: true, baseUom: true, purchaseUom: true, piecesPerPack: true, allowLoose: true } }) : [],
     ]);
     const customerMap = new Map(customers.map((item: any) => [item.id, item] as const));
     const ownerMap = new Map(owners.map((item: any) => [item.id, item] as const));
     const orderMap = new Map(orders.map((item: any) => [item.id, item] as const));
-    return rows.map((row) => ({ ...row, customer: row.customerId ? customerMap.get(row.customerId) || null : null, owner: row.ownerId ? ownerMap.get(row.ownerId) || null : null, salesOrder: row.sourceOrderId ? orderMap.get(row.sourceOrderId) || null : null }));
+    const productMap = new Map(products.map((item: any) => [item.id, item] as const));
+    return rows.map((row) => ({
+      ...row,
+      customer: row.customerId ? customerMap.get(row.customerId) || null : null,
+      owner: row.ownerId ? ownerMap.get(row.ownerId) || null : null,
+      salesOrder: row.sourceOrderId ? orderMap.get(row.sourceOrderId) || null : null,
+      product: row.productId ? productMap.get(row.productId) || null : null,
+    }));
   }
 
   private async attachPoLines(orders: any[]) {
@@ -1094,12 +1320,17 @@ export class ProcurementService {
     const vendorMap = new Map(vendors.map((vendor: any) => [vendor.id, vendor] as const));
     const linesByPo = this.groupBy(lines.map((line: any) => {
       const unitCost = Number(line.unitCost || 0);
+      const netUnitCost = Number(line.netUnitCost || 0);
       const orderedQuantity = Number(line.orderedQuantity || 0);
       const lineGross = Number(line.metadata?.lineGross ?? (orderedQuantity * unitCost));
       return {
         ...line,
-        effectiveUnitCost: unitCost,
-        costStatus: unitCost > 0 ? 'captured' : 'missing',
+        enteredUnitCost: Number(line.enteredUnitCost || 0),
+        rateUomFactor: Number(line.rateUomFactor || 1),
+        unitCost,
+        netUnitCost,
+        effectiveUnitCost: netUnitCost > 0 ? netUnitCost : unitCost,
+        costStatus: line.costStatus === 'complete' && unitCost > 0 && netUnitCost > 0 ? 'captured' : 'missing',
         product: line.productId ? productMap.get(line.productId) || null : null,
         lineGross,
         lineDiscount: Number(line.metadata?.lineDiscount ?? 0),
@@ -1455,18 +1686,44 @@ export class ProcurementService {
     };
   }
 
-  private resolveReceiptCost(grnValue: any, poValue?: any) {
-    const candidates = [
-      { value: grnValue, source: 'grn_entered' },
-      { value: poValue, source: 'purchase_order' },
-    ];
-    for (const candidate of candidates) {
-      if (candidate.value === undefined || candidate.value === null || candidate.value === '') continue;
-      const value = Number(candidate.value);
-      if (!Number.isFinite(value) || value <= 0) throw new BadRequestException('Unit cost must be greater than zero');
-      if (value > 0) return { unitCost: value, source: candidate.source };
+  private normalizePurchaseRate(row: any, product: any, label: string) {
+    const enteredUnitCost = Number(row?.enteredUnitCost ?? row?.unitCost ?? 0);
+    if (!Number.isFinite(enteredUnitCost) || enteredUnitCost <= 0) {
+      throw new BadRequestException(`${label} must be greater than zero`);
     }
-    throw new BadRequestException('Unit cost is required before a GRN can be posted');
+    const baseUom = String(product?.baseUom || 'PC').trim().toUpperCase();
+    const purchaseUom = String(product?.purchaseUom || baseUom).trim().toUpperCase();
+    const rateUom = String(row?.rateUom || purchaseUom || baseUom).trim().toUpperCase();
+    const piecesPerPack = Math.max(1, Math.trunc(Number(product?.piecesPerPack || 1)));
+    let rateUomFactor = 0;
+    if (rateUom === baseUom) rateUomFactor = 1;
+    else if (rateUom === purchaseUom || rateUom === 'BOX' || rateUom === 'PACK') rateUomFactor = piecesPerPack;
+    if (rateUomFactor <= 0) {
+      throw new BadRequestException(`${label} UOM ${rateUom} cannot be converted to ${baseUom}. Update the SKU packing master first.`);
+    }
+    return {
+      enteredUnitCost: this.money4(enteredUnitCost),
+      rateUom,
+      rateUomFactor,
+      unitCost: this.money4(enteredUnitCost / rateUomFactor),
+    };
+  }
+
+  private resolvePoReceiptCost(line: any) {
+    if (String(line?.costStatus || '') !== 'complete') {
+      throw new BadRequestException(`${line?.sku || 'PO line'} has no approved PO rate. Complete legacy PO cost setup before receiving.`);
+    }
+    const value = Number(line?.netUnitCost || 0);
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new BadRequestException(`${line?.sku || 'PO line'} has no valid net PO cost. Complete legacy PO cost setup before receiving.`);
+    }
+    return { unitCost: this.money4(value), source: 'purchase_order_net_snapshot' };
+  }
+
+  private money4(value: any) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) throw new BadRequestException('Purchase amount must be a valid number');
+    return Math.round((number + Number.EPSILON) * 10000) / 10000;
   }
 
   private limit(value: any, fallback: number) {

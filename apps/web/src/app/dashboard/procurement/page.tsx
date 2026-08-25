@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 const DATA = gql`
   query ProcurementSuite(
@@ -188,6 +189,7 @@ export default function ProcurementSuitePage() {
   const [productSearch, setProductSearch] = useState("");
   const [directLines, setDirectLines] = useState<any[]>([]);
   const [demandCosts, setDemandCosts] = useState<Record<string, string>>({});
+  const [demandRateUoms, setDemandRateUoms] = useState<Record<string, string>>({});
   const [receipt, setReceipt] = useState<any>(emptyReceipt);
   const [receiveRows, setReceiveRows] = useState<Record<string, any>>({});
   const [receiptKey, setReceiptKey] = useState(uuid());
@@ -286,6 +288,8 @@ export default function ProcurementSuitePage() {
   }, [commercial.vendorId, demands, selectedDemand]);
   const canCancel = ["owner", "admin"].includes(data?.me?.role);
   const canViewCost = ["owner", "admin"].includes(data?.me?.role);
+  const canEnterPoRate = Boolean(data?.me?.effectivePermissions?.includes("procurement.manage"));
+  const canEnterManualRate = Boolean(data?.me?.effectivePermissions?.includes("goods_receipts.manage"));
   const actionableDemandIds = demands
     .filter((row: any) =>
       ["open", "ordered", "partial_received"].includes(row.status),
@@ -293,10 +297,11 @@ export default function ProcurementSuitePage() {
     .map((row: any) => row.id);
   const directLinesReady =
     directLines.length > 0 &&
-    directLines.every((line: any) => enteredBaseQuantity(line) > 0);
+    directLines.every((line: any) => enteredBaseQuantity(line) > 0 && Number(line.enteredUnitCost || 0) > 0);
   const manualLinesReady =
     manualLines.length > 0 &&
-    manualLines.every((line: any) => enteredBaseQuantity(line) > 0);
+    manualLines.every((line: any) => enteredBaseQuantity(line) > 0 && Number(line.enteredUnitCost || 0) > 0);
+  const demandLinesReady = selectedDemand.length > 0 && selectedDemand.every((id) => Number(demandCosts[id] || 0) > 0);
   const receiptLinesReady = Boolean(
     activePo?.lines?.some(
       (line: any) => receivedBaseQuantity(line, receiveRows[line.id] || {}) > 0,
@@ -316,6 +321,7 @@ export default function ProcurementSuitePage() {
     setDirectLines([]);
     setSelectedDemand([]);
     setDemandCosts({});
+    setDemandRateUoms({});
     setProductSearch("");
   }
   function beginNewPo() {
@@ -333,13 +339,15 @@ export default function ProcurementSuitePage() {
       internalCode: product.internalCode,
       name: product.name,
       category: product.category,
+      baseUom: product.baseUom || "PC",
       piecesPerPack: Number(product.piecesPerPack || 1),
       purchaseUom: product.purchaseUom || product.unit || "PC",
       allowLoose: product.allowLoose !== false,
       boxes: "",
       loosePieces: "",
       quantity: "1",
-      unitCost: "",
+      enteredUnitCost: "",
+      rateUom: product.purchaseUom || product.unit || "PC",
       damagedQuantity: "",
       supplierBatch: "",
       shade: "",
@@ -361,9 +369,12 @@ export default function ProcurementSuitePage() {
       rows.map((row) => (row.productId === id ? { ...row, ...patch } : row)),
     );
   }
-  function linePayload(line: any) {
+  function linePayload(line: any, canEnterRate: boolean) {
     const tile = String(line.category || "").toLowerCase() === "tiles";
-    const cost = canViewCost && line.unitCost !== "" ? { unitCost: Number(line.unitCost) } : {};
+    const cost = canEnterRate && line.enteredUnitCost !== "" ? {
+      enteredUnitCost: Number(line.enteredUnitCost),
+      rateUom: line.rateUom || line.purchaseUom || line.baseUom || "PC",
+    } : {};
     return tile
       ? {
           productId: line.productId,
@@ -391,9 +402,12 @@ export default function ProcurementSuitePage() {
       mode === "demand"
         ? chosenDemands.map((row: any) => ({
             purchaseDemandId: row.id,
-            ...(canViewCost && demandCosts[row.id] !== undefined && demandCosts[row.id] !== "" ? { unitCost: Number(demandCosts[row.id]) } : {}),
+            ...(canEnterPoRate && demandCosts[row.id] !== undefined && demandCosts[row.id] !== "" ? {
+              enteredUnitCost: Number(demandCosts[row.id]),
+              rateUom: demandRateUoms[row.id] || row.product?.purchaseUom || row.product?.baseUom || row.unit || "PC",
+            } : {}),
           }))
-        : directLines.map(linePayload);
+        : directLines.map((line: any) => linePayload(line, canEnterPoRate));
     const response = await createPo({
       variables: {
         input: {
@@ -445,14 +459,12 @@ export default function ProcurementSuitePage() {
               shade: row.shade || undefined,
               caliber: row.caliber || undefined,
               grade: row.grade || undefined,
-              ...(canViewCost && row.unitCost !== "" ? { unitCost: Number(row.unitCost) } : {}),
             }
           : {
               purchaseOrderLineId: line.id,
               receivedQuantity: Number(row.receivedQuantity || 0),
               damagedQuantity: Number(row.damagedQuantity || 0),
               supplierBatch: row.supplierBatch || undefined,
-              ...(canViewCost && row.unitCost !== "" ? { unitCost: Number(row.unitCost) } : {}),
             };
       })
       .filter(
@@ -500,7 +512,7 @@ export default function ProcurementSuitePage() {
             : undefined,
           locationId: receipt.locationId || undefined,
           reason: manualReason,
-          lines: JSON.stringify(manualLines.map(linePayload)),
+          lines: JSON.stringify(manualLines.map((line: any) => linePayload(line, canEnterManualRate))),
           idempotencyKey: manualKey,
         },
       },
@@ -554,6 +566,14 @@ export default function ProcurementSuitePage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {canViewCost ? (
+              <Button asChild className="border border-white/25 bg-white/10 text-white hover:bg-white/20">
+                <Link href="/dashboard/procurement/cost-readiness">
+                  <CircleDollarSign className="mr-2 h-4 w-4" />
+                  Complete legacy PO rates
+                </Link>
+              </Button>
+            ) : null}
             <Button
               onClick={beginNewPo}
               className="border border-white/15 bg-white text-[#612421] hover:bg-rose-50"
@@ -706,26 +726,26 @@ export default function ProcurementSuitePage() {
             </div>
             {selectedDemand.length ? (
               <div className="sticky top-[4.5rem] z-10 border-b border-[#edc7bd] bg-[#fff8f5]/95 p-4 shadow-sm backdrop-blur">
-                <div className="grid gap-3 lg:grid-cols-[1fr_180px_180px_auto] lg:items-end">
+                <div className="grid gap-3 lg:grid-cols-[1fr_160px_130px_130px_auto] lg:items-end">
                   <Field label="Supplier for selected lines">
-                    <select
+                    <SearchableSelect
                       value={commercial.vendorId}
-                      onChange={(event) =>
+                      onValueChange={(value) =>
                         setCommercial({
                           ...commercial,
-                          vendorId: event.target.value,
+                          vendorId: value,
                           vendorName: "",
                         })
                       }
-                      className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm"
-                    >
-                      <option value="">Select supplier</option>
-                      {vendors.map((vendor: any) => (
-                        <option key={vendor.id} value={vendor.id}>
-                          {vendor.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={vendors.map((vendor: any) => ({
+                        value: vendor.id,
+                        label: vendor.name,
+                        description: [vendor.code, vendor.city].filter(Boolean).join(" · "),
+                        keywords: [vendor.code, vendor.phone, vendor.email].filter(Boolean).join(" "),
+                      }))}
+                      placeholder="Select supplier"
+                      searchPlaceholder="Search supplier, code or city"
+                    />
                   </Field>
                   <Field label="Expected date">
                     <Input
@@ -737,6 +757,18 @@ export default function ProcurementSuitePage() {
                           expectedDate: event.target.value,
                         })
                       }
+                    />
+                  </Field>
+                  <Field label="PO discount %">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={commercial.discount}
+                      onChange={(event) =>
+                        setCommercial({ ...commercial, discount: event.target.value })
+                      }
+                      placeholder="0"
                     />
                   </Field>
                   <Field label="GST % (optional)">
@@ -755,7 +787,7 @@ export default function ProcurementSuitePage() {
                     />
                   </Field>
                   <Button
-                    disabled={createState.loading || !commercial.vendorId}
+                    disabled={createState.loading || !commercial.vendorId || !demandLinesReady || !canEnterPoRate}
                     onClick={() => submitPo("demand")}
                     className="min-w-44"
                   >
@@ -764,10 +796,17 @@ export default function ProcurementSuitePage() {
                       : `Create PO (${selectedDemand.length})`}
                   </Button>
                 </div>
-                {!commercial.vendorId ? (
+                {!canEnterPoRate ? (
                   <p className="mt-2 text-xs font-semibold text-amber-800">
-                    Choose the supplier once; blank line costs remain explicitly
-                    pending until GRN.
+                    Purchase rates are private. Ask an owner or administrator to issue the PO from this selected demand.
+                  </p>
+                ) : !commercial.vendorId ? (
+                  <p className="mt-2 text-xs font-semibold text-amber-800">
+                    Choose the supplier and enter every supplier rate before issuing the PO.
+                  </p>
+                ) : !demandLinesReady ? (
+                  <p className="mt-2 text-xs font-semibold text-amber-800">
+                    Every selected line needs a positive supplier rate and rate UOM. Cost is never deferred to a PO-linked GRN.
                   </p>
                 ) : null}
               </div>
@@ -781,7 +820,7 @@ export default function ProcurementSuitePage() {
                     <th>Customer / order</th>
                     <th>Required</th>
                     <th>Status / ETA</th>
-                    {canViewCost ? <th className="pr-4">PO cost / pc</th> : null}
+                    {canEnterPoRate ? <th className="pr-4">Supplier rate / UOM</th> : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--line)]">
@@ -837,20 +876,33 @@ export default function ProcurementSuitePage() {
                             : "No ETA"}
                         </p>
                       </td>
-                      {canViewCost ? <td className="pr-4">
-                        <Input
-                          className="w-28"
-                          type="number"
-                          min="0"
-                          value={demandCosts[row.id] || ""}
-                          onChange={(e) =>
-                            setDemandCosts({
-                              ...demandCosts,
-                              [row.id]: e.target.value,
-                            })
-                          }
-                          placeholder="At GRN"
-                        />
+                      {canEnterPoRate ? <td className="pr-4">
+                        <div className="flex min-w-[220px] gap-2">
+                          <Input
+                            className="w-28"
+                            type="number"
+                            min="0.0001"
+                            step="0.01"
+                            value={demandCosts[row.id] || ""}
+                            onChange={(e) =>
+                              setDemandCosts({ ...demandCosts, [row.id]: e.target.value })
+                            }
+                            placeholder="Rate"
+                          />
+                          <SearchableSelect
+                            className="w-24"
+                            value={demandRateUoms[row.id] || row.product?.purchaseUom || row.product?.baseUom || row.unit || "PC"}
+                            onValueChange={(value) => setDemandRateUoms({ ...demandRateUoms, [row.id]: value })}
+                            options={Array.from(new Set([row.product?.purchaseUom, row.product?.baseUom, row.unit].filter(Boolean))).map((uom: any) => ({ value: String(uom), label: String(uom) }))}
+                            placeholder="UOM"
+                            searchPlaceholder="Find UOM"
+                          />
+                        </div>
+                        {Number(row.product?.piecesPerPack || 1) > 1 ? (
+                          <small className="mt-1 block text-[10px] text-[var(--ink-4)]">
+                            {row.product.piecesPerPack} {row.product.baseUom || "PC"} per {row.product.purchaseUom || "BOX"}
+                          </small>
+                        ) : null}
                       </td> : null}
                     </tr>
                   ))}
@@ -906,7 +958,7 @@ export default function ProcurementSuitePage() {
               products={products}
               onAdd={(p: any) => addProduct(p, "po")}
             />
-            <LineEditor rows={directLines} setRows={setDirectLines} mode="po" canViewCost={canViewCost} />
+            <LineEditor rows={directLines} setRows={setDirectLines} mode="po" canViewCost={canEnterPoRate} />
             {!directLines.length ? (
               <div className="mt-4 rounded-xl border border-dashed border-[#dfb8ad] bg-white/70 p-5 text-center">
                 <ShoppingCart className="mx-auto h-6 w-6 text-[#9f2d29]" />
@@ -928,7 +980,7 @@ export default function ProcurementSuitePage() {
               vendors={vendors}
               onSubmit={() => submitPo("direct")}
               disabled={
-                createState.loading || !commercial.vendorId || !directLinesReady
+                createState.loading || !commercial.vendorId || !directLinesReady || !canEnterPoRate
               }
               title="Supplier and commercial terms"
             />
@@ -1102,28 +1154,36 @@ export default function ProcurementSuitePage() {
               </label>
               <label className="mt-3 block text-xs font-semibold text-[var(--ink-4)]">
                 Open PO
-                <select
+                <SearchableSelect
                   value={activePo?.id || ""}
-                  onChange={(e) => {
-                    setActivePoId(e.target.value);
+                  onValueChange={(value) => {
+                    setActivePoId(value);
                     setReceiveRows({});
                   }}
-                  className="mt-1 h-11 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                >
-                  <option value="">Select PO from matching results</option>
-                  {orders
+                  className="mt-1 h-11"
+                  options={orders
                     .filter((po: any) =>
                       ["ordered", "partial_received"].includes(po.status),
                     )
-                    .map((po: any) => (
-                      <option key={po.id} value={po.id}>
-                        {po.poNumber} · {po.vendorName}
-                      </option>
-                    ))}
-                </select>
+                    .map((po: any) => ({
+                      value: po.id,
+                      label: `${po.poNumber} · ${po.vendorName}`,
+                      description: `${po.lines?.length || 0} lines · ${po.lines?.some((line: any) => line.costStatus === "missing") ? "rate setup required" : "rate locked"}`,
+                      keywords: (po.lines || []).map((line: any) => `${line.sku} ${line.name}`).join(" "),
+                    }))}
+                  placeholder="Select PO from matching results"
+                  searchPlaceholder="Search PO, supplier, SKU or item"
+                  emptyText="No open PO matches this search"
+                />
               </label>
               {activePo ? (
                 <div className="mt-4 space-y-3">
+                  {(activePo.lines || []).some((line: any) => line.costStatus === "missing") ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      <b>Receipt blocked safely.</b> This legacy PO has a missing supplier rate. An owner must complete it before GRN so the lot receives a valid cost snapshot.{" "}
+                      <Link className="font-semibold underline" href="/dashboard/procurement/cost-readiness">Open rate setup</Link>
+                    </div>
+                  ) : null}
                   {(activePo.lines || [])
                     .filter(
                       (line: any) =>
@@ -1158,7 +1218,7 @@ export default function ProcurementSuitePage() {
               <Button
                 className="mt-4 w-full"
                 disabled={
-                  !activePo || !receiptLinesReady || receiveState.loading
+                  !activePo || !receiptLinesReady || receiveState.loading || (activePo.lines || []).some((line: any) => line.costStatus === "missing")
                 }
                 onClick={submitReceipt}
               >
@@ -1190,7 +1250,7 @@ export default function ProcurementSuitePage() {
                 rows={manualLines}
                 setRows={setManualLines}
                 mode="manual"
-                canViewCost={canViewCost}
+                canViewCost={canEnterManualRate}
               />
               <div className="mt-4">
                 <PoCommercial
@@ -1219,7 +1279,8 @@ export default function ProcurementSuitePage() {
                     !manualLinesReady ||
                     manualState.loading ||
                     !manualReason.trim() ||
-                    !commercial.vendorId
+                    !commercial.vendorId ||
+                    !canEnterManualRate
                   }
                   onClick={submitManual}
                 >
@@ -2032,6 +2093,8 @@ function Empty({ text }: any) {
   );
 }
 function ProductPicker({ value, setValue, products, onAdd, inputRef }: any) {
+  const [active, setActive] = useState(0);
+  useEffect(() => setActive(0), [value, products.length]);
   return (
     <div className="relative mt-4">
       <Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
@@ -2040,16 +2103,35 @@ function ProductPicker({ value, setValue, products, onAdd, inputRef }: any) {
         className="pl-9"
         value={value}
         onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setActive((index) => Math.min(products.length - 1, index + 1));
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setActive((index) => Math.max(0, index - 1));
+          } else if (event.key === "Enter" && products[active]) {
+            event.preventDefault();
+            onAdd(products[active]);
+          } else if (event.key === "Escape") {
+            setValue("");
+          }
+        }}
+        aria-expanded={value.trim().length >= 2}
+        aria-controls="procurement-product-results"
         placeholder="Search SKU, design, alias or product"
       />
       {value.trim().length >= 2 && products.length ? (
-        <div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 shadow-xl">
-          {products.map((p: any) => (
+        <div id="procurement-product-results" role="listbox" className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-xl border border-[#ead8d2] bg-white p-1.5 shadow-[0_24px_70px_-22px_rgba(64,31,27,.42)]">
+          {products.map((p: any, index: number) => (
             <button
               type="button"
+              role="option"
+              aria-selected={index === active}
               key={p.id}
+              onMouseEnter={() => setActive(index)}
               onClick={() => onAdd(p)}
-              className="flex w-full items-center justify-between rounded p-3 text-left hover:bg-[var(--bg-soft)]"
+              className={`flex w-full items-center justify-between rounded-lg p-3 text-left transition ${index === active ? "bg-[#fff0eb] text-[#6f211e]" : "hover:bg-[#fff7f4]"}`}
             >
               <span>
                 <b>{p.internalCode || p.sku}</b> · {p.name}
@@ -2139,18 +2221,39 @@ function LineEditor({ rows, setRows, mode, canViewCost }: any) {
                 />
               </Field>
             )}
-            {canViewCost ? <Field label="Unit cost ₹">
-              <Input
-                type="number"
-                min="0"
-                value={row.unitCost}
-                onChange={(e) =>
-                  updateRows(setRows, row.productId, {
-                    unitCost: e.target.value,
-                  })
-                }
-              />
-            </Field> : null}
+            {canViewCost ? (
+              <>
+                <Field label={mode === "manual" ? "Inward supplier rate ₹" : "PO supplier rate ₹"}>
+                  <Input
+                    type="number"
+                    min="0.0001"
+                    step="0.01"
+                    value={row.enteredUnitCost}
+                    onChange={(e) =>
+                      updateRows(setRows, row.productId, {
+                        enteredUnitCost: e.target.value,
+                      })
+                    }
+                    placeholder="Required"
+                  />
+                </Field>
+                <Field label="Rate UOM">
+                  <SearchableSelect
+                    value={row.rateUom || row.purchaseUom || row.baseUom || "PC"}
+                    onValueChange={(value) => updateRows(setRows, row.productId, { rateUom: value })}
+                    options={Array.from(new Set([row.purchaseUom, row.baseUom].filter(Boolean))).map((uom: any) => ({
+                      value: String(uom),
+                      label: String(uom),
+                      description: String(uom) === String(row.purchaseUom) && Number(row.piecesPerPack || 1) > 1
+                        ? `${row.piecesPerPack} ${row.baseUom || "PC"} per ${row.purchaseUom}`
+                        : "Base stock unit",
+                    }))}
+                    placeholder="Select rate UOM"
+                    searchPlaceholder="Search UOM"
+                  />
+                </Field>
+              </>
+            ) : null}
             {mode === "manual" ? (
               <>
                 <Field label="Damaged pc">
@@ -2259,20 +2362,20 @@ function PoCommercial({
       <h2 className="font-semibold">{title}</h2>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Supplier">
-          <select
+          <SearchableSelect
             value={form.vendorId}
-            onChange={(e) =>
-              setForm({ ...form, vendorId: e.target.value, vendorName: "" })
+            onValueChange={(value) =>
+              setForm({ ...form, vendorId: value, vendorName: "" })
             }
-            className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3 text-sm"
-          >
-            <option value="">Select supplier</option>
-            {vendors.map((v: any) => (
-              <option key={v.id} value={v.id}>
-                {v.name}
-              </option>
-            ))}
-          </select>
+            options={vendors.map((vendor: any) => ({
+              value: vendor.id,
+              label: vendor.name,
+              description: [vendor.code, vendor.city].filter(Boolean).join(" · "),
+              keywords: [vendor.code, vendor.phone, vendor.email].filter(Boolean).join(" "),
+            }))}
+            placeholder="Select supplier"
+            searchPlaceholder="Search supplier, code or city"
+          />
         </Field>
         <Field label="Expected date">
           <Input
@@ -2347,18 +2450,21 @@ function ReceiptHeader({ form, setForm, locations }: any) {
         />
       </Field>
       <Field label="Stock location">
-        <select
+        <SearchableSelect
           value={form.locationId}
-          onChange={(e) => setForm({ ...form, locationId: e.target.value })}
-          className="h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-2 text-sm"
-        >
-          <option value="">Default</option>
-          {locations.map((x: any) => (
-            <option key={x.id} value={x.id}>
-              {x.code} · {x.name}
-            </option>
-          ))}
-        </select>
+          onValueChange={(value) => setForm({ ...form, locationId: value })}
+          options={[
+            { value: "", label: "Default stock location", description: "Uses the governed warehouse default" },
+            ...locations.map((location: any) => ({
+              value: location.id,
+              label: `${location.code} · ${location.name}`,
+              description: [location.type, location.zone].filter(Boolean).join(" · "),
+              keywords: [location.code, location.name, location.type, location.zone].filter(Boolean).join(" "),
+            })),
+          ]}
+          placeholder="Default stock location"
+          searchPlaceholder="Search code, location or zone"
+        />
       </Field>
     </div>
   );

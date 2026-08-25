@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { QueryErrorBanner } from "@/components/query-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
@@ -180,6 +181,8 @@ const emptyVariant: any = {
   priceRateBasis: "AREA",
   priceUom: "SQFT",
   mrpSource: "MANUAL",
+  mrpChangeReason: "",
+  originalMrp: "",
   pricingEffectiveFrom: "",
   status: "active",
   alias: "",
@@ -427,6 +430,8 @@ export default function TileWorkspacePage() {
       ...row,
       piecesPerPack: String(row.piecesPerPack || ""),
       defaultMrpInclusive: row.defaultMrpInclusive == null ? "" : String(row.defaultMrpInclusive),
+      originalMrp: row.defaultMrpInclusive == null ? "" : String(row.defaultMrpInclusive),
+      mrpChangeReason: "",
       defaultNrpInclusive: row.defaultNrpInclusive == null ? "" : String(row.defaultNrpInclusive),
       floorPriceInclusive: row.floorPriceInclusive == null ? "" : String(row.floorPriceInclusive),
       priceRateBasis: "AREA",
@@ -436,21 +441,32 @@ export default function TileWorkspacePage() {
   }
   async function submitVariant(event: any) {
     event.preventDefault();
+    const mrpChanged = Boolean(variant.id && variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001);
     const response = await saveVariant({
       variables: {
         input: {
-          ...variant,
           id: variant.id || undefined,
+          tileDesignId: variant.tileDesignId,
+          tileSizeId: variant.tileSizeId,
           sku: variant.id ? undefined : variant.sku || undefined,
           internalCode: variant.internalCode || undefined,
+          finish: variant.finish,
           piecesPerPack: Number(variant.piecesPerPack || 1),
+          purchaseUom: variant.purchaseUom,
+          salesUom: variant.salesUom,
+          allowLoose: Boolean(variant.allowLoose),
+          hsnCode: variant.hsnCode || undefined,
           defaultMrpInclusive: variant.defaultMrpInclusive === "" ? undefined : Number(variant.defaultMrpInclusive),
           defaultNrpInclusive: variant.defaultNrpInclusive === "" ? undefined : Number(variant.defaultNrpInclusive),
           floorPriceInclusive: variant.floorPriceInclusive === "" ? null : Number(variant.floorPriceInclusive),
           priceRateBasis: "AREA",
           priceUom: "SQFT",
           mrpSource: variant.defaultMrpInclusive !== "" ? variant.mrpSource : undefined,
+          mrpChangeReason: mrpChanged ? variant.mrpChangeReason.trim() : undefined,
           pricingEffectiveFrom: variant.pricingEffectiveFrom || undefined,
+          status: variant.status,
+          alias: variant.alias || undefined,
+          expectedUpdatedAt: variant.id ? variant.updatedAt : undefined,
         },
       },
     });
@@ -947,22 +963,14 @@ export default function TileWorkspacePage() {
               </label>
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
                 Brand
-                <select
-                  required
+                <SearchableSelect
+                  className="mt-1"
                   value={design.brand}
-                  onChange={(e) =>
-                    setDesign({ ...design, brand: e.target.value })
-                  }
-                  className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                >
-                  <option value="">Select from Brand Master</option>
-                  {brands.map((brand: any) => (
-                    <option key={brand.id} value={brand.name}>
-                      {brand.code ? `${brand.code} · ` : ""}
-                      {brand.name}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={(brand) => setDesign({ ...design, brand })}
+                  options={brands.map((brand: any) => ({ value: brand.name, label: brand.name, description: brand.code ? `Brand code ${brand.code}` : undefined, keywords: brand.code }))}
+                  placeholder="Select from Brand Master"
+                  searchPlaceholder="Search brand name or code…"
+                />
               </label>
               <div className="rounded-md border border-dashed border-[var(--line)] p-3">
                 <label className="flex cursor-pointer items-center justify-between text-xs font-semibold">
@@ -1122,66 +1130,48 @@ export default function TileWorkspacePage() {
             <div className="mt-4 space-y-3">
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
                 Design
-                <select
+                <SearchableSelect
+                  className="mt-1"
                   disabled={Boolean(variant.id)}
                   value={variant.tileDesignId}
-                  onChange={(e) =>
-                    setVariant({ ...variant, tileDesignId: e.target.value })
-                  }
-                  className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                >
-                  <option value="">Select design</option>
-                  {designs.map((x: any) => (
-                    <option key={x.id} value={x.id}>
-                      {x.designCode} · {x.name}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={(tileDesignId) => setVariant({ ...variant, tileDesignId })}
+                  options={designs.map((x: any) => ({ value: x.id, label: `${x.designCode} · ${x.name}`, description: x.brand || undefined, keywords: `${x.brand || ""} ${x.designCode}` }))}
+                  placeholder="Select design"
+                  searchPlaceholder="Search design code, name or brand…"
+                />
               </label>
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
                 Size
-                <select
+                <SearchableSelect
+                  className="mt-1"
                   disabled={Boolean(variant.id)}
                   value={variant.tileSizeId}
-                  onChange={(e) => {
+                  onValueChange={(tileSizeId) => {
                     const size = sizes.find(
-                      (x: any) => x.id === e.target.value,
+                      (x: any) => x.id === tileSizeId,
                     );
                     setVariant({
                       ...variant,
-                      tileSizeId: e.target.value,
+                      tileSizeId,
                       piecesPerPack:
                         variant.piecesPerPack || String(size?.pcsPerBox || ""),
                     });
                   }}
-                  className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                >
-                  <option value="">Select governed size</option>
-                  {sizes.map((x: any) => (
-                    <option key={x.id} value={x.id}>
-                      {x.code} · {x.name}
-                    </option>
-                  ))}
-                </select>
+                  options={sizes.map((x: any) => ({ value: x.id, label: `${x.code} · ${x.name}`, description: x.pcsPerBox ? `${x.pcsPerBox} pc / box` : undefined, keywords: `${x.widthMm || ""} ${x.heightMm || ""}` }))}
+                  placeholder="Select governed size"
+                  searchPlaceholder="Search size or dimensions…"
+                />
               </label>
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
                 Finish
-                <select
-                  required
+                <SearchableSelect
+                  className="mt-1"
                   value={variant.finish}
-                  onChange={(e) =>
-                    setVariant({ ...variant, finish: e.target.value })
-                  }
-                  className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                >
-                  <option value="">Select from Finish Master</option>
-                  {finishes.map((finish: any) => (
-                    <option key={finish.id} value={finish.name}>
-                      {finish.code ? `${finish.code} · ` : ""}
-                      {finish.name}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={(finish) => setVariant({ ...variant, finish })}
+                  options={finishes.map((finish: any) => ({ value: finish.name, label: finish.name, description: finish.code ? `Finish code ${finish.code}` : undefined, keywords: finish.code }))}
+                  placeholder="Select from Finish Master"
+                  searchPlaceholder="Search finish name or code…"
+                />
               </label>
               {!variant.id ? (
                 <div className="grid grid-cols-2 gap-3">
@@ -1235,29 +1225,11 @@ export default function TileWorkspacePage() {
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
                   Purchase UOM
-                  <select
-                    className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-2"
-                    value={variant.purchaseUom}
-                    onChange={(e) =>
-                      setVariant({ ...variant, purchaseUom: e.target.value })
-                    }
-                  >
-                    <option>BOX</option>
-                    <option>PC</option>
-                  </select>
+                  <SearchableSelect className="mt-1" value={variant.purchaseUom} onValueChange={(purchaseUom) => setVariant({ ...variant, purchaseUom })} options={[{ value: "BOX", label: "BOX · full box" }, { value: "PC", label: "PC · individual piece" }]} searchPlaceholder="Search UOM…" />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
                   Sales UOM
-                  <select
-                    className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-2"
-                    value={variant.salesUom}
-                    onChange={(e) =>
-                      setVariant({ ...variant, salesUom: e.target.value })
-                    }
-                  >
-                    <option>BOX</option>
-                    <option>PC</option>
-                  </select>
+                  <SearchableSelect className="mt-1" value={variant.salesUom} onValueChange={(salesUom) => setVariant({ ...variant, salesUom })} options={[{ value: "BOX", label: "BOX · full box" }, { value: "PC", label: "PC · individual piece" }]} searchPlaceholder="Search UOM…" />
                 </label>
               </div>
               <label className="flex items-center gap-2 text-xs font-semibold text-[var(--ink-3)]">
@@ -1311,6 +1283,7 @@ export default function TileWorkspacePage() {
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">Price UOM<Input className="mt-1" value="SQFT" disabled /></label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">MRP source<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.mrpSource} onChange={(e) => setVariant({ ...variant, mrpSource: e.target.value })}><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">Effective from<Input className="mt-1" type="date" value={variant.pricingEffectiveFrom} onChange={(e) => setVariant({ ...variant, pricingEffectiveFrom: e.target.value })}/></label>
+                {variant.id && variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001 ? <label className="block text-xs font-semibold text-[#9f342d] sm:col-span-2">MRP change reason *<Input className="mt-1" value={variant.mrpChangeReason} onChange={(e) => setVariant({ ...variant, mrpChangeReason: e.target.value })} placeholder="Example: Revised brand price list"/><span className="mt-1 block text-[10px] font-medium text-[var(--ink-4)]">Old and new MRP, user, source and effective date will be added to this tile SKU history.</span></label> : null}
                 </div>
               </div>
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
@@ -1334,7 +1307,8 @@ export default function TileWorkspacePage() {
                   !variant.tileDesignId ||
                   !variant.tileSizeId ||
                   !variant.finish ||
-                  Number(variant.defaultMrpInclusive) <= 0
+                  Number(variant.defaultMrpInclusive) <= 0 ||
+                  (variant.id && variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001 && variant.mrpChangeReason.trim().length < 3)
                 }
               >
                 {variantState.loading ? "Saving…" : "Save and clear variant"}
