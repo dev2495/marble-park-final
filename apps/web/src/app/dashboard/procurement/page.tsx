@@ -143,6 +143,12 @@ const emptyReceipt = {
 function money(value: any) {
   return `₹${Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
+function hasPendingPoRate(po: any) {
+  return Boolean((po?.lines || []).some(isPendingPoLineRate));
+}
+function isPendingPoLineRate(line: any) {
+  return !["complete", "captured"].includes(String(line?.costStatus || "")) || Number(line?.unitCost || 0) <= 0 || Number(line?.netUnitCost || 0) <= 0;
+}
 function statusClass(status: string) {
   return status === "received" || status === "allocated"
     ? "bg-emerald-50 text-emerald-700"
@@ -290,6 +296,7 @@ export default function ProcurementSuitePage() {
   const canViewCost = ["owner", "admin"].includes(data?.me?.role);
   const canEnterPoRate = Boolean(data?.me?.effectivePermissions?.includes("procurement.manage"));
   const canEnterManualRate = Boolean(data?.me?.effectivePermissions?.includes("goods_receipts.manage"));
+  const canEnterReceiptRate = canEnterManualRate;
   const actionableDemandIds = demands
     .filter((row: any) =>
       ["open", "ordered", "partial_received"].includes(row.status),
@@ -297,16 +304,15 @@ export default function ProcurementSuitePage() {
     .map((row: any) => row.id);
   const directLinesReady =
     directLines.length > 0 &&
-    directLines.every((line: any) => enteredBaseQuantity(line) > 0 && Number(line.enteredUnitCost || 0) > 0);
+    directLines.every((line: any) => enteredBaseQuantity(line) > 0);
   const manualLinesReady =
     manualLines.length > 0 &&
     manualLines.every((line: any) => enteredBaseQuantity(line) > 0 && Number(line.enteredUnitCost || 0) > 0);
-  const demandLinesReady = selectedDemand.length > 0 && selectedDemand.every((id) => Number(demandCosts[id] || 0) > 0);
-  const receiptLinesReady = Boolean(
-    activePo?.lines?.some(
-      (line: any) => receivedBaseQuantity(line, receiveRows[line.id] || {}) > 0,
-    ),
+  const demandLinesReady = selectedDemand.length > 0;
+  const selectedReceiptLines = (activePo?.lines || []).filter(
+    (line: any) => receivedBaseQuantity(line, receiveRows[line.id] || {}) > 0,
   );
+  const receiptLinesReady = Boolean(selectedReceiptLines.length);
   const errors = [
     error,
     searchError,
@@ -431,9 +437,8 @@ export default function ProcurementSuitePage() {
       },
     });
     const po = response.data?.createPurchaseOrder;
-    setNotice(
-      `${po?.poNumber || "Purchase order"} created. The form is blank and ready for the next PO.`,
-    );
+    const pendingRates = Number(po?.metadata?.commercial?.missingLineCount || 0);
+    setNotice(`${po?.poNumber || "Purchase order"} created${pendingRates ? ` with ${pendingRates} supplier cost(s) pending` : " with supplier rates locked"}. Missing costs remain in the permanent delayed-cost queue before or after inward.`);
     resetPo();
     setActivePoId(po?.id || "");
     setTab("receiving");
@@ -459,12 +464,20 @@ export default function ProcurementSuitePage() {
               shade: row.shade || undefined,
               caliber: row.caliber || undefined,
               grade: row.grade || undefined,
+              ...(isPendingPoLineRate(line) && Number(row.enteredUnitCost || 0) > 0 ? {
+                enteredUnitCost: Number(row.enteredUnitCost || 0),
+                rateUom: row.rateUom || line.product?.purchaseUom || line.product?.baseUom || line.unit || "PC",
+              } : {}),
             }
           : {
               purchaseOrderLineId: line.id,
               receivedQuantity: Number(row.receivedQuantity || 0),
               damagedQuantity: Number(row.damagedQuantity || 0),
               supplierBatch: row.supplierBatch || undefined,
+              ...(isPendingPoLineRate(line) && Number(row.enteredUnitCost || 0) > 0 ? {
+                enteredUnitCost: Number(row.enteredUnitCost || 0),
+                rateUom: row.rateUom || line.product?.purchaseUom || line.product?.baseUom || line.unit || "PC",
+              } : {}),
             };
       })
       .filter(
@@ -489,7 +502,7 @@ export default function ProcurementSuitePage() {
       },
     });
     setNotice(
-      `${response.data?.receivePurchaseOrder?.grnNumber || "GRN"} posted. Inventory, lot ledger and backorder allocation are reconciled.`,
+      `${response.data?.receivePurchaseOrder?.grnNumber || "GRN"} posted. Quantity, lot ledger and backorder allocation are reconciled; any unknown supplier cost remains visibly pending.`,
     );
     setReceipt(emptyReceipt);
     setReceiveRows({});
@@ -798,15 +811,15 @@ export default function ProcurementSuitePage() {
                 </div>
                 {!canEnterPoRate ? (
                   <p className="mt-2 text-xs font-semibold text-amber-800">
-                    Purchase rates are private. Ask an owner or administrator to issue the PO from this selected demand.
+                    Purchase rates are private. You can issue the PO without a rate; only authorized users can add or later complete supplier cost.
                   </p>
                 ) : !commercial.vendorId ? (
                   <p className="mt-2 text-xs font-semibold text-amber-800">
-                    Choose the supplier and enter every supplier rate before issuing the PO.
+                    Choose the supplier. Supplier rates may be added now or completed later from the delayed-cost queue.
                   </p>
                 ) : !demandLinesReady ? (
                   <p className="mt-2 text-xs font-semibold text-amber-800">
-                    Every selected line needs a positive supplier rate and rate UOM. Cost is never deferred to a PO-linked GRN.
+                    Select at least one valid pending item. Supplier rates remain optional.
                   </p>
                 ) : null}
               </div>
@@ -887,7 +900,7 @@ export default function ProcurementSuitePage() {
                             onChange={(e) =>
                               setDemandCosts({ ...demandCosts, [row.id]: e.target.value })
                             }
-                            placeholder="Rate"
+                            placeholder="Optional"
                           />
                           <SearchableSelect
                             className="w-24"
@@ -939,7 +952,9 @@ export default function ProcurementSuitePage() {
                 </h2>
                 <p className="mt-1 text-xs text-[var(--ink-4)]">
                   Search Product Master or a tile variant code. Tile quantities
-                  accept boxes plus loose pieces.
+                  accept boxes plus loose pieces. Supplier rate is optional on
+                  the PO and at inward; unknown cost remains in the permanent
+                  delayed-cost queue until the supplier confirms it.
                 </p>
               </div>
               <Button
@@ -1068,9 +1083,9 @@ export default function ProcurementSuitePage() {
                   </p>
                 </div>
                 <div className="font-semibold">
-                  {money(po.grandTotal)}
+                  {hasPendingPoRate(po) ? "Rate pending" : money(po.grandTotal)}
                   <p className="text-xs font-normal text-[var(--ink-4)]">
-                    Tax {money(po.taxAmount)}
+                    {hasPendingPoRate(po) ? `${money(po.grandTotal)} known value` : `Tax ${money(po.taxAmount)}`}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -1168,7 +1183,7 @@ export default function ProcurementSuitePage() {
                     .map((po: any) => ({
                       value: po.id,
                       label: `${po.poNumber} · ${po.vendorName}`,
-                      description: `${po.lines?.length || 0} lines · ${po.lines?.some((line: any) => line.costStatus === "missing") ? "rate setup required" : "rate locked"}`,
+                      description: `${po.lines?.length || 0} lines · ${po.lines?.some(isPendingPoLineRate) ? "rate captured when received" : "rate locked"}`,
                       keywords: (po.lines || []).map((line: any) => `${line.sku} ${line.name}`).join(" "),
                     }))}
                   placeholder="Select PO from matching results"
@@ -1178,10 +1193,9 @@ export default function ProcurementSuitePage() {
               </label>
               {activePo ? (
                 <div className="mt-4 space-y-3">
-                  {(activePo.lines || []).some((line: any) => line.costStatus === "missing") ? (
+                  {(activePo.lines || []).some(isPendingPoLineRate) ? (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                      <b>Receipt blocked safely.</b> This legacy PO has a missing supplier rate. An owner must complete it before GRN so the lot receives a valid cost snapshot.{" "}
-                      <Link className="font-semibold underline" href="/dashboard/procurement/cost-readiness">Open rate setup</Link>
+                      <b>Supplier rate is optional at inward.</b> Add it now if known, or post the quantities and let the linked GRN/lot remain cost-pending in the permanent delayed-cost queue. Existing rated lines remain locked.
                     </div>
                   ) : null}
                   {(activePo.lines || [])
@@ -1195,6 +1209,7 @@ export default function ProcurementSuitePage() {
                         key={line.id}
                         line={line}
                         value={receiveRows[line.id] || {}}
+                        canEnterRate={canEnterReceiptRate}
                         onChange={(patch: any) =>
                           setReceiveRows({
                             ...receiveRows,
@@ -1218,7 +1233,7 @@ export default function ProcurementSuitePage() {
               <Button
                 className="mt-4 w-full"
                 disabled={
-                  !activePo || !receiptLinesReady || receiveState.loading || (activePo.lines || []).some((line: any) => line.costStatus === "missing")
+                  !activePo || !receiptLinesReady || receiveState.loading || !canEnterReceiptRate
                 }
                 onClick={submitReceipt}
               >
@@ -2021,9 +2036,9 @@ function PurchaseOrderRow({
         </p>
       </div>
       <div className="font-semibold">
-        {money(po.grandTotal)}
+        {hasPendingPoRate(po) ? "Rate pending" : money(po.grandTotal)}
         <p className="text-xs font-normal text-[var(--ink-4)]">
-          Tax {money(po.taxAmount)}
+          {hasPendingPoRate(po) ? `${money(po.grandTotal)} known value` : `Tax ${money(po.taxAmount)}`}
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -2223,7 +2238,7 @@ function LineEditor({ rows, setRows, mode, canViewCost }: any) {
             )}
             {canViewCost ? (
               <>
-                <Field label={mode === "manual" ? "Inward supplier rate ₹" : "PO supplier rate ₹"}>
+                <Field label={mode === "manual" ? "Inward supplier rate ₹" : "PO supplier rate ₹ (optional)"}>
                   <Input
                     type="number"
                     min="0.0001"
@@ -2234,7 +2249,7 @@ function LineEditor({ rows, setRows, mode, canViewCost }: any) {
                         enteredUnitCost: e.target.value,
                       })
                     }
-                    placeholder="Required"
+                    placeholder={mode === "manual" ? "Required" : "Can be added at inward"}
                   />
                 </Field>
                 <Field label="Rate UOM">
@@ -2469,7 +2484,7 @@ function ReceiptHeader({ form, setForm, locations }: any) {
     </div>
   );
 }
-function ReceiveLine({ line, value, onChange }: any) {
+function ReceiveLine({ line, value, onChange, canEnterRate }: any) {
   const tile =
     String(line.product?.category || line.category || "").toLowerCase() ===
     "tiles";
@@ -2485,6 +2500,7 @@ function ReceiveLine({ line, value, onChange }: any) {
       <p className="text-xs text-[var(--ink-4)]">
         Remaining {remaining} base pc
         {tile ? ` · ${line.product?.piecesPerPack || 1} pc/box` : ""}
+        {isPendingPoLineRate(line) ? " · supplier rate pending" : " · PO rate locked"}
       </p>
       <div className="mt-3 grid grid-cols-2 gap-2">
         {tile ? (
@@ -2532,6 +2548,35 @@ function ReceiveLine({ line, value, onChange }: any) {
             onChange={(e) => onChange({ supplierBatch: e.target.value })}
           />
         </Field>
+        {isPendingPoLineRate(line) && canEnterRate ? (
+          <>
+            <Field label="Supplier rate ₹ (optional)">
+              <Input
+                type="number"
+                min="0.0001"
+                step="0.01"
+                value={value.enteredUnitCost || ""}
+                onChange={(e) => onChange({ enteredUnitCost: e.target.value })}
+                placeholder="Add now or 10–20 days later"
+              />
+            </Field>
+            <Field label="Rate UOM">
+              <SearchableSelect
+                value={value.rateUom || line.product?.purchaseUom || line.product?.baseUom || line.unit || "PC"}
+                onValueChange={(rateUom) => onChange({ rateUom })}
+                options={Array.from(new Set([line.product?.purchaseUom, line.product?.baseUom, line.unit].filter(Boolean))).map((uom: any) => ({
+                  value: String(uom),
+                  label: String(uom),
+                  description: String(uom) === String(line.product?.purchaseUom) && Number(line.product?.piecesPerPack || 1) > 1
+                    ? `${line.product.piecesPerPack} ${line.product?.baseUom || "PC"} per ${uom}`
+                    : "Base stock unit",
+                }))}
+                placeholder="Select rate UOM"
+                searchPlaceholder="Search UOM"
+              />
+            </Field>
+          </>
+        ) : null}
         {tile ? (
           <>
             <Field label="Shade">

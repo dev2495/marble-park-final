@@ -124,10 +124,12 @@ export class ProductsService {
     const finish = String(data.finish || '').trim();
     const status = String(data.status || 'active').trim().toLowerCase();
     const tileDefaults = category.toLowerCase() === 'tiles';
+    const chemicalDefaults = category.toLowerCase() === 'chemicals';
     const defaults = this.validateSellingDefaults({
       ...data,
       ...(tileDefaults ? { priceRateBasis: 'AREA', priceUom: 'SQFT' } : {}),
-    }, data.salesUom || data.unit, true);
+      ...(chemicalDefaults ? { priceRateBasis: 'BOX', priceUom: 'KG' } : {}),
+    }, chemicalDefaults ? 'KG' : data.salesUom || data.unit, true);
     if (!sku) throw new BadRequestException('SKU is required');
     if (!name) throw new BadRequestException('Product name is required');
     if (!category) throw new BadRequestException('Category is required');
@@ -151,7 +153,9 @@ export class ProductsService {
     if (normalizedSupplierAlias && normalizedSupplierAlias !== internalCode) {
       await this.assertCodeAvailable(normalizedSupplierAlias, '');
     }
-    const uoms = [data.baseUom || (tileDefaults ? 'PC' : data.unit) || 'PC', data.purchaseUom || data.unit || (tileDefaults ? 'BOX' : 'PC'), data.salesUom || data.unit || (tileDefaults ? 'BOX' : 'PC')]
+    const uoms = (chemicalDefaults
+      ? ['KG', 'KG', 'KG']
+      : [data.baseUom || (tileDefaults ? 'PC' : data.unit) || 'PC', data.purchaseUom || data.unit || (tileDefaults ? 'BOX' : 'PC'), data.salesUom || data.unit || (tileDefaults ? 'BOX' : 'PC')])
       .map((value) => String(value).trim().toUpperCase());
     const coveragePerPack = this.numberAtLeastZero(data.coveragePerPack || 0, 'Coverage per pack');
     const validUoms = await this.prisma.unitOfMeasure.count({ where: { code: { in: Array.from(new Set(uoms)) }, status: 'active' } });
@@ -167,7 +171,7 @@ export class ProductsService {
           brand,
           finish,
           dimensions: String(data.dimensions || '').trim(),
-          unit: String(data.unit || uoms[1]).trim().toUpperCase() || uoms[1],
+          unit: chemicalDefaults ? 'KG' : String(data.unit || uoms[1]).trim().toUpperCase() || uoms[1],
           tags: [],
           sellPrice: 0,
           floorPrice: 0,
@@ -197,10 +201,10 @@ export class ProductsService {
           tileSizeId: data.tileSizeId || null,
           tileDesignId: data.tileDesignId || null,
           baseUom: uoms[0], purchaseUom: uoms[1], salesUom: uoms[2],
-          piecesPerPack: Math.max(1, Math.trunc(Number(data.piecesPerPack || 1))),
-          coveragePerPack,
+          piecesPerPack: chemicalDefaults ? 1 : Math.max(1, Math.trunc(Number(data.piecesPerPack || 1))),
+          coveragePerPack: chemicalDefaults ? 0 : coveragePerPack,
           hsnCode: String(data.hsnCode || '').trim() || null,
-          trackLots: true, allowLoose: Boolean(data.allowLoose),
+          trackLots: true, allowLoose: chemicalDefaults ? true : Boolean(data.allowLoose),
           updatedAt: new Date(),
         } as any,
       });
@@ -277,17 +281,19 @@ export class ProductsService {
     if (update.status !== undefined && !['active', 'inactive', 'archived'].includes(update.status)) {
       throw new BadRequestException('Product status must be active, inactive, or archived');
     }
+    const finalCategory = String(data.category === undefined ? current.category : data.category).trim().toLowerCase();
+    const isChemical = finalCategory === 'chemicals';
     if (['defaultMrpInclusive', 'defaultNrpInclusive', 'floorPriceInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom'].some((key) => (data as any)[key] !== undefined)) {
       if (data.defaultMrpInclusive === null && current.defaultMrpInclusive != null) {
         throw new BadRequestException('MRP cannot be cleared after it is verified. Enter a replacement MRP or archive the SKU.');
       }
-      const isTile = String(data.category === undefined ? current.category : data.category).toLowerCase() === 'tiles';
+      const isTile = finalCategory === 'tiles';
       const defaults = this.validateSellingDefaults({
         defaultMrpInclusive: data.defaultMrpInclusive === undefined ? current.defaultMrpInclusive : data.defaultMrpInclusive,
         defaultNrpInclusive: data.defaultNrpInclusive === undefined ? current.defaultNrpInclusive : data.defaultNrpInclusive,
         floorPriceInclusive: data.floorPriceInclusive === undefined ? current.floorPriceInclusive : data.floorPriceInclusive,
-        priceRateBasis: isTile ? 'AREA' : data.priceRateBasis === undefined ? current.priceRateBasis : data.priceRateBasis,
-        priceUom: isTile ? 'SQFT' : data.priceUom === undefined ? current.priceUom : data.priceUom,
+        priceRateBasis: isTile ? 'AREA' : isChemical ? 'BOX' : data.priceRateBasis === undefined ? current.priceRateBasis : data.priceRateBasis,
+        priceUom: isTile ? 'SQFT' : isChemical ? 'KG' : data.priceUom === undefined ? current.priceUom : data.priceUom,
         mrpSource: data.mrpSource === undefined ? current.mrpSource : data.mrpSource,
         pricingEffectiveFrom: data.pricingEffectiveFrom === undefined ? current.pricingEffectiveFrom : data.pricingEffectiveFrom,
       }, data.salesUom || current.salesUom);
@@ -326,6 +332,20 @@ export class ProductsService {
     if (data.coveragePerPack !== undefined) update.coveragePerPack = this.numberAtLeastZero(data.coveragePerPack, 'Coverage per pack');
     if (data.hsnCode !== undefined) update.hsnCode = String(data.hsnCode || '').trim() || null;
     if (data.allowLoose !== undefined) update.allowLoose = Boolean(data.allowLoose);
+    if (isChemical) {
+      Object.assign(update, {
+        unit: 'KG',
+        baseUom: 'KG',
+        purchaseUom: 'KG',
+        salesUom: 'KG',
+        piecesPerPack: 1,
+        coveragePerPack: 0,
+        allowLoose: true,
+        priceRateBasis: 'BOX',
+        priceUom: 'KG',
+        mrpRateBasis: 'BOX',
+      });
+    }
     const supplierAlias = data.supplierAlias === undefined ? undefined : String(data.supplierAlias || '').trim();
     const normalizedSupplierAlias = supplierAlias ? this.normalizeInternalCode(supplierAlias) : '';
     if (normalizedSupplierAlias && normalizedSupplierAlias !== current.internalCode) {

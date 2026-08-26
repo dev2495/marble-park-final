@@ -32,6 +32,10 @@ export class SystemService {
           documentFooter: 'Thank you for choosing Marble Park. Product availability, shade and batch are confirmed at order stage.',
           quoteBrandSelectionMode: 'all',
           quoteBrandIds: [],
+          tileQuoteBrandSelectionMode: 'all',
+          tileQuoteBrandIds: [],
+          cpSanitaryQuoteBrandSelectionMode: 'all',
+          cpSanitaryQuoteBrandIds: [],
           supportPhone: '0260-2424498 · 9427119271 · 7506133166 · 9712508070',
           supportEmail: '',
           updatedAt: new Date(),
@@ -56,6 +60,10 @@ export class SystemService {
       documentFooter: settings.documentFooter,
       quoteBrandSelectionMode: settings.quoteBrandSelectionMode || 'all',
       quoteBrandIds: Array.isArray(settings.quoteBrandIds) ? settings.quoteBrandIds : [],
+      tileQuoteBrandSelectionMode: settings.tileQuoteBrandSelectionMode || settings.quoteBrandSelectionMode || 'all',
+      tileQuoteBrandIds: Array.isArray(settings.tileQuoteBrandIds) ? settings.tileQuoteBrandIds : (Array.isArray(settings.quoteBrandIds) ? settings.quoteBrandIds : []),
+      cpSanitaryQuoteBrandSelectionMode: settings.cpSanitaryQuoteBrandSelectionMode || settings.quoteBrandSelectionMode || 'all',
+      cpSanitaryQuoteBrandIds: Array.isArray(settings.cpSanitaryQuoteBrandIds) ? settings.cpSanitaryQuoteBrandIds : (Array.isArray(settings.quoteBrandIds) ? settings.quoteBrandIds : []),
       supportPhone: settings.supportPhone,
       supportEmail: settings.supportEmail,
     };
@@ -63,18 +71,22 @@ export class SystemService {
 
   async updateSettings(input: any, actorUserId: string) {
     const current = await this.getSettings();
-    const quoteBrandSelectionMode = input.quoteBrandSelectionMode === undefined
-      ? current.quoteBrandSelectionMode
-      : String(input.quoteBrandSelectionMode || '').trim().toLowerCase();
-    if (!['all', 'selected', 'none'].includes(quoteBrandSelectionMode)) {
-      throw new BadRequestException('Quote brand default must be all, selected, or none');
-    }
-    const requestedBrandIds: string[] = Array.isArray(input.quoteBrandIds)
-      ? input.quoteBrandIds.map((brandId: unknown) => String(brandId)).filter(Boolean)
-      : [];
-    const quoteBrandIds: string[] = input.quoteBrandIds === undefined
-      ? (Array.isArray(current.quoteBrandIds) ? current.quoteBrandIds.map((brandId) => String(brandId)).filter(Boolean) : [])
-      : Array.from(new Set<string>(requestedBrandIds)).slice(0, 100);
+    const policy = (modeInput: unknown, idsInput: unknown, currentMode: unknown, currentIds: unknown, label: string) => {
+      const mode = modeInput === undefined ? String(currentMode || 'all') : String(modeInput || '').trim().toLowerCase();
+      if (!['all', 'selected', 'none'].includes(mode)) {
+        throw new BadRequestException(`${label} brand policy must be all, selected, or none`);
+      }
+      const ids = idsInput === undefined
+        ? (Array.isArray(currentIds) ? currentIds : [])
+        : (Array.isArray(idsInput) ? idsInput : []);
+      return {
+        mode,
+        ids: Array.from(new Set<string>(ids.map((brandId: unknown) => String(brandId)).filter(Boolean))).slice(0, 100),
+      };
+    };
+    const legacyPolicy = policy(input.quoteBrandSelectionMode, input.quoteBrandIds, current.quoteBrandSelectionMode, current.quoteBrandIds, 'Quote');
+    const tilePolicy = policy(input.tileQuoteBrandSelectionMode, input.tileQuoteBrandIds, current.tileQuoteBrandSelectionMode || legacyPolicy.mode, current.tileQuoteBrandIds || legacyPolicy.ids, 'Tile & Chemical quote');
+    const cpSanitaryPolicy = policy(input.cpSanitaryQuoteBrandSelectionMode, input.cpSanitaryQuoteBrandIds, current.cpSanitaryQuoteBrandSelectionMode || legacyPolicy.mode, current.cpSanitaryQuoteBrandIds || legacyPolicy.ids, 'CP & Sanitary quote');
     const settings = await this.prisma.appSetting.update({
       where: { id: current.id },
       data: {
@@ -92,8 +104,12 @@ export class SystemService {
         defaultTerms: input.defaultTerms ?? current.defaultTerms,
         bankDetails: input.bankDetails ?? current.bankDetails,
         documentFooter: input.documentFooter ?? current.documentFooter,
-        quoteBrandSelectionMode,
-        quoteBrandIds,
+        quoteBrandSelectionMode: legacyPolicy.mode,
+        quoteBrandIds: legacyPolicy.ids,
+        tileQuoteBrandSelectionMode: tilePolicy.mode,
+        tileQuoteBrandIds: tilePolicy.ids,
+        cpSanitaryQuoteBrandSelectionMode: cpSanitaryPolicy.mode,
+        cpSanitaryQuoteBrandIds: cpSanitaryPolicy.ids,
         supportPhone: input.supportPhone ?? current.supportPhone,
         supportEmail: input.supportEmail ?? current.supportEmail,
         updatedAt: new Date(),

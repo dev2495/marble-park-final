@@ -77,13 +77,62 @@ async function main() {
   assert(delegatedPo?.id && delegatedPo.createdBy === delegatedBuyerId, 'procurement.manage override did not create a traceable PO');
   close(delegatedPo.lines[0].unitCost, 100, 'Delegated PO supplier rate did not normalize');
 
-  const zeroRateError = await gql(
+  const optionalRatePo = (await gql(
     'mutation($input:CreatePurchaseOrderInput!){createPurchaseOrder(input:$input)}',
-    { input: { vendorId, vendorName: `Contract Supplier ${stamp}`, lines: JSON.stringify([{ productId, boxes: 1, enteredUnitCost: 0, rateUom: 'BOX' }]) } },
+    { input: { vendorId, vendorName: `Contract Supplier ${stamp}`, discountPercent: 5, lines: JSON.stringify([{ productId, boxes: 1, rateUom: 'BOX' }]) } },
     token,
-    true,
-  );
-  assert(/greater than zero/i.test(zeroRateError), `Zero-rate PO was not blocked: ${zeroRateError}`);
+  )).createPurchaseOrder;
+  assert(optionalRatePo?.id && optionalRatePo.lines?.[0]?.costStatus === 'missing', 'PO without supplier rate was not preserved as rate-pending');
+  close(optionalRatePo.grandTotal, 0, 'Pending-rate PO invented a commercial total');
+  const optionalLine = optionalRatePo.lines[0];
+  const pendingReceipt = (await gql(
+    'mutation($input:ReceivePurchaseOrderInput!){receivePurchaseOrder(input:$input)}',
+    { input: { purchaseOrderId: optionalRatePo.id, locationId, lines: JSON.stringify([{ purchaseOrderLineId: optionalLine.id, boxes: 1 }]) } },
+    token,
+  )).receivePurchaseOrder;
+  close(pendingReceipt.lines[0].unitCost, 0, 'Unrated inward invented an inventory cost');
+  assert(pendingReceipt.lines[0].costStatus === 'pending', 'Unrated inward did not retain a pending cost status');
+  const pendingLot = await prisma.inventoryLot.findUnique({ where: { id: pendingReceipt.lines[0].lotId } });
+  close(pendingLot?.unitCost, 0, 'Unrated inventory lot invented a cost');
+  assert(pendingLot?.costStatus === 'pending' && pendingLot?.metadata?.costSource === 'pending_supplier_rate', 'Unrated lot lost delayed-cost provenance');
+  const receivedReadiness = (await gql('query($search:String){purchaseOrderCostReadinessPage(search:$search,take:20)}', { search: optionalRatePo.poNumber }, token)).purchaseOrderCostReadinessPage;
+  assert(receivedReadiness.total === 1 && receivedReadiness.items[0].receivedMissingLineCount === 1, 'Received no-cost PO did not remain on the permanent delayed-cost queue');
+  const finalizedAfterReceipt = (await gql(
+    'mutation($input:CompletePurchaseOrderCostsInput!){completePurchaseOrderCosts(input:$input)}',
+    { input: { purchaseOrderId: optionalRatePo.id, reason: 'Supplier invoice received after stock inward', lines: JSON.stringify([{ purchaseOrderLineId: optionalLine.id, enteredUnitCost: 440, rateUom: 'BOX' }]) } },
+    token,
+  )).completePurchaseOrderCosts;
+  close(finalizedAfterReceipt.lines[0].unitCost, 110, 'Delayed supplier BOX rate did not normalize to base PC cost');
+  close(finalizedAfterReceipt.lines[0].netUnitCost, 104.5, 'Delayed supplier rate did not apply the saved PO discount');
+  const [finalizedReceiptLine, finalizedLot] = await Promise.all([
+    prisma.goodsReceiptLine.findUnique({ where: { id: pendingReceipt.lines[0].id } }),
+    prisma.inventoryLot.findUnique({ where: { id: pendingReceipt.lines[0].lotId } }),
+  ]);
+  close(finalizedReceiptLine?.unitCost, 104.5, 'Delayed cost did not update the received GRN line');
+  assert(finalizedReceiptLine?.costStatus === 'complete', 'Delayed cost did not complete the GRN cost state');
+  close(finalizedLot?.unitCost, 104.5, 'Delayed cost did not update the original inventory lot');
+  assert(finalizedLot?.costStatus === 'complete' && finalizedLot?.metadata?.costSource === 'purchase_order_delayed_net_snapshot', 'Delayed lot cost provenance is missing');
+  const delayedAudit = await prisma.auditEvent.findFirst({ where: { action: 'purchase_order.cost_finalize_late', entityId: optionalRatePo.id } });
+  assert(delayedAudit?.metadata?.stockQuantityChanged === false, 'Delayed supplier-rate audit does not explicitly preserve stock quantity');
+  assert(delayedAudit?.metadata?.lotCostChanges?.[0]?.lotId === pendingReceipt.lines[0].lotId, 'Delayed supplier-rate audit is missing the lot before/after cost evidence');
+
+  const inwardRatePo = (await gql(
+    'mutation($input:CreatePurchaseOrderInput!){createPurchaseOrder(input:$input)}',
+    { input: { vendorId, vendorName: `Contract Supplier ${stamp}`, discountPercent: 5, lines: JSON.stringify([{ productId, boxes: 1, rateUom: 'BOX' }]) } },
+    token,
+  )).createPurchaseOrder;
+  const inwardRateLine = inwardRatePo.lines[0];
+  const firstInward = (await gql(
+    'mutation($input:ReceivePurchaseOrderInput!){receivePurchaseOrder(input:$input)}',
+    { input: { purchaseOrderId: inwardRatePo.id, locationId, lines: JSON.stringify([{ purchaseOrderLineId: inwardRateLine.id, boxes: 1, enteredUnitCost: 440, rateUom: 'BOX' }]) } },
+    token,
+  )).receivePurchaseOrder;
+  close(firstInward.lines[0].unitCost, 104.5, 'First inward did not apply the saved PO discount to the captured supplier rate');
+  const capturedOptionalLine = await prisma.purchaseOrderLine.findUnique({ where: { id: inwardRateLine.id } });
+  assert(capturedOptionalLine?.costStatus === 'complete', 'First inward did not lock the captured rate on the PO line');
+  close(capturedOptionalLine?.enteredUnitCost, 440, 'First inward did not preserve entered supplier rate');
+  close(capturedOptionalLine?.netUnitCost, 104.5, 'First inward did not preserve net pre-tax base cost');
+  assert(await prisma.auditEvent.count({ where: { action: 'purchase_order.rate_capture_on_inward', entityId: inwardRateLine.id } }) === 1, 'First-inward supplier-rate audit is missing');
 
   const created = (await gql(
     'mutation($input:CreatePurchaseOrderInput!){createPurchaseOrder(input:$input)}',
@@ -153,7 +202,7 @@ async function main() {
   close(completed.lines[0].unitCost, 100, 'Legacy rate normalization is wrong');
   close(completed.lines[0].netUnitCost, 95, 'Legacy PO discount was not applied to inventory cost');
   close(completed.taxAmount, 68.4, 'Legacy PO optional GST total is wrong');
-  assert(await prisma.auditEvent.count({ where: { action: 'purchase_order.cost_complete', entityId: legacyPoId } }) === 1, 'Legacy rate completion audit is missing');
+  assert(await prisma.auditEvent.count({ where: { action: 'purchase_order.cost_finalize_late', entityId: legacyPoId } }) === 1, 'Legacy rate completion audit is missing');
 
   console.log(JSON.stringify({
     ok: true,
@@ -163,7 +212,10 @@ async function main() {
     optionalGst: '0% and 18% verified',
     inventoryCost: '90 / PC net pre-tax snapshot',
     manualGrnCost: '110 / PC from 440 / BOX',
-    legacyReadiness: 'paged, actionable, audited',
+    optionalPoRate: 'blank on PO and inward; zero-cost lot remains traceable until supplier rate arrives',
+    inwardRate: 'optional capture at inward remains normalized and audited',
+    delayedCost: 'permanent queue updates the original GRN and lot without changing stock quantity',
+    legacyReadiness: 'received and awaiting-inward items remain paged, actionable and audited',
   }, null, 2));
 }
 

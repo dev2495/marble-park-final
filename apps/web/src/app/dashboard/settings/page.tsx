@@ -3,9 +3,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
-  Building2, CheckCircle2, FileText, Globe2,
+  Bath, Building2, Check, CheckCircle2, FileText, Globe2,
   ImagePlus, Landmark, LifeBuoy, Loader2, MapPin, Pencil, PlusCircle, Save, ShieldCheck, SlidersHorizontal,
-  Upload, Warehouse, BellRing,
+  Upload, Warehouse, BellRing, Layers3, LockKeyhole,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -70,6 +70,10 @@ const defaults = {
   approvalDiscountThreshold: 15,
   quoteBrandSelectionMode: 'all',
   quoteBrandIds: [],
+  tileQuoteBrandSelectionMode: 'all',
+  tileQuoteBrandIds: [],
+  cpSanitaryQuoteBrandSelectionMode: 'all',
+  cpSanitaryQuoteBrandIds: [],
 };
 
 async function fileBase64(file: File) {
@@ -94,6 +98,10 @@ function cleanSettings(settings: any, origin = '') {
   return {
     ...defaults,
     ...settings,
+    tileQuoteBrandSelectionMode: settings?.tileQuoteBrandSelectionMode ?? settings?.quoteBrandSelectionMode ?? 'all',
+    tileQuoteBrandIds: Array.isArray(settings?.tileQuoteBrandIds) ? settings.tileQuoteBrandIds : (Array.isArray(settings?.quoteBrandIds) ? settings.quoteBrandIds : []),
+    cpSanitaryQuoteBrandSelectionMode: settings?.cpSanitaryQuoteBrandSelectionMode ?? settings?.quoteBrandSelectionMode ?? 'all',
+    cpSanitaryQuoteBrandIds: Array.isArray(settings?.cpSanitaryQuoteBrandIds) ? settings.cpSanitaryQuoteBrandIds : (Array.isArray(settings?.quoteBrandIds) ? settings.quoteBrandIds : []),
     canonicalAppUrl: settings?.canonicalAppUrl && !String(settings.canonicalAppUrl).includes('localhost') ? settings.canonicalAppUrl : origin,
   };
 }
@@ -116,6 +124,57 @@ function InfoCard({ icon: Icon, label, value, tone }: { icon: any; label: string
       <p className="mt-1 truncate text-sm font-semibold text-[var(--ink)]">{value || 'Not set'}</p>
     </div>
   );
+}
+
+function QuoteBrandPolicyCard({
+  title, description, icon: Icon, tone, modeKey, idsKey, form, setForm, brands,
+}: {
+  title: string; description: string; icon: any; tone: string; modeKey: string; idsKey: string;
+  form: any; setForm: React.Dispatch<React.SetStateAction<any>>; brands: any[];
+}) {
+  const available = brands.filter((brand: any) => brand.metadata?.quoteEnabled !== false);
+  const mode = String(form[modeKey] || 'all');
+  const selectedIds = Array.isArray(form[idsKey]) ? form[idsKey].map(String) : [];
+  const selected = new Set(selectedIds);
+  const effectiveCount = mode === 'none' ? 0 : mode === 'all' ? available.length : available.filter((brand: any) => selected.has(String(brand.id))).length;
+  const missingArtwork = available.filter((brand: any) => !brand.metadata?.logoUrl).length;
+  const toggleBrand = (brandId: string) => setForm((current: any) => {
+    const currentIds = Array.isArray(current[idsKey]) ? current[idsKey].map(String) : [];
+    return { ...current, [idsKey]: currentIds.includes(brandId) ? currentIds.filter((id: string) => id !== brandId) : [...currentIds, brandId] };
+  });
+
+  return <article className="overflow-hidden rounded-r4 border border-[var(--line)] bg-[var(--surface)] shadow-sm-soft">
+    <div className="flex items-start justify-between gap-4 border-b border-[var(--line-soft)] px-5 py-5">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className={cn('grid h-11 w-11 shrink-0 place-items-center rounded-r3', tone)}><Icon className="h-5 w-5" /></div>
+        <div><h3 className="text-lg font-semibold tracking-tight text-[var(--ink)]">{title}</h3><p className="mt-1 text-xs leading-5 text-[var(--ink-4)]">{description}</p></div>
+      </div>
+      <span className="shrink-0 rounded-full bg-[var(--bg-soft)] px-2.5 py-1 text-xs font-semibold tabular-nums text-[var(--ink-3)]">{effectiveCount} logo{effectiveCount === 1 ? '' : 's'}</span>
+    </div>
+    <div className="p-5">
+      <div className="grid grid-cols-3 rounded-md border border-[var(--line)] bg-[var(--bg-soft)] p-1" role="group" aria-label={`${title} footer brand policy`}>
+        {([['all', 'All active'], ['selected', 'Selected'], ['none', 'None']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setForm((current: any) => ({ ...current, [modeKey]: value }))} className={cn('min-h-10 rounded px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]', mode === value ? 'bg-[var(--brand-700)] text-white shadow-sm-soft' : 'text-[var(--ink-3)] hover:bg-[var(--surface)]')}>{label}</button>)}
+      </div>
+
+      {mode === 'selected' ? <>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-semibold text-[var(--ink-3)]">Choose the exact footer portfolio</p>
+          <div className="flex gap-2"><button type="button" onClick={() => setForm((current: any) => ({ ...current, [idsKey]: available.map((brand: any) => String(brand.id)) }))} className="min-h-9 rounded-md border border-[var(--line)] px-3 text-xs font-semibold text-[var(--ink-2)] hover:bg-[var(--bg-soft)]">Select all</button><button type="button" onClick={() => setForm((current: any) => ({ ...current, [idsKey]: [] }))} className="min-h-9 rounded-md border border-[var(--line)] px-3 text-xs font-semibold text-[var(--ink-2)] hover:bg-[var(--bg-soft)]">Clear</button></div>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3">
+          {available.map((brand: any) => {
+            const active = selected.has(String(brand.id));
+            return <button key={brand.id} type="button" aria-pressed={active} onClick={() => toggleBrand(String(brand.id))} className={cn('relative flex min-h-16 items-center gap-2 rounded-md border bg-white p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]', active ? 'border-[var(--brand-500)] bg-[var(--brand-50)]' : 'border-[var(--line)] hover:border-[var(--line-strong)]')}>
+              <span className="grid h-10 w-12 shrink-0 place-items-center rounded border border-[var(--line-soft)] bg-white p-1">{brand.metadata?.logoUrl ? <img src={brand.metadata.logoUrl} alt="" className="max-h-full max-w-full object-contain" /> : <ImagePlus className="h-4 w-4 text-[var(--ink-5)]" />}</span>
+              <span className="min-w-0"><span className="block truncate text-xs font-semibold text-[var(--ink)]">{brand.name}</span><span className="mt-0.5 block text-[10px] text-[var(--ink-4)]">{brand.metadata?.logoUrl ? 'Artwork ready' : 'Logo required'}</span></span>
+              {active ? <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-700)] text-white"><Check className="h-2.5 w-2.5" /></span> : null}
+            </button>;
+          })}
+        </div>
+      </> : <div className="mt-4 flex items-center gap-3 rounded-md bg-[var(--bg-soft)] px-4 py-3 text-xs text-[var(--ink-3)]"><LockKeyhole className="h-4 w-4 shrink-0 text-[var(--brand-700)]" /><span>{mode === 'all' ? 'Every active quote-enabled brand is included, including brands added later.' : 'No served-brand strip is printed for this quote family.'}</span></div>}
+      {missingArtwork ? <p className="mt-3 text-[11px] font-semibold text-amber-700">{missingArtwork} enabled brand{missingArtwork === 1 ? '' : 's'} still need logo artwork before they can print.</p> : null}
+    </div>
+  </article>;
 }
 
 export default function SettingsPage() {
@@ -174,6 +233,10 @@ export default function SettingsPage() {
           approvalDiscountThreshold: Number(form.approvalDiscountThreshold || defaults.approvalDiscountThreshold),
           quoteBrandSelectionMode: form.quoteBrandSelectionMode || 'all',
           quoteBrandIds: Array.isArray(form.quoteBrandIds) ? form.quoteBrandIds : [],
+          tileQuoteBrandSelectionMode: form.tileQuoteBrandSelectionMode || 'all',
+          tileQuoteBrandIds: Array.isArray(form.tileQuoteBrandIds) ? form.tileQuoteBrandIds : [],
+          cpSanitaryQuoteBrandSelectionMode: form.cpSanitaryQuoteBrandSelectionMode || 'all',
+          cpSanitaryQuoteBrandIds: Array.isArray(form.cpSanitaryQuoteBrandIds) ? form.cpSanitaryQuoteBrandIds : [],
         },
       },
     });
@@ -216,10 +279,12 @@ export default function SettingsPage() {
   async function saveQuoteBrandDefaults() {
     setBrandMessage('');
     await save({ variables: { input: {
-      quoteBrandSelectionMode: form.quoteBrandSelectionMode || 'all',
-      quoteBrandIds: Array.isArray(form.quoteBrandIds) ? form.quoteBrandIds : [],
+      tileQuoteBrandSelectionMode: form.tileQuoteBrandSelectionMode || 'all',
+      tileQuoteBrandIds: Array.isArray(form.tileQuoteBrandIds) ? form.tileQuoteBrandIds : [],
+      cpSanitaryQuoteBrandSelectionMode: form.cpSanitaryQuoteBrandSelectionMode || 'all',
+      cpSanitaryQuoteBrandIds: Array.isArray(form.cpSanitaryQuoteBrandIds) ? form.cpSanitaryQuoteBrandIds : [],
     } } });
-    setBrandMessage('Quotation footer brand defaults saved. New quotes will inherit this selection.');
+    setBrandMessage('Tile and CP/Sanitary footer policies saved. Every new quote now snapshots its matching global policy.');
   }
 
   async function handleBrandLogoUpload(brand: any, file?: File) {
@@ -357,7 +422,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="mp-panel p-5 lg:p-6 xl:col-span-2">
-          <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><Landmark className="h-5 w-5" /></div><div><h2 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">Quotation defaults</h2><p className="text-sm text-[var(--ink-4)]">These values prefill every new customer quotation and remain editable on each quote.</p></div></div>
+          <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><Landmark className="h-5 w-5" /></div><div><h2 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">Quotation defaults</h2><p className="text-sm text-[var(--ink-4)]">Terms and presentation copy prefill new quotations. Served-brand policies are governed separately below.</p></div></div>
           <div className="mt-5 grid gap-4 lg:grid-cols-2">
             <Field label="Document title"><Input value={form.quotationTitle || ''} onChange={(e) => setForm({ ...form, quotationTitle: e.target.value })} /></Field>
             <Field label="Document tagline"><Input value={form.documentTagline || ''} onChange={(e) => setForm({ ...form, documentTagline: e.target.value })} /></Field>
@@ -390,19 +455,15 @@ export default function SettingsPage() {
 
       <section className="mp-panel p-5 lg:p-6">
         <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
-          <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--brand-700)]">Quotation presentation</p><h2 className="mt-2 text-2xl font-semibold text-[var(--ink)]">Served brand logos</h2><p className="mt-1 text-sm text-[var(--ink-4)]">Replace customer-facing artwork and decide which brands sales can include in quotation PDFs.</p></div>
+          <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--brand-700)]">Quotation presentation governance</p><h2 className="mt-2 text-2xl font-semibold text-[var(--ink)]">Served-brand policies by quote family</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--ink-4)]">This is the only place footer brands are chosen. A new quote snapshots the matching policy, so sales cannot change customer-facing brand identity inside Quote Studio.</p></div>
           <a href="/dashboard/master-data/brands" className="text-sm font-semibold text-[var(--brand-700)]">Open full Brand Master</a>
         </div>
-        <div className="mt-5 rounded-md border border-[var(--line)] bg-[var(--bg-soft)] p-4">
-          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-            <div><p className="text-sm font-semibold text-[var(--ink)]">Default footer selection</p><p className="mt-1 text-xs text-[var(--ink-4)]">Applied to every new quote. Sales can still change the selection inside an individual quote.</p></div>
-            <div className="inline-flex w-full rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 lg:w-auto" role="group" aria-label="Default quote brands">
-              {[['all', 'All brands'], ['selected', 'Selected'], ['none', 'None']].map(([value, label]) => <button key={value} type="button" onClick={() => setForm((current: any) => ({ ...current, quoteBrandSelectionMode: value }))} className={cn('min-h-9 flex-1 rounded px-4 text-xs font-semibold transition lg:flex-none', form.quoteBrandSelectionMode === value ? 'bg-[var(--brand-700)] text-white' : 'text-[var(--ink-3)] hover:bg-[var(--bg-soft)]')}>{label}</button>)}
-            </div>
-          </div>
-          {form.quoteBrandSelectionMode === 'selected' ? <div className="mt-4 flex flex-wrap items-center gap-2"><button type="button" onClick={() => setForm((current: any) => ({ ...current, quoteBrandIds: brands.filter((brand: any) => brand.metadata?.quoteEnabled !== false).map((brand: any) => String(brand.id)) }))} className="rounded border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-2)]">Select all available</button><button type="button" onClick={() => setForm((current: any) => ({ ...current, quoteBrandIds: [] }))} className="rounded border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-2)]">Clear</button><span className="text-xs text-[var(--ink-4)]">{Array.isArray(form.quoteBrandIds) ? form.quoteBrandIds.length : 0} selected</span></div> : null}
-          <div className="mt-4 flex flex-wrap items-center gap-3"><Button type="button" onClick={saveQuoteBrandDefaults} disabled={loading}><Save className="mr-2 h-4 w-4" />Save footer defaults</Button><span className="text-xs text-[var(--ink-4)]">“All brands” automatically includes future active brands.</span></div>
+        <div className="mt-5 grid gap-4 xl:grid-cols-2">
+          <QuoteBrandPolicyCard title="Tile & Chemical quotations" description="Footer identity for tiles, installation chemicals and area-priced customer selections." icon={Layers3} tone="bg-amber-50 text-amber-800" modeKey="tileQuoteBrandSelectionMode" idsKey="tileQuoteBrandIds" form={form} setForm={setForm} brands={brands} />
+          <QuoteBrandPolicyCard title="CP & Sanitary quotations" description="Footer identity for faucets, sanitaryware and every non-tile product family." icon={Bath} tone="bg-sky-50 text-sky-800" modeKey="cpSanitaryQuoteBrandSelectionMode" idsKey="cpSanitaryQuoteBrandIds" form={form} setForm={setForm} brands={brands} />
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md border border-[var(--line)] bg-[var(--bg-soft)] p-4"><Button type="button" onClick={saveQuoteBrandDefaults} disabled={loading}><Save className="mr-2 h-4 w-4" />Save both quote-family policies</Button><span className="text-xs leading-5 text-[var(--ink-4)]">Changes apply to future quotes. Existing quotes retain their audited brand selection snapshot.</span></div>
+        <div className="mt-7 flex items-end justify-between gap-3 border-t border-[var(--line-soft)] pt-6"><div><h3 className="text-lg font-semibold text-[var(--ink)]">Brand artwork library</h3><p className="mt-1 text-xs text-[var(--ink-4)]">Upload logos and control whether each Brand Master record is eligible for quotation policies.</p></div></div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {brands.map((brand: any) => <article key={brand.id} className="rounded-md border border-[var(--line)] bg-[var(--surface)] p-4">
             <div className="grid h-20 place-items-center rounded border border-[var(--line-soft)] bg-white p-3">{brand.metadata?.logoUrl ? <img src={brand.metadata.logoUrl} alt={`${brand.name} logo`} className="max-h-14 max-w-full object-contain" /> : <ImagePlus className="h-5 w-5 text-[var(--ink-5)]" />}</div>
@@ -411,7 +472,6 @@ export default function SettingsPage() {
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-[var(--line)] px-3 py-2 text-xs font-semibold text-[var(--ink-2)]">{uploadingBrandId === String(brand.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}{brand.metadata?.logoUrl ? 'Replace' : 'Upload'}<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={Boolean(uploadingBrandId)} onChange={(event) => handleBrandLogoUpload(brand, event.target.files?.[0])} /></label>
               <label className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ink-3)]"><input type="checkbox" checked={brand.metadata?.quoteEnabled !== false} onChange={(event) => saveBrandPresentation(brand, { quoteEnabled: event.target.checked })} className="h-4 w-4" />Quotes</label>
             </div>
-            {form.quoteBrandSelectionMode === 'selected' && brand.metadata?.quoteEnabled !== false ? <label className="mt-3 flex items-center gap-2 border-t border-[var(--line-soft)] pt-3 text-xs font-semibold text-[var(--ink-3)]"><input type="checkbox" checked={Array.isArray(form.quoteBrandIds) && form.quoteBrandIds.includes(String(brand.id))} onChange={(event) => setForm((current: any) => ({ ...current, quoteBrandIds: event.target.checked ? Array.from(new Set([...(current.quoteBrandIds || []), String(brand.id)])) : (current.quoteBrandIds || []).filter((id: string) => id !== String(brand.id)) }))} className="h-4 w-4" />Selected by default</label> : null}
           </article>)}
         </div>
         {!brands.length ? <p className="mt-5 rounded-md border border-dashed border-[var(--line)] p-6 text-center text-sm font-semibold text-[var(--ink-4)]">Create brands in Brand Master before assigning quotation logos.</p> : null}

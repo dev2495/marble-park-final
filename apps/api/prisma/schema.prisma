@@ -27,26 +27,30 @@ model Activity {
 }
 
 model AppSetting {
-  id                        String   @id
-  canonicalAppUrl           String
-  quotePrefix               String
-  challanPrefix             String
-  approvalDiscountThreshold Float
-  companyName               String
-  logoUrl                   String   @default("/brand/marble-park-logo.png")
-  companyAddress            String   @default("")
-  gstNumber                 String   @default("")
-  website                   String   @default("")
-  quotationTitle            String   @default("PROFORMA / QUOTATION")
-  documentTagline           String   @default("Premium bath, tile and surface selections for considered spaces.")
-  defaultTerms              String   @default("")
-  bankDetails               String   @default("")
-  documentFooter            String   @default("")
-  quoteBrandSelectionMode   String   @default("all")
-  quoteBrandIds             Json     @default("[]")
-  supportPhone              String
-  supportEmail              String
-  updatedAt                 DateTime
+  id                                String   @id
+  canonicalAppUrl                   String
+  quotePrefix                       String
+  challanPrefix                     String
+  approvalDiscountThreshold         Float
+  companyName                       String
+  logoUrl                           String   @default("/brand/marble-park-logo.png")
+  companyAddress                    String   @default("")
+  gstNumber                         String   @default("")
+  website                           String   @default("")
+  quotationTitle                    String   @default("PROFORMA / QUOTATION")
+  documentTagline                   String   @default("Premium bath, tile and surface selections for considered spaces.")
+  defaultTerms                      String   @default("")
+  bankDetails                       String   @default("")
+  documentFooter                    String   @default("")
+  quoteBrandSelectionMode           String   @default("all")
+  quoteBrandIds                     Json     @default("[]")
+  tileQuoteBrandSelectionMode       String   @default("all")
+  tileQuoteBrandIds                 Json     @default("[]")
+  cpSanitaryQuoteBrandSelectionMode String   @default("all")
+  cpSanitaryQuoteBrandIds           Json     @default("[]")
+  supportPhone                      String
+  supportEmail                      String
+  updatedAt                         DateTime
 }
 
 model AuditEvent {
@@ -703,7 +707,7 @@ model Product {
   adjustmentApprovals  StockAdjustmentApproval[]
   returnLines          ReturnLine[]
   periodSnapshots      InventoryPeriodSnapshot[]
-  mrpHistory          ProductMrpHistory[]
+  mrpHistory           ProductMrpHistory[]
 
   @@index([brand])
   @@index([category])
@@ -729,19 +733,19 @@ model Product {
 /// this table is deliberately limited to MRP so the statutory price trail is
 /// easy to read and cannot be confused with NRP, floor policy, or lot cost.
 model ProductMrpHistory {
-  id                   String   @id
-  product              Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  id                   String    @id
+  product              Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
   productId            String
-  previousMrpInclusive Decimal? @db.Decimal(18, 2)
-  newMrpInclusive      Decimal  @db.Decimal(18, 2)
+  previousMrpInclusive Decimal?  @db.Decimal(18, 2)
+  newMrpInclusive      Decimal   @db.Decimal(18, 2)
   priceRateBasis       String
   priceUom             String
   source               String?
   reason               String
   changedById          String
   effectiveFrom        DateTime?
-  metadata             Json     @default("{}")
-  createdAt            DateTime @default(now())
+  metadata             Json      @default("{}")
+  createdAt            DateTime  @default(now())
 
   @@index([productId, createdAt(sort: Desc)], map: "ProductMrpHistory_product_created_idx")
   @@index([changedById, createdAt(sort: Desc)], map: "ProductMrpHistory_actor_created_idx")
@@ -838,6 +842,9 @@ model Quote {
   pricingVersion      String            @default("unified_retail_v1")
   pricingStatus       String            @default("incomplete")
   displayMode         String            @default("priced")
+  /// Customer-facing quotation family. Tile quotes accept Tiles + Chemicals;
+  /// CP/Sanitary quotes accept every other governed product category.
+  quoteType           String            @default("cp_sanitary")
   projectName         String
   createdAt           DateTime          @default(now())
   validUntil          DateTime
@@ -871,6 +878,8 @@ model Quote {
   @@index([status, createdAt(sort: Desc)])
   @@index([commercialTotal])
   @@index([status, commercialTotal(sort: Desc)])
+  @@index([quoteType, createdAt(sort: Desc)])
+  @@index([quoteType, status, createdAt(sort: Desc)])
   @@index([approvalStatus])
   @@index([validUntil])
   @@index([intentId])
@@ -2191,46 +2200,46 @@ model CreditNote {
 }
 
 model ReturnLine {
-  id                     String          @id
-  returnOrderId          String
-  dispatchLine           DispatchLine?   @relation(fields: [dispatchLineId], references: [id])
-  dispatchLineId         String?
-  salesOrderLine         SalesOrderLine? @relation(fields: [salesOrderLineId], references: [id])
-  salesOrderLineId       String?
-  product                Product?        @relation(fields: [productId], references: [id])
-  productId              String?
-  lot                    InventoryLot?   @relation(fields: [lotId], references: [id])
-  lotId                  String?
-  locationId             String?
-  sku                    String
-  name                   String
-  unit                   String          @default("PC")
-  quantity               Int
-  acceptedQuantity       Int             @default(0)
-  resellQuantity         Int             @default(0)
-  damagedQuantity        Int             @default(0)
-  supplierReturnQuantity Int             @default(0)
-  disposition            String          @default("inspect")
-  status                 String          @default("pending")
-  pricingVersion         String          @default("legacy_unverified")
-  priceRateBasis         String?
-  mrpInclusive           Decimal?        @db.Decimal(18, 2)
-  nrpMode                 String?
-  nrpInput                Decimal?        @db.Decimal(18, 6)
-  nrpInclusive            Decimal?        @db.Decimal(18, 2)
-  specialMode             String          @default("NONE")
-  specialInput            Decimal?        @db.Decimal(18, 6)
-  specialRateInclusive    Decimal?        @db.Decimal(18, 2)
-  quoteDiscountAllocatedInclusive Decimal @default(0) @db.Decimal(18, 2)
-  taxableValue            Decimal         @default(0) @db.Decimal(18, 2)
-  taxAmount               Decimal         @default(0) @db.Decimal(18, 2)
-  grossLineTotal          Decimal         @default(0) @db.Decimal(18, 2)
-  costSnapshot            Decimal?        @db.Decimal(18, 4)
-  costSnapshotSource      String?
-  costSnapshotAt          DateTime?
-  createdAt              DateTime        @default(now())
-  updatedAt              DateTime
-  metadata               Json            @default("{}")
+  id                              String          @id
+  returnOrderId                   String
+  dispatchLine                    DispatchLine?   @relation(fields: [dispatchLineId], references: [id])
+  dispatchLineId                  String?
+  salesOrderLine                  SalesOrderLine? @relation(fields: [salesOrderLineId], references: [id])
+  salesOrderLineId                String?
+  product                         Product?        @relation(fields: [productId], references: [id])
+  productId                       String?
+  lot                             InventoryLot?   @relation(fields: [lotId], references: [id])
+  lotId                           String?
+  locationId                      String?
+  sku                             String
+  name                            String
+  unit                            String          @default("PC")
+  quantity                        Int
+  acceptedQuantity                Int             @default(0)
+  resellQuantity                  Int             @default(0)
+  damagedQuantity                 Int             @default(0)
+  supplierReturnQuantity          Int             @default(0)
+  disposition                     String          @default("inspect")
+  status                          String          @default("pending")
+  pricingVersion                  String          @default("legacy_unverified")
+  priceRateBasis                  String?
+  mrpInclusive                    Decimal?        @db.Decimal(18, 2)
+  nrpMode                         String?
+  nrpInput                        Decimal?        @db.Decimal(18, 6)
+  nrpInclusive                    Decimal?        @db.Decimal(18, 2)
+  specialMode                     String          @default("NONE")
+  specialInput                    Decimal?        @db.Decimal(18, 6)
+  specialRateInclusive            Decimal?        @db.Decimal(18, 2)
+  quoteDiscountAllocatedInclusive Decimal         @default(0) @db.Decimal(18, 2)
+  taxableValue                    Decimal         @default(0) @db.Decimal(18, 2)
+  taxAmount                       Decimal         @default(0) @db.Decimal(18, 2)
+  grossLineTotal                  Decimal         @default(0) @db.Decimal(18, 2)
+  costSnapshot                    Decimal?        @db.Decimal(18, 4)
+  costSnapshotSource              String?
+  costSnapshotAt                  DateTime?
+  createdAt                       DateTime        @default(now())
+  updatedAt                       DateTime
+  metadata                        Json            @default("{}")
 
   @@index([returnOrderId])
   @@index([dispatchLineId])

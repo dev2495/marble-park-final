@@ -116,6 +116,13 @@ const styles = StyleSheet.create({
   rateCol: { width: '14%', textAlign: 'right' },
   finalRateCol: { width: '13%', textAlign: 'right' },
   amountCol: { width: '11%', textAlign: 'right' },
+  tileImageCol: { width: '10%' },
+  tileDescCol: { width: '28%', paddingRight: 5 },
+  tileFulfilCol: { width: '14%', textAlign: 'center' },
+  tileCoverageCol: { width: '12%', textAlign: 'center' },
+  tileMrpCol: { width: '12%', textAlign: 'right' },
+  tileSellingCol: { width: '13%', textAlign: 'right' },
+  tileAmountCol: { width: '11%', textAlign: 'right' },
   meta: { marginTop: 3, fontSize: 7.6, color: colors.muted },
   totalsWrap: { marginTop: 9, flexDirection: 'row', gap: 12, alignItems: 'stretch' },
   totalsWrapCompact: { marginTop: 5, gap: 7 },
@@ -246,6 +253,12 @@ async function hydrateImages(payload, requestUrl, apiUrl) {
   const quote = { ...payload.quote };
   quote.lines = await Promise.all(asArray(quote.lines).map(async (line) => ({ ...line, _pdfImage: await toDataUri(imageSrc(line, requestUrl)) })));
   const quoteMeta = safeJson(quote.quoteMeta, {});
+  if (Array.isArray(quoteMeta.brandSelectionSnapshot)) {
+    quoteMeta.brandSelectionSnapshot = await Promise.all(quoteMeta.brandSelectionSnapshot.map(async (brand) => ({
+      ...brand,
+      logoUrl: await toDataUri(brand?.logoUrl || safeJson(brand?.metadata, {}).logoUrl),
+    })));
+  }
   if (quoteMeta.coverImage) quoteMeta.coverImage = await toDataUri(quoteMeta.coverImage);
   quote.quoteMeta = quoteMeta;
   if (quote.coverImage) quote.coverImage = await toDataUri(quote.coverImage);
@@ -278,9 +291,37 @@ function rateFor(line) {
   return { qty, basis, pricingQuantity, pricingUom, unitRate: priced.specialRateExclusive, lineSubtotal: priced.specialValueInclusive, grossBeforeQuoteDiscount: priced.specialValueInclusive, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, nrp: priced.nrpInclusive, netSellingPrice: priced.specialRateInclusive, finalUnitPayable, mrpUom, grossMrp };
 }
 
+function quoteTypeFor(quote) {
+  const quoteMeta = safeJson(quote?.quoteMeta, {});
+  const explicit = String(quote?.quoteType || quoteMeta.quoteType || '').trim().toLowerCase();
+  if (explicit === 'tile' || explicit === 'cp_sanitary') return explicit;
+  return asArray(quote?.lines).some((line) => ['tiles', 'chemicals'].includes(String(line.category || '').trim().toLowerCase()))
+    ? 'tile'
+    : 'cp_sanitary';
+}
+
+function quoteTypeLabel(quote) {
+  return quoteTypeFor(quote) === 'tile' ? 'TILE & CHEMICAL' : 'CP & SANITARY';
+}
+
+function assertQuoteTypeEligibility(quote) {
+  const quoteType = quoteTypeFor(quote);
+  const invalid = asArray(quote.lines).find((line) => {
+    const category = String(line.category || '').trim().toLowerCase();
+    const tileFamily = category === 'tiles' || category === 'chemicals';
+    return quoteType === 'tile' ? !tileFamily : tileFamily;
+  });
+  if (invalid) {
+    const allowed = quoteType === 'tile' ? 'Tiles and Chemicals' : 'CP and Sanitary products';
+    throw new Error(`Quote PDF blocked: ${invalid.sku || invalid.name || 'line'} does not belong in a ${quoteTypeLabel(quote)} quotation. Only ${allowed} are allowed.`);
+  }
+  return quoteType;
+}
+
 function assertQuoteCommercialReady(quote, taxMode) {
   const lines = asArray(quote.lines);
   if (!lines.length) throw new Error('Quote PDF blocked: add at least one priced line.');
+  assertQuoteTypeEligibility(quote);
   for (const line of lines) {
     const rate = rateFor(line);
     const payable = rate.finalUnitPayable;
@@ -312,6 +353,17 @@ function chunk(items, size) {
 
 function selectedBrands(payload, quoteMeta) {
   if (quoteMeta.showBrandLogos === false) return [];
+  if (Array.isArray(quoteMeta.brandSelectionSnapshot)) {
+    return quoteMeta.brandSelectionSnapshot
+      .map((brand) => ({
+        id: String(brand?.id || ''),
+        name: String(brand?.name || ''),
+        code: String(brand?.code || ''),
+        status: 'active',
+        metadata: { logoUrl: String(brand?.logoUrl || safeJson(brand?.metadata, {}).logoUrl || '') },
+      }))
+      .filter((brand) => brand.id && Boolean(brand.metadata.logoUrl));
+  }
   const brands = asArray(payload.brands).filter((brand) => {
     const metadata = safeJson(brand.metadata, {});
     const logoUrl = String(metadata.logoUrl || '').trim();
@@ -322,10 +374,14 @@ function selectedBrands(payload, quoteMeta) {
     const ids = new Set(quoteMeta.selectedBrandIds.map(String));
     return brands.filter((brand) => ids.has(String(brand.id)));
   }
-  const mode = String(payload.settings?.quoteBrandSelectionMode || 'all');
+  const family = quoteTypeFor(payload.quote);
+  const mode = String((family === 'tile'
+    ? payload.settings?.tileQuoteBrandSelectionMode
+    : payload.settings?.cpSanitaryQuoteBrandSelectionMode) || payload.settings?.quoteBrandSelectionMode || 'all');
   if (mode === 'none') return [];
   if (mode === 'selected') {
-    const defaults = new Set(asArray(payload.settings?.quoteBrandIds).map(String));
+    const familyIds = family === 'tile' ? payload.settings?.tileQuoteBrandIds : payload.settings?.cpSanitaryQuoteBrandIds;
+    const defaults = new Set(asArray(familyIds === undefined ? payload.settings?.quoteBrandIds : familyIds).map(String));
     return brands.filter((brand) => defaults.has(String(brand.id)));
   }
   return brands;
@@ -386,7 +442,7 @@ async function fetchQuote(id, apiUrl) {
   }
   const query = `query QuoteForPdf($id: ID!) {
     quote(id: $id) {
-      id quoteNumber title projectName validUntil createdAt
+      id quoteNumber quoteType title projectName validUntil createdAt
       lines quoteMeta displayMode discountPercent notes
       architectId architectName architect
       customer owner lead approval
@@ -444,9 +500,9 @@ function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
     companyLogo
       ? e(View, { style: styles.coverIdentity }, e(Image, { src: companyLogo, style: styles.coverIdentityLogo }))
       : e(Text, { style: styles.coverBrandWordmark }, String(company).toUpperCase()),
-    // QUOTATION pill
+    // Quotation-family pill
     e(View, { style: styles.coverQuotationTab },
-      e(Text, { style: styles.coverQuotationText }, 'QUOTATION'),
+      e(Text, { style: styles.coverQuotationText }, `${quoteTypeLabel(quote)} QUOTATION`),
     ),
     // Client / project ribbon at bottom
     e(View, { style: styles.coverRibbon },
@@ -539,7 +595,7 @@ function CompactSelectionDocument({ payload, requestUrl }) {
       e(View, { style: { flexDirection: 'row', alignItems: 'center', gap: 9 } },
         companyLogo ? e(Image, { src: companyLogo, style: { width: 44, height: 44, objectFit: 'contain' } }) : null,
         e(View, null,
-          e(Text, { style: styles.compactSelectionTitle }, 'SELECTION QUOTATION'),
+          e(Text, { style: styles.compactSelectionTitle }, `${quoteTypeLabel(quote)} SELECTION`),
           e(Text, { style: { marginTop: 2, fontSize: 8, color: colors.redAccent, fontWeight: 900 } }, quote.quoteNumber || 'QT/PENDING'),
         ),
       ),
@@ -555,7 +611,7 @@ function CompactSelectionDocument({ payload, requestUrl }) {
     ),
     e(Text, { style: styles.compactSelectionTerms }, terms),
     e(View, { style: styles.footer },
-      e(Text, null, `${settings.companyName || 'Marble Park'} · Selection quotation`),
+      e(Text, null, `${settings.companyName || 'Marble Park'} · ${quoteTypeLabel(quote)} quotation`),
       e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}`, style: styles.pageNumber }),
     ),
   );
@@ -608,8 +664,8 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
       e(Text, { style: [styles.th, styles.imageCol] }, 'Image'),
       e(Text, { style: [styles.th, styles.descCol] }, 'Description'),
       e(Text, { style: [styles.th, styles.qtyCol] }, 'Qty'),
-      showPrices ? e(Text, { style: [styles.th, styles.rateCol] }, 'MRP') : null,
-      showPrices ? e(Text, { style: [styles.th, styles.finalRateCol] }, 'Selling price') : null,
+      showPrices ? e(Text, { style: [styles.th, styles.rateCol] }, 'MRP\nrate') : null,
+      showPrices ? e(Text, { style: [styles.th, styles.finalRateCol] }, 'Selling\nprice') : null,
       showPrices ? e(Text, { style: [styles.th, styles.amountCol] }, 'Total') : null,
     ),
     ...group.rows.map((line, index) => {
@@ -633,6 +689,52 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
   );
 }
 
+function TileAreaTable({ group, requestUrl, brands, compact = false }) {
+  const e = React.createElement;
+  return e(View, { style: [styles.areaBlock, compact ? styles.areaBlockCompact : null], wrap: true },
+    e(View, { style: styles.areaHeader },
+      e(Text, { style: styles.areaTitle }, group.area),
+      e(Text, { style: styles.areaCount }, `${group.rows.length} tile / chemical item(s)`),
+    ),
+    e(View, { style: styles.tableHeader },
+      e(Text, { style: [styles.th, styles.tileImageCol] }, 'Image'),
+      e(Text, { style: [styles.th, styles.tileDescCol] }, 'Tile / Chemical'),
+      e(Text, { style: [styles.th, styles.tileFulfilCol] }, 'Box / Pc / Kg'),
+      e(Text, { style: [styles.th, styles.tileCoverageCol] }, 'Total SQFT'),
+      e(Text, { style: [styles.th, styles.tileMrpCol] }, 'MRP RATE\nSQFT / KG'),
+      e(Text, { style: [styles.th, styles.tileSellingCol] }, 'SELLING RATE\nSQFT / KG'),
+      e(Text, { style: [styles.th, styles.tileAmountCol] }, 'Amount'),
+    ),
+    ...group.rows.map((line, index) => {
+      const rate = rateFor(line);
+      const src = imageSrc(line, requestUrl);
+      const identityCodes = identityCodesFor(line, brands);
+      const isTile = String(line.category || '').trim().toLowerCase() === 'tiles';
+      const piecesPerPack = Number(line.piecesPerPack || line.pcsPerBox || 0);
+      const inventoryUom = String(line.inventoryUom || line.unit || line.uom || (isTile ? 'BOX' : 'KG')).toUpperCase();
+      const fulfilment = isTile
+        ? `${rate.qty} ${inventoryUom}${piecesPerPack > 0 ? `\n${rate.qty * piecesPerPack} PC` : ''}`
+        : `${rate.qty} KG`;
+      const size = String(line.tileSize || line.size || line.dimensions || '').trim();
+      return e(View, { key: `${line.sku || line.tileCode || index}`, style: [styles.tableRow, compact ? styles.tableRowCompact : null], wrap: false },
+        e(View, { style: styles.tileImageCol },
+          src ? e(Image, { src, style: [styles.image, compact ? styles.imageCompact : null] }) : e(View, { style: [styles.image, compact ? styles.imageCompact : null] }, e(Text, { style: { fontSize: 7, color: colors.tan, textAlign: 'center', marginTop: compact ? 12 : 18 } }, 'No image')),
+        ),
+        e(View, { style: styles.tileDescCol },
+          e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
+          size ? e(Text, { style: styles.meta }, size) : null,
+          identityCodes ? e(Text, { style: styles.meta }, identityCodes) : null,
+        ),
+        e(Text, { style: [styles.td, styles.tileFulfilCol] }, fulfilment),
+        e(Text, { style: [styles.td, styles.tileCoverageCol] }, isTile ? `${rate.pricingQuantity.toFixed(2)}\nSQFT` : '—'),
+        e(Text, { style: [styles.td, styles.tileMrpCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`),
+        e(Text, { style: [styles.td, styles.tileSellingCol] }, `${money(rate.finalUnitPayable)}\nper ${rate.pricingUom}`),
+        e(Text, { style: [styles.td, styles.tileAmountCol] }, money(rate.amount)),
+      );
+    }),
+  );
+}
+
 function PricedDocumentBody(payload, requestUrl) {
   const e = React.createElement;
   const quote = payload.quote;
@@ -640,6 +742,8 @@ function PricedDocumentBody(payload, requestUrl) {
   const lines = asArray(quote.lines);
   const quoteMeta = safeJson(quote.quoteMeta, {});
   const quoteDiscount = safeJson(quoteMeta.quoteDiscount, {});
+  const quoteType = assertQuoteTypeEligibility(quote);
+  const typeLabel = quoteTypeLabel(quote);
   const groups = groupByArea(lines);
   const compact = lines.length <= 4;
   const taxMode = quoteMeta.taxMode === 'non_gst' ? 'non_gst' : 'gst';
@@ -677,7 +781,7 @@ function PricedDocumentBody(payload, requestUrl) {
         ),
       ),
       e(View, { style: styles.quoteIdentity },
-        e(Text, { style: styles.quoteTitle }, settings.quotationTitle || 'PROFORMA / QUOTATION'),
+        e(Text, { style: styles.quoteTitle }, `${typeLabel}\nQUOTATION`),
         e(Text, { style: styles.quoteDate }, `Date: ${fmtDate(quote.createdAt) || fmtDate(new Date())}`),
       ),
     ),
@@ -694,13 +798,17 @@ function PricedDocumentBody(payload, requestUrl) {
       e(View, { style: [styles.panel, compact ? styles.panelCompact : null] },
         e(Text, { style: styles.label }, 'Quote Reference'),
         e(Text, { style: styles.value }, quote.quoteNumber || 'QT/PENDING'),
+        e(Text, { style: [styles.label, { marginTop: 7 }] }, 'Quote Type'),
+        e(Text, { style: styles.text }, typeLabel),
         e(Text, { style: [styles.label, { marginTop: 9 }] }, 'Valid Until'),
         e(Text, { style: styles.value }, fmtDate(quote.validUntil) || '30 days'),
         e(Text, { style: [styles.label, { marginTop: 9 }] }, 'Sales Person'),
         e(Text, { style: styles.value }, quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team'),
       ),
     ),
-    ...groups.map((group) => e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode, brands: payload.brands, compact })),
+    ...groups.map((group) => quoteType === 'tile'
+      ? e(TileAreaTable, { key: group.area, group, requestUrl, brands: payload.brands, compact })
+      : e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode, brands: payload.brands, compact })),
     e(View, { style: [styles.totalsWrap, compact ? styles.totalsWrapCompact : null], wrap: false },
       e(View, { style: [styles.notesBox, compact ? styles.notesBoxCompact : null] },
         e(Text, { style: styles.label }, 'Remarks'),

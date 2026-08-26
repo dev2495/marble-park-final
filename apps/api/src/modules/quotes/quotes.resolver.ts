@@ -42,6 +42,9 @@ export class QuoteOutput {
   displayMode?: string;
 
   @Field({ nullable: true })
+  quoteType?: string;
+
+  @Field({ nullable: true })
   projectName?: string;
 
   @Field(() => Date, { nullable: true })
@@ -115,6 +118,9 @@ export class QuoteOutput {
 
 @InputType()
 export class CreateQuoteInput {
+  @Field(() => String, { nullable: true, description: 'Commercial family: tile or cp_sanitary.' })
+  quoteType?: string;
+
   @Field(() => String, { nullable: true })
   leadId?: string;
 
@@ -163,6 +169,9 @@ export class CreateQuoteInput {
 
 @InputType()
 export class UpdateQuoteInput {
+  @Field(() => String, { nullable: true, description: 'Commercial family: tile or cp_sanitary.' })
+  quoteType?: string;
+
   @Field(() => String, { nullable: true })
   title?: string;
 
@@ -311,12 +320,13 @@ export class QuotesResolver {
     @Args('customerId', { nullable: true }) customerId?: string,
     @Args('ownerId', { nullable: true }) ownerId?: string,
     @Args('status', { nullable: true }) status?: string,
+    @Args('quoteType', { nullable: true }) quoteType?: string,
     @Args('architectId', { nullable: true }) architectId?: string,
     @Args('take', { type: () => Number, nullable: true }) take?: number,
     @Args('skip', { type: () => Number, nullable: true }) skip?: number,
   ) {
     return requireSession(this.prisma, ctx).then((user) =>
-      this.quotes.findAll({ leadId, customerId, ownerId: canManageQuotes(user) ? ownerId : user.id, status, architectId, take, skip }),
+      this.quotes.findAll({ leadId, customerId, ownerId: canManageQuotes(user) ? ownerId : user.id, status, quoteType, architectId, take, skip }),
     );
   }
 
@@ -329,6 +339,7 @@ export class QuotesResolver {
     @Args('ownerId', { nullable: true }) ownerId?: string,
     @Args('architectId', { nullable: true }) architectId?: string,
     @Args('status', { nullable: true }) status?: string,
+    @Args('quoteType', { nullable: true }) quoteType?: string,
     @Args('dateFrom', { type: () => Date, nullable: true }) dateFrom?: Date,
     @Args('dateTo', { type: () => Date, nullable: true }) dateTo?: Date,
     @Args('sort', { nullable: true }) sort?: string,
@@ -337,7 +348,7 @@ export class QuotesResolver {
   ) {
     const user = await requireSession(this.prisma, ctx);
     return this.quotes.quotePage({
-      search, customerSearch, ownerSearch, architectId, status, dateFrom, dateTo, sort, skip, take,
+      search, customerSearch, ownerSearch, architectId, status, quoteType, dateFrom, dateTo, sort, skip, take,
       ownerId: canManageQuotes(user) ? ownerId : user.id,
     });
   }

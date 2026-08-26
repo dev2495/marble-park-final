@@ -249,7 +249,7 @@ def build_story() -> list:
     story += [page_two_columns(left, right), PageBreak()]
 
     # PO builder
-    left = [p("PURCHASE ORDER", KICKER), p("Enter the supplier’s commercial terms once", H1), bullet("Select product/SKU with fast search."), bullet("Enter quantity, supplier rate and rate UOM."), bullet("Apply one governed header discount if negotiated."), bullet("Choose GST % or leave 0/blank for a without-GST PO."), bullet("The PO stores both the entered rate and normalized net base-unit cost."), Spacer(1, 4 * mm), p("Keyboard", H2), p("Type to filter, use ↑/↓ to move, Enter to select and Esc to close. This is the standard interaction for upgraded high-volume selectors.", BODY)]
+    left = [p("PURCHASE ORDER", KICKER), p("Enter known supplier terms without delaying the order", H1), bullet("Select product/SKU with fast search."), bullet("Enter quantity; supplier rate and UOM are optional on the PO."), bullet("A blank rate may remain pending through inward and be completed days later."), bullet("Apply one governed header discount if negotiated."), bullet("Choose GST % or leave 0/blank for a without-GST PO."), bullet("Any captured rate is audited, normalized and locked."), Spacer(1, 4 * mm), p("Keyboard", H2), p("Type to filter, use ↑/↓ to move, Enter to select and Esc to close. This is the standard interaction for upgraded high-volume selectors.", BODY)]
     right = screenshot("po-builder-desktop.png", 170 * mm, 133 * mm, "New PO — supplier rate, UOM, discount and optional GST are visible together before the order is saved.")
     story += [page_two_columns(left, right), PageBreak()]
 
@@ -274,7 +274,7 @@ def build_story() -> list:
         ("TOPPADDING", (0, 0), (-1, -1), 8),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
     ]))
-    story += [table, Spacer(1, 8 * mm), Table([[card("PO-linked GRN", "The receiver confirms quantity, location, batch and packing. The approved PO cost is inherited and cannot be overridden.", GREEN_SOFT, 120 * mm), card("Manual GRN", "Use only when no PO exists. The receiver must enter a positive supplier rate and UOM; that becomes the lot cost snapshot.", AMBER_SOFT, 120 * mm)]], colWidths=[125 * mm, 125 * mm], style=[("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, 0), 5 * mm)])]
+    story += [table, Spacer(1, 8 * mm), Table([[card("PO-linked GRN", "A rated line inherits its locked PO cost. A pending line may be inwarded without cost; its GRN and exact lot remain cost-pending until the permanent queue records the verified rate.", GREEN_SOFT, 120 * mm), card("Manual GRN", "Use only when no PO exists. The receiver must enter a positive supplier rate and UOM; that becomes the lot cost snapshot.", AMBER_SOFT, 120 * mm)]], colWidths=[125 * mm, 125 * mm], style=[("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, 0), 5 * mm)])]
     story += [PageBreak()]
 
     # Procurement page
@@ -283,8 +283,8 @@ def build_story() -> list:
     story += [page_two_columns(left, right), PageBreak()]
 
     # Readiness
-    left = [p("LEGACY READINESS", KICKER), p("Repair old open POs without deleting history", H1), bullet("Only owner/admin users can access the queue."), bullet("Only open, unreceived legacy lines are eligible."), bullet("Enter positive rate, UOM and reason."), bullet("The change is audited and the original PO remains in place."), bullet("Already received commercial history is never rewritten."), Spacer(1, 4 * mm), p("Empty is healthy", H2), p("If no rows are shown, there are no actionable legacy PO lines missing their positive supplier cost.", BODY)]
-    right = screenshot("po-cost-readiness-empty.png", 170 * mm, 133 * mm, "PO Cost Readiness — truthful empty state after all actionable legacy lines are complete.")
+    left = [p("DELAYED COST", KICKER), p("Complete verified supplier costs when they arrive", H1), bullet("Only owner/admin users can access the permanent queue."), bullet("Unreceived and already received missing-cost lines stay visible."), bullet("Enter positive rate, UOM and reason for only the rows known today."), bullet("Received completion updates the original PO, GRN and exact lot without changing stock."), bullet("Existing positive costs are never silently overwritten."), Spacer(1, 4 * mm), p("Empty is healthy", H2), p("If no rows are shown, every non-cancelled PO line has a verified supplier cost.", BODY)]
+    right = screenshot("po-cost-readiness-empty.png", 170 * mm, 133 * mm, "Permanent delayed-cost queue — truthful state for supplier costs still pending before or after inward.")
     story += [page_two_columns(left, right), PageBreak()]
 
     # Quote readiness
@@ -296,10 +296,10 @@ def build_story() -> list:
     story += section_intro("8 · Handover checklist", "Who does what every day", "Use named accounts. Do not share the owner login. Every price change and remediation keeps actor, reason and time.")
     role_rows = [
         [p("Role", TABLE_HEAD), p("Daily responsibility", TABLE_HEAD), p("Cannot do", TABLE_HEAD)],
-        [p("Purchasing", TABLE_CELL), p("Create PO; enter supplier rate/UOM, discount, optional GST; print supplier document", TABLE_CELL), p("Rewrite received lot cost", TABLE_CELL_MUTED)],
+        [p("Purchasing", TABLE_CELL), p("Create PO with optional supplier rate/UOM, discount and GST; print supplier document; monitor delayed costs", TABLE_CELL), p("Invent an unverified cost", TABLE_CELL_MUTED)],
         [p("Inventory", TABLE_CELL), p("Receive PO GRN; create manual GRN with positive rate; verify batch/location/packing", TABLE_CELL), p("Override PO-linked cost", TABLE_CELL_MUTED)],
         [p("Sales", TABLE_CELL), p("Quote from governed MRP; stay above floor or follow approval path", TABLE_CELL), p("See owner-only actual cost", TABLE_CELL_MUTED)],
-        [p("Owner/Admin", TABLE_CELL), p("Complete MRP and legacy PO cost readiness; review audit and stock reconciliation", TABLE_CELL), p("Delete commercial history", TABLE_CELL_MUTED)],
+        [p("Owner/Admin", TABLE_CELL), p("Complete MRP and permanent delayed-cost readiness; review audit and stock reconciliation", TABLE_CELL), p("Delete commercial history", TABLE_CELL_MUTED)],
     ]
     role_table = Table(role_rows, colWidths=[40 * mm, 135 * mm, 80 * mm], repeatRows=1)
     role_table.setStyle(TableStyle([
@@ -314,7 +314,7 @@ def build_story() -> list:
     ]))
     checklist = Table([
         [p("SHIFT-END CHECK", KICKER), "", ""],
-        [bullet("No PO remains blocked for missing positive rate."), bullet("All inward is posted to an exact lot and location."), bullet("Manual GRNs carry source reference and rate.")],
+        [bullet("Every missing PO cost remains visible in the delayed-cost queue."), bullet("All inward is posted to an exact lot and location."), bullet("Manual GRNs carry source reference and rate.")],
         [bullet("Tomorrow’s quoted SKUs have verified MRP."), bullet("Stock reconciliation has no unexplained critical row."), bullet("Cancelled work is voided with reason; nothing is deleted.")],
     ], colWidths=[85 * mm] * 3)
     checklist.setStyle(TableStyle([

@@ -192,7 +192,7 @@ export class ProcurementService {
   async purchaseOrderCostReadinessPage(args?: { search?: string; skip?: number; take?: number }) {
     const search = String(args?.search || '').trim();
     const where: any = {
-      status: { in: ['draft', 'ordered', 'partial_received'] },
+      status: { not: 'cancelled' },
       lines: { some: { OR: [{ costStatus: 'missing' }, { unitCost: { lte: 0 } }, { netUnitCost: { lte: 0 } }] } },
     };
     if (search) where.AND = [{ OR: [
@@ -215,51 +215,55 @@ export class ProcurementService {
       return {
         ...order,
         missingLineCount: missingLines.length,
-        blockedReceivedLineCount: missingLines.filter((line: any) => Number(line.receivedQuantity || 0) > 0).length,
+        receivedMissingLineCount: missingLines.filter((line: any) => Number(line.receivedQuantity || 0) > 0).length,
+        awaitingInwardMissingLineCount: missingLines.filter((line: any) => Number(line.receivedQuantity || 0) <= 0).length,
         missingLines,
       };
     });
-    return { items: decorated, total, skip, take, hasNext: skip + decorated.length < total };
+    return {
+      items: decorated,
+      total,
+      missingLineTotal: decorated.reduce((sum: number, order: any) => sum + Number(order.missingLineCount || 0), 0),
+      receivedMissingLineTotal: decorated.reduce((sum: number, order: any) => sum + Number(order.receivedMissingLineCount || 0), 0),
+      skip,
+      take,
+      hasNext: skip + decorated.length < total,
+    };
   }
 
   async completePurchaseOrderCosts(input: { purchaseOrderId: string; lines?: any; reason?: string }, actorUserId: string) {
     const purchaseOrderId = String(input.purchaseOrderId || '').trim();
     const reason = String(input.reason || '').trim();
     if (!purchaseOrderId) throw new BadRequestException('Purchase order is required');
-    if (reason.length < 3) throw new BadRequestException('Enter a clear reason for completing legacy PO rates');
+    if (reason.length < 3) throw new BadRequestException('Enter a clear reason for recording the delayed supplier rate');
     const order = await (this.prisma as any).purchaseOrder.findUnique({ where: { id: purchaseOrderId } });
     if (!order) throw new NotFoundException('Purchase order not found');
-    if (!['draft', 'ordered', 'partial_received'].includes(String(order.status || ''))) {
-      throw new BadRequestException(`${order.poNumber} is ${order.status} and cannot be repriced`);
-    }
+    if (String(order.status || '') === 'cancelled') throw new BadRequestException(`${order.poNumber} is cancelled and cannot be repriced`);
     const rows = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId }, orderBy: { createdAt: 'asc' } });
     const missing = rows.filter((row: any) => Number(row.unitCost || 0) <= 0 || Number(row.netUnitCost || 0) <= 0 || row.costStatus === 'missing');
     if (!missing.length) return this.purchaseOrder(purchaseOrderId);
-    if (missing.some((row: any) => Number(row.receivedQuantity || 0) > 0)) {
-      throw new BadRequestException('A zero-cost line was already received. Use the audited inventory cost-correction workflow; historical lots are never silently repriced.');
-    }
     const enteredRows = this.normalizeLines(input.lines);
     const enteredById = new Map(enteredRows.map((row: any) => [String(row.purchaseOrderLineId || row.id || ''), row]));
-    const missingInput = missing.find((row: any) => !enteredById.has(row.id));
-    if (missingInput) throw new BadRequestException(`Enter the supplier rate for ${missingInput.sku}`);
+    const selectedMissing = missing.filter((row: any) => enteredById.has(row.id));
+    if (!selectedMissing.length) throw new BadRequestException('Enter at least one supplier rate to save');
     const productIds = Array.from(new Set(rows.map((row: any) => row.productId).filter(Boolean))) as string[];
     const products = productIds.length ? await this.prisma.product.findMany({ where: { id: { in: productIds } } }) : [];
     const productMap = new Map(products.map((product: any) => [product.id, product] as const));
     const normalized = rows.map((row: any) => {
-      if (!missing.includes(row)) {
+      if (!selectedMissing.includes(row)) {
         const unitCost = Number(row.unitCost || 0);
-        if (!Number.isFinite(unitCost) || unitCost <= 0) throw new BadRequestException(`${row.sku} has an invalid saved PO rate`);
         return {
           row,
-          enteredUnitCost: Number(row.enteredUnitCost || unitCost),
+          enteredUnitCost: Number(row.enteredUnitCost || unitCost || 0),
           rateUom: String(row.rateUom || row.unit || 'PC'),
           rateUomFactor: Number(row.rateUomFactor || 1),
-          unitCost,
+          unitCost: Number.isFinite(unitCost) && unitCost > 0 ? unitCost : 0,
+          selected: false,
         };
       }
       const product: any = productMap.get(row.productId);
       if (!product) throw new BadRequestException(`${row.sku} must be linked to Product Master before its PO rate can be completed`);
-      return { row, ...this.normalizePurchaseRate(enteredById.get(row.id), product, `${row.sku} purchase rate`) };
+      return { row, ...this.normalizePurchaseRate(enteredById.get(row.id), product, `${row.sku} purchase rate`), selected: true };
     });
     const priced = pricePoLines(
       normalized.map((item: any) => ({ orderedQuantity: Number(item.row.orderedQuantity || 0), unitCost: item.unitCost })),
@@ -267,8 +271,14 @@ export class ProcurementService {
     );
 
     await this.prisma.$transaction(async (tx: any) => {
+      const finalizedLineIds: string[] = [];
+      const finalizedReceiptLineIds: string[] = [];
+      const finalizedLotIds: string[] = [];
+      const backfilledInvoiceLineIds: string[] = [];
+      const lotCostChanges: Array<{ lotId: string; previousUnitCost: number; newUnitCost: number }> = [];
       for (let index = 0; index < normalized.length; index += 1) {
         const item: any = normalized[index];
+        if (!item.selected) continue;
         const commercial = priced.lines[index];
         const netUnitCost = this.money4(commercial.taxableValue / Math.max(1, commercial.orderedQuantity));
         await tx.purchaseOrderLine.update({
@@ -287,7 +297,7 @@ export class ProcurementService {
             lineTotal: commercial.lineTotal,
             metadata: {
               ...(item.row.metadata || {}),
-              costStatus: 'confirmed_on_legacy_po',
+              costStatus: Number(item.row.receivedQuantity || 0) > 0 ? 'confirmed_after_inward' : 'confirmed_before_inward',
               enteredRate: item.enteredUnitCost,
               rateUom: item.rateUom,
               rateUomFactor: item.rateUomFactor,
@@ -295,39 +305,99 @@ export class ProcurementService {
               netBaseUnitCost: netUnitCost,
               lineGross: commercial.lineGross,
               lineDiscount: commercial.lineDiscount,
-              legacyCostCompletedAt: new Date().toISOString(),
-              legacyCostCompletionReason: reason,
+              supplierRateFinalizedAt: new Date().toISOString(),
+              supplierRateFinalizationReason: reason,
             },
             updatedAt: new Date(),
           },
         });
+        finalizedLineIds.push(item.row.id);
+
+        const receiptLines = await tx.goodsReceiptLine.findMany({ where: { purchaseOrderLineId: item.row.id } });
+        for (const receiptLine of receiptLines) {
+          await tx.goodsReceiptLine.update({
+            where: { id: receiptLine.id },
+            data: {
+              unitCost: netUnitCost,
+              costStatus: 'complete',
+              metadata: {
+                ...(receiptLine.metadata || {}),
+                costSource: 'purchase_order_delayed_net_snapshot',
+                delayedSupplierRateFinalizedAt: new Date().toISOString(),
+                delayedSupplierRateFinalizationReason: reason,
+              },
+            },
+          });
+          finalizedReceiptLineIds.push(receiptLine.id);
+        }
+
+        const lots = await tx.inventoryLot.findMany({ where: { sourceLineId: { in: receiptLines.map((row: any) => row.id) } } });
+        for (const lot of lots) {
+          await tx.inventoryLot.update({
+            where: { id: lot.id },
+            data: {
+              unitCost: netUnitCost,
+              costStatus: 'complete',
+              metadata: {
+                ...(lot.metadata || {}),
+                costSource: 'purchase_order_delayed_net_snapshot',
+                delayedSupplierRateFinalizedAt: new Date().toISOString(),
+                delayedSupplierRateFinalizationReason: reason,
+                poCostSnapshot: {
+                  ...((lot.metadata || {})?.poCostSnapshot || {}),
+                  enteredRate: item.enteredUnitCost,
+                  rateUom: item.rateUom,
+                  rateUomFactor: item.rateUomFactor,
+                  preDiscountBaseUnitCost: commercial.unitCost,
+                  netBaseUnitCost: netUnitCost,
+                  discountPercent: commercial.discountPercent,
+                  taxRate: commercial.taxRate,
+                },
+              },
+              updatedAt: new Date(),
+            },
+          });
+          finalizedLotIds.push(lot.id);
+          // A cost finalization is not a stock movement. Keep the exact before /
+          // after values in the audited commercial event instead of inventing a
+          // zero-quantity ledger row (the stock ledger intentionally requires a
+          // positive movement quantity).
+          lotCostChanges.push({ lotId: lot.id, previousUnitCost: Number(lot.unitCost || 0), newUnitCost: netUnitCost });
+        }
+
+        if (lots.length) {
+          const dispatchLines = await tx.dispatchLine.findMany({ where: { lotId: { in: lots.map((lot: any) => lot.id) } }, select: { id: true } });
+          const invoiceLines = dispatchLines.length ? await tx.salesInvoiceLine.findMany({
+            where: { dispatchLineId: { in: dispatchLines.map((row: any) => row.id) }, costSnapshot: null },
+            select: { id: true },
+          }) : [];
+          if (invoiceLines.length) {
+            await tx.salesInvoiceLine.updateMany({
+              where: { id: { in: invoiceLines.map((row: any) => row.id) }, costSnapshot: null },
+              data: { costSnapshot: netUnitCost, costSnapshotSource: 'InventoryLot.delayed_purchase_cost', costSnapshotAt: new Date() },
+            });
+            backfilledInvoiceLineIds.push(...invoiceLines.map((row: any) => row.id));
+          }
+        }
       }
-      await tx.purchaseOrder.update({
-        where: { id: purchaseOrderId },
-        data: {
-          subtotal: priced.totals.subtotal,
-          discountAmount: priced.totals.discountAmount,
-          taxableValue: priced.totals.taxableValue,
-          taxAmount: priced.totals.taxAmount,
-          grandTotal: priced.totals.grandTotal,
-          metadata: {
-            ...(order.metadata || {}),
-            legacyCostCompletedAt: new Date().toISOString(),
-            legacyCostCompletedBy: actorUserId,
-            legacyCostCompletionReason: reason,
-          },
-          updatedAt: new Date(),
-        },
-      });
+      await this.refreshPurchaseOrderCommercialTotalsTx(tx, order);
       await tx.auditEvent.create({
         data: {
           id: ulid(),
           actorUserId,
-          action: 'purchase_order.cost_complete',
+          action: 'purchase_order.cost_finalize_late',
           entityType: 'PurchaseOrder',
           entityId: purchaseOrderId,
-          summary: `Completed missing supplier rates for ${order.poNumber}`,
-          metadata: { reason, lineIds: missing.map((row: any) => row.id), totals: priced.totals },
+          summary: `Finalized delayed supplier rates for ${order.poNumber}`,
+          metadata: {
+            reason,
+            lineIds: finalizedLineIds,
+            receiptLineIds: finalizedReceiptLineIds,
+            lotIds: finalizedLotIds,
+            lotCostChanges,
+            backfilledInvoiceLineIds,
+            stockQuantityChanged: false,
+          },
         },
       });
     }, { timeout: 15000 });
@@ -365,7 +435,7 @@ export class ProcurementService {
       if (!product) throw new BadRequestException(`${demand.sku} is not an active Product Master SKU`);
       const captured: any = demandCostById.get(demand.id) || {};
       const legacyCost = Number((demand.metadata || {})?.unitCost || 0);
-      const rate = this.normalizePurchaseRate({
+      const rate = this.normalizeOptionalPurchaseRate({
         ...captured,
         enteredUnitCost: captured.enteredUnitCost ?? captured.unitCost ?? legacyCost,
       }, product, `${demand.sku} purchase rate`);
@@ -375,7 +445,7 @@ export class ProcurementService {
       const product: any = productById.get(String(line.productId || ''));
       if (!product) throw new BadRequestException(`Direct PO line ${index + 1} is not an active Product Master SKU`);
       const orderedQuantity = this.baseQuantity(line, product, `${product.sku} quantity`);
-      const rate = this.normalizePurchaseRate(line, product, `${product.sku} purchase rate`);
+      const rate = this.normalizeOptionalPurchaseRate(line, product, `${product.sku} purchase rate`);
       return { product, orderedQuantity, ...rate, unit: String(product.baseUom || 'PC'), note: String(line.note || '').trim(), orderedInput: this.uomSnapshot(line, product) };
     });
 
@@ -408,6 +478,7 @@ export class ProcurementService {
       enteredUnitCost: number;
       rateUom: string;
       rateUomFactor: number;
+      costStatus: 'complete' | 'missing';
       unit: string;
       note?: string;
       sku: string;
@@ -419,7 +490,7 @@ export class ProcurementService {
       purchaseDemandId?: string;
       orderedInput?: any;
     }> = [
-      ...demandLines.map(({ demand, product, unitCost, enteredUnitCost, rateUom, rateUomFactor }) => ({
+      ...demandLines.map(({ demand, product, unitCost, enteredUnitCost, rateUom, rateUomFactor, costStatus }) => ({
         kind: 'demand' as const,
         demand,
         product,
@@ -428,6 +499,7 @@ export class ProcurementService {
         enteredUnitCost,
         rateUom,
         rateUomFactor,
+        costStatus,
         unit: String(product.baseUom || 'PC'),
         sku: demand.sku,
         name: demand.name,
@@ -445,6 +517,7 @@ export class ProcurementService {
         enteredUnitCost: row.enteredUnitCost,
         rateUom: row.rateUom,
         rateUomFactor: row.rateUomFactor,
+        costStatus: row.costStatus,
         unit: row.unit,
         note: row.note,
         orderedInput: row.orderedInput,
@@ -457,6 +530,8 @@ export class ProcurementService {
       })),
     ];
     if (!commercialDrafts.length) throw new BadRequestException('No purchase order lines to create');
+
+    const costCoverage = this.poCostCoverage(commercialDrafts);
 
     const priced = pricePoLines(
       commercialDrafts.map((row) => ({ orderedQuantity: row.orderedQuantity, unitCost: row.unitCost })),
@@ -490,6 +565,7 @@ export class ProcurementService {
               discountPercent: priced.totals.discountPercent,
               taxRate: priced.totals.taxRate,
               grandTotal: priced.totals.grandTotal,
+              ...costCoverage,
             },
           },
           updatedAt: new Date(),
@@ -520,7 +596,7 @@ export class ProcurementService {
               rateUomFactor: draft.rateUomFactor,
               unitCost: commercial.unitCost,
               netUnitCost,
-              costStatus: 'complete',
+              costStatus: draft.costStatus,
               discountPercent: commercial.discountPercent,
               taxRate: commercial.taxRate,
               taxableValue: commercial.taxableValue,
@@ -533,8 +609,8 @@ export class ProcurementService {
                 sourceQuoteId: demand.sourceQuoteId,
                 customerId: demand.customerId,
                 ownerId: demand.ownerId,
-                costStatus: 'confirmed_on_po',
-                enteredRate: draft.enteredUnitCost,
+                costStatus: draft.costStatus === 'complete' ? 'confirmed_on_po' : 'pending_supplier_rate',
+                enteredRate: draft.costStatus === 'complete' ? draft.enteredUnitCost : null,
                 rateUom: draft.rateUom,
                 rateUomFactor: draft.rateUomFactor,
                 normalizedBaseUnitCost: commercial.unitCost,
@@ -616,7 +692,7 @@ export class ProcurementService {
             rateUomFactor: draft.rateUomFactor,
             unitCost: commercial.unitCost,
             netUnitCost,
-            costStatus: 'complete',
+            costStatus: draft.costStatus,
             discountPercent: commercial.discountPercent,
             taxRate: commercial.taxRate,
             taxableValue: commercial.taxableValue,
@@ -628,8 +704,8 @@ export class ProcurementService {
               internalCode: product.internalCode || null,
               note: draft.note || null,
               orderedInput: (draft as any).orderedInput || null,
-              costStatus: 'confirmed_on_po',
-              enteredRate: draft.enteredUnitCost,
+              costStatus: draft.costStatus === 'complete' ? 'confirmed_on_po' : 'pending_supplier_rate',
+              enteredRate: draft.costStatus === 'complete' ? draft.enteredUnitCost : null,
               rateUom: draft.rateUom,
               rateUomFactor: draft.rateUomFactor,
               normalizedBaseUnitCost: commercial.unitCost,
@@ -668,6 +744,7 @@ export class ProcurementService {
             discountPercent: priced.totals.discountPercent,
             taxRate: priced.totals.taxRate,
             grandTotal: priced.totals.grandTotal,
+            ...costCoverage,
           },
         },
       });
@@ -803,6 +880,8 @@ export class ProcurementService {
     const lineMap = new Map(poLines.map((line: any) => [line.id, line]));
 
     const grn = await this.prisma.$transaction(async (tx: any) => {
+      const capturedRateLineIds: string[] = [];
+      const pendingCostLineIds: string[] = [];
       const receiptLocation = input.locationId
         ? await this.resolveStockLocationTx(tx, input.locationId)
         : await this.ensureDefaultLocationTx(tx);
@@ -827,9 +906,6 @@ export class ProcurementService {
       for (const [lineIndex, row] of selected.entries()) {
         const line = lineMap.get(String(row.purchaseOrderLineId || '')) as any;
         if (!line) throw new BadRequestException('One GRN line does not belong to this purchase order');
-        if (row.unitCost !== undefined || row.enteredUnitCost !== undefined || row.rateUom !== undefined) {
-          throw new BadRequestException('PO-linked GRN cost is locked to the approved purchase order. Remove receipt-level rate fields.');
-        }
         const product = line.productId ? productMap.get(line.productId) as any : null;
         const received = this.baseQuantity(row, product, `${line.sku} received quantity`);
         const damaged = Math.max(0, Math.trunc(Number(row.damagedQuantity || 0)));
@@ -841,7 +917,73 @@ export class ProcurementService {
         if (received > remaining) {
           throw new BadRequestException(`${line.sku} receipt ${received} exceeds remaining PO quantity ${remaining}`);
         }
-        const receiptCost = this.resolvePoReceiptCost(line);
+        const rawRate = row.enteredUnitCost ?? row.unitCost;
+        const hasRateAmount = rawRate !== undefined && rawRate !== null && String(rawRate).trim() !== '';
+        const hasRateInput = hasRateAmount || row.rateUom !== undefined;
+        const rateMissing = String(line.costStatus || '') !== 'complete' || Number(line.unitCost || 0) <= 0 || Number(line.netUnitCost || 0) <= 0;
+        let effectiveLine = line;
+        if (rateMissing && hasRateAmount) {
+          if (!product) throw new BadRequestException(`${line.sku} must be linked to Product Master before its inward rate can be captured`);
+          const normalizedRate = this.normalizePurchaseRate(row, product, `${line.sku} inward supplier rate`);
+          const pricedLine = pricePoLines(
+            [{ orderedQuantity: Number(line.orderedQuantity || 0), unitCost: normalizedRate.unitCost }],
+            { discountPercent: po.discountPercent, taxRate: po.taxRate },
+          ).lines[0];
+          const netUnitCost = this.money4(pricedLine.taxableValue / Math.max(1, pricedLine.orderedQuantity));
+          effectiveLine = await tx.purchaseOrderLine.update({
+            where: { id: line.id },
+            data: {
+              enteredUnitCost: normalizedRate.enteredUnitCost,
+              rateUom: normalizedRate.rateUom,
+              rateUomFactor: normalizedRate.rateUomFactor,
+              unitCost: pricedLine.unitCost,
+              netUnitCost,
+              costStatus: 'complete',
+              discountPercent: pricedLine.discountPercent,
+              taxRate: pricedLine.taxRate,
+              taxableValue: pricedLine.taxableValue,
+              taxAmount: pricedLine.taxAmount,
+              lineTotal: pricedLine.lineTotal,
+              metadata: {
+                ...(line.metadata || {}),
+                costStatus: 'confirmed_during_inward',
+                enteredRate: normalizedRate.enteredUnitCost,
+                rateUom: normalizedRate.rateUom,
+                rateUomFactor: normalizedRate.rateUomFactor,
+                normalizedBaseUnitCost: pricedLine.unitCost,
+                netBaseUnitCost: netUnitCost,
+                lineGross: pricedLine.lineGross,
+                lineDiscount: pricedLine.lineDiscount,
+                inwardRateCapturedAt: new Date().toISOString(),
+                inwardRateCapturedBy: actorUserId,
+              },
+              updatedAt: new Date(),
+            },
+          });
+          capturedRateLineIds.push(line.id);
+          await tx.auditEvent.create({
+            data: {
+              id: ulid(),
+              actorUserId,
+              action: 'purchase_order.rate_capture_on_inward',
+              entityType: 'PurchaseOrderLine',
+              entityId: line.id,
+              summary: `Captured previously missing supplier rate for ${line.sku} during inward`,
+              metadata: {
+                purchaseOrderId: po.id,
+                poNumber: po.poNumber,
+                enteredRate: normalizedRate.enteredUnitCost,
+                rateUom: normalizedRate.rateUom,
+                normalizedBaseUnitCost: pricedLine.unitCost,
+                netBaseUnitCost: netUnitCost,
+              },
+            },
+          });
+        } else if (!rateMissing && hasRateInput) {
+          throw new BadRequestException(`${line.sku} already has a locked PO rate. Remove receipt-level rate fields.`);
+        }
+        const receiptCost = this.resolvePoReceiptCost(effectiveLine);
+        if (receiptCost.costStatus === 'pending') pendingCostLineIds.push(line.id);
 
         const receiptLine = await tx.goodsReceiptLine.create({
           data: {
@@ -857,16 +999,18 @@ export class ProcurementService {
             damagedQuantity: damaged,
             location: row.location || receiptLocation.name,
             unitCost: receiptCost.unitCost,
+            costStatus: receiptCost.costStatus,
             metadata: {
               purchaseDemandId: line.purchaseDemandId,
               note: row.note || '',
               locationId: receiptLocation.id,
               costSource: receiptCost.source,
-              poUnitCost: Number(line.unitCost || 0),
-              poNetUnitCost: Number(line.netUnitCost || 0),
-              poEnteredRate: Number(line.enteredUnitCost || 0),
-              poRateUom: line.rateUom,
-              poRateUomFactor: Number(line.rateUomFactor || 1),
+              costStatus: receiptCost.costStatus,
+              poUnitCost: Number(effectiveLine.unitCost || 0),
+              poNetUnitCost: Number(effectiveLine.netUnitCost || 0),
+              poEnteredRate: Number(effectiveLine.enteredUnitCost || 0),
+              poRateUom: effectiveLine.rateUom,
+              poRateUomFactor: Number(effectiveLine.rateUomFactor || 1),
               uomConversion: this.uomSnapshot(row, product),
             },
           },
@@ -880,19 +1024,21 @@ export class ProcurementService {
               productId: line.productId, sourceType: 'grn', sourceId: note.id, sourceLineId: receiptLine.id,
               supplierBatch: row.supplierBatch || null, qualityStatus: damaged === received ? 'damaged' : 'available',
               receivedAt: note.receivedDate, unitCost: receiptCost.unitCost, status: 'active',
+              costStatus: receiptCost.costStatus,
               attributes: { ...(row.attributes || {}), shade: row.shade || null, caliber: row.caliber || null, grade: row.grade || null },
               metadata: {
                 purchaseOrderId: po.id,
                 purchaseOrderLineId: line.id,
                 costSource: receiptCost.source,
+                costStatus: receiptCost.costStatus,
                 poCostSnapshot: {
-                  enteredRate: Number(line.enteredUnitCost || 0),
-                  rateUom: line.rateUom,
-                  rateUomFactor: Number(line.rateUomFactor || 1),
-                  preDiscountBaseUnitCost: Number(line.unitCost || 0),
-                  netBaseUnitCost: Number(line.netUnitCost || 0),
-                  discountPercent: Number(line.discountPercent || 0),
-                  taxRate: Number(line.taxRate || 0),
+                  enteredRate: Number(effectiveLine.enteredUnitCost || 0),
+                  rateUom: effectiveLine.rateUom,
+                  rateUomFactor: Number(effectiveLine.rateUomFactor || 1),
+                  preDiscountBaseUnitCost: Number(effectiveLine.unitCost || 0),
+                  netBaseUnitCost: Number(effectiveLine.netUnitCost || 0),
+                  discountPercent: Number(effectiveLine.discountPercent || 0),
+                  taxRate: Number(effectiveLine.taxRate || 0),
                 },
                 uomConversion: this.uomSnapshot(row, product),
               },
@@ -944,6 +1090,7 @@ export class ProcurementService {
         }
       }
 
+      if (capturedRateLineIds.length) await this.refreshPurchaseOrderCommercialTotalsTx(tx, po);
       await this.refreshPurchaseOrderStatusTx(tx, po.id);
       await tx.auditEvent.create({
         data: {
@@ -953,7 +1100,7 @@ export class ProcurementService {
           entityType: 'GoodsReceiptNote',
           entityId: note.id,
           summary: `Posted ${note.grnNumber} for ${po.poNumber}`,
-          metadata: { purchaseOrderId: po.id },
+          metadata: { purchaseOrderId: po.id, inwardRateCapturedLineIds: capturedRateLineIds, pendingCostLineIds },
         },
       }).catch(() => null);
       return note;
@@ -1620,6 +1767,37 @@ export class ProcurementService {
     await tx.purchaseOrder.update({ where: { id: purchaseOrderId }, data: { status, updatedAt: new Date(), closedAt: status === 'received' ? new Date() : undefined } });
   }
 
+  private async refreshPurchaseOrderCommercialTotalsTx(tx: any, order: any) {
+    const lines = await tx.purchaseOrderLine.findMany({ where: { purchaseOrderId: order.id }, orderBy: { createdAt: 'asc' } });
+    const priced = pricePoLines(
+      lines.map((line: any) => ({ orderedQuantity: Number(line.orderedQuantity || 0), unitCost: Number(line.unitCost || 0) })),
+      { discountPercent: order.discountPercent, taxRate: order.taxRate },
+    );
+    const coverage = this.poCostCoverage(lines);
+    await tx.purchaseOrder.update({
+      where: { id: order.id },
+      data: {
+        subtotal: priced.totals.subtotal,
+        discountAmount: priced.totals.discountAmount,
+        taxableValue: priced.totals.taxableValue,
+        taxAmount: priced.totals.taxAmount,
+        grandTotal: priced.totals.grandTotal,
+        metadata: {
+          ...(order.metadata || {}),
+          commercial: {
+            ...((order.metadata || {})?.commercial || {}),
+            discountPercent: priced.totals.discountPercent,
+            taxRate: priced.totals.taxRate,
+            grandTotal: priced.totals.grandTotal,
+            ...coverage,
+          },
+          inwardRateCoverageUpdatedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date(),
+      },
+    });
+  }
+
   private normalizeLines(lines: any) {
     if (!lines) return [];
     if (typeof lines === 'string') {
@@ -1709,15 +1887,46 @@ export class ProcurementService {
     };
   }
 
+  private normalizeOptionalPurchaseRate(row: any, product: any, label: string) {
+    const raw = row?.enteredUnitCost ?? row?.unitCost;
+    if (raw === undefined || raw === null || String(raw).trim() === '' || Number(raw) === 0) {
+      const baseUom = String(product?.baseUom || 'PC').trim().toUpperCase();
+      const purchaseUom = String(product?.purchaseUom || baseUom).trim().toUpperCase();
+      const rateUom = String(row?.rateUom || purchaseUom || baseUom).trim().toUpperCase();
+      const piecesPerPack = Math.max(1, Math.trunc(Number(product?.piecesPerPack || 1)));
+      const rateUomFactor = rateUom === baseUom ? 1
+        : rateUom === purchaseUom || rateUom === 'BOX' || rateUom === 'PACK' ? piecesPerPack
+          : 0;
+      if (rateUomFactor <= 0) {
+        throw new BadRequestException(`${label} UOM ${rateUom} cannot be converted to ${baseUom}. Update the SKU packing master first.`);
+      }
+      return { enteredUnitCost: 0, rateUom, rateUomFactor, unitCost: 0, costStatus: 'missing' as const };
+    }
+    const amount = Number(raw);
+    if (!Number.isFinite(amount) || amount < 0) throw new BadRequestException(`${label} must be a valid positive amount or left blank`);
+    return { ...this.normalizePurchaseRate(row, product, label), costStatus: 'complete' as const };
+  }
+
+  private poCostCoverage(lines: Array<{ costStatus?: string; unitCost?: any }>) {
+    const missingLineCount = lines.filter((line) => line.costStatus !== 'complete' || Number(line.unitCost || 0) <= 0).length;
+    const pricedLineCount = Math.max(0, lines.length - missingLineCount);
+    return {
+      costStatus: missingLineCount ? 'missing' : 'complete',
+      commercialValueStatus: missingLineCount === 0 ? 'complete' : pricedLineCount > 0 ? 'partial' : 'pending',
+      pricedLineCount,
+      missingLineCount,
+    };
+  }
+
   private resolvePoReceiptCost(line: any) {
     if (String(line?.costStatus || '') !== 'complete') {
-      throw new BadRequestException(`${line?.sku || 'PO line'} has no approved PO rate. Complete legacy PO cost setup before receiving.`);
+      return { unitCost: 0, source: 'pending_supplier_rate', costStatus: 'pending' as const };
     }
     const value = Number(line?.netUnitCost || 0);
     if (!Number.isFinite(value) || value <= 0) {
-      throw new BadRequestException(`${line?.sku || 'PO line'} has no valid net PO cost. Complete legacy PO cost setup before receiving.`);
+      return { unitCost: 0, source: 'pending_supplier_rate', costStatus: 'pending' as const };
     }
-    return { unitCost: this.money4(value), source: 'purchase_order_net_snapshot' };
+    return { unitCost: this.money4(value), source: 'purchase_order_net_snapshot', costStatus: 'complete' as const };
   }
 
   private money4(value: any) {

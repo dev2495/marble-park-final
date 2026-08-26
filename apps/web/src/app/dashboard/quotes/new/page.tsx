@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
-import { AlertTriangle, BadgeIndianRupee, Building2, Camera, Check, CheckCircle, Download, FileText, Percent, Plus, Save, Search, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, BadgeIndianRupee, Bath, Building2, Camera, CheckCircle, Download, FileText, Layers3, LockKeyhole, Percent, Plus, Save, Search, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ProductImageFrame } from '@/components/product-image-frame';
@@ -63,6 +63,28 @@ function productImage(media: any) {
 }
 
 type TileRateBasis = 'AREA' | 'PIECE' | 'BOX';
+type QuoteType = 'tile' | 'cp_sanitary';
+
+function quoteTypeForProduct(product: any): QuoteType {
+  const category = String(product?.category || '').trim().toLowerCase();
+  return ['tiles', 'chemicals'].includes(category) ? 'tile' : 'cp_sanitary';
+}
+
+function allowedInQuote(product: any, quoteType: QuoteType) {
+  return quoteTypeForProduct(product) === quoteType;
+}
+
+function quoteFamilyBrandPolicy(settings: any, brands: any[], quoteType: QuoteType) {
+  const mode = String(quoteType === 'tile'
+    ? settings.tileQuoteBrandSelectionMode ?? settings.quoteBrandSelectionMode ?? 'all'
+    : settings.cpSanitaryQuoteBrandSelectionMode ?? settings.quoteBrandSelectionMode ?? 'all');
+  const configuredIds = quoteType === 'tile'
+    ? settings.tileQuoteBrandIds ?? settings.quoteBrandIds ?? []
+    : settings.cpSanitaryQuoteBrandIds ?? settings.quoteBrandIds ?? [];
+  const configured = new Set((Array.isArray(configuredIds) ? configuredIds : []).map(String));
+  const ids = mode === 'none' ? [] : brands.filter((brand: any) => mode === 'all' || configured.has(String(brand.id))).map((brand: any) => String(brand.id));
+  return { mode, ids };
+}
 
 function isTileLine(line: any) {
   return String(line.category || '').toLowerCase() === 'tiles';
@@ -132,6 +154,7 @@ const AREA_SUGGESTIONS = [
 
 export default function QuoteBuilderPage() {
   const [lines, setLines] = useState<any[]>([]);
+  const [quoteType, setQuoteType] = useState<QuoteType>('cp_sanitary');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedArchitectId, setSelectedArchitectId] = useState('');
   const [selectedOwnerId, setSelectedOwnerId] = useState('');
@@ -141,7 +164,6 @@ export default function QuoteBuilderPage() {
   const [savedQuote, setSavedQuote] = useState<any>(null);
   const [displayMode, setDisplayMode] = useState<'priced' | 'selection'>('priced');
   const [taxMode, setTaxMode] = useState<'gst' | 'non_gst'>('gst');
-  const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
   const [defaultArea, setDefaultArea] = useState('General Selection');
   const [quoteDiscountType, setQuoteDiscountType] = useState<DiscountMode>('PERCENT');
   const [quoteDiscountValue, setQuoteDiscountValue] = useState('0');
@@ -158,18 +180,11 @@ export default function QuoteBuilderPage() {
   const [scanResult, setScanResult] = useState<any>(null);
   const [scanMessage, setScanMessage] = useState('');
   const [scanLabel, scanState] = useMutation(SCAN_LABEL);
-  const documentSettings = customerData?.documentSettings?.data || {};
+  const documentSettings = useMemo(() => customerData?.documentSettings?.data || {}, [customerData?.documentSettings?.data]);
   const brands = useMemo<any[]>(() => (customerData?.masterProductBrands || []).filter((brand: any) => brand.metadata?.quoteEnabled !== false), [customerData?.masterProductBrands]);
-  const brandDefaultsApplied = useRef(false);
+  const footerBrandPolicy = useMemo(() => quoteFamilyBrandPolicy(documentSettings, brands, quoteType), [brands, documentSettings, quoteType]);
+  const quoteTypeLocked = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!customerData || brandDefaultsApplied.current) return;
-    const mode = String(documentSettings.quoteBrandSelectionMode || 'all');
-    const configured = new Set((Array.isArray(documentSettings.quoteBrandIds) ? documentSettings.quoteBrandIds : []).map(String));
-    setSelectedBrandIds(mode === 'none' ? [] : brands.filter((brand: any) => mode === 'all' || configured.has(String(brand.id))).map((brand: any) => String(brand.id)));
-    brandDefaultsApplied.current = true;
-  }, [brands, customerData, documentSettings.quoteBrandIds, documentSettings.quoteBrandSelectionMode]);
 
   useEffect(() => {
     if (selectedOwnerId || !customerData?.salesAssignees?.length) return;
@@ -179,9 +194,23 @@ export default function QuoteBuilderPage() {
     setSelectedOwnerId(match?.id || customerData.salesAssignees[0].id);
   }, [customerData?.salesAssignees, selectedOwnerId]);
 
-  useEffect(()=>{const params=new URLSearchParams(window.location.search);const ids=(params.get('products')||params.get('product')||'').split(',').map((id)=>id.trim()).filter(Boolean).slice(0,250);setPreloadProductIds([...new Set(ids)]);},[]);
+  useEffect(()=>{const params=new URLSearchParams(window.location.search);const requestedType=String(params.get('type')||'').toLowerCase();if(requestedType==='tile'||requestedType==='cp_sanitary'){setQuoteType(requestedType as QuoteType);quoteTypeLocked.current=true;}const ids=(params.get('products')||params.get('product')||'').split(',').map((id)=>id.trim()).filter(Boolean).slice(0,250);setPreloadProductIds([...new Set(ids)]);},[]);
 
   const addProduct = (product: any) => {
+    const productQuoteType = quoteTypeForProduct(product);
+    let effectiveQuoteType = quoteType;
+    if (productQuoteType !== quoteType) {
+      if (lines.length === 0 && !quoteTypeLocked.current) {
+        effectiveQuoteType = productQuoteType;
+        setQuoteType(productQuoteType);
+      } else {
+        setValidationError(productQuoteType === 'tile'
+          ? `${product.internalCode || product.sku} belongs in a Tile & Chemical quotation.`
+          : `${product.internalCode || product.sku} belongs in a CP & Sanitary quotation.`);
+        return false;
+      }
+    }
+    if (!allowedInQuote(product, effectiveQuoteType)) return false;
     const isTile = String(product.category || '').toLowerCase() === 'tiles';
     const pricingUom = isTile ? 'SQFT' : product.priceUom || product.salesUom || product.unit || 'PC';
     const coveragePerPack = Number(product.coveragePerPack || 0);
@@ -193,13 +222,13 @@ export default function QuoteBuilderPage() {
     const defaultMrp = Number(product.defaultMrpInclusive || 0);
     const defaultNrp = Number(product.defaultNrpInclusive || 0);
     setLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, { id: `${product.id}-${Date.now()}`, lineKey: `product:${product.id}:${Date.now()}`, pricingVersion: 'unified_retail_v1', area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces: isTile ? Number(product.piecesPerPack || 1) : 0, wastagePercent, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom, pricingUom, rateBasis, priceRateBasis: rateBasis, mrpInclusive: defaultMrp || '', mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive), nrpMode: defaultNrp > 0 ? 'FIXED_NRP' : 'PERCENT_OFF_MRP', nrpInput: defaultNrp > 0 ? defaultNrp : 0, specialMode: 'NONE', specialInput: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media }]);
-    const matchedBrand = brands.find((brand: any) => String(brand.name || '').trim().toLowerCase() === String(product.brand || '').trim().toLowerCase());
-    if (matchedBrand) setSelectedBrandIds((current) => current.includes(String(matchedBrand.id)) ? current : [...current, String(matchedBrand.id)]);
     setSearchQuery('');
+    setValidationError('');
+    return true;
   };
   // The preload is intentionally one-shot; addProduct is a render-local builder.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(()=>{const products=preloadData?.productsByIds||[];if(!products.length||preloadApplied.current)return;preloadApplied.current=true;products.forEach(addProduct);setSuccess(`${products.length} scanned selection${products.length === 1 ? '' : 's'} added with Product Master MRP. Select the customer and verify quantity and negotiated rate before saving.`);},[preloadData?.productsByIds]);
+  useEffect(()=>{const products=preloadData?.productsByIds||[];if(!products.length||preloadApplied.current)return;preloadApplied.current=true;const inferred=quoteTypeForProduct(products[0]);if(!quoteTypeLocked.current&&products.every((product:any)=>quoteTypeForProduct(product)===inferred)){setQuoteType(inferred);}const eligible=products.filter((product:any)=>allowedInQuote(product,quoteTypeLocked.current?quoteType:inferred));eligible.forEach(addProduct);setSuccess(`${eligible.length} scanned selection${eligible.length === 1 ? '' : 's'} added to the ${inferred === 'tile' ? 'Tile & Chemical' : 'CP & Sanitary'} quote with Product Master MRP.`);},[preloadData?.productsByIds]);
   const scanToQuote = async (payload: string) => {
     setScanMessage('');
     setScanPayload(payload);
@@ -214,8 +243,8 @@ export default function QuoteBuilderPage() {
   };
   const addScannedProducts = async (products: any[]) => {
     await scanLabel({ variables: { labelCode: scanPayload, input: { action: 'quote_similar_select', entityType: 'QuoteDraft', metadata: { surface: 'quote_new', selectedProductIds: products.map((product) => product.id) } } } });
-    products.forEach(addProduct);
-    setScanMessage(`${products.length} selected item${products.length === 1 ? '' : 's'} added to the quote draft.`);
+    const added = products.filter((product) => addProduct(product)).length;
+    setScanMessage(added ? `${added} selected item${added === 1 ? '' : 's'} added to the quote draft.` : 'The scanned selection belongs to the other quote type. The draft was not changed.');
     setScanResult(null);
     setScanOpen(false);
   };
@@ -258,6 +287,9 @@ export default function QuoteBuilderPage() {
   const nrpValue = lines.reduce((sum, line) => sum + lineCommercial(line).nrpValueInclusive, 0);
   const specialValue = lines.reduce((sum, line) => sum + lineCommercial(line).specialValueInclusive, 0);
   const totalItems = lines.reduce((sum, line) => sum + Number(line.qty || 0), 0);
+  const totalTileCoverage = lines.filter(isTileLine).reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.coveragePerPack || 0), 0);
+  const totalChemicalKg = lines.filter((line) => String(line.category || '').toLowerCase() === 'chemicals').reduce((sum, line) => sum + Number(line.qty || 0), 0);
+  const visibleSearchProducts = (searchData?.globalSearch?.products || []).filter((product: any) => allowedInQuote(product, quoteType));
   const missingMrpCount = lines.filter((line) => lineCommercial(line).mrpMissing).length;
   const invalidMrpCount = lines.filter((line) => !lineCommercial(line).mrpMissing && !lineCommercial(line).mrpValid).length;
   const missingNrpCount = lines.filter((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0).length;
@@ -302,6 +334,12 @@ export default function QuoteBuilderPage() {
       setValidationError('Add at least one product line before saving.');
       return;
     }
+    const familyMismatch = lines.find((line) => !allowedInQuote(line, quoteType));
+    if (familyMismatch) {
+      setValidationError(`${familyMismatch.internalCode || familyMismatch.sku} does not belong in this quote type. Remove it or start the matching quote family.`);
+      focusLine(familyMismatch);
+      return;
+    }
     if (invalidDiscountLine || invalidQuoteDiscount) {
       setValidationError(invalidDiscountLine ? `A discount on ${invalidDiscountLine.sku || invalidDiscountLine.name} exceeds the price it is applied to.` : 'The additional quote discount exceeds the available quote value.');
       if (invalidDiscountLine) focusLine(invalidDiscountLine);
@@ -338,14 +376,15 @@ export default function QuoteBuilderPage() {
           input: {
             customerId: selectedCustomerId,
             ownerId,
+            quoteType,
             architectId: selectedArchitectId || undefined,
             projectName: projectTitle,
-            title: projectTitle || 'Retail product quotation',
+            title: projectTitle || (quoteType === 'tile' ? 'Tile & chemical quotation' : 'CP & sanitary quotation'),
             validUntil: validUntil ? new Date(`${validUntil}T23:59:59`).toISOString() : undefined,
             displayMode,
             discountPercent: quoteDiscountType === 'PERCENT' ? Number(quoteDiscountValue || 0) : 0,
             saveAsDraft,
-            quoteMeta: JSON.stringify({ remarks: '', taxMode, pricingVersion: 'unified_retail_v1', quoteDiscount: { mode: quoteDiscountType, value: Number(quoteDiscountValue || 0) }, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, pricingReadiness: { missingMrpCount, missingNrpCount, invalidMrpCount, missingTileCoverageCount, floorBreachCount } }),
+            quoteMeta: JSON.stringify({ remarks: '', quoteType, taxMode, pricingVersion: 'unified_retail_v1', quoteDiscount: { mode: quoteDiscountType, value: Number(quoteDiscountValue || 0) }, pricingReadiness: { missingMrpCount, missingNrpCount, invalidMrpCount, missingTileCoverageCount, floorBreachCount } }),
             lines: JSON.stringify(lines.map((line) => {
               const commercial = lineCommercial(line);
               const { id: _clientId, ...persisted } = line;
@@ -388,9 +427,9 @@ export default function QuoteBuilderPage() {
         <div className="border-b border-[#e4e4e7]/10 p-5 lg:p-6">
           <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
             <div>
-              <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#52525b]">Quote studio</p>
-              <h1 className="mt-2 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Build a beautiful retail proposal.</h1>
-              <p className="mt-2 text-sm font-semibold text-[#52525b]">Search catalogue SKUs, add product-image rows, and save a quote version.</p>
+              <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#52525b]">Quote studio · {quoteType === 'tile' ? 'Tile & Chemical' : 'CP & Sanitary'}</p>
+              <h1 className="mt-2 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Build the {quoteType === 'tile' ? 'tile selection and coverage' : 'CP & sanitary package'}.</h1>
+              <p className="mt-2 text-sm font-semibold text-[#52525b]">One governed price ladder; a purpose-built product family, unit language and customer output.</p>
             </div>
             <div className="flex gap-3">
               <Button disabled={saving || !selectedCustomerId || !selectedOwnerId || lines.length === 0} onClick={() => handleSave(true)} size="lg" variant="outline"><Save className="mr-2 h-5 w-5" /> {saving ? 'Saving...' : 'Save draft'}</Button>
@@ -401,6 +440,12 @@ export default function QuoteBuilderPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 custom-scrollbar lg:p-6">
+          <div className="mb-5 grid gap-3 rounded-2xl border border-[#e7d8cf] bg-[linear-gradient(105deg,#fff8f4,#ffffff_52%,#eefaf5)] p-3 sm:grid-cols-2">
+            {([
+              { value: 'tile' as QuoteType, icon: Layers3, label: 'Tile & Chemical quote', detail: 'Tiles by box / pieces / SQFT · Chemicals by KG' },
+              { value: 'cp_sanitary' as QuoteType, icon: Bath, label: 'CP & Sanitary quote', detail: 'Faucets, sanitaryware and all non-tile product families' },
+            ]).map((option) => { const Icon = option.icon; const active = quoteType === option.value; return <button key={option.value} type="button" onClick={() => { if (lines.length && !active) { setValidationError('Remove the current lines before changing quote type. This keeps catalogue families from mixing.'); return; } quoteTypeLocked.current = true; setQuoteType(option.value); setValidationError(''); }} className={`flex items-center gap-3 rounded-xl border p-4 text-left transition ${active ? 'border-[#9f342d] bg-[#241f1e] text-white shadow-lg' : 'border-white bg-white/85 text-[#18181b] hover:border-[#d8b8aa]'}`}><span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${active ? 'bg-white/12' : 'bg-[#f7eee9] text-[#9f342d]'}`}><Icon className="h-5 w-5" /></span><span><b className="block text-sm">{option.label}</b><small className={`mt-1 block ${active ? 'text-white/65' : 'text-[#71717a]'}`}>{option.detail}</small></span>{active ? <CheckCircle className="ml-auto h-5 w-5 text-emerald-300" /> : null}</button>; })}
+          </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <label className="block space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Customer</span>
@@ -467,18 +512,12 @@ export default function QuoteBuilderPage() {
                 ))}
               </div>
             </label>
-            <div className="rounded-md border border-[#e4e4e7] bg-white p-4 lg:col-span-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="grid h-10 w-10 place-items-center overflow-hidden rounded border border-[#e4e4e7] bg-white p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-[#71717a]" />}</div>
-                  <div><p className="text-sm font-semibold text-[#18181b]">{documentSettings.companyName || 'Marble Park'}</p><p className="text-xs text-[#71717a]">Global quotation identity</p></div>
-                </div>
-                <div className="flex items-center gap-2"><button type="button" onClick={() => setSelectedBrandIds(brands.map((brand: any) => String(brand.id)))} className="rounded border border-[#e4e4e7] px-2.5 py-1 text-xs font-semibold text-[#52525b]">All</button><button type="button" onClick={() => setSelectedBrandIds([])} className="rounded border border-[#e4e4e7] px-2.5 py-1 text-xs font-semibold text-[#52525b]">Clear</button><span className="text-xs font-semibold text-[#52525b]">{selectedBrandIds.length} selected</span></div>
+            <div className="flex flex-col gap-3 rounded-md border border-[#e4e4e7] bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:col-span-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded border border-[#e4e4e7] bg-white p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-[#71717a]" />}</div>
+                <div className="min-w-0"><p className="truncate text-sm font-semibold text-[#18181b]">{documentSettings.companyName || 'Marble Park'} · {quoteType === 'tile' ? 'Tile & Chemical' : 'CP & Sanitary'}</p><p className="text-xs text-[#71717a]">Customer identity and footer brands are governed globally; this quote will snapshot the policy when saved.</p></div>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">
-                {brands.map((brand: any) => { const selected = selectedBrandIds.includes(String(brand.id)); return <button key={brand.id} type="button" title={brand.name} onClick={() => setSelectedBrandIds((current) => selected ? current.filter((id) => id !== String(brand.id)) : [...current, String(brand.id)])} className={`relative grid h-16 place-items-center rounded border bg-white p-2 ${selected ? 'border-[#2563eb] ring-2 ring-[#2563eb]/15' : 'border-[#e4e4e7]'}`}>{brand.metadata?.logoUrl ? <img src={brand.metadata.logoUrl} alt={brand.name} className="max-h-9 max-w-full object-contain" /> : <span className="line-clamp-2 text-center text-[10px] font-semibold text-[#52525b]">{brand.name}</span>}{selected ? <span className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-[#2563eb] text-white"><Check className="h-2.5 w-2.5" /></span> : null}</button>; })}
-              </div>
-              {!brands.length ? <p className="mt-3 text-xs font-semibold text-amber-700">Upload and enable served-brand logos in Settings or Brand Master before printing them.</p> : null}
+              <div className="flex shrink-0 items-center gap-2 rounded-md bg-[#f4f4f5] px-3 py-2 text-xs font-semibold text-[#52525b]"><LockKeyhole className="h-3.5 w-3.5 text-[#9f342d]" />{footerBrandPolicy.ids.length} footer logo{footerBrandPolicy.ids.length === 1 ? '' : 's'} · read only</div>
             </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#e4e4e7] bg-[#fafafa] px-3 py-2 text-[10px] font-semibold text-[#52525b]" aria-label="Keyboard shortcuts">
@@ -490,7 +529,7 @@ export default function QuoteBuilderPage() {
 
           <section aria-label="Pricing readiness" className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
             {[
-              [FileText, 'Lines / items', `${lines.length} / ${totalItems}`, null],
+              [quoteType === 'tile' ? Layers3 : FileText, quoteType === 'tile' ? 'Lines / coverage' : 'Lines / units', quoteType === 'tile' ? `${lines.length} · ${totalTileCoverage.toFixed(2)} SQFT${totalChemicalKg ? ` · ${totalChemicalKg} KG` : ''}` : `${lines.length} / ${totalItems}`, null],
               [BadgeIndianRupee, 'Gross MRP', pricedDisplay(grossMrp, missingMrpCount > 0), missingMrpCount ? () => focusLine(lines.find((line) => lineCommercial(line).mrpMissing)) : null],
               [BadgeIndianRupee, 'NRP value', pricedDisplay(nrpValue, missingMrpCount > 0), missingNrpCount ? () => focusLine(lines.find((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0)) : null],
               [BadgeIndianRupee, 'Special value', pricedDisplay(specialValue, missingMrpCount > 0), null],
@@ -504,15 +543,15 @@ export default function QuoteBuilderPage() {
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <div className="relative min-w-0 flex-1">
             <Search className="absolute left-4 top-7 h-5 w-5 -translate-y-1/2 text-[#52525b]" />
-            <Input ref={searchInputRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search showroom code, SKU, brand or name..." className="h-14 pl-12 text-base" />
+            <Input ref={searchInputRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={quoteType === 'tile' ? 'Search Tile or Chemical code, brand or name…' : 'Search CP / sanitary code, brand or name…'} className="h-14 pl-12 text-base" />
             <AnimatePresence>
-              {searchQuery.length >= 2 && searchData?.globalSearch?.products?.length > 0 && (
+              {searchQuery.length >= 2 && visibleSearchProducts.length > 0 && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute left-0 right-0 top-full z-40 mt-3 max-h-96 overflow-y-auto rounded-r4 border border-[#e4e4e7]/12 bg-white p-2 shadow-2xl custom-scrollbar">
-                  {searchData.globalSearch.products.map((product: any) => (
+                  {visibleSearchProducts.map((product: any) => (
                     <button key={product.id} onClick={() => addProduct(product)} className="flex w-full items-center justify-between gap-4 rounded-2xl p-3 text-left transition hover:bg-[#eff6ff]/65">
                       <div className="flex min-w-0 items-center gap-3">
                         <ProductImageFrame src={productImage(product.media)} alt={product.name} className="h-20 w-24 shrink-0 rounded-2xl" imageClassName="p-1.5" />
-                        <div className="min-w-0"><p className="truncate text-sm font-black">{product.internalCode || product.sku} · {product.name}</p><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{product.sku}{masterBrandCode(brands, product.brand) ? ` · ${masterBrandCode(brands, product.brand)}` : ''}</p>{Number(product.coveragePerPack || 0) > 0 ? <p className="mt-1 text-xs text-[#52525b]">{product.coveragePerPack} {product.salesUom || 'area'} / {product.purchaseUom || product.unit || 'pack'} · {product.piecesPerPack || 1} pcs</p> : null}</div>
+                        <div className="min-w-0"><p className="truncate text-sm font-black">{product.internalCode || product.sku} · {product.name}</p><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{product.category} · {product.sku}{masterBrandCode(brands, product.brand) ? ` · ${masterBrandCode(brands, product.brand)}` : ''}</p>{Number(product.coveragePerPack || 0) > 0 ? <p className="mt-1 text-xs text-[#52525b]">{product.coveragePerPack} {product.salesUom || 'area'} / {product.purchaseUom || product.unit || 'pack'} · {product.piecesPerPack || 1} pcs</p> : String(product.category || '').toLowerCase() === 'chemicals' ? <p className="mt-1 text-xs font-bold text-emerald-700">Governed in KG · allowed only in Tile & Chemical quotes</p> : null}</div>
                       </div>
                       <span className="shrink-0 text-right text-xs font-black text-[#059669]">{Number(product.defaultMrpInclusive || 0) > 0 ? <>MRP<br/>{money(product.defaultMrpInclusive)} / {String(product.category || '').toLowerCase() === 'tiles' ? 'SQFT' : product.priceUom || product.salesUom || product.unit}</> : 'MRP setup needed'}</span>
                     </button>
@@ -520,6 +559,7 @@ export default function QuoteBuilderPage() {
                 </motion.div>
               )}
             </AnimatePresence>
+            {searchQuery.length >= 2 && !searching && (searchData?.globalSearch?.products || []).length > 0 && visibleSearchProducts.length === 0 ? <div className="absolute left-0 right-0 top-full z-40 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">Matches exist only in the other quote family. Start a {quoteType === 'tile' ? 'CP & Sanitary' : 'Tile & Chemical'} quote to use them.</div> : null}
             </div>
             <Button type="button" variant="outline" size="lg" onClick={() => { setScanOpen((value) => !value); setScanResult(null); }} className="h-14 shrink-0">
               <Camera className="mr-2 h-5 w-5" />{scanOpen ? 'Close scanner' : 'Scan showroom item'}
@@ -536,11 +576,11 @@ export default function QuoteBuilderPage() {
                   <div className="min-w-0 flex-1"><input list="mp-area-list" value={line.area || ''} onChange={(event)=>updateLine(line.id,{area:event.target.value})} placeholder="Area / room" className="h-8 max-w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-xs font-medium uppercase tracking-wider text-[#2563eb]"/><p className="mt-2 text-base font-black text-[#18181b] sm:text-lg">{line.internalCode || line.sku} · {line.name}</p><p className="mt-1 text-xs font-bold uppercase tracking-wider text-[#71717a]">{line.sku}{masterBrandCode(brands, line.brand) ? ` · ${masterBrandCode(brands, line.brand)}` : ''} · {line.unit}</p></div>
                   <button type="button" title="Remove line" onClick={() => removeLine(line.id)} className="shrink-0 rounded-lg p-2 text-[#71717a] hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4"/></button>
                 </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.25fr_0.85fr_1.05fr_1.1fr_0.65fr_1fr]">
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.15fr_0.72fr_1.35fr_1.35fr_0.58fr_0.85fr]">
                   <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Quantity / fulfilment</p>{isTileLine(line) ? <TileQuantityEditor line={line} onChange={(patch) => updateLine(line.id, patch)}/> : <div className="flex h-10 items-center gap-2"><input type="number" value={line.qty} min={1} onChange={(event)=>updateQty(line.id,Number(event.target.value)||0)} className="h-10 w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-right text-sm font-semibold"/><span className="text-xs font-bold text-[#52525b]">{line.unit}</span></div>}</div>
                   <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">MRP / {commercial.mrpUom}</p><input data-pricing-error={commercial.mrpMissing || !commercial.mrpValid ? 'true' : undefined} aria-label={`MRP per ${commercial.mrpUom} for ${line.name}`} readOnly tabIndex={-1} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-md border px-3 text-right text-sm font-black ${commercial.mrpMissing || !commercial.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`}/><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'Required before pricing' : 'Tax-inclusive · Product Master'}</p></div>
-                  <div className="rounded-md border border-[#f1d5d1] bg-[#fff8f7] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8f2f28]">Base pricing → NRP</p><div className="grid grid-cols-[1fr_7.5rem] gap-1"><input data-pricing-error={Number(commercial.nrpInclusive || 0) <= 0 ? 'true' : undefined} aria-label={`NRP input for ${line.name}`} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing} value={line.nrpInput ?? 0} onChange={(event)=>updateLine(line.id,{nrpInput:event.target.value})} className="h-10 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-black disabled:bg-[#f4f4f5]"/><select aria-label={`NRP mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(line.id,{nrpMode:event.target.value,nrpInput:0})} className="h-10 rounded-md border border-[#e4e4e7] bg-white px-1 text-[10px] font-black disabled:bg-[#f4f4f5]"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#8f2f28]">{commercial.mrpMissing ? 'Waiting for MRP' : `NRP ${money(commercial.nrpInclusive)}`}</p></div>
-                  <div className="rounded-md border border-[#d9e6fb] bg-[#f5f8ff] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#1d4ed8]">Optional special pricing</p><div className="grid grid-cols-[1fr_7.8rem] gap-1"><input aria-label={`Special pricing input for ${line.name}`} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} value={line.specialInput ?? 0} onChange={(event)=>updateLine(line.id,{specialInput:event.target.value})} className="h-10 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-black disabled:bg-[#f4f4f5]"/><select aria-label={`Special pricing mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(line.id,{specialMode:event.target.value,specialInput:0})} className="h-10 rounded-md border border-[#e4e4e7] bg-white px-1 text-[10px] font-black disabled:bg-[#f4f4f5]"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#1d4ed8]">{commercial.mrpMissing ? 'Waiting for MRP' : `Special rate ${money(commercial.specialRateInclusive)}`}</p></div>
+                  <div className="rounded-md border border-[#f1d5d1] bg-[#fff8f7] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8f2f28]">Base pricing → NRP</p><div className="grid grid-cols-[minmax(5.5rem,1fr)_minmax(9.5rem,1.35fr)] gap-2"><input data-pricing-error={Number(commercial.nrpInclusive || 0) <= 0 ? 'true' : undefined} aria-label={`NRP input for ${line.name}`} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing} value={line.nrpInput ?? 0} onChange={(event)=>updateLine(line.id,{nrpInput:event.target.value})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-base font-black disabled:bg-[#f4f4f5]"/><select aria-label={`NRP mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(line.id,{nrpMode:event.target.value,nrpInput:0})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-xs font-black disabled:bg-[#f4f4f5]"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#8f2f28]">{commercial.mrpMissing ? 'Waiting for MRP' : `NRP ${money(commercial.nrpInclusive)}`}</p></div>
+                  <div className="rounded-md border border-[#d9e6fb] bg-[#f5f8ff] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#1d4ed8]">Optional special pricing</p><div className="grid grid-cols-[minmax(5.5rem,1fr)_minmax(9.5rem,1.35fr)] gap-2"><input aria-label={`Special pricing input for ${line.name}`} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} value={line.specialInput ?? 0} onChange={(event)=>updateLine(line.id,{specialInput:event.target.value})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-base font-black disabled:bg-[#f4f4f5]"/><select aria-label={`Special pricing mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(line.id,{specialMode:event.target.value,specialInput:0})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-xs font-black disabled:bg-[#f4f4f5]"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#1d4ed8]">{commercial.mrpMissing ? 'Waiting for MRP' : `Special rate ${money(commercial.specialRateInclusive)}`}</p></div>
                   <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">GST</p>{taxMode==='gst'?<><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate??18} onChange={(event)=>updateLine(line.id,{taxRate:event.target.value})} className="h-10 w-full rounded-md border border-[#e4e4e7] px-3 text-right text-sm font-black"/><p className="mt-1 text-right text-[10px] font-semibold text-[#71717a]">{money(commercial.taxAmount)}</p></>:<span className="inline-flex rounded bg-[#f4f4f5] px-2 py-2 text-xs font-semibold text-[#52525b]">Without GST</span>}</div>
                   <div className={`rounded-md p-3 text-right ${commercial.mrpMissing ? 'border border-amber-200 bg-amber-50' : 'bg-[#f8fafc]'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Final payable</p><p className={`mt-2 font-black ${commercial.mrpMissing ? 'text-sm text-amber-900' : 'text-xl text-[#059669]'}`}>{commercial.mrpMissing ? 'MRP setup needed' : money(commercial.total)}</p><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'No false ₹0 total shown' : `${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}`}</p></div>
                 </div>
@@ -550,7 +590,7 @@ export default function QuoteBuilderPage() {
               </article>;})}
             </div>
             {lines.length === 0 && <div className="grid h-56 place-items-center text-center"><div><Plus className="mx-auto mb-3 h-8 w-8 text-[#2563eb]" /><p className="font-semibold text-[#18181b]">Search products to start a quote.</p><p className="mt-1 text-sm font-semibold text-[#52525b]">Catalogue images and price details will appear here.</p></div></div>}
-            {lines.length > 0 && <p className="border-t border-[#e4e4e7] px-4 py-3 text-xs font-semibold text-[#52525b]">MRP is read-only from Product Master. Tiles are always quoted per SQFT; boxes remain the fulfilment quantity. Below-floor pricing is preserved but requires owner approval.</p>}
+            {lines.length > 0 && <p className="border-t border-[#e4e4e7] px-4 py-3 text-xs font-semibold text-[#52525b]">MRP is read-only from Product Master. {quoteType === 'tile' ? 'Tiles price per SQFT while boxes/pieces remain fulfilment; Chemicals price and fulfil in KG.' : 'CP & Sanitary lines use their governed Product Master price and fulfilment UOM.'} Below-floor pricing is preserved but requires owner approval.</p>}
           </div>
         </div>
       </section>

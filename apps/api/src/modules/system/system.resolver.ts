@@ -28,6 +28,10 @@ class UpdateSettingsInput {
   @Field({ nullable: true }) documentFooter?: string;
   @Field({ nullable: true }) quoteBrandSelectionMode?: string;
   @Field(() => GraphQLJSON, { nullable: true }) quoteBrandIds?: string[];
+  @Field({ nullable: true }) tileQuoteBrandSelectionMode?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) tileQuoteBrandIds?: string[];
+  @Field({ nullable: true }) cpSanitaryQuoteBrandSelectionMode?: string;
+  @Field(() => GraphQLJSON, { nullable: true }) cpSanitaryQuoteBrandIds?: string[];
   @Field({ nullable: true }) supportPhone?: string;
   @Field({ nullable: true }) supportEmail?: string;
 }

@@ -118,8 +118,8 @@ function build({ order, settings }, requestUrl) {
           e(Text, { style: s.c2 }, line.metadata?.internalCode || line.sku || ''),
           e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')),
           e(Text, { style: s.c4 }, `${displayQuantity} ${displayUom}`),
-          e(Text, { style: s.c5 }, known ? `${money(displayRate)} / ${displayUom}` : 'Setup required'),
-          e(Text, { style: s.c6 }, known ? money(lineValue) : 'Blocked'),
+          e(Text, { style: s.c5 }, known ? `${money(displayRate)} / ${displayUom}` : 'Pending supplier rate'),
+          e(Text, { style: s.c6 }, known ? money(lineValue) : 'Pending'),
         );
       }),
     ),
@@ -129,7 +129,7 @@ function build({ order, settings }, requestUrl) {
       totals.taxAmount > 0 ? e(View, { style: s.totalRow }, e(Text, null, `GST ${totals.taxRate}%`), e(Text, null, money(totals.taxAmount))) : null,
       e(View, { style: s.totalStrong }, e(Text, null, hasPendingCost ? 'Known order value' : 'Order value'), e(Text, null, money(totals.grandTotal))),
     ),
-    e(View, { style: [s.notes, compact ? s.notesCompact : null], wrap: false }, e(Text, { style: s.label }, 'Instructions / terms'), e(Text, { style: s.small }, [order.notes || 'Supply against this purchase order only. Quantity and condition are subject to GRN verification.', hasPendingCost ? 'Rate setup is incomplete. Complete the legacy PO rate queue before receiving; PO-linked GRN never accepts a receipt-level cost override.' : '', 'Stock cost is the PO net pre-tax base-unit snapshot after header discount. GST is recorded on the commercial document and never capitalized into inventory cost.'].filter(Boolean).join('\n'))),
+    e(View, { style: [s.notes, compact ? s.notesCompact : null], wrap: false }, e(Text, { style: s.label }, 'Instructions / terms'), e(Text, { style: s.small }, [order.notes || 'Supply against this purchase order only. Quantity and condition are subject to GRN verification.', hasPendingCost ? 'A pending supplier rate may be recorded during inward or later in the permanent delayed-cost queue. Stock may be received while cost remains pending; every later cost completion is audited.' : '', 'Stock cost is the PO net pre-tax base-unit snapshot after header discount. GST is recorded on the commercial document and never capitalized into inventory cost.'].filter(Boolean).join('\n'))),
     e(View, { style: [s.signatures, compact ? s.signaturesCompact : null], wrap: false }, e(Text, { style: s.sign }, 'Supplier acceptance'), e(Text, { style: s.sign }, `For ${settings.companyName || 'Marble Park'}`)),
     e(View, { style: s.footer }, e(Text, null, settings.supportPhone || settings.supportEmail || ''), e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}` })),
   ));

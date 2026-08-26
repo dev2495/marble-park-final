@@ -12,6 +12,7 @@ import { StoredImageService } from '../assets/stored-image.service';
 import { ReceivablesService } from '../receivables/receivables.service';
 
 export interface CreateQuoteInput {
+  quoteType?: string;
   leadId: string;
   customerId: string;
   ownerId: string;
@@ -30,6 +31,7 @@ export interface CreateQuoteInput {
 }
 
 export interface UpdateQuoteInput {
+  quoteType?: string;
   title?: string;
   projectName?: string;
   validUntil?: Date;
@@ -101,12 +103,13 @@ export class QuotesService {
    * the resolver can fan relations through DataLoader and avoid the classic
    * 1 + 2N (`customer`, `owner` per row) hit pattern when listing 100s of quotes.
    */
-  async findAll(args?: { leadId?: string; customerId?: string; ownerId?: string; status?: string; architectId?: string; take?: number; skip?: number }): Promise<any[]> {
+  async findAll(args?: { leadId?: string; customerId?: string; ownerId?: string; status?: string; quoteType?: string; architectId?: string; take?: number; skip?: number }): Promise<any[]> {
     const where: any = {};
     if (args?.leadId) where.leadId = args.leadId;
     if (args?.customerId) where.customerId = args.customerId;
     if (args?.ownerId) where.ownerId = args.ownerId;
     if (args?.status) where.status = args.status;
+    if (args?.quoteType) where.quoteType = this.normalizeQuoteType(args.quoteType);
     if (args?.architectId) where.architectId = args.architectId;
 
     return this.prisma.quote.findMany({
@@ -118,12 +121,13 @@ export class QuotesService {
   }
 
   async quotePage(args?: {
-    ownerId?: string; status?: string; architectId?: string; search?: string; customerSearch?: string;
+    ownerId?: string; status?: string; quoteType?: string; architectId?: string; search?: string; customerSearch?: string;
     ownerSearch?: string; dateFrom?: Date; dateTo?: Date; sort?: string; take?: number; skip?: number;
   }) {
     const where: any = {};
     if (args?.ownerId) where.ownerId = args.ownerId;
     if (args?.status) where.status = args.status;
+    if (args?.quoteType) where.quoteType = this.normalizeQuoteType(args.quoteType);
     if (args?.architectId) where.architectId = args.architectId;
     if (args?.dateFrom || args?.dateTo) where.createdAt = {
       ...(args.dateFrom ? { gte: args.dateFrom } : {}),
@@ -202,6 +206,7 @@ export class QuotesService {
       return false;
     }
     try {
+      this.assertQuoteTypeEligibility(this.normalizeQuoteType(quote?.quoteType || this.parseQuoteMeta(quote?.quoteMeta)?.quoteType, lines), lines, 'using this quote');
       return priceQuoteLines(lines, this.quoteDiscountForQuote(quote), { requireMrp: true }).pricingErrors.length === 0;
     } catch {
       return false;
@@ -244,6 +249,9 @@ export class QuotesService {
     const saveAsDraft = Boolean((data as any).saveAsDraft);
     const rawQuoteMeta = this.parseQuoteMeta(data.quoteMeta);
     const assertedLines = await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote', true));
+    const quoteType = this.normalizeQuoteType(data.quoteType || rawQuoteMeta.quoteType, assertedLines);
+    this.assertQuoteTypeEligibility(quoteType, assertedLines, 'creating a quote');
+    const brandSnapshot = await this.governedQuoteBrandMetadata(quoteType);
     const pricing = priceQuoteLines(assertedLines, this.quoteDiscountInput(rawQuoteMeta, data.discountPercent || 0), { requireMrp: !saveAsDraft });
     const normalizedLines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || ownerId));
     const incompletePricing = pricing.pricingErrors.length > 0;
@@ -255,6 +263,8 @@ export class QuotesService {
         pricingVersion: rawQuoteMeta.pricingVersion || RETAIL_LADDER_VERSION,
         quoteDiscount: { mode: pricing.quoteDiscountMode, value: pricing.quoteDiscountValue, allocatedInclusive: pricing.totals.quoteDiscountInclusive },
         architectName: consultingArchitect?.name || undefined,
+        quoteType,
+        ...brandSnapshot,
       },
       normalizedLines,
     );
@@ -303,7 +313,7 @@ export class QuotesService {
             await this.releaseReservationsTx(tx, supersedesId, 'Quote superseded by revision');
           }
 
-          const { intentId, supersedesQuoteId: _supersedesQuoteId, saveAsDraft: _saveAsDraft, architectId: _architectId, ...quoteData } = data as any;
+          const { intentId, supersedesQuoteId: _supersedesQuoteId, saveAsDraft: _saveAsDraft, architectId: _architectId, quoteType: _quoteType, ...quoteData } = data as any;
           const quote = await tx.quote.create({
             data: {
               id: ulid(),
@@ -324,6 +334,7 @@ export class QuotesService {
               pricingVersion: RETAIL_LADDER_VERSION,
               pricingStatus: incompletePricing ? 'incomplete' : 'complete',
               displayMode,
+              quoteType,
               projectName: data.projectName || '',
               title: data.title || 'Retail quotation',
               validUntil: data.validUntil || this.defaultValidUntil(),
@@ -375,7 +386,7 @@ export class QuotesService {
       }
     }
     if (!created) throw new BadRequestException(lastError?.message || 'Could not allocate quote number');
-    await this.audit(actorUserId || created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId, incompletePricing });
+    await this.audit(actorUserId || created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId, incompletePricing, quoteType });
     await this.notifications.createMany([
       {
         title: 'Quote ready',
@@ -403,7 +414,7 @@ export class QuotesService {
 
   async update(id: string, data: UpdateQuoteInput, actorUserId?: string): Promise<any> {
     const current = await this.findById(id);
-    if (data.discountPercent !== undefined || data.lines !== undefined) {
+    if (data.discountPercent !== undefined || data.lines !== undefined || data.quoteType !== undefined) {
       const existingOrders = await this.prisma.salesOrder.count({ where: { quoteId: id } });
       if (existingOrders > 0) {
         throw new BadRequestException('Commercial lines are frozen once an order exists. Create a quote revision for a new commercial agreement.');
@@ -412,11 +423,18 @@ export class QuotesService {
     const saveAsDraft = Boolean((data as any).saveAsDraft);
     const updateData: any = { ...data };
     delete updateData.saveAsDraft;
-    if (data.discountPercent !== undefined || data.lines !== undefined) {
+    if (data.discountPercent !== undefined || data.lines !== undefined || data.quoteType !== undefined) {
       const assertedLines = await this.persistQuoteLineImages(data.lines !== undefined
         ? await this.assertQuoteLines(data.lines, 'updating a quote', true)
         : await this.assertQuoteLines(current.lines, 'updating a quote'));
       const nextMeta = this.parseQuoteMeta(data.quoteMeta ?? current.quoteMeta);
+      const quoteType = this.normalizeQuoteType(data.quoteType || current.quoteType || nextMeta.quoteType, assertedLines);
+      this.assertQuoteTypeEligibility(quoteType, assertedLines, 'updating a quote');
+      const currentType = this.normalizeQuoteType(current.quoteType || this.parseQuoteMeta(current.quoteMeta).quoteType, assertedLines);
+      const brandSnapshot = await this.governedQuoteBrandMetadata(
+        quoteType,
+        quoteType === currentType ? this.parseQuoteMeta(current.quoteMeta) : undefined,
+      );
       const pricing = priceQuoteLines(assertedLines, this.quoteDiscountInput(nextMeta, data.discountPercent ?? current.discountPercent ?? 0), { requireMrp: !saveAsDraft });
       const incompletePricing = pricing.pricingErrors.length > 0;
       updateData.lines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || current.ownerId));
@@ -430,7 +448,10 @@ export class QuotesService {
         ...nextMeta,
         pricingVersion: nextMeta.pricingVersion || RETAIL_LADDER_VERSION,
         quoteDiscount: { mode: pricing.quoteDiscountMode, value: pricing.quoteDiscountValue, allocatedInclusive: pricing.totals.quoteDiscountInclusive },
+        quoteType,
+        ...brandSnapshot,
       }, pricing.lines);
+      updateData.quoteType = quoteType;
       updateData.approvalStatus = incompletePricing ? 'incomplete' : pricing.requiresApproval ? 'pending' : 'approved';
       updateData.status = incompletePricing ? 'incomplete_pricing' : pricing.requiresApproval ? 'pending_approval' : 'draft';
       updateData.approval = {
@@ -446,7 +467,13 @@ export class QuotesService {
       };
     }
     if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
-    if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, await this.assertQuoteLines((await this.findById(id)).lines, 'updating quote metadata'));
+    if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) {
+      const metadataLines = await this.assertQuoteLines((await this.findById(id)).lines, 'updating quote metadata');
+      const metadataType = this.normalizeQuoteType(current.quoteType || this.parseQuoteMeta(data.quoteMeta).quoteType, metadataLines);
+      this.assertQuoteTypeEligibility(metadataType, metadataLines, 'updating quote metadata');
+      const brandSnapshot = await this.governedQuoteBrandMetadata(metadataType, this.parseQuoteMeta(current.quoteMeta));
+      updateData.quoteMeta = this.normalizeQuoteMeta({ ...this.parseQuoteMeta(data.quoteMeta), quoteType: metadataType, ...brandSnapshot }, metadataLines);
+    }
     if (data.architectId !== undefined) {
       const consultingArchitect = await this.resolveConsultingArchitect(data.architectId);
       updateData.architectId = consultingArchitect?.id || null;
@@ -503,7 +530,10 @@ export class QuotesService {
     if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
     if (data.coverImage !== undefined) updateData.coverImage = String(data.coverImage || '');
     if (data.quoteMeta !== undefined) {
-      updateData.quoteMeta = this.normalizeQuoteMeta(data.quoteMeta, await this.assertQuoteLines(current.lines, 'updating quote presentation'));
+      const presentationLines = await this.assertQuoteLines(current.lines, 'updating quote presentation');
+      const quoteType = this.normalizeQuoteType(current.quoteType || this.parseQuoteMeta(current.quoteMeta).quoteType, presentationLines);
+      const brandSnapshot = await this.governedQuoteBrandMetadata(quoteType, this.parseQuoteMeta(current.quoteMeta));
+      updateData.quoteMeta = this.normalizeQuoteMeta({ ...this.parseQuoteMeta(data.quoteMeta), quoteType, ...brandSnapshot }, presentationLines);
     }
 
     if (data.linePresentation !== undefined) {
@@ -612,6 +642,10 @@ export class QuotesService {
         supportEmail: settings.supportEmail,
         quoteBrandSelectionMode: (settings as any).quoteBrandSelectionMode || 'all',
         quoteBrandIds: Array.isArray((settings as any).quoteBrandIds) ? (settings as any).quoteBrandIds : [],
+        tileQuoteBrandSelectionMode: (settings as any).tileQuoteBrandSelectionMode || (settings as any).quoteBrandSelectionMode || 'all',
+        tileQuoteBrandIds: Array.isArray((settings as any).tileQuoteBrandIds) ? (settings as any).tileQuoteBrandIds : (Array.isArray((settings as any).quoteBrandIds) ? (settings as any).quoteBrandIds : []),
+        cpSanitaryQuoteBrandSelectionMode: (settings as any).cpSanitaryQuoteBrandSelectionMode || (settings as any).quoteBrandSelectionMode || 'all',
+        cpSanitaryQuoteBrandIds: Array.isArray((settings as any).cpSanitaryQuoteBrandIds) ? (settings as any).cpSanitaryQuoteBrandIds : (Array.isArray((settings as any).quoteBrandIds) ? (settings as any).quoteBrandIds : []),
       } : {},
       brands,
       share: { id: share.id, expiresAt: share.expiresAt, allowDownload: share.allowDownload },
@@ -2075,7 +2109,8 @@ export class QuotesService {
         throw new BadRequestException(`${product.sku} needs a positive whole-number quantity`);
       }
       const productBasis = String(product.priceRateBasis || '').toUpperCase() === 'PACK' ? 'BOX' : String(product.priceRateBasis || '').toUpperCase();
-      const requestedBasis = String(line.priceRateBasis || line.mrpRateBasis || line.rateBasis || productBasis || this.basisForQuoteUom(product.salesUom || product.unit)).toUpperCase();
+      const isChemical = String(product.category || '').trim().toLowerCase() === 'chemicals';
+      const requestedBasis = String(isChemical ? 'BOX' : line.priceRateBasis || line.mrpRateBasis || line.rateBasis || productBasis || this.basisForQuoteUom(product.salesUom || product.unit)).toUpperCase();
       const rateBasis = requestedBasis === 'PACK' ? 'BOX' : requestedBasis;
       const basisMatches = productBasis === rateBasis;
       const defaultMrp = basisMatches && product.defaultMrpInclusive != null ? Number(product.defaultMrpInclusive) : null;
@@ -2093,7 +2128,9 @@ export class QuotesService {
         brand: product.brand,
         finish: product.finish,
         dimensions: product.dimensions,
-        unit: product.unit,
+        unit: isChemical ? 'KG' : product.unit,
+        inventoryUom: isChemical ? 'KG' : String(line.inventoryUom || product.purchaseUom || product.unit || 'PC').trim().toUpperCase(),
+        pricingUom: isChemical ? 'KG' : String(line.pricingUom || product.priceUom || product.salesUom || product.unit || 'PC').trim().toUpperCase(),
         qty,
         quantity: qty,
         pricingVersion: RETAIL_LADDER_VERSION,
@@ -2149,6 +2186,99 @@ export class QuotesService {
     return String(value || '').toLowerCase() === 'selection' ? 'selection' : 'priced';
   }
 
+  private normalizeQuoteType(value?: string | null, linesInput?: any[]) {
+    const raw = String(value || '').trim().toLowerCase().replace(/[\s/&-]+/g, '_');
+    if (['tile', 'tiles', 'tile_quote', 'tile_quotation'].includes(raw)) return 'tile';
+    if (['cp', 'cp_sanitary', 'cp_sanitaryware', 'cp___sanitary', 'cp_quote', 'sanitary'].includes(raw)) return 'cp_sanitary';
+    const lines = this.normalizeLines(linesInput);
+    return lines.some((line: any) => ['tiles', 'chemicals'].includes(String(line?.category || '').trim().toLowerCase()))
+      ? 'tile'
+      : 'cp_sanitary';
+  }
+
+  private async governedQuoteBrandMetadata(quoteTypeInput: string, existingMeta?: any) {
+    const quoteType = this.normalizeQuoteType(quoteTypeInput);
+    const existing = this.parseQuoteMeta(existingMeta);
+    if (Array.isArray(existing.selectedBrandIds)) {
+      const ids = Array.from(new Set<string>(existing.selectedBrandIds.map((brandId: unknown) => String(brandId)).filter(Boolean))).slice(0, 100);
+      const snapshot = Array.isArray(existing.brandSelectionSnapshot)
+        ? existing.brandSelectionSnapshot
+          .map((brand: any) => ({
+            id: String(brand?.id || '').trim(),
+            name: String(brand?.name || '').trim(),
+            code: String(brand?.code || '').trim(),
+            logoUrl: String(brand?.logoUrl || this.parseQuoteMeta(brand?.metadata).logoUrl || '').trim(),
+          }))
+          .filter((brand: any) => brand.id && brand.logoUrl)
+          .slice(0, 100)
+        : undefined;
+      return {
+        showBrandLogos: ids.length > 0,
+        selectedBrandIds: ids,
+        ...(snapshot ? { brandSelectionSnapshot: snapshot } : {}),
+        brandSelectionSource: existing.brandSelectionSource || 'locked_quote_snapshot',
+        brandSelectionMode: existing.brandSelectionMode || 'snapshot',
+        brandSelectionFamily: existing.brandSelectionFamily || quoteType,
+        brandSelectionSnapshotAt: existing.brandSelectionSnapshotAt || existing.createdAt || new Date().toISOString(),
+      };
+    }
+
+    const [settings, brands] = await Promise.all([
+      this.prisma.appSetting.findFirst({ orderBy: { updatedAt: 'desc' } }),
+      this.prisma.productBrand.findMany({ where: { status: 'active' }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+    ]);
+    const familyMode = quoteType === 'tile'
+      ? (settings as any)?.tileQuoteBrandSelectionMode
+      : (settings as any)?.cpSanitaryQuoteBrandSelectionMode;
+    const familyIds = quoteType === 'tile'
+      ? (settings as any)?.tileQuoteBrandIds
+      : (settings as any)?.cpSanitaryQuoteBrandIds;
+    const mode = String(familyMode || (settings as any)?.quoteBrandSelectionMode || 'all').trim().toLowerCase();
+    const configuredIds = Array.isArray(familyIds)
+      ? familyIds
+      : (Array.isArray((settings as any)?.quoteBrandIds) ? (settings as any).quoteBrandIds : []);
+    const configured = new Set(configuredIds.map((brandId: unknown) => String(brandId)));
+    const eligible = brands.filter((brand: any) => {
+      const metadata = this.parseQuoteMeta(brand.metadata);
+      return metadata.quoteEnabled !== false && Boolean(String(metadata.logoUrl || '').trim());
+    });
+    const selectedBrands = mode === 'none'
+      ? []
+      : eligible.filter((brand: any) => mode === 'all' || configured.has(String(brand.id)));
+    const selectedBrandIds = selectedBrands.map((brand: any) => String(brand.id));
+    return {
+      showBrandLogos: selectedBrandIds.length > 0,
+      selectedBrandIds,
+      brandSelectionSnapshot: selectedBrands.map((brand: any) => ({
+        id: String(brand.id),
+        name: String(brand.name || ''),
+        code: String(brand.code || ''),
+        logoUrl: String(this.parseQuoteMeta(brand.metadata).logoUrl || ''),
+      })),
+      brandSelectionSource: 'global_quote_family_settings',
+      brandSelectionMode: ['all', 'selected', 'none'].includes(mode) ? mode : 'all',
+      brandSelectionFamily: quoteType,
+      brandSelectionSnapshotAt: new Date().toISOString(),
+    };
+  }
+
+  private assertQuoteTypeEligibility(quoteTypeInput: string, linesInput: any[], action: string) {
+    const quoteType = this.normalizeQuoteType(quoteTypeInput, linesInput);
+    const lines = this.normalizeLines(linesInput);
+    const invalid = lines.find((line: any) => {
+      const category = String(line?.category || '').trim().toLowerCase();
+      return quoteType === 'tile'
+        ? !['tiles', 'chemicals'].includes(category)
+        : ['tiles', 'chemicals'].includes(category);
+    });
+    if (!invalid) return quoteType;
+    const label = invalid.sku || invalid.name || 'One selected item';
+    if (quoteType === 'tile') {
+      throw new BadRequestException(`${label} cannot be added while ${action}. Tile quotations accept only Tiles and Chemicals.`);
+    }
+    throw new BadRequestException(`${label} cannot be added while ${action}. CP & Sanitary quotations exclude Tiles and Chemicals.`);
+  }
+
   private async resolveConsultingArchitect(architectId?: string | null) {
     const id = String(architectId || '').trim();
     if (!id) return null;
@@ -2200,6 +2330,11 @@ export class QuotesService {
 
   private ensureCommercialReady(quote: any, action: string) {
     const lines = this.normalizeLines(quote?.lines);
+    this.assertQuoteTypeEligibility(
+      this.normalizeQuoteType(quote?.quoteType || this.parseQuoteMeta(quote?.quoteMeta)?.quoteType, lines),
+      lines,
+      action,
+    );
     const quoteVersion = String(quote?.pricingVersion || this.parseQuoteMeta(quote?.quoteMeta)?.pricingVersion || '');
     const legacyOrIncomplete = quote?.status === 'incomplete_pricing'
       || quote?.pricingStatus === 'incomplete'

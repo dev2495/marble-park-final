@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { ArrowDownAZ, CalendarClock, Download, Eye, FileSpreadsheet, Plus, Search, Send, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowDownAZ, Bath, CalendarClock, Download, Eye, FileSpreadsheet, Layers3, Search, Send, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
@@ -11,10 +11,10 @@ import { QueryErrorBanner } from '@/components/query-state';
 const QUOTE_REGISTER = gql`
   query QuoteRegister(
     $search: String, $customerSearch: String, $ownerSearch: String, $ownerId: String,
-    $architectId: String, $status: String, $dateFrom: DateTime, $dateTo: DateTime,
+    $architectId: String, $status: String, $quoteType: String, $dateFrom: DateTime, $dateTo: DateTime,
     $sort: String, $skip: Float, $take: Float
   ) {
-    quotePage(search: $search, customerSearch: $customerSearch, ownerSearch: $ownerSearch, ownerId: $ownerId, architectId: $architectId, status: $status, dateFrom: $dateFrom, dateTo: $dateTo, sort: $sort, skip: $skip, take: $take)
+    quotePage(search: $search, customerSearch: $customerSearch, ownerSearch: $ownerSearch, ownerId: $ownerId, architectId: $architectId, status: $status, quoteType: $quoteType, dateFrom: $dateFrom, dateTo: $dateTo, sort: $sort, skip: $skip, take: $take)
     architects(status: "active", take: 200)
   }
 `;
@@ -41,6 +41,7 @@ export default function QuotesRegisterPage() {
   const [user, setUser] = useState<any>(null);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState('all');
+  const [quoteType, setQuoteType] = useState('all');
   const [architectId, setArchitectId] = useState('all');
   const [search, setSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -64,6 +65,7 @@ export default function QuotesRegisterPage() {
     ownerId,
     architectId: architectId === 'all' ? undefined : architectId,
     status: status === 'all' ? undefined : status,
+    quoteType: quoteType === 'all' ? undefined : quoteType,
     dateFrom: dateFrom ? new Date(`${dateFrom}T00:00:00`).toISOString() : undefined,
     dateTo: dateTo ? new Date(`${dateTo}T23:59:59`).toISOString() : undefined,
     sort,
@@ -76,8 +78,8 @@ export default function QuotesRegisterPage() {
   const quotes = useMemo<any[]>(() => result.rows || [], [result.rows]);
   const architects = useMemo<any[]>(() => data?.architects || [], [data?.architects]);
   const summary = result.statusSummary || {};
-  const activeFilters = [search, customerSearch, ownerSearch, architectId !== 'all' ? architectId : '', dateFrom, dateTo].filter(Boolean).length;
-  const resetFilters = () => { setSearch(''); setCustomerSearch(''); setOwnerSearch(''); setArchitectId('all'); setDateFrom(''); setDateTo(''); setStatus('all'); setSort('newest'); setPage(0); };
+  const activeFilters = [search, customerSearch, ownerSearch, architectId !== 'all' ? architectId : '', quoteType !== 'all' ? quoteType : '', dateFrom, dateTo].filter(Boolean).length;
+  const resetFilters = () => { setSearch(''); setCustomerSearch(''); setOwnerSearch(''); setArchitectId('all'); setQuoteType('all'); setDateFrom(''); setDateTo(''); setStatus('all'); setSort('newest'); setPage(0); };
   const chooseSort = (next: string) => { setSort(next); setPage(0); };
 
   return (
@@ -90,7 +92,7 @@ export default function QuotesRegisterPage() {
             <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.04em] lg:text-4xl">Quote pipeline, pricing readiness and next action—at a glance.</h1>
             <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-white/70">Every value is read from the governed commercial snapshot used by the PDF and Sales Order conversion.</p>
           </div>
-          <div className="flex flex-wrap gap-2"><Button asChild size="lg" className="bg-white text-[#7f2923] hover:bg-[#fff4f2]"><Link href="/dashboard/quotes/new"><Plus className="mr-2 h-5 w-5" /> Build quote</Link></Button><Button asChild variant="outline" size="lg" className="border-white/25 bg-white/10 text-white hover:bg-white/20"><Link href="/dashboard/approvals"><ShieldCheck className="mr-2 h-5 w-5" /> Approvals</Link></Button></div>
+          <div className="flex flex-wrap gap-2"><Button asChild size="lg" className="bg-white text-[#7f2923] hover:bg-[#fff4f2]"><Link href="/dashboard/quotes/new?type=tile"><Layers3 className="mr-2 h-5 w-5" /> Tile quote</Link></Button><Button asChild size="lg" className="bg-[#ecb7aa] text-[#4b1915] hover:bg-[#f4c8be]"><Link href="/dashboard/quotes/new?type=cp_sanitary"><Bath className="mr-2 h-5 w-5" /> CP & Sanitary</Link></Button><Button asChild variant="outline" size="lg" className="border-white/25 bg-white/10 text-white hover:bg-white/20"><Link href="/dashboard/approvals"><ShieldCheck className="mr-2 h-5 w-5" /> Approvals</Link></Button></div>
         </div>
         <div className="relative mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
@@ -114,10 +116,11 @@ export default function QuotesRegisterPage() {
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
           {['all', 'incomplete_pricing', 'draft', 'pending_approval', 'sent', 'confirmed', 'lost'].map((item) => <button key={item} onClick={() => { setStatus(item); setPage(0); }} className={`whitespace-nowrap rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-wider transition ${status === item ? 'bg-[#18181b] text-white' : 'bg-[#f4f4f5] text-[#52525b] hover:bg-[#e4e4e7]'}`}>{item.replaceAll('_', ' ')}</button>)}
         </div>
-        {filtersOpen ? <div className="mt-4 grid gap-3 rounded-xl border border-[#e4e4e7] bg-[#fafafa] p-4 md:grid-cols-2 xl:grid-cols-5">
+        {filtersOpen ? <div className="mt-4 grid gap-3 rounded-xl border border-[#e4e4e7] bg-[#fafafa] p-4 md:grid-cols-2 xl:grid-cols-6">
           <label className="space-y-1"><span className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Customer contains</span><Input value={customerSearch} onChange={(event) => { setCustomerSearch(event.target.value); setPage(0); }} placeholder="Customer name"/></label>
           <label className="space-y-1"><span className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Owner contains</span><Input value={ownerSearch} onChange={(event) => { setOwnerSearch(event.target.value); setPage(0); }} placeholder="Sales user"/></label>
           <label className="space-y-1"><span className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Architect</span><select value={architectId} onChange={(event) => { setArchitectId(event.target.value); setPage(0); }} className="h-10 w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-sm"><option value="all">All architects</option>{architects.map((architect: any) => <option key={architect.id} value={architect.id}>{architect.name}</option>)}</select></label>
+          <label className="space-y-1"><span className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Quote type</span><select value={quoteType} onChange={(event) => { setQuoteType(event.target.value); setPage(0); }} className="h-10 w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-sm"><option value="all">All quote types</option><option value="tile">Tile & Chemical</option><option value="cp_sanitary">CP & Sanitary</option></select></label>
           <label className="space-y-1"><span className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Created from</span><Input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(0); }}/></label>
           <label className="space-y-1"><span className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Created to</span><Input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(0); }}/></label>
         </div> : null}
@@ -139,7 +142,7 @@ export default function QuotesRegisterPage() {
             const expires = quote.validUntil ? new Date(quote.validUntil) : null;
             const expired = expires ? expires.getTime() < Date.now() && !['confirmed', 'won', 'closed'].includes(quote.status) : false;
             return <article key={quote.id} className="grid gap-4 p-5 transition hover:bg-[#fffaf9] lg:grid-cols-[1.25fr_1fr_0.9fr_0.72fr_0.85fr_0.72fr_1fr] lg:items-center">
-              <div><Link href={`/dashboard/quotes/${quote.id}`} className="text-lg font-black text-[#18181b] hover:text-[#a52b23]">{quote.quoteNumber}</Link><p className="mt-1 line-clamp-1 text-sm font-semibold text-[#52525b]">{quote.title || quote.projectName || 'Retail quotation'}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">{commercial.itemCount || 0} lines · {commercial.quantity || 0} units · {dateValue(quote.createdAt)}</p></div>
+              <div><div className="flex flex-wrap items-center gap-2"><Link href={`/dashboard/quotes/${quote.id}`} className="text-lg font-black text-[#18181b] hover:text-[#a52b23]">{quote.quoteNumber}</Link><span className={`inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${quote.quoteType === 'tile' ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>{quote.quoteType === 'tile' ? 'Tile + Chemical' : 'CP + Sanitary'}</span></div><p className="mt-1 line-clamp-1 text-sm font-semibold text-[#52525b]">{quote.title || quote.projectName || 'Retail quotation'}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">{commercial.itemCount || 0} lines · {commercial.quantity || 0} units · {dateValue(quote.createdAt)}</p></div>
               <div><p className="font-bold text-[#18181b]">{quote.customer?.name || 'Customer'}</p><p className="mt-1 line-clamp-1 text-xs font-semibold text-[#71717a]">{quote.customer?.siteAddress || quote.customer?.city || 'Site pending'}</p></div>
               <div><p className="font-semibold text-[#18181b]">{quote.architectName || quote.architect?.name || '—'}</p><p className="mt-1 text-xs text-[#71717a]">{quote.owner?.name || 'Unassigned owner'}</p></div>
               <div><span className={`inline-flex rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ring-1 ${statusClass(quote.status)}`}>{String(quote.status || '').replaceAll('_', ' ')}</span></div>

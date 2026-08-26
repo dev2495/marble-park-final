@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowLeft, BadgeCheck, BadgeIndianRupee, Building2, Check, Download, Image as ImageIcon, ImagePlus, PenLine, Printer, Save, Send, Share2, ShieldCheck, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, BadgeIndianRupee, Building2, Download, ImagePlus, LockKeyhole, PenLine, Printer, Save, Send, Share2, ShieldCheck, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { allocateQuoteDiscount, retailLadder, type DiscountMode } from '@/lib/quote-pricing';
@@ -12,7 +12,7 @@ import { allocateQuoteDiscount, retailLadder, type DiscountMode } from '@/lib/qu
 const QUOTE_DETAIL = gql`
   query QuoteDetail($id: ID!) {
     quote(id: $id) {
-      id quoteNumber title projectName status approvalStatus discountPercent displayMode createdAt validUntil sentAt confirmedAt notes lines quoteMeta customer owner lead approval coverImage
+      id quoteNumber title projectName status approvalStatus discountPercent displayMode quoteType createdAt validUntil sentAt confirmedAt notes lines quoteMeta customer owner lead approval coverImage
       versionNumber supersedesQuoteId supersededByQuoteId intentId architectId architectName architect pricingVersion pricingStatus
     }
     architects(status: "active", take: 200)
@@ -31,7 +31,7 @@ const QUOTE_PRODUCTS = gql`
   }
 `;
 
-const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id displayMode lines quoteMeta approvalStatus status architectId architectName } }`;
+const UPDATE_QUOTE = gql`mutation UpdateQuote($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id displayMode quoteType lines quoteMeta approvalStatus status architectId architectName } }`;
 const UPDATE_QUOTE_PRESENTATION = gql`mutation UpdateQuotePresentation($id: ID!, $input: UpdateQuotePresentationInput!) { updateQuotePresentation(id: $id, input: $input) { id displayMode lines quoteMeta coverImage } }`;
 const SEND_QUOTE = gql`mutation SendQuote($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
 const CREATE_SALES_ORDER = gql`mutation CreateSalesOrderFromQuote($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`;
@@ -86,6 +86,18 @@ function groupLines(lines: any[]) {
     groups.set(area, [...(groups.get(area) || []), line]);
   }
   return Array.from(groups.entries()).map(([area, rows]) => ({ area, rows }));
+}
+
+function quoteFamilyBrandIds(settings: any, brands: any[], quoteType: string) {
+  const tile = quoteType === 'tile';
+  const mode = String(tile
+    ? settings.tileQuoteBrandSelectionMode ?? settings.quoteBrandSelectionMode ?? 'all'
+    : settings.cpSanitaryQuoteBrandSelectionMode ?? settings.quoteBrandSelectionMode ?? 'all');
+  const configuredIds = tile
+    ? settings.tileQuoteBrandIds ?? settings.quoteBrandIds ?? []
+    : settings.cpSanitaryQuoteBrandIds ?? settings.quoteBrandIds ?? [];
+  const configured = new Set((Array.isArray(configuredIds) ? configuredIds : []).map(String));
+  return mode === 'none' ? [] : brands.filter((brand: any) => mode === 'all' || configured.has(String(brand.id))).map((brand: any) => String(brand.id));
 }
 
 function legacyNegotiatedRate(line: any, pricingQuantity: number) {
@@ -211,7 +223,7 @@ export default function QuoteDetailPage() {
     variables: { ids: quoteProductIds },
     skip: quoteProductIds.length === 0,
   });
-  const documentSettings = data?.documentSettings?.data || {};
+  const documentSettings = useMemo(() => data?.documentSettings?.data || {}, [data?.documentSettings?.data]);
   const brands = useMemo<any[]>(() => (data?.masterProductBrands || []).filter((brand: any) => brand.metadata?.quoteEnabled !== false), [data?.masterProductBrands]);
   const fulfillment = fulfillmentData?.quoteFulfillment;
   const commercialLocked = Boolean(fulfillment?.orders?.length);
@@ -247,13 +259,11 @@ export default function QuoteDetailPage() {
     setQuoteDiscountValue(String(meta.quoteDiscount?.value ?? quote.discountPercent ?? 0));
     setCoverImage(quote.coverImage || meta.coverImage || '');
     setTagline(meta.tagline || documentSettings.documentTagline || '');
-    const mode = String(documentSettings.quoteBrandSelectionMode || 'all');
-    const defaults = new Set((Array.isArray(documentSettings.quoteBrandIds) ? documentSettings.quoteBrandIds : []).map(String));
     setSelectedBrandIds(Array.isArray(meta.selectedBrandIds)
       ? meta.selectedBrandIds.map(String)
-      : mode === 'none' ? [] : brands.filter((brand: any) => mode === 'all' || defaults.has(String(brand.id))).map((brand: any) => String(brand.id)));
+      : quoteFamilyBrandIds(documentSettings, brands, quote.quoteType || meta.quoteType || 'cp_sanitary'));
     setSelectedArchitectId(quote.architectId || '');
-  }, [brands, documentSettings.bankDetails, documentSettings.defaultTerms, documentSettings.documentTagline, documentSettings.quoteBrandIds, documentSettings.quoteBrandSelectionMode, pricingProductsData?.productsByIds, pricingProductsLoading, quote, quoteProductIds.length]);
+  }, [brands, documentSettings, pricingProductsData?.productsByIds, pricingProductsLoading, quote, quoteProductIds.length]);
 
   useEffect(() => {
     const lines = fulfillment?.lines;
@@ -324,13 +334,11 @@ export default function QuoteDetailPage() {
     : '';
   const pricingIssueCount = mrpIssues.length + discountIssues.length + (quoteDiscountIssue ? 1 : 0);
   const pricingReady = editLines.length > 0 && pricingIssueCount === 0;
-  const quotedBrandIds = brands.filter((brand: any) => editLines.some((line: any) => String(line.brand || '').trim().toLowerCase() === String(brand.name || '').trim().toLowerCase())).map((brand: any) => String(brand.id));
-
   const updateLine = (index: number, patch: any) => setEditLines((current) => current.map((line, idx) => idx === index ? { ...line, ...patch } : line));
   const presentationInput = () => ({
     displayMode,
     coverImage,
-    quoteMeta: JSON.stringify({ remarks, terms, bankDetails, taxMode, pricingVersion: 'unified_retail_v1', quoteDiscount: { mode: quoteDiscountType, value: Number(quoteDiscountValue || 0) }, showBrandLogos: selectedBrandIds.length > 0, selectedBrandIds, coverImage, tagline }),
+    quoteMeta: JSON.stringify({ remarks, terms, bankDetails, quoteType: quote?.quoteType || 'cp_sanitary', taxMode, pricingVersion: 'unified_retail_v1', quoteDiscount: { mode: quoteDiscountType, value: Number(quoteDiscountValue || 0) }, coverImage, tagline }),
     linePresentation: JSON.stringify(editLines.map((line, index) => ({
       lineKey: line.lineKey || line.id || `index:${index}`,
       area: line.area || '',
@@ -378,6 +386,7 @@ export default function QuoteDetailPage() {
       ...presentationInput(),
       linePresentation: undefined,
       discountPercent: quoteDiscountType === 'PERCENT' ? Number(quoteDiscountValue || 0) : 0,
+      quoteType: quote.quoteType || 'cp_sanitary',
       saveAsDraft,
       architectId: selectedArchitectId || '',
       lines: JSON.stringify(editLines.map((line) => { const rate = rateForLine(line); const isTile = String(line.category || '').toLowerCase() === 'tiles'; return { ...line, pricingVersion: 'unified_retail_v1', taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), priceRateBasis: isTile ? 'AREA' : line.priceRateBasis || line.rateBasis || 'BOX', pricingUom: isTile ? 'SQFT' : line.pricingUom, mrpInclusive: rate.mrpInclusive, mrpSource: 'PRODUCT_MASTER', nrpMode: rate.nrpMode, nrpInput: rate.nrpInput, nrpInclusive: rate.nrpInclusive, nrpExclusive: rate.nrpExclusive, specialMode: rate.specialMode, specialInput: rate.specialInput, specialRateInclusive: rate.specialRateInclusive, specialRateExclusive: rate.specialRateExclusive, pricingQuantity: rate.pricingQuantity, quoteDiscountMode: quoteDiscountType, quoteDiscountValue: Number(quoteDiscountValue || 0), quoteDiscountAllocatedInclusive: rate.quoteDiscountAllocatedInclusive, taxableValue: rate.taxableValue, taxAmount: rate.taxAmount, grossLineTotal: rate.grossAfterQuoteDiscount, total: rate.grossAfterQuoteDiscount }; })),
@@ -421,7 +430,7 @@ export default function QuoteDetailPage() {
     {reviseError ? <QueryErrorBanner error={reviseError} /> : null}
     {!commercialLocked && pricingIssueCount ? <section className="flex flex-col gap-2 rounded-r4 border border-red-200 bg-red-50 p-4 text-sm text-red-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">Commercial pricing needs attention.</p><p className="mt-1 text-xs font-semibold">Resolve MRP and discount validation before PDF, share, send or order conversion.</p></div><span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black uppercase tracking-wider">{pricingIssueCount} issue{pricingIssueCount === 1 ? '' : 's'}</span></section> : null}
     {legacyLineCount ? <section className={`flex flex-col gap-3 rounded-r4 border p-4 text-sm sm:flex-row sm:items-center sm:justify-between ${commercialLocked ? 'border-amber-300 bg-amber-50 text-amber-950' : 'border-blue-200 bg-blue-50 text-blue-950'}`}><div><p className="font-black">{commercialLocked ? 'This order-linked quote keeps its historical legacy pricing.' : 'Legacy quote loaded with current Product Master MRP.'}</p><p className="mt-1 text-xs font-semibold leading-5">{commercialLocked ? 'Commercial rows cannot be rewritten after order conversion. Start an audited revision to confirm current MRP and NRP before producing a new quote PDF.' : 'The customer-negotiated rate is preserved as a fixed NRP for review. Check every line, then Validate changes to create the governed snapshot and unlock PDF, print, share and send.'}</p></div>{commercialLocked ? <Button size="sm" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}><PenLine className="mr-2 h-4 w-4" />Start pricing-safe revision</Button> : <span className="shrink-0 rounded-full bg-blue-100 px-3 py-1 text-xs font-black uppercase tracking-wider">{legacyLineCount} line{legacyLineCount === 1 ? '' : 's'} to validate</span>}</section> : null}
-    {commercialLocked ? <section className="flex flex-col gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">Commercial terms are locked after sales-order conversion.</p><p className="mt-1 text-xs leading-5 text-amber-800">You can still save cover, room labels, product images, terms and brand logos. Revise the quote to change quantity, rates, discount or GST.</p></div><Button size="sm" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}><PenLine className="mr-2 h-4 w-4" />Revise commercial terms</Button></section> : null}
+    {commercialLocked ? <section className="flex flex-col gap-3 rounded-r4 border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">Commercial terms are locked after sales-order conversion.</p><p className="mt-1 text-xs leading-5 text-amber-800">You can still save the cover, room labels, product images and terms. The quote-family brand snapshot remains locked. Revise the quote to change quantity, rates, discount or GST.</p></div><Button size="sm" variant="outline" disabled={revising} onClick={() => startRevision({ variables: { quoteId: quote.id } })}><PenLine className="mr-2 h-4 w-4" />Revise commercial terms</Button></section> : null}
     <section className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-6 shadow-md-soft">
       <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
         <div>
@@ -429,6 +438,7 @@ export default function QuoteDetailPage() {
           <p className="mt-5 text-xs font-medium uppercase tracking-[0.14em] text-[var(--brand-700)]">{quote.status} · {quote.approvalStatus} · {displayMode === 'selection' ? 'selection summary' : 'priced quote'}</p>
           <h1 className="mt-2 flex max-w-4xl flex-wrap items-center gap-2 font-display text-3xl font-bold text-[var(--ink)]">
             {quote.quoteNumber}
+            <span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase tracking-wider ${quote.quoteType === 'tile' ? 'bg-emerald-100 text-emerald-900' : 'bg-rose-100 text-rose-900'}`}>{quote.quoteType === 'tile' ? 'Tile + Chemical' : 'CP + Sanitary'}</span>
             <span className="rounded-full bg-[var(--brand-600)] px-2.5 py-0.5 text-sm font-bold text-white">v{quote.versionNumber || 1}</span>
             {quote.supersededByQuoteId ? <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-bold text-slate-700">Superseded</span> : null}
             {quote.supersedesQuoteId ? <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-800">Replaces prior</span> : null}
@@ -589,20 +599,7 @@ export default function QuoteDetailPage() {
         </div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">Totals</h2>{showPrices ? <div className="mt-5 space-y-3 text-sm font-bold text-[var(--ink-2)]"><div className="flex justify-between"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between"><span>Discount</span><span>{money(quoteDiscount)}</span></div>{taxMode === 'gst' ? <div className="flex justify-between"><span>GST</span><span>{money(tax)}</span></div> : <div className="flex justify-between text-[var(--ink-4)]"><span>Tax treatment</span><span>Without GST</span></div>}<div className="flex justify-between border-t border-[var(--line)] pt-4 text-2xl font-semibold text-[var(--ink)]"><span>Total</span><span>{money(total)}</span></div></div> : <p className="mt-4 rounded-2xl bg-[var(--brand-50)] p-4 text-sm font-black text-[var(--brand-700)]">Selection summary mode hides all prices in the PDF.</p>}</div>
         <div className="mp-panel p-5">
-          <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--brand-700)]">Quotation footer</p><h2 className="mt-1 text-xl font-semibold text-[var(--ink)]">Served brands</h2></div><span className="rounded-full bg-[var(--brand-50)] px-2.5 py-1 text-xs font-semibold text-[var(--brand-700)]">{selectedBrandIds.length} selected</span></div>
-          <p className="mt-2 text-xs leading-5 text-[var(--ink-4)]">Only selected logos are printed in the customer PDF. Brand Master controls the artwork.</p>
-          <div className="mt-4 flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setSelectedBrandIds(brands.map((brand: any) => String(brand.id)))}>All brands</Button><Button type="button" size="sm" variant="outline" disabled={!quotedBrandIds.length} onClick={() => setSelectedBrandIds(quotedBrandIds)}><BadgeCheck className="mr-1.5 h-3.5 w-3.5" />Quoted brands</Button><Button type="button" size="sm" variant="ghost" onClick={() => setSelectedBrandIds([])}>Clear</Button></div>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            {brands.map((brand: any) => {
-              const selected = selectedBrandIds.includes(String(brand.id));
-              return <button key={brand.id} type="button" onClick={() => setSelectedBrandIds((current) => selected ? current.filter((id) => id !== String(brand.id)) : [...current, String(brand.id)])} className={`relative grid min-h-20 place-items-center rounded-md border bg-white p-2 transition ${selected ? 'border-[var(--brand-500)] ring-2 ring-[var(--ring)]' : 'border-[var(--line)] hover:border-[var(--line-strong)]'}`}>
-                {brand.metadata?.logoUrl ? <img src={brand.metadata.logoUrl} alt={brand.name} className="max-h-10 max-w-full object-contain" /> : <span className="line-clamp-2 text-center text-xs font-semibold text-[var(--ink-3)]">{brand.name}</span>}
-                <span className="mt-1 max-w-full truncate text-[10px] font-semibold text-[var(--ink-4)]">{brand.name}</span>
-                {selected ? <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-600)] text-white"><Check className="h-2.5 w-2.5" /></span> : null}
-              </button>;
-            })}
-          </div>
-          {!brands.length ? <Link href="/dashboard/master-data/brands" className="mt-4 flex items-center gap-2 rounded-md border border-dashed border-[var(--line-strong)] p-3 text-xs font-semibold text-[var(--brand-700)]"><ImageIcon className="h-4 w-4" />Upload logos in Brand Master</Link> : null}
+          <div className="flex items-start gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-[var(--brand-50)] text-[var(--brand-700)]"><LockKeyhole className="h-4 w-4" /></div><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--brand-700)]">Governed quotation footer</p><h2 className="mt-1 text-lg font-semibold text-[var(--ink)]">{quote.quoteType === 'tile' ? 'Tile & Chemical' : 'CP & Sanitary'} brand snapshot</h2><p className="mt-2 text-xs leading-5 text-[var(--ink-4)]">{selectedBrandIds.length} served-brand logo{selectedBrandIds.length === 1 ? '' : 's'} {selectedBrandIds.length === 1 ? 'was' : 'were'} locked when this quote was created. Selection is managed only in global Settings and cannot be changed on this quote.</p></div></div>
         </div>
         <div className="mp-panel p-5"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center overflow-hidden rounded-md border border-[var(--line)] bg-white p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-[var(--ink-4)]" />}</div><div><p className="font-semibold text-[var(--ink)]">{documentSettings.companyName || 'Marble Park'}</p><p className="text-xs text-[var(--ink-4)]">{documentSettings.gstNumber ? `GSTIN ${documentSettings.gstNumber}` : 'Company profile managed globally'}</p></div></div><Link href="/dashboard/settings" className="mt-4 inline-flex text-xs font-semibold text-[var(--brand-700)]">Edit global quotation identity</Link></div>
         <div className="mp-card rounded-r5 p-6"><h2 className="text-2xl font-black tracking-tight">PDF terms</h2><label className="mt-4 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Terms</span><textarea value={terms} onChange={(event)=>setTerms(event.target.value)} className="min-h-28 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-xs font-bold" /></label><label className="mt-3 block space-y-2"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Bank details</span><textarea value={bankDetails} onChange={(event)=>setBankDetails(event.target.value)} className="min-h-24 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-xs font-bold" /></label></div>
