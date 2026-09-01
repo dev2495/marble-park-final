@@ -316,7 +316,7 @@
       ],
       "checks": [
         "Creating or printing labels never posts stock; only a GRN, opening session or governed movement changes inventory.",
-        "Every label shows the governed Brand Master code and Product Master MRP; tile labels always show MRP per SQFT.",
+        "Every label separately shows the governed Brand Master code and full brand name, plus Product Master MRP; tile labels always show MRP per SQFT.",
         "Printing is blocked when the selected product has no positive MRP, with a linkable correction path through MRP Readiness.",
         "Every QR encodes MP-LABEL:<unique label code>; the MP centre mark is branding and the human-readable code remains the fallback.",
         "Every new print page is exactly 4 x 2 inches in landscape with one sticker per page; do not use Fit to page or an A4 paper size.",

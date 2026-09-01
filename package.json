@@ -54,6 +54,7 @@
     "smoke:quote-families": "node scripts/e2e-quote-family-smoke.mjs",
     "smoke:branded-label-qr": "tsx scripts/verify-branded-label-qr.ts",
     "smoke:label-brand-code": "node scripts/e2e-label-brand-code-smoke.mjs",
+    "smoke:label-4x2-renderer": "node scripts/verify-4x2-label-renderer.mjs",
     "smoke:quote-product-brand-code": "node scripts/quote-product-brand-code-smoke.cjs",
     "smoke:legacy-quote-pdf": "node scripts/e2e-legacy-quote-pdf-remediation-smoke.mjs",
     "smoke:master-edit-audit": "node scripts/e2e-master-edit-audit-smoke.mjs",

@@ -43,10 +43,12 @@ function StandardFourByTwoLabel({ label }: { label: any }) {
   const payload = label.payload || {};
   const productCode = payload.productCode || payload.internalCode || payload.sku || 'PRODUCT CODE PENDING';
   const showWarehouseSku = payload.sku && String(payload.sku).toUpperCase() !== String(productCode).toUpperCase();
-  const brandCode = payload.brandCode || payload.brand || 'BRAND PENDING';
+  const brandCode = payload.brandCode || 'CODE PENDING';
+  const brandName = payload.brand || 'NAME PENDING';
   const identity = printIdentity(label);
   const locations = Array.isArray(payload.locations) ? payload.locations.filter(Boolean).join(', ') : '';
   const codeSize = String(productCode).length > 28 ? '8.6pt' : String(productCode).length > 20 ? '10pt' : '12.2pt';
+  const brandNameSize = String(brandName).length > 30 ? '4.7pt' : String(brandName).length > 20 ? '5.2pt' : '5.8pt';
 
   return <article className="mp-label-page" aria-label={`Physical label ${label.labelCode}`}>
     <div className="mp-label-safe-frame">
@@ -58,9 +60,12 @@ function StandardFourByTwoLabel({ label }: { label: any }) {
       <section className="mp-label-copy">
         <header className="mp-label-header">
           <div className="mp-label-brand"><span className="mp-label-mark">MP</span><span>MARBLE PARK</span></div>
-          <span className="mp-label-brand-code">BRAND {brandCode}</span>
           <span className="mp-label-kind">{labelKind(label)}</span>
         </header>
+        <div className="mp-label-product-brand" aria-label={`Brand code ${brandCode}; brand name ${brandName}`}>
+          <p><span>BRAND CODE</span><strong>{brandCode}</strong></p>
+          <p><span>BRAND NAME</span><strong style={{ fontSize: brandNameSize }}>{brandName}</strong></p>
+        </div>
         <div className="mp-label-code-block">
           <p className="mp-label-code" style={{ fontSize: codeSize }}>{productCode}</p>
           {showWarehouseSku ? <p className="mp-label-sku">WAREHOUSE SKU {payload.sku}</p> : null}
@@ -86,7 +91,7 @@ function StandardFourByTwoLabel({ label }: { label: any }) {
 
 function LegacyLabel({ label, template }: { label: any; template: any }) {
   return <article className="overflow-hidden border border-black/30 bg-white p-[1.6mm] text-black [break-inside:avoid]" style={{ width: `${Number(template.widthMm || 70)}mm`, height: `${Number(template.heightMm || 37)}mm` }}>
-    <div className="flex h-full items-center gap-[1.6mm]"><div className="shrink-0"><img src={label.qrDataUrl} alt={`QR ${label.labelCode}`} className="h-[23mm] w-[23mm]"/><p className="mt-[.4mm] text-center font-mono text-[5.6pt] font-bold">{label.labelCode}</p></div><div className="min-w-0 flex-1 text-[7pt] leading-[1.14]"><div className="mb-[.6mm] flex items-center justify-between border-b border-black/25 pb-[.5mm]"><p className="truncate text-[9.3pt] font-black">{label.payload.productCode || label.payload.internalCode || label.payload.sku}</p><span className="ml-1 rounded bg-[#a92f28] px-[1.2mm] py-[.3mm] text-[5.5pt] font-black tracking-wide text-white">MP</span></div><p className="line-clamp-2 font-bold">{label.payload.productName}</p><p className="truncate">{[label.payload.brandCode || label.payload.brand, label.payload.dimensions, label.payload.finish].filter(Boolean).join(' / ')}</p><p className="mt-[.6mm] truncate text-[8pt] font-black">MRP Rs. {money(label.payload.mrpInclusive)} / {String(label.payload.priceUom || 'PC').toUpperCase()}</p><p className="mt-[.4mm] truncate font-black">{label.payload.lotNumber || label.payload.displaySample || 'PRODUCT / SHELF'}</p>{label.payload.sourceDocument ? <p className="truncate">{label.payload.sourceDocument}{label.payload.locations?.length ? ` / ${label.payload.locations.join(', ')}` : ''}</p> : null}</div></div>
+    <div className="flex h-full items-center gap-[1.6mm]"><div className="shrink-0"><img src={label.qrDataUrl} alt={`QR ${label.labelCode}`} className="h-[23mm] w-[23mm]"/><p className="mt-[.4mm] text-center font-mono text-[5.6pt] font-bold">{label.labelCode}</p></div><div className="min-w-0 flex-1 text-[7pt] leading-[1.14]"><div className="mb-[.6mm] flex items-center justify-between border-b border-black/25 pb-[.5mm]"><p className="truncate text-[9.3pt] font-black">{label.payload.productCode || label.payload.internalCode || label.payload.sku}</p><span className="ml-1 rounded bg-[#a92f28] px-[1.2mm] py-[.3mm] text-[5.5pt] font-black tracking-wide text-white">MP</span></div><p className="line-clamp-2 font-bold">{label.payload.productName}</p><p className="truncate"><b>BRAND CODE</b> {label.payload.brandCode || 'CODE PENDING'} / <b>NAME</b> {label.payload.brand || 'NAME PENDING'}</p><p className="truncate">{[label.payload.dimensions, label.payload.finish].filter(Boolean).join(' / ')}</p><p className="mt-[.6mm] truncate text-[8pt] font-black">MRP Rs. {money(label.payload.mrpInclusive)} / {String(label.payload.priceUom || 'PC').toUpperCase()}</p><p className="mt-[.4mm] truncate font-black">{label.payload.lotNumber || label.payload.displaySample || 'PRODUCT / SHELF'}</p>{label.payload.sourceDocument ? <p className="truncate">{label.payload.sourceDocument}{label.payload.locations?.length ? ` / ${label.payload.locations.join(', ')}` : ''}</p> : null}</div></div>
   </article>;
 }
 
@@ -117,16 +122,20 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     .mp-label-qr-frame img { display: block; width: 29.6mm; height: 29.6mm; object-fit: contain; image-rendering: auto; }
     .mp-label-human-code { width: 100%; margin: .7mm 0 0; overflow: hidden; color: #111; font: 700 5.8pt/1.12 'Courier New', monospace; letter-spacing: -.08pt; text-align: center; white-space: nowrap; }
     .mp-label-scan-hint { margin: .6mm 0 0; color: #444; font: 700 4.8pt/1 Arial, sans-serif; letter-spacing: .75pt; }
-    .mp-label-copy { display: grid; min-width: 0; height: 100%; grid-template-rows: auto auto minmax(0, 1fr) auto auto auto; overflow: hidden; padding: 1.35mm 1.65mm 1.2mm; }
-    .mp-label-header { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 1.2mm; padding-bottom: .8mm; border-bottom: .22mm solid #111; }
+    .mp-label-copy { display: grid; min-width: 0; height: 100%; grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto; overflow: hidden; padding: 1.35mm 1.65mm 1.2mm; }
+    .mp-label-header { display: grid; min-width: 0; grid-template-columns: auto auto; align-items: center; justify-content: space-between; gap: 1.2mm; padding-bottom: .65mm; border-bottom: .22mm solid #111; }
     .mp-label-brand { display: flex; align-items: center; gap: .8mm; font: 800 5.7pt/1 Arial, sans-serif; letter-spacing: .55pt; white-space: nowrap; }
     .mp-label-mark { display: grid; width: 5.2mm; height: 4mm; place-items: center; color: #fff; background: #111; font: 900 6.2pt/1 Arial, sans-serif; letter-spacing: -.3pt; }
-    .mp-label-brand-code { min-width: 0; overflow: hidden; font: 800 5.5pt/1 Arial, sans-serif; letter-spacing: .35pt; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
     .mp-label-kind { padding: .65mm .9mm .55mm; color: #fff; background: #111; font: 800 5pt/1 Arial, sans-serif; letter-spacing: .35pt; white-space: nowrap; }
-    .mp-label-code-block { min-width: 0; padding-top: 1.05mm; }
+    .mp-label-product-brand { display: grid; min-width: 0; grid-template-columns: 18mm minmax(0, 1fr); gap: 1.4mm; padding: .7mm 0 .65mm; border-bottom: .18mm solid #999; }
+    .mp-label-product-brand p { display: grid; min-width: 0; margin: 0; gap: .22mm; }
+    .mp-label-product-brand span { color: #555; font: 800 4.3pt/1 Arial, sans-serif; letter-spacing: .45pt; }
+    .mp-label-product-brand strong { min-width: 0; overflow: hidden; color: #111; font-family: Arial, Helvetica, sans-serif; font-weight: 900; line-height: 1; letter-spacing: .08pt; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-label-product-brand p:first-child strong { font-size: 5.8pt; font-family: 'Courier New', monospace; }
+    .mp-label-code-block { min-width: 0; padding-top: .8mm; }
     .mp-label-code { max-height: 8.2mm; margin: 0; overflow: hidden; color: #111; font-family: 'Arial Narrow', Arial, Helvetica, sans-serif; font-weight: 900; line-height: .94; letter-spacing: -.2pt; overflow-wrap: anywhere; }
     .mp-label-sku { margin: .5mm 0 0; overflow: hidden; font: 700 5.2pt/1 'Courier New', monospace; letter-spacing: .1pt; text-overflow: ellipsis; white-space: nowrap; }
-    .mp-label-product-name { display: -webkit-box; align-self: center; max-height: 8.2mm; margin: .65mm 0; overflow: hidden; color: #111; font: 700 8.8pt/1.08 Arial, Helvetica, sans-serif; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .mp-label-product-name { display: -webkit-box; align-self: center; max-height: 7.4mm; margin: .5mm 0; overflow: hidden; color: #111; font: 700 8.3pt/1.06 Arial, Helvetica, sans-serif; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .mp-label-specs { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 1mm; padding: .8mm 0; border-top: .18mm solid #bbb; color: #333; font: 700 6.1pt/1 Arial, sans-serif; letter-spacing: .08pt; text-transform: uppercase; }
     .mp-label-specs span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mp-label-price { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 1.4mm; padding: 1mm 0 .9mm; border-top: .32mm solid #111; }
