@@ -22,3 +22,9 @@ We deliberately did **not** add a separate `TileDesign` family table in this rel
 Labels are shared infrastructure for Product, inventory lot and display subjects. Shelf and carton are label purposes, not tile-specific records. Every physical label has an immutable label code; void and reprint retain history. A prepared print run does not increment print counts. Counts change only after the operator explicitly confirms successful physical output on the isolated exact-size print page.
 
 QR values use `MP-LABEL:<label-code>`. The scanner also accepts legacy JSON, lookup URLs and bare codes so existing labels remain usable.
+
+## Governed physical label standard
+
+All new physical-label runs use one `thermal_4x2` template: **4 x 2 inches in landscape (101.6 x 50.8 mm)**, one sticker per PDF/print page. The renderer reserves a 2.2 mm printer-safe outer margin, gives the branded QR a 29.6 mm square, and keeps the human label code outside the symbol as a manual fallback. Product code, governed Brand Master code, product name, size, finish, MRP including tax, rate UOM, exact lot/display identity and source trace are separated into a high-contrast thermal-print hierarchy. Tiles always display MRP per SQFT.
+
+The former A4 and smaller thermal templates are archived for new runs, not deleted. Historical print runs continue resolving their original template code and version for audit/review. Operators must print on 4 x 2 inch paper with landscape orientation, 100%/Actual size, no margins and browser headers disabled. A scaled, clipped or unscannable output is a failed run and must not be confirmed.

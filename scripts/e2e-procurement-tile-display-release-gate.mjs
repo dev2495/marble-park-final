@@ -151,7 +151,7 @@ async function main() {
   assert(displayPage.total === 1 && displayPage.items[0].sourceLotId === lot.id && displayPage.items[0].events[0].action === 'issue_to_display', 'Display register must expose stock provenance and lifecycle event');
 
   const labelJob = (await gql('mutation($input:InternalLabelJobInput!){createInternalLabelJob(input:$input)}', { input: { displaySampleId: display.id, quantity: 1, template: 'display_sample', newJob: true } }, token)).createInternalLabelJob;
-  const printRun = (await gql('mutation($input:InternalLabelPrintRunInput!){prepareInternalLabelPrintRun(input:$input)}', { input: { labelJobId: labelJob.id, templateCode: 'thermal_100x50', labelIds: [labelJob.instances[0].id], copies: 1, reason: 'Clone display print acceptance' } }, token)).prepareInternalLabelPrintRun;
+  const printRun = (await gql('mutation($input:InternalLabelPrintRunInput!){prepareInternalLabelPrintRun(input:$input)}', { input: { labelJobId: labelJob.id, templateCode: 'thermal_4x2', labelIds: [labelJob.instances[0].id], copies: 1, reason: 'Clone display print acceptance' } }, token)).prepareInternalLabelPrintRun;
   const printData = (await gql('query($id:ID!){internalLabelPrintRun(id:$id)}', { id: printRun.id }, token)).internalLabelPrintRun;
   assert(printData.status === 'prepared' && printData.labels.length === 1 && printData.labels[0].qrValue.startsWith('MP-LABEL:'), 'Selected label print run must use isolated scanner-ready payload');
   const stockBeforeSelection = await prisma.inventoryBalance.findUnique({ where: { productId: variant.id } });

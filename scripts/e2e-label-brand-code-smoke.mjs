@@ -25,8 +25,8 @@ try {
   const brand = setup.masterProductBrands.find((row) => row.code) || setup.masterProductBrands[0];
   const category = setup.masterProductCategories[0];
   const finish = setup.masterProductFinishes[0];
-  const template = setup.internalLabelTemplates.find((row) => row.code === 'a4_70x37') || setup.internalLabelTemplates[0];
-  assert(brand?.name && brand?.code && category?.name && finish?.name && template?.code, 'Governed brand code, category, finish and label template are required');
+  const template = setup.internalLabelTemplates.find((row) => row.code === 'thermal_4x2') || setup.internalLabelTemplates[0];
+  assert(brand?.name && brand?.code && category?.name && finish?.name && template?.code === 'thermal_4x2', 'Governed brand code, category, finish and 4 x 2 inch label template are required');
   const suffix = Date.now().toString(36).toUpperCase();
   const product = (await gql('mutation($input:CreateProductInput!){createProduct(input:$input){id sku internalCode brand}}', { input: {
     sku: `LABEL-BRAND-${suffix}`, internalCode: `LB-${suffix}`, name: `Label brand-code acceptance ${suffix}`,

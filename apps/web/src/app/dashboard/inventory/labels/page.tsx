@@ -58,7 +58,7 @@ export default function LabelDeskPage() {
   const [page, setPage] = useState(0);
   const [expandedJobId, setExpandedJobId] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [physicalTemplate, setPhysicalTemplate] = useState('a4_70x37');
+  const [physicalTemplate, setPhysicalTemplate] = useState('thermal_4x2');
   const [copies, setCopies] = useState('1');
   const [printReason, setPrintReason] = useState('Operational label print');
   const [voidReason, setVoidReason] = useState('Damaged or superseded physical label');

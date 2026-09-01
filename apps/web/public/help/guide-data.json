@@ -300,15 +300,15 @@
         "Scan and trace"
       ],
       "examples": [
-        "Training example: open the recent GRN for Calacatta Ivory, select its exact lot and create 10 carton labels. Prepare a run for only labels 1-10, print on the chosen physical template, and confirm only after paper is produced. A salesperson may later scan any active label, keep the exact size or select several active same-design sizes for Intent or Quote; no stock changes during scan, selection or print."
+        "Training example: open the recent GRN for Calacatta Ivory, select its exact lot and create 10 carton labels. Prepare a run for only labels 1-10, print one label per 4 x 2 inch sticker, and confirm only after paper is produced. A salesperson may later scan any active label, keep the exact size or select several active same-design sizes for Intent or Quote; no stock changes during scan, selection or print."
       ],
       "steps": [
         "After posting a PO or manual GRN, use Create labels in Procurement History or open Recent GRNs in the Physical Identity Desk.",
         "Select accepted receipt lines and verify the product image, permanent code, exact lot, location, accepted quantity and pieces per pack.",
         "Confirm the number of physical packs or items that need unique labels. The suggestion is derived from accepted pieces and pack size but remains an explicit operator decision.",
         "For a shelf, existing lot, carton or showroom asset, use Other subjects and search the authoritative Product Master, lot or Display Asset register.",
-        "Open Print & reprint, select the exact unique labels, physical paper/template and reason. A preview creates an audited prepared run but does not mark anything printed.",
-        "In the isolated print screen, confirm only after the printer produces the labels. Cancel or failed leaves print counts unchanged.",
+        "Open Print & reprint, select the exact unique labels and enter the reason. New runs use the governed 4 x 2 inch (101.6 x 50.8 mm) sticker; a preview creates an audited prepared run but does not mark anything printed.",
+        "In the isolated print screen, use landscape orientation, Actual size or 100% scale, no margins and no browser headers. Confirm only after the printer produces a full-size readable label whose QR scans. Cancel or failed leaves print counts unchanged.",
         "In Scan & verify, tap Scan with camera on mobile or use a handheld scanner/manual code. Camera access starts only after the tap and stops after a successful read.",
         "Review the exact product, lot, batch, location or display identity. For a tile, the side panel offers only active Product Master variants with the same governed design; filter by size, finish or code and select one or several.",
         "Choose Quick quote or Add to intent. The selected Product Master IDs preload together; customer, room, quantity and pricing checks are still required.",
@@ -319,6 +319,7 @@
         "Every label shows the governed Brand Master code and Product Master MRP; tile labels always show MRP per SQFT.",
         "Printing is blocked when the selected product has no positive MRP, with a linkable correction path through MRP Readiness.",
         "Every QR encodes MP-LABEL:<unique label code>; the MP centre mark is branding and the human-readable code remains the fallback.",
+        "Every new print page is exactly 4 x 2 inches in landscape with one sticker per page; do not use Fit to page or an A4 paper size.",
         "Reprints retain the same physical identity and add print audit history.",
         "A display label identifies a non-sellable showroom asset and must never be treated as available stock.",
         "Vendor-provided displays create no stock movement; displays issued from a received lot post an audited lot issue and can return only to that original lot."
