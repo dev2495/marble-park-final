@@ -542,6 +542,8 @@ Labels are a shared physical identity platform for product/SKU, lot, carton, she
 
 - **Prepare/preview** creates an audited prepared run.
 - The isolated print route contains only the physical sheet/label surface.
+- New runs use the governed version 2 portrait page: exactly 2 × 4 inches (50.8 × 101.6 mm), one PDF page per physical sticker.
+- In the printer dialog choose portrait, one page per sheet, Actual size/100%, no margins, and no browser headers. Never choose A4 or Fit to page.
 - Opening or cancelling the browser print dialog does not increment print counts.
 - Confirm print only after paper was actually produced.
 - Reprint is a new audited run with reason; it retains physical identity.
@@ -552,10 +554,11 @@ Labels are a shared physical identity platform for product/SKU, lot, carton, she
 - unique human-readable label code;
 - standards-valid QR payload `MP-LABEL:<unique-label-code>`;
 - governed Brand Master code;
-- product/display code and relevant permanent identity;
-- product/lot/display description appropriate to template;
-- MRP from Product Master; tile MRP always per SQFT;
-- exact lot/batch/location where the subject is lot-specific.
+- Product Master/display product code;
+- optional exact lot code or display code;
+- direct governed rate and rate UOM; tile rate is always per SQFT.
+
+The portrait sticker intentionally does **not** print brand name, product name, warehouse SKU, dimensions, finish, source/trace prose, or MRP/GST/tax wording. Those details remain available after QR scan and in audited master/lot records without crowding the physical sticker.
 
 The MP center mark is branding. The QR remains standards-decodable; do not replace it with decorative pixels that reduce scan reliability.
 

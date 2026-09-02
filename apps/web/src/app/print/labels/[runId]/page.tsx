@@ -10,8 +10,10 @@ const RUN = gql`query LabelPrintRun($id: ID!) { internalLabelPrintRun(id: $id) }
 const CONFIRM = gql`mutation ConfirmLabelPrint($id: ID!) { confirmInternalLabelPrintRun(id: $id) }`;
 const CANCEL = gql`mutation CancelLabelPrint($id: ID!, $reason: String!) { cancelInternalLabelPrintRun(id: $id, reason: $reason) }`;
 const STANDARD_TEMPLATE = 'thermal_4x2';
-const STANDARD_WIDTH_MM = 101.6;
-const STANDARD_HEIGHT_MM = 50.8;
+const PORTRAIT_WIDTH_MM = 50.8;
+const PORTRAIT_HEIGHT_MM = 101.6;
+const LANDSCAPE_WIDTH_MM = 101.6;
+const LANDSCAPE_HEIGHT_MM = 50.8;
 
 function money(value: unknown) {
   return Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
@@ -28,6 +30,52 @@ function printIdentity(label: any) {
   if (payload.lotNumber) return { heading: 'LOT', value: payload.lotNumber };
   if (payload.displaySample) return { heading: 'DISPLAY', value: payload.displaySample };
   return { heading: 'IDENTITY', value: 'PRODUCT / SHELF' };
+}
+
+function PortraitFourByTwoLabel({ label }: { label: any }) {
+  const payload = label.payload || {};
+  const brandCode = String(payload.brandCode || 'CODE PENDING').toUpperCase();
+  const productCode = String(payload.productCode || payload.internalCode || payload.sku || 'PRODUCT CODE PENDING').toUpperCase();
+  const identity = payload.lotNumber
+    ? { heading: 'LOT CODE', value: String(payload.lotNumber).toUpperCase() }
+    : payload.displaySample
+      ? { heading: 'DISPLAY CODE', value: String(payload.displaySample).toUpperCase() }
+      : null;
+  const productCodeSize = productCode.length > 40 ? '5.5pt' : productCode.length > 32 ? '6.2pt' : productCode.length > 24 ? '7pt' : productCode.length > 14 ? '7.2pt' : '15.5pt';
+  const productCodeWhiteSpace = productCode.length > 40 ? 'normal' : 'nowrap';
+  const identityCodeSize = String(identity?.value || '').length > 28 ? '7.5pt' : '9pt';
+
+  return <article className="mp-portrait-label-page" aria-label={`Physical label ${label.labelCode}`}>
+    <div className="mp-portrait-safe-frame">
+      <header className="mp-portrait-header">
+        <div className="mp-portrait-brand"><span className="mp-portrait-mark">MP</span><span>MARBLE PARK</span></div>
+        <span className="mp-portrait-kind">{labelKind(label)}</span>
+      </header>
+      <section className="mp-portrait-qr-panel">
+        <img src={label.qrDataUrl} alt={`Scan ${label.labelCode}`} />
+        <p className="mp-portrait-human-code">{label.labelCode}</p>
+      </section>
+      <section className={`mp-portrait-code-panel${identity ? ' has-identity' : ''}`}>
+        <div className="mp-portrait-code-row">
+          <span>BRAND CODE</span>
+          <strong>{brandCode}</strong>
+        </div>
+        <div className="mp-portrait-code-row mp-portrait-product-code">
+          <span>PRODUCT CODE</span>
+          <strong style={{ fontSize: productCodeSize, whiteSpace: productCodeWhiteSpace }}>{productCode}</strong>
+        </div>
+        {identity ? <div className="mp-portrait-code-row mp-portrait-identity-code">
+          <span>{identity.heading}</span>
+          <strong style={{ fontSize: identityCodeSize }}>{identity.value}</strong>
+        </div> : null}
+      </section>
+      <footer className="mp-portrait-rate">
+        <span>RATE</span>
+        <strong>Rs. {money(payload.mrpInclusive)}</strong>
+        <b>/{String(payload.priceUom || 'PC').toUpperCase()}</b>
+      </footer>
+    </div>
+  </article>;
 }
 
 async function waitForPrintAssets() {
@@ -107,15 +155,39 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
   const template = run?.template || {};
   const labels = run?.labels || [];
   const standardFourByTwo = template.code === STANDARD_TEMPLATE;
-  const pageWidth = Number(template.pageWidthMm || template.widthMm || STANDARD_WIDTH_MM);
-  const pageHeight = Number(template.pageHeightMm || template.heightMm || STANDARD_HEIGHT_MM);
+  const portraitFourByTwo = standardFourByTwo && Number(template.version || 0) >= 2;
+  const pageWidth = Number(template.pageWidthMm || template.widthMm || (portraitFourByTwo ? PORTRAIT_WIDTH_MM : LANDSCAPE_WIDTH_MM));
+  const pageHeight = Number(template.pageHeightMm || template.heightMm || (portraitFourByTwo ? PORTRAIT_HEIGHT_MM : LANDSCAPE_HEIGHT_MM));
   const columns = Number(template.columns || 1);
   const printCss = `
     @page { size: ${pageWidth}mm ${pageHeight}mm; margin: 0; }
-    :root .label-sheet, :root .label-sheet article, :root .mp-label-page,
-    :root.dark .label-sheet, :root.dark .label-sheet article, :root.dark .mp-label-page { background: #fff !important; color: #111 !important; }
+    :root .label-sheet, :root .label-sheet article, :root .mp-label-page, :root .mp-portrait-label-page,
+    :root.dark .label-sheet, :root.dark .label-sheet article, :root.dark .mp-label-page, :root.dark .mp-portrait-label-page { background: #fff !important; color: #111 !important; }
     .mp-label-pages { display: grid; gap: 16px; justify-content: center; }
-    .mp-label-page { box-sizing: border-box; width: ${STANDARD_WIDTH_MM}mm; height: ${STANDARD_HEIGHT_MM}mm; overflow: hidden; padding: 2.2mm; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; box-shadow: 0 18px 45px -24px rgba(31, 20, 18, .55); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .mp-portrait-label-page { box-sizing: border-box; width: ${PORTRAIT_WIDTH_MM}mm; height: ${PORTRAIT_HEIGHT_MM}mm; overflow: hidden; padding: 1.9mm; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; box-shadow: 0 18px 45px -24px rgba(31, 20, 18, .55); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .mp-portrait-safe-frame { box-sizing: border-box; display: grid; width: 100%; height: 100%; grid-template-rows: 7.4mm 47.2mm minmax(0, 1fr) 15.2mm; overflow: hidden; border: .38mm solid #111; }
+    .mp-portrait-header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 1mm; padding: 1mm 1.2mm; border-bottom: .28mm solid #111; }
+    .mp-portrait-brand { display: flex; min-width: 0; align-items: center; gap: .9mm; font: 900 6.5pt/1 Arial, sans-serif; letter-spacing: .55pt; white-space: nowrap; }
+    .mp-portrait-mark { display: grid; width: 6.1mm; height: 4.7mm; flex: 0 0 auto; place-items: center; color: #fff; background: #111; font: 900 7pt/1 Arial, sans-serif; letter-spacing: -.3pt; }
+    .mp-portrait-kind { flex: 0 0 auto; padding: .8mm 1mm .65mm; color: #fff; background: #111; font: 900 5.2pt/1 Arial, sans-serif; letter-spacing: .38pt; white-space: nowrap; }
+    .mp-portrait-qr-panel { display: flex; min-width: 0; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; border-bottom: .3mm solid #111; padding: .9mm 1mm .7mm; }
+    .mp-portrait-qr-panel img { display: block; width: 40.8mm; height: 40.8mm; object-fit: contain; image-rendering: auto; }
+    .mp-portrait-human-code { width: 100%; margin: .65mm 0 0; overflow: hidden; color: #111; font: 800 6.3pt/1 'Courier New', monospace; letter-spacing: -.08pt; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-portrait-code-panel { display: grid; min-height: 0; align-content: stretch; overflow: hidden; }
+    .mp-portrait-code-panel.has-identity { grid-template-rows: 7.2mm minmax(13.4mm, 1fr) 6.8mm; }
+    .mp-portrait-code-row { display: grid; min-width: 0; align-content: center; gap: .65mm; overflow: hidden; padding: 1.2mm 1.5mm 1.1mm; border-bottom: .22mm solid #777; }
+    .mp-portrait-code-panel.has-identity .mp-portrait-code-row { gap: .35mm; padding-top: .45mm; padding-bottom: .45mm; }
+    .mp-portrait-code-panel.has-identity .mp-portrait-code-row span { font-size: 4.2pt; }
+    .mp-portrait-code-panel.has-identity .mp-portrait-code-row:first-child strong { font-size: 10.5pt; }
+    .mp-portrait-code-row:last-child { border-bottom: 0; }
+    .mp-portrait-code-row span { color: #333; font: 900 5.2pt/1 Arial, sans-serif; letter-spacing: .75pt; }
+    .mp-portrait-code-row strong { min-width: 0; overflow: visible; color: #111; font-family: 'Arial Narrow', Arial, Helvetica, sans-serif; font-size: 14.5pt; font-weight: 900; line-height: 1.08; letter-spacing: -.18pt; overflow-wrap: anywhere; }
+    .mp-portrait-identity-code strong { font-family: 'Courier New', monospace; }
+    .mp-portrait-rate { display: grid; min-width: 0; grid-template-columns: 10.5mm minmax(0, 1fr); grid-template-rows: 1fr auto; align-items: center; gap: 0 1mm; overflow: hidden; padding: 1.5mm; border-top: .42mm solid #111; }
+    .mp-portrait-rate span { grid-row: 1 / span 2; align-self: stretch; display: grid; place-items: center start; border-right: .28mm solid #111; color: #222; font: 900 7pt/1 Arial, sans-serif; letter-spacing: .8pt; }
+    .mp-portrait-rate strong { min-width: 0; align-self: end; overflow: hidden; color: #111; font: 900 19.5pt/1.08 'Arial Narrow', Arial, Helvetica, sans-serif; letter-spacing: -.75pt; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-portrait-rate b { align-self: start; color: #111; font: 900 7pt/1 Arial, sans-serif; letter-spacing: .25pt; }
+    .mp-label-page { box-sizing: border-box; width: ${LANDSCAPE_WIDTH_MM}mm; height: ${LANDSCAPE_HEIGHT_MM}mm; overflow: hidden; padding: 2.2mm; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; box-shadow: 0 18px 45px -24px rgba(31, 20, 18, .55); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .mp-label-safe-frame { box-sizing: border-box; display: grid; grid-template-columns: 34.5mm minmax(0, 1fr); width: 100%; height: 100%; overflow: hidden; border: .34mm solid #111; }
     .mp-label-qr-panel { display: flex; min-width: 0; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; border-right: .34mm solid #111; padding: 1.2mm 1.4mm 1mm; }
     .mp-label-qr-frame { display: grid; width: 29.6mm; height: 29.6mm; place-items: center; background: #fff; }
@@ -157,8 +229,8 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
       body { min-height: 0 !important; background-image: none !important; }
       .print-controls { display: none !important; }
       .mp-label-pages { display: block !important; }
-      .mp-label-page { margin: 0 !important; box-shadow: none !important; break-inside: avoid !important; page-break-inside: avoid !important; }
-      .mp-label-page:not(:last-child) { break-after: page !important; page-break-after: always !important; }
+      .mp-label-page, .mp-portrait-label-page { margin: 0 !important; box-shadow: none !important; break-inside: avoid !important; page-break-inside: avoid !important; }
+      .mp-label-page:not(:last-child), .mp-portrait-label-page:not(:last-child) { break-after: page !important; page-break-after: always !important; }
       .label-sheet { box-shadow: none !important; margin: 0 !important; }
     }
   `;
@@ -169,19 +241,19 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     window.print();
   }
 
-  if (loading) return <div className="grid min-h-screen place-items-center bg-white text-black">Preparing exact 4 x 2 inch labels...</div>;
+  if (loading) return <div className="grid min-h-screen place-items-center bg-white text-black">Preparing exact 2 x 4 inch portrait labels...</div>;
 
   return <main className="min-h-screen bg-[#f4f1ef] p-4 text-black print:bg-white print:p-0">
     <style dangerouslySetInnerHTML={{ __html: printCss }} />
     {error ? <div className="print-controls mx-auto max-w-3xl"><QueryErrorBanner error={error}/></div> : null}
     <section className="print-controls mx-auto mb-5 max-w-5xl overflow-hidden rounded-2xl border border-[#e4d8d3] shadow-[0_24px_70px_-48px_rgba(73,32,28,.7)]">
       <div className="h-1.5 bg-[linear-gradient(90deg,#2a201f,#a92f28,#d77761)]" />
-      <div className="p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#e38a7f]">Physical identity print - {run?.runNumber}</p><h1 className="mt-2 text-2xl font-black">{standardFourByTwo ? '4 x 2 inch sticker' : template.name}</h1><p className="print-meta mt-1 text-sm">{labels.length} label{labels.length === 1 ? '' : 's'} - exact {pageWidth} x {pageHeight} mm page - one sticker per page.</p></div><Button className="bg-[#a92f28] hover:bg-[#8d2722]" disabled={!run || !labels.length || Boolean(error) || decision === 'confirmed' || decision === 'cancelled'} onClick={openPrintDialog}><Printer className="mr-2 h-4 w-4"/>Print 4 x 2 labels</Button></div>
-        <div className="print-steps mt-4 grid gap-2 rounded-xl p-3 text-xs sm:grid-cols-4"><p><b>Paper</b><br/>4 x 2 inch / 101.6 x 50.8 mm.</p><p><b>Orientation</b><br/>Landscape.</p><p><b>Scale</b><br/>100% or Actual size.</p><p><b>Options</b><br/>Margins none; headers off.</p></div>
-        {dialogOpened && !decision ? <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4"><p className="font-bold text-blue-950">Did the printer complete this run at full sticker size?</p><p className="mt-1 text-xs text-blue-800">Confirm only after the physical 4 x 2 inch output is readable and the QR scans. If the dialog was cancelled, scaled down, clipped, or the printer failed, cancel the run; print counts remain unchanged.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><Button disabled={confirmState.loading} onClick={() => confirm({ variables: { id: runId } })}><CheckCircle2 className="mr-2 h-4 w-4"/>Confirm printed</Button><input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} className="h-10 flex-1 rounded-md border border-blue-200 bg-white px-3 text-sm"/><Button variant="outline" disabled={cancelState.loading || !cancelReason.trim()} onClick={() => cancel({ variables: { id: runId, reason: cancelReason } })}><XCircle className="mr-2 h-4 w-4"/>Cancel / failed</Button></div></div> : null}
+      <div className="p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#e38a7f]">Physical identity print - {run?.runNumber}</p><h1 className="mt-2 text-2xl font-black">{portraitFourByTwo ? '2 x 4 inch portrait sticker' : standardFourByTwo ? 'Historic 4 x 2 inch sticker' : template.name}</h1><p className="print-meta mt-1 text-sm">{labels.length} label{labels.length === 1 ? '' : 's'} - exact {pageWidth} x {pageHeight} mm page - one sticker per page.</p></div><Button className="bg-[#a92f28] hover:bg-[#8d2722]" disabled={!run || !labels.length || Boolean(error) || decision === 'confirmed' || decision === 'cancelled'} onClick={openPrintDialog}><Printer className="mr-2 h-4 w-4"/>Print portrait labels</Button></div>
+        <div className="print-steps mt-4 grid gap-2 rounded-xl p-3 text-xs sm:grid-cols-4"><p><b>Paper</b><br/>{portraitFourByTwo ? '2 x 4 inch / 50.8 x 101.6 mm.' : `${pageWidth} x ${pageHeight} mm.`}</p><p><b>Orientation</b><br/>{portraitFourByTwo ? 'Portrait.' : 'Use saved run setting.'}</p><p><b>Scale</b><br/>100% or Actual size.</p><p><b>Options</b><br/>One page per sheet; margins none; headers off.</p></div>
+        {dialogOpened && !decision ? <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4"><p className="font-bold text-blue-950">Did the printer complete this run at full sticker size?</p><p className="mt-1 text-xs text-blue-800">Confirm only after the physical 2 x 4 inch portrait output is readable and the QR scans. If the dialog was cancelled, scaled down, clipped, or the printer failed, cancel the run; print counts remain unchanged.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><Button disabled={confirmState.loading} onClick={() => confirm({ variables: { id: runId } })}><CheckCircle2 className="mr-2 h-4 w-4"/>Confirm printed</Button><input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} className="h-10 flex-1 rounded-md border border-blue-200 bg-white px-3 text-sm"/><Button variant="outline" disabled={cancelState.loading || !cancelReason.trim()} onClick={() => cancel({ variables: { id: runId, reason: cancelReason } })}><XCircle className="mr-2 h-4 w-4"/>Cancel / failed</Button></div></div> : null}
         {decision ? <div aria-live="polite" className={`mt-4 rounded-lg p-3 text-sm font-bold ${decision === 'confirmed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{decision === 'confirmed' ? 'Print confirmed and audited. Reprinting will create a new run.' : 'Run cancelled; no label print counts were changed.'}</div> : null}
       </div>
     </section>
-    {standardFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <StandardFourByTwoLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : <section className="label-sheet mx-auto grid bg-white shadow-xl" style={{ width: `${pageWidth}mm`, minHeight: `${pageHeight}mm`, gridTemplateColumns: `repeat(${columns}, ${Number(template.widthMm || 70)}mm)`, gridAutoRows: `${Number(template.heightMm || 37)}mm`, columnGap: `${Number(template.gapXMm || 0)}mm`, rowGap: `${Number(template.gapYMm || 0)}mm`, padding: `${Number(template.marginTopMm || 0)}mm ${Number(template.marginRightMm || 0)}mm ${Number(template.marginBottomMm || 0)}mm ${Number(template.marginLeftMm || 0)}mm` }}>{labels.map((label: any, index: number) => <LegacyLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label} template={template}/>)}</section>}
+    {portraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <PortraitFourByTwoLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : standardFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <StandardFourByTwoLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : <section className="label-sheet mx-auto grid bg-white shadow-xl" style={{ width: `${pageWidth}mm`, minHeight: `${pageHeight}mm`, gridTemplateColumns: `repeat(${columns}, ${Number(template.widthMm || 70)}mm)`, gridAutoRows: `${Number(template.heightMm || 37)}mm`, columnGap: `${Number(template.gapXMm || 0)}mm`, rowGap: `${Number(template.gapYMm || 0)}mm`, padding: `${Number(template.marginTopMm || 0)}mm ${Number(template.marginRightMm || 0)}mm ${Number(template.marginBottomMm || 0)}mm ${Number(template.marginLeftMm || 0)}mm` }}>{labels.map((label: any, index: number) => <LegacyLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label} template={template}/>)}</section>}
   </main>;
 }
