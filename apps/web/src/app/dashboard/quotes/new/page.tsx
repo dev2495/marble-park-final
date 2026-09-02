@@ -236,7 +236,7 @@ export default function QuoteBuilderPage() {
     const response = await scanLabel({ variables: { labelCode: payload, input: { action: 'quote_similar_lookup', metadata: { surface: 'quote_new' } } } });
     const result = response.data?.scanInternalLabel;
     if (result?.result !== 'success' || !result?.label?.product) {
-      setScanMessage('No active governed label matched this scan. The quote was not changed.');
+      setScanMessage(`Scan blocked: ${result?.message || 'No active production label matched this code.'} The quote was not changed.`);
       return;
     }
     setScanResult(result);
@@ -567,7 +567,7 @@ export default function QuoteBuilderPage() {
           </div>
           {scanOpen ? <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3"><PhysicalQrScanner compact busy={scanState.loading} onDetected={scanToQuote}/></div> : null}
           {scanResult ? <div className="mt-3"><ScanProductSelector result={scanResult} busy={scanState.loading} existingProductIds={lines.map((line) => line.productId)} primaryLabel="Add selected to quote" onPrimary={addScannedProducts} onDismiss={() => setScanResult(null)}/></div> : null}
-          {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-xl p-3 text-xs font-semibold ${scanMessage.startsWith('No active') ? 'bg-red-50 text-red-800' : 'bg-emerald-50 text-emerald-800'}`}>{scanMessage.startsWith('No active') ? <XCircle className="h-4 w-4"/> : <CheckCircle className="h-4 w-4"/>}{scanMessage}</div> : null}
+          {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-xl p-3 text-xs font-semibold ${scanMessage.startsWith('Scan blocked') ? 'bg-red-50 text-red-800' : 'bg-emerald-50 text-emerald-800'}`}>{scanMessage.startsWith('Scan blocked') ? <XCircle className="h-4 w-4"/> : <CheckCircle className="h-4 w-4"/>}{scanMessage}</div> : null}
 
           <div className="mt-6 overflow-hidden rounded-r4 border border-[#e4e4e7] bg-white/80">
             <div className="divide-y divide-[#e4e4e7]">

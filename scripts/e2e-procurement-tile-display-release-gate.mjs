@@ -38,8 +38,9 @@ async function main() {
   const sizes = (await gql('query { tileSizes(status:"active") }', {}, token)).tileSizes;
   assert(sizes.length > 1, 'At least two active governed Tile Sizes are required for same-design selection acceptance');
   const governedMasters = await gql('query { masterProductBrands(status:"active") masterProductFinishes(status:"active") }', {}, token);
-  assert(governedMasters.masterProductBrands.length && governedMasters.masterProductFinishes.length, 'Active Brand and Finish masters are required');
-  const governedBrand = governedMasters.masterProductBrands[0].name;
+  const governedBrandMaster = governedMasters.masterProductBrands.find((row) => String(row.code || '').trim()) || governedMasters.masterProductBrands[0];
+  assert(governedBrandMaster?.name && governedBrandMaster?.code && governedMasters.masterProductFinishes.length, 'Active Brand Master with a code and Finish Master are required');
+  const governedBrand = governedBrandMaster.name;
   const governedFinish = governedMasters.masterProductFinishes[0].name;
   const size = sizes.find((row) => Number(row.pcsPerBox || 0) >= 2) || sizes[0];
   const piecesPerPack = Math.max(2, Number(size.pcsPerBox || 2));
@@ -128,6 +129,12 @@ async function main() {
   poRead = (await gql('query($id:ID!){purchaseOrder(id:$id)}', { id: po.id }, token)).purchaseOrder;
   assert(poRead.status === 'received', 'Final receipt must close the PO');
 
+  const futureReceiptError = await gql('mutation($input:ManualGoodsReceiptInput!){createManualGoodsReceipt(input:$input)}', { input: {
+    vendorName: `Gate supplier ${suffix}`, receivedDate: new Date(Date.now() + 2 * 86_400_000).toISOString(), reason: 'Future date rejection acceptance',
+    lines: '[]',
+  } }, token, true);
+  assert(/cannot be later than today in India/i.test(futureReceiptError), 'PO and manual inward must reject a future India calendar date');
+
   const manual = (await gql('mutation($input:ManualGoodsReceiptInput!){createManualGoodsReceipt(input:$input)}', { input: {
     vendorName: `Gate supplier ${suffix}`, supplierChallan: `MAN-${suffix}`, reason: 'Clone-only manual inward acceptance',
     locationId: location.id, idempotencyKey: `MAN-${suffix}`,
@@ -135,9 +142,27 @@ async function main() {
   } }, token)).createManualGoodsReceipt;
   const grnPage = (await gql('query($search:String){goodsReceiptPage(search:$search,source:"manual",sort:"newest",skip:0,take:1)}', { search: `MAN-${suffix}` }, token)).goodsReceiptPage;
   assert(grnPage.total === 1 && grnPage.items[0].id === manual.id, 'Manual GRN history must be searchable and server-paged');
-  const lot = await prisma.inventoryLot.findFirst({ where: { productId: variant.id, sourceId: manual.id }, include: { balances: true } });
   const manualQuantity = piecesPerPack * 2 + 1;
+  const correctionDate = new Date(Date.now() - 86_400_000);
+  const corrected = (await gql('mutation($input:CorrectGoodsReceiptInput!){correctGoodsReceipt(input:$input)}', { input: {
+    goodsReceiptNoteId: manual.id, receivedDate: correctionDate.toISOString(), supplierChallan: `MAN-CORRECTED-${suffix}`,
+    supplierBill: `BILL-${suffix}`, notes: 'Corrected receipt header acceptance', reason: 'Supplier challan and inward date entered incorrectly', expectedUpdatedAt: manual.updatedAt,
+  } }, token)).correctGoodsReceipt;
+  assert(corrected.supplierChallan === `MAN-CORRECTED-${suffix}` && corrected.metadata?.corrections?.length === 1, 'Owner must be able to correct GRN header with append-only correction metadata');
+  const lot = await prisma.inventoryLot.findFirst({ where: { productId: variant.id, sourceId: manual.id }, include: { balances: true } });
   assert(lot && Number(lot.balances[0].available) === manualQuantity, 'Manual tile inward must create an exact lot using boxes plus loose pieces');
+  assert(new Date(lot.receivedAt).toISOString() === correctionDate.toISOString(), 'An inward-date correction must synchronize the exact lot receipt date without changing quantity');
+  const staffEmail = `release-gate-staff-${suffix.toLowerCase()}@example.invalid`;
+  const staffPassword = `GateStaff-${suffix}-Strong!42`;
+  await prisma.user.create({ data: {
+    id: ulid(), name: 'Release Gate Inventory Staff', email: staffEmail, passwordHash: await bcrypt.hash(staffPassword, 12),
+    role: 'inventory_manager', phone: '', active: true, permissionOverrides: { 'goods_receipts.manage': true }, passwordChangedAt: new Date(),
+  } });
+  const staffToken = (await gql('mutation($input: LoginInput!) { login(input: $input) { token } }', { input: { email: staffEmail, password: staffPassword } })).login.token;
+  const roleError = await gql('mutation($input:CorrectGoodsReceiptInput!){correctGoodsReceipt(input:$input)}', { input: {
+    goodsReceiptNoteId: manual.id, receivedDate: correctionDate.toISOString(), reason: 'Unauthorized correction acceptance', expectedUpdatedAt: corrected.updatedAt,
+  } }, staffToken, true);
+  assert(/restricted/i.test(roleError), 'GRN correction must remain restricted to owner/admin even when staff can post goods receipts');
   const recognisableLots = (await gql('query($productId:String,$search:String){inventoryLots(productId:$productId,status:"active",search:$search,take:10)}', { productId: variant.id, search: manual.grnNumber }, token)).inventoryLots;
   assert(recognisableLots.some((row) => row.id === lot.id && row.goodsReceiptLines?.[0]?.goodsReceiptNote?.vendorName === `Gate supplier ${suffix}`), 'Display lot picker must resolve GRN search with supplier and receipt provenance');
 
@@ -153,10 +178,13 @@ async function main() {
   const labelJob = (await gql('mutation($input:InternalLabelJobInput!){createInternalLabelJob(input:$input)}', { input: { displaySampleId: display.id, quantity: 1, template: 'display_sample', newJob: true } }, token)).createInternalLabelJob;
   const printRun = (await gql('mutation($input:InternalLabelPrintRunInput!){prepareInternalLabelPrintRun(input:$input)}', { input: { labelJobId: labelJob.id, templateCode: 'thermal_4x2', labelIds: [labelJob.instances[0].id], copies: 1, reason: 'Clone display print acceptance' } }, token)).prepareInternalLabelPrintRun;
   const printData = (await gql('query($id:ID!){internalLabelPrintRun(id:$id)}', { id: printRun.id }, token)).internalLabelPrintRun;
-  assert(printData.status === 'prepared' && printData.labels.length === 1 && printData.labels[0].qrValue.startsWith('MP-LABEL:'), 'Selected label print run must use isolated scanner-ready payload');
+  assert(printData.status === 'prepared' && printData.template.version === 3 && printData.labels.length === 1 && printData.labels[0].qrValue.startsWith('MP-LABEL:'), 'Selected label print run must use isolated scanner-ready v3 payload');
+  assert(printData.labels[0].payload.compactProductValue === design.name && printData.labels[0].payload.governedBrandCode === governedBrandMaster.code, 'Tile labels must print Tile Design name and the governed Brand Master code');
   const stockBeforeSelection = await prisma.inventoryBalance.findUnique({ where: { productId: variant.id } });
   const scanned = (await gql('mutation($code:String!){scanInternalLabel(labelCode:$code)}', { code: printData.labels[0].qrValue }, token)).scanInternalLabel;
   assert(scanned.result === 'success', 'Scanner must accept the actual rendered QR payload');
+  const sampleScan = (await gql('mutation($code:String!){scanInternalLabel(labelCode:$code)}', { code: `MP-LABEL:TEST-NOT-PRODUCTION-${suffix}` }, token)).scanInternalLabel;
+  assert(sampleScan.result === 'not_found' && /sample or test print/i.test(sampleScan.message), 'Unknown sample QR must return explicit production guidance');
   assert(scanned.relatedSummary?.type === 'tile_design' && scanned.relatedProducts?.length === 2, 'A tile scan must return every active variant from only the same governed design');
   assert(scanned.relatedProducts.some((product) => product.id === variant.id && product.isScannedProduct) && scanned.relatedProducts.some((product) => product.id === siblingVariant.id), 'Scan response must distinguish the physical item and its selectable sibling size');
   const orderedProducts = (await gql('query($ids:[ID!]!){productsByIds(ids:$ids){id}}', { ids: [siblingVariant.id, variant.id] }, token)).productsByIds;

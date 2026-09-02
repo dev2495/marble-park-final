@@ -23,7 +23,9 @@ try {
   const token = (await gql('mutation($input:LoginInput!){login(input:$input){token}}', { input: { email: EMAIL, password: PASSWORD } })).login.token;
   const setup = await gql('query{masterProductCategories(status:"active") masterProductBrands(status:"active") masterProductFinishes(status:"active") internalLabelTemplates}', {}, token);
   const brand = setup.masterProductBrands.find((row) => row.code) || setup.masterProductBrands[0];
-  const category = setup.masterProductCategories[0];
+  const category = setup.masterProductCategories.find((row) => String(row.name || '').trim().toLowerCase() === 'sanitaryware')
+    || setup.masterProductCategories.find((row) => !['tiles', 'chemicals'].includes(String(row.name || '').trim().toLowerCase()))
+    || setup.masterProductCategories[0];
   const finish = setup.masterProductFinishes[0];
   const template = setup.internalLabelTemplates.find((row) => row.code === 'thermal_4x2') || setup.internalLabelTemplates[0];
   assert(brand?.name && brand?.code && category?.name && finish?.name && template?.code === 'thermal_4x2', 'Governed brand code, category, finish and 4 x 2 inch label template are required');
@@ -44,7 +46,7 @@ try {
   assert(run.labels[0].payload.productCode === product.internalCode, 'Label must expose the governed Product Master code');
   assert(run.labels[0].payload.brand === brand.name, 'Full brand name must remain in governed payload for traceability');
   assert(Number(run.labels[0].payload.mrpInclusive) === 1000, 'Label must use the governed Product Master MRP');
-  assert(run.labels[0].payload.priceUom === 'PC', 'Generic product label must retain its governed pricing UOM');
+  assert(run.labels[0].payload.priceUom === 'PC', `Generic product label must retain its governed pricing UOM (received ${run.labels[0].payload.priceUom || 'blank'})`);
   console.log(JSON.stringify({ ok: true, productCode: run.labels[0].payload.productCode, brandName: brand.name, printedBrandCode: run.labels[0].payload.brandCode, mrpInclusive: run.labels[0].payload.mrpInclusive, priceUom: run.labels[0].payload.priceUom }));
 } finally {
   if (jobId) {

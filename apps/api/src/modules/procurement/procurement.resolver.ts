@@ -94,6 +94,36 @@ class ManualGoodsReceiptInput {
 }
 
 @InputType()
+class CorrectGoodsReceiptInput {
+  @Field()
+  goodsReceiptNoteId!: string;
+
+  @Field(() => Date)
+  receivedDate!: Date;
+
+  @Field({ nullable: true })
+  vendorId?: string;
+
+  @Field({ nullable: true })
+  vendorName?: string;
+
+  @Field({ nullable: true })
+  supplierChallan?: string;
+
+  @Field({ nullable: true })
+  supplierBill?: string;
+
+  @Field({ nullable: true })
+  notes?: string;
+
+  @Field()
+  reason!: string;
+
+  @Field(() => Date)
+  expectedUpdatedAt!: Date;
+}
+
+@InputType()
 class CompletePurchaseOrderCostsInput {
   @Field()
   purchaseOrderId!: string;
@@ -253,5 +283,11 @@ export class ProcurementResolver {
     const user = await requirePermission(this.prisma, ctx, 'goods_receipts.manage');
     assertNoCostInput(input.lines, user, (message) => new BadRequestException(message));
     return this.procurement.createManualGoodsReceipt(input as any, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async correctGoodsReceipt(@Args('input') input: CorrectGoodsReceiptInput, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return inventoryCostView(await this.procurement.correctGoodsReceipt(input as any, user.id), user);
   }
 }

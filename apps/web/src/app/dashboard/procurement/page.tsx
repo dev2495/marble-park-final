@@ -17,6 +17,7 @@ import {
   FileClock,
   History,
   PackageCheck,
+  PencilLine,
   Plus,
   Printer,
   Search,
@@ -118,6 +119,11 @@ const MANUAL_GRN = gql`
     createManualGoodsReceipt(input: $input)
   }
 `;
+const CORRECT_GRN = gql`
+  mutation CorrectGrn($input: CorrectGoodsReceiptInput!) {
+    correctGoodsReceipt(input: $input)
+  }
+`;
 const CANCEL_PO = gql`
   mutation CancelPo($id: ID!, $reason: String!) {
     cancelPurchaseOrder(id: $id, reason: $reason)
@@ -163,6 +169,19 @@ function uuid() {
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random()}`;
 }
+function indiaDate(value: Date | string = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || "";
+  return `${pick("year")}-${pick("month")}-${pick("day")}`;
+}
+function inwardDateIso(value: string) {
+  return value ? `${value}T12:00:00+05:30` : undefined;
+}
 
 export default function ProcurementSuitePage() {
   const [tab, setTab] = useState<Tab>("overview");
@@ -204,6 +223,7 @@ export default function ProcurementSuitePage() {
     "Supplier delivery received without a prior PO",
   );
   const [manualKey, setManualKey] = useState(uuid());
+  const [grnCorrection, setGrnCorrection] = useState<any>(null);
   const [notice, setNotice] = useState("");
   const poComposerRef = useRef<HTMLDivElement>(null);
   const poProductInputRef = useRef<HTMLInputElement>(null);
@@ -257,6 +277,7 @@ export default function ProcurementSuitePage() {
   const [createPo, createState] = useMutation(CREATE_PO);
   const [receivePo, receiveState] = useMutation(RECEIVE_PO);
   const [manualGrn, manualState] = useMutation(MANUAL_GRN);
+  const [correctGrn, correctState] = useMutation(CORRECT_GRN);
   const [cancelPo, cancelState] = useMutation(CANCEL_PO);
   const demands = useMemo(
     () => data?.purchaseDemandPage?.items || [],
@@ -293,6 +314,7 @@ export default function ProcurementSuitePage() {
     }
   }, [commercial.vendorId, demands, selectedDemand]);
   const canCancel = ["owner", "admin"].includes(data?.me?.role);
+  const canCorrectGrn = ["owner", "admin"].includes(data?.me?.role);
   const canViewCost = ["owner", "admin"].includes(data?.me?.role);
   const canEnterPoRate = Boolean(data?.me?.effectivePermissions?.includes("procurement.manage"));
   const canEnterManualRate = Boolean(data?.me?.effectivePermissions?.includes("goods_receipts.manage"));
@@ -307,7 +329,7 @@ export default function ProcurementSuitePage() {
     directLines.every((line: any) => enteredBaseQuantity(line) > 0);
   const manualLinesReady =
     manualLines.length > 0 &&
-    manualLines.every((line: any) => enteredBaseQuantity(line) > 0 && Number(line.enteredUnitCost || 0) > 0);
+    manualLines.every((line: any) => enteredBaseQuantity(line) > 0);
   const demandLinesReady = selectedDemand.length > 0;
   const selectedReceiptLines = (activePo?.lines || []).filter(
     (line: any) => receivedBaseQuantity(line, receiveRows[line.id] || {}) > 0,
@@ -319,6 +341,7 @@ export default function ProcurementSuitePage() {
     createState.error,
     receiveState.error,
     manualState.error,
+    correctState.error,
     cancelState.error,
   ].filter(Boolean);
 
@@ -492,9 +515,7 @@ export default function ProcurementSuitePage() {
         input: {
           purchaseOrderId: activePo.id,
           ...receipt,
-          receivedDate: receipt.receivedDate
-            ? new Date(receipt.receivedDate).toISOString()
-            : undefined,
+          receivedDate: inwardDateIso(receipt.receivedDate),
           locationId: receipt.locationId || undefined,
           lines: JSON.stringify(lines),
           idempotencyKey: receiptKey,
@@ -520,9 +541,7 @@ export default function ProcurementSuitePage() {
             commercial.vendorName ||
             vendors.find((v: any) => v.id === commercial.vendorId)?.name,
           ...receipt,
-          receivedDate: receipt.receivedDate
-            ? new Date(receipt.receivedDate).toISOString()
-            : undefined,
+          receivedDate: inwardDateIso(receipt.receivedDate),
           locationId: receipt.locationId || undefined,
           reason: manualReason,
           lines: JSON.stringify(manualLines.map((line: any) => linePayload(line, canEnterManualRate))),
@@ -548,6 +567,38 @@ export default function ProcurementSuitePage() {
     if (!reason?.trim()) return;
     await cancelPo({ variables: { id: po.id, reason: reason.trim() } });
     setNotice(`${po.poNumber} cancelled with audit history preserved.`);
+    await refetch();
+  }
+  function beginGrnCorrection(grn: any) {
+    setGrnCorrection({
+      id: grn.id,
+      grnNumber: grn.grnNumber,
+      purchaseOrderId: grn.purchaseOrderId || "",
+      vendorId: grn.vendorId || "",
+      vendorName: grn.vendorName || "",
+      receivedDate: indiaDate(grn.receivedDate),
+      supplierChallan: grn.supplierChallan || "",
+      supplierBill: grn.supplierBill || "",
+      notes: grn.notes || "",
+      reason: "",
+      expectedUpdatedAt: grn.updatedAt,
+    });
+  }
+  async function submitGrnCorrection() {
+    if (!grnCorrection) return;
+    const response = await correctGrn({ variables: { input: {
+      goodsReceiptNoteId: grnCorrection.id,
+      receivedDate: inwardDateIso(grnCorrection.receivedDate),
+      vendorId: grnCorrection.purchaseOrderId ? undefined : grnCorrection.vendorId || undefined,
+      vendorName: grnCorrection.purchaseOrderId || grnCorrection.vendorId ? undefined : grnCorrection.vendorName,
+      supplierChallan: grnCorrection.supplierChallan,
+      supplierBill: grnCorrection.supplierBill,
+      notes: grnCorrection.notes,
+      reason: grnCorrection.reason,
+      expectedUpdatedAt: grnCorrection.expectedUpdatedAt,
+    } } });
+    setNotice(`${response.data?.correctGoodsReceipt?.grnNumber || grnCorrection.grnNumber} header corrected. The reason and before/after values are in the audit trail; stock quantities were not rewritten.`);
+    setGrnCorrection(null);
     await refetch();
   }
 
@@ -1387,6 +1438,11 @@ export default function ProcurementSuitePage() {
                     challan {grn.supplierChallan || "not captured"} · bill{" "}
                     {grn.supplierBill || "not captured"}
                   </p>
+                  {Array.isArray(grn.metadata?.corrections) && grn.metadata.corrections.length ? (
+                    <p className="mt-1 text-[11px] font-semibold text-amber-700">
+                      {grn.metadata.corrections.length} audited header correction{grn.metadata.corrections.length === 1 ? "" : "s"}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2 self-start">
                   <span className="rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
@@ -1398,8 +1454,91 @@ export default function ProcurementSuitePage() {
                       Create labels
                     </Link>
                   </Button>
+                  {canCorrectGrn ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => grnCorrection?.id === grn.id ? setGrnCorrection(null) : beginGrnCorrection(grn)}
+                    >
+                      <PencilLine className="mr-2 h-3.5 w-3.5" />
+                      {grnCorrection?.id === grn.id ? "Close" : "Correct header"}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
+              {grnCorrection?.id === grn.id ? (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                  <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
+                    <div>
+                      <p className="font-semibold text-amber-950">Controlled GRN header correction</p>
+                      <p className="mt-1 text-xs leading-5 text-amber-900">
+                        Owner/admin only. The original and corrected values, actor and reason are retained. Item quantities and stock ledgers are deliberately immutable; use Inventory Control for a quantity correction.
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-800">No stock rewrite</span>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {!grn.purchaseOrderId ? (
+                      <Field label="Governed supplier (optional)">
+                        <SearchableSelect
+                          value={grnCorrection.vendorId}
+                          onValueChange={(value) => {
+                            const vendor = vendors.find((row: any) => row.id === value);
+                            setGrnCorrection({ ...grnCorrection, vendorId: value, vendorName: vendor?.name || grnCorrection.vendorName });
+                          }}
+                          options={vendors.map((vendor: any) => ({
+                            value: vendor.id,
+                            label: vendor.name,
+                            description: [vendor.code, vendor.city].filter(Boolean).join(" · "),
+                            keywords: [vendor.code, vendor.phone, vendor.email].filter(Boolean).join(" "),
+                          }))}
+                          placeholder={grnCorrection.vendorName || "Select supplier"}
+                          searchPlaceholder="Search supplier, code or city"
+                        />
+                      </Field>
+                    ) : (
+                      <Field label="Supplier from PO">
+                        <Input value={grn.vendorName} disabled />
+                      </Field>
+                    )}
+                    {!grn.purchaseOrderId ? (
+                      <Field label="Supplier name">
+                        <Input
+                          value={grnCorrection.vendorName}
+                          onChange={(event) => setGrnCorrection({ ...grnCorrection, vendorId: "", vendorName: event.target.value })}
+                          placeholder="Supplier shown on this GRN"
+                        />
+                      </Field>
+                    ) : null}
+                    <Field label="Inward date">
+                      <Input
+                        type="date"
+                        max={indiaDate()}
+                        value={grnCorrection.receivedDate}
+                        onChange={(event) => setGrnCorrection({ ...grnCorrection, receivedDate: event.target.value })}
+                      />
+                    </Field>
+                    <Field label="Supplier challan">
+                      <Input value={grnCorrection.supplierChallan} onChange={(event) => setGrnCorrection({ ...grnCorrection, supplierChallan: event.target.value })} />
+                    </Field>
+                    <Field label="Supplier bill">
+                      <Input value={grnCorrection.supplierBill} onChange={(event) => setGrnCorrection({ ...grnCorrection, supplierBill: event.target.value })} />
+                    </Field>
+                    <Field label="Notes">
+                      <Input value={grnCorrection.notes} onChange={(event) => setGrnCorrection({ ...grnCorrection, notes: event.target.value })} />
+                    </Field>
+                    <Field label="Correction reason (required)">
+                      <Input value={grnCorrection.reason} onChange={(event) => setGrnCorrection({ ...grnCorrection, reason: event.target.value })} placeholder="What was entered incorrectly?" />
+                    </Field>
+                  </div>
+                  <div className="mt-4 flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setGrnCorrection(null)}>Cancel</Button>
+                    <Button disabled={correctState.loading || !grnCorrection.receivedDate || grnCorrection.reason.trim().length < 8} onClick={submitGrnCorrection}>
+                      {correctState.loading ? "Saving…" : "Save audited correction"}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[880px] text-left text-xs">
                   <thead className="text-[var(--ink-4)]">
@@ -2460,6 +2599,7 @@ function ReceiptHeader({ form, setForm, locations }: any) {
       <Field label="Receipt date">
         <Input
           type="date"
+          max={indiaDate()}
           value={form.receivedDate}
           onChange={(e) => setForm({ ...form, receivedDate: e.target.value })}
         />

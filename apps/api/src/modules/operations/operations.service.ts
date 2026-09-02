@@ -1328,7 +1328,7 @@ export class OperationsService {
       include: {
         instances: {
           include: {
-            product: { include: { brandMaster: true } },
+            product: { include: { brandMaster: true, tileDesignMaster: true } },
             lot: { include: { balances: { include: { location: true } } } },
             displaySample: true,
           },
@@ -1344,11 +1344,24 @@ export class OperationsService {
     const selection = new Set((selectedIds || []).map(String));
     const printable = job.instances.filter((instance: any) => instance.status === 'active' && (!selection.size || selection.has(instance.id)));
     if (!printable.length) throw new BadRequestException('No active labels were selected');
+    const governedBrands = await this.prisma.productBrand.findMany({
+      where: { status: 'active' },
+      select: { id: true, name: true, code: true },
+    });
+    const governedBrandByName = new Map(governedBrands.map((brand: any) => [String(brand.name || '').trim().toUpperCase(), brand]));
     const missingMrp = printable.find((instance: any) => !Number.isFinite(Number(instance.product?.defaultMrpInclusive)) || Number(instance.product?.defaultMrpInclusive) <= 0);
     if (missingMrp) {
       throw new BadRequestException(`${missingMrp.product?.sku || 'This SKU'} needs a verified Product Master MRP before its physical label can be printed. Complete it in MRP Readiness.`);
     }
     const labels = await Promise.all(printable.flatMap((instance: any) => Array.from({ length: Math.max(1, copies) }, (_, copyIndex) => ({ instance, copyIndex }))).map(async ({ instance, copyIndex }: any) => {
+      const tile = String(instance.product?.category || '').trim().toLowerCase() === 'tiles';
+      const designBrand = tile
+        ? governedBrandByName.get(String(instance.product?.tileDesignMaster?.brand || '').trim().toUpperCase())
+        : null;
+      const governedBrand = designBrand || instance.product?.brandMaster || null;
+      const compactProductValue = tile
+        ? instance.product?.tileDesignMaster?.name || instance.product?.name || instance.product?.internalCode || instance.product?.sku
+        : instance.product?.internalCode || instance.product?.sku || instance.displaySample?.internalCode;
       const payload = {
         version: 1,
         system: 'Marble Park Retail OS',
@@ -1356,8 +1369,13 @@ export class OperationsService {
         sku: instance.product?.sku || null,
         internalCode: instance.displaySample?.internalCode || instance.product?.internalCode || null,
         productCode: instance.displaySample?.internalCode || instance.product?.internalCode || instance.product?.sku || null,
+        compactProductValue: compactProductValue || null,
+        tileDesignName: instance.product?.tileDesignMaster?.name || null,
+        tileDesignCode: instance.product?.tileDesignMaster?.designCode || null,
         productName: instance.product?.name || null,
         brandCode: instance.product?.brandMaster?.code || null,
+        governedBrandCode: governedBrand?.code || null,
+        governedBrandName: governedBrand?.name || null,
         brand: instance.product?.brand || null,
         category: instance.product?.category || null,
         mrpInclusive: instance.product?.defaultMrpInclusive == null ? null : Number(instance.product.defaultMrpInclusive),
@@ -1545,6 +1563,12 @@ export class OperationsService {
         : [];
       return {
         result,
+        normalizedLabelCode: normalizedCode,
+        message: result === 'success'
+          ? `Matched active production label ${normalizedCode}`
+          : result === 'inactive'
+            ? `Label ${normalizedCode} exists but is inactive or its governed product, lot, or display record is inactive. Do not use it until the source record is corrected.`
+            : `Label ${normalizedCode} is not registered in production. It may be a sample or test print. Print a fresh label from Labels & Scan before using it.`,
         event,
         label: instance || null,
         relatedProducts: relatedProducts.map((product: any) => ({

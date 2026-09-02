@@ -375,6 +375,8 @@ model GoodsReceiptNote {
   status          String             @default("posted")
   notes           String             @default("")
   attachments     Json               @default("[]")
+  /// Append-only correction summaries. The canonical before/after trail remains in AuditEvent.
+  metadata        Json               @default("{}")
   createdAt       DateTime           @default(now())
   updatedAt       DateTime
   lines           GoodsReceiptLine[]

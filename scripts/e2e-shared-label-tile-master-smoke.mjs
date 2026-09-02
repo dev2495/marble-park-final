@@ -60,7 +60,7 @@ async function main() {
   const displayJob = await createJob({ displaySampleId: display.id }, 1, 'display_sample');
 
   const templates = (await gql(`query { internalLabelTemplates }`, {}, token)).internalLabelTemplates;
-  assert(templates.length === 1 && templates[0].code === 'thermal_4x2' && templates[0].version === 2 && templates[0].widthMm === 50.8 && templates[0].heightMm === 101.6 && templates[0].pageWidthMm === 50.8 && templates[0].pageHeightMm === 101.6, 'The only active physical template must be an exact 2 x 4 inch portrait sticker');
+  assert(templates.length === 1 && templates[0].code === 'thermal_4x2' && templates[0].version === 3 && templates[0].widthMm === 50.8 && templates[0].heightMm === 101.6 && templates[0].pageWidthMm === 50.8 && templates[0].pageHeightMm === 101.6, 'The only active physical template must be the exact 2 x 4 inch portrait v3 sticker');
   const prepared = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: productJob.id, templateCode: 'thermal_4x2', labelIds: [productJob.instances[0].id], copies: 1, reason: 'Single-label acceptance' } }, token)).prepareInternalLabelPrintRun;
   let run = (await gql(`query($id: ID!) { internalLabelPrintRun(id: $id) }`, { id: prepared.id }, token)).internalLabelPrintRun;
   assert(run.status === 'prepared' && run.labels.length === 1 && run.labels[0].qrValue === `MP-LABEL:${run.labels[0].labelCode}`, 'Prepared run must isolate one selected label and encode scanner-ready QR payload');

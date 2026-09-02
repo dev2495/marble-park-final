@@ -18,6 +18,7 @@ import {
   Trash2,
   Unlock,
   X,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -394,7 +395,7 @@ export default function IntentDetailPage() {
     const response = await scanLabel({ variables: { labelCode: payload, input: { action: "intent_similar_lookup", entityType: "Intent", entityId: id, metadata: { surface: "intent_detail" } } } });
     const result = response.data?.scanInternalLabel;
     if (result?.result !== "success" || !result?.label?.product) {
-      setScanMessage("No active governed label matched this scan. The intent was not changed.");
+      setScanMessage(`Scan blocked: ${result?.message || "No active production label matched this code."} The intent was not changed.`);
       return;
     }
     setScanResult(result);
@@ -603,7 +604,7 @@ export default function IntentDetailPage() {
           </div>
           {scanOpen ? <div className="mt-3 rounded-r4 border border-emerald-200 bg-emerald-50 p-3"><PhysicalQrScanner compact busy={scanState.loading} onDetected={addFromScan}/></div> : null}
           {scanResult ? <div className="mt-3"><ScanProductSelector result={scanResult} busy={scanState.loading} existingProductIds={rows.map((row) => row.productId || "")} primaryLabel="Add selected to intent" onPrimary={addScannedProducts} onDismiss={() => setScanResult(null)}/></div> : null}
-          {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-r4 p-3 text-xs font-semibold ${scanMessage.startsWith("No active") ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}><CheckCircle2 className="h-4 w-4" />{scanMessage}</div> : null}
+          {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-r4 p-3 text-xs font-semibold ${scanMessage.startsWith("Scan blocked") ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}>{scanMessage.startsWith("Scan blocked") ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}{scanMessage}</div> : null}
           {scanState.error ? <div className="mt-3"><QueryErrorBanner error={scanState.error}/></div> : null}
         </section>
       ) : null}

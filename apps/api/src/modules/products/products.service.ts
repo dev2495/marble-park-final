@@ -620,7 +620,7 @@ export class ProductsService {
     if (!requestedBrand) throw new BadRequestException('Select a brand from Brand Master');
     const brandMaster = await this.prisma.productBrand.findFirst({
       where: { name: { equals: requestedBrand, mode: 'insensitive' }, status: 'active' },
-      select: { name: true },
+      select: { id: true, name: true, code: true },
     });
     if (!brandMaster) throw new BadRequestException('Choose an active brand from Brand Master');
     const media = input.media === undefined && existing ? existing.media : await this.normalizeMedia(input.media || {});
@@ -640,10 +640,33 @@ export class ProductsService {
       const design = existing
         ? await tx.tileDesign.update({ where: { id: existing.id }, data })
         : await tx.tileDesign.create({ data: { id: ulid(), ...data } });
+      const syncedVariants = await tx.product.updateMany({
+        where: {
+          tileDesignId: design.id,
+          OR: [
+            { brandId: null },
+            { brandId: { not: brandMaster.id } },
+            { brand: { not: brandMaster.name } },
+          ],
+        },
+        data: { brand: brandMaster.name, brandId: brandMaster.id, updatedAt: new Date() },
+      });
       await tx.auditEvent.create({ data: {
         id: ulid(), actorUserId, action: existing ? 'tile_design.update' : 'tile_design.create', entityType: 'TileDesign', entityId: design.id,
-        summary: `${existing ? 'Updated' : 'Created'} tile design ${design.designCode}`, metadata: { before: existing || null, after: design },
+        summary: `${existing ? 'Updated' : 'Created'} tile design ${design.designCode}`, metadata: {
+          before: existing || null,
+          after: design,
+          governedBrand: { id: brandMaster.id, name: brandMaster.name, code: brandMaster.code || null },
+          syncedVariantCount: syncedVariants.count,
+        },
       } });
+      if (syncedVariants.count > 0) {
+        await tx.auditEvent.create({ data: {
+          id: ulid(), actorUserId, action: 'tile_design.variant_brand_sync', entityType: 'TileDesign', entityId: design.id,
+          summary: `Synced ${syncedVariants.count} variant brand${syncedVariants.count === 1 ? '' : 's'} for ${design.designCode}`,
+          metadata: { brandId: brandMaster.id, brandName: brandMaster.name, brandCode: brandMaster.code || null, variantCount: syncedVariants.count },
+        } });
+      }
       return design;
     });
   }

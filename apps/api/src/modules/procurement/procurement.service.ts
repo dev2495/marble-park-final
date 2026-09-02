@@ -45,6 +45,18 @@ export interface ManualGoodsReceiptInput {
   lines?: any;
 }
 
+export interface CorrectGoodsReceiptInput {
+  goodsReceiptNoteId: string;
+  receivedDate: Date;
+  vendorId?: string;
+  vendorName?: string;
+  supplierChallan?: string;
+  supplierBill?: string;
+  notes?: string;
+  reason: string;
+  expectedUpdatedAt: Date;
+}
+
 @Injectable()
 export class ProcurementService {
   constructor(private prisma: PrismaService) {}
@@ -863,6 +875,7 @@ export class ProcurementService {
       if (existing) return (await this.decorateGrns([existing]))[0];
     }
     if (!input.purchaseOrderId) throw new BadRequestException('Purchase order is required for GRN receiving');
+    const receivedDate = this.normalizeReceivedDate(input.receivedDate);
     const po = await (this.prisma as any).purchaseOrder.findUnique({ where: { id: input.purchaseOrderId } });
     if (!po) throw new NotFoundException('Purchase order not found');
     if (po.status === 'cancelled' || po.status === 'closed') throw new BadRequestException('This purchase order is closed or cancelled');
@@ -895,7 +908,7 @@ export class ProcurementService {
           vendorName: po.vendorName,
           supplierChallan: input.supplierChallan || null,
           supplierBill: input.supplierBill || null,
-          receivedDate: input.receivedDate ? new Date(input.receivedDate) : new Date(),
+          receivedDate,
           receivedBy: actorUserId,
           status: 'posted',
           notes: input.notes || '',
@@ -1121,6 +1134,7 @@ export class ProcurementService {
       : null;
     const vendorName = String(input.vendorName || vendor?.name || '').trim();
     if (!vendorName) throw new BadRequestException('Vendor name is required');
+    const receivedDate = this.normalizeReceivedDate(input.receivedDate);
     const lines = this.normalizeLines(input.lines);
     if (!lines.length) throw new BadRequestException('Add at least one SKU to receive');
     const productIds = Array.from(new Set(lines.map((line: any) => String(line.productId || '').trim()).filter(Boolean)));
@@ -1141,7 +1155,7 @@ export class ProcurementService {
           vendorName,
           supplierChallan: input.supplierChallan || null,
           supplierBill: input.supplierBill || null,
-          receivedDate: input.receivedDate ? new Date(input.receivedDate) : new Date(),
+          receivedDate,
           receivedBy: actorUserId,
           notes: [input.reason ? `Reason: ${input.reason}` : '', input.notes || ''].filter(Boolean).join(' • '),
           updatedAt: new Date(),
@@ -1235,6 +1249,97 @@ export class ProcurementService {
     }, { timeout: 20000 });
 
     const [decorated] = await this.decorateGrns([grn]);
+    return decorated;
+  }
+
+  async correctGoodsReceipt(input: CorrectGoodsReceiptInput, actorUserId: string) {
+    const id = String(input.goodsReceiptNoteId || '').trim();
+    const reason = String(input.reason || '').trim();
+    if (!id) throw new BadRequestException('Goods receipt is required');
+    if (reason.length < 8) throw new BadRequestException('Enter a clear correction reason of at least 8 characters');
+    const receivedDate = this.normalizeReceivedDate(input.receivedDate);
+    const expectedUpdatedAt = new Date(input.expectedUpdatedAt);
+    if (!Number.isFinite(expectedUpdatedAt.getTime())) throw new BadRequestException('Refresh the receipt before correcting it');
+
+    const corrected = await this.prisma.$transaction(async (tx: any) => {
+      const current = await tx.goodsReceiptNote.findUnique({ where: { id } });
+      if (!current) throw new NotFoundException('Goods receipt not found');
+      if (new Date(current.updatedAt).getTime() !== expectedUpdatedAt.getTime()) {
+        throw new BadRequestException('This receipt changed after you opened it. Refresh and review the latest record before correcting it.');
+      }
+
+      let vendorId = current.vendorId;
+      let vendorName = current.vendorName;
+      if (!current.purchaseOrderId) {
+        if (input.vendorId) {
+          const vendor = await tx.vendor.findUnique({ where: { id: input.vendorId } });
+          if (!vendor || vendor.status !== 'active') throw new BadRequestException('Choose an active supplier');
+          vendorId = vendor.id;
+          vendorName = vendor.name;
+        } else if (input.vendorName !== undefined) {
+          vendorName = String(input.vendorName || '').trim();
+          vendorId = null;
+        }
+        if (!vendorName) throw new BadRequestException('Supplier name is required');
+      }
+
+      const before = {
+        vendorId: current.vendorId || null,
+        vendorName: current.vendorName,
+        receivedDate: current.receivedDate,
+        supplierChallan: current.supplierChallan || null,
+        supplierBill: current.supplierBill || null,
+        notes: current.notes || '',
+      };
+      const after = {
+        vendorId: vendorId || null,
+        vendorName,
+        receivedDate,
+        supplierChallan: input.supplierChallan === undefined ? current.supplierChallan : String(input.supplierChallan || '').trim() || null,
+        supplierBill: input.supplierBill === undefined ? current.supplierBill : String(input.supplierBill || '').trim() || null,
+        notes: input.notes === undefined ? current.notes : String(input.notes || '').trim(),
+      };
+      const changed = JSON.stringify({ ...before, receivedDate: new Date(before.receivedDate).toISOString() })
+        !== JSON.stringify({ ...after, receivedDate: new Date(after.receivedDate).toISOString() });
+      if (!changed) throw new BadRequestException('Change at least one receipt header field before saving the correction');
+
+      const correction = {
+        correctedAt: new Date().toISOString(),
+        correctedBy: actorUserId,
+        reason,
+        before,
+        after,
+      };
+      const priorMetadata = current.metadata && typeof current.metadata === 'object' ? current.metadata : {};
+      const priorCorrections = Array.isArray(priorMetadata.corrections) ? priorMetadata.corrections : [];
+      const now = new Date();
+      const updated = await tx.goodsReceiptNote.update({
+        where: { id },
+        data: {
+          ...after,
+          metadata: { ...priorMetadata, corrections: [...priorCorrections, correction] },
+          updatedAt: now,
+        },
+      });
+      const lots = await tx.inventoryLot.updateMany({
+        where: { sourceId: id, sourceType: { in: ['grn', 'manual_grn'] } },
+        data: { receivedAt: receivedDate, updatedAt: now },
+      });
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(),
+          actorUserId,
+          action: 'grn.correct',
+          entityType: 'GoodsReceiptNote',
+          entityId: id,
+          summary: `Corrected receipt header ${current.grnNumber}`,
+          metadata: { reason, before, after, affectedLotCount: lots.count, stockQuantitiesChanged: false },
+        },
+      });
+      return updated;
+    }, { isolationLevel: 'Serializable', timeout: 15000 });
+
+    const [decorated] = await this.decorateGrns([corrected]);
     return decorated;
   }
 
@@ -1809,6 +1914,15 @@ export class ProcurementService {
       }
     }
     return Array.isArray(lines) ? lines : [];
+  }
+
+  private normalizeReceivedDate(value?: Date | string | null) {
+    const date = value ? new Date(value) : new Date();
+    if (!Number.isFinite(date.getTime())) throw new BadRequestException('Enter a valid inward date');
+    if (indiaDay(date) > indiaDay(new Date())) {
+      throw new BadRequestException('Inward date cannot be later than today in India');
+    }
+    return date;
   }
 
   private isTileLine(line: any) {
