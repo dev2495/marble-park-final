@@ -395,12 +395,14 @@ export class ProductsResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('search', { nullable: true }) search?: string,
     @Args('status', { nullable: true }) status?: string,
+    @Args('readiness', { nullable: true }) readiness?: string,
+    @Args('source', { nullable: true }) source?: string,
     @Args('sort', { nullable: true }) sort?: string,
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
-    return this.products.tileDesignsPage({ search, status, sort, skip, take });
+    return this.products.tileDesignsPage({ search, status, readiness, source, sort, skip, take });
   }
 
   @Query(() => GraphQLJSON)

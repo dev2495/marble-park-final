@@ -89,6 +89,15 @@ async function main() {
   assert(designPreview.ready === 1 && designPreview.failed === 0 && designPreview.confirmationToken, 'Design-only Excel preview must validate live Brand Master without writing');
   const designApplied = (await gql('mutation($filename:String!,$contentBase64:String!,$confirmationToken:String!){applyTileDesignImport(filename:$filename,contentBase64:$contentBase64,confirmationToken:$confirmationToken){result}}', { filename: designFilename, contentBase64: designContentBase64, confirmationToken: designPreview.confirmationToken }, token)).applyTileDesignImport.result;
   assert(designApplied.applied === 1 && await prisma.tileDesign.findUnique({ where: { designCode: `DX-${suffix}` } }), 'Design-only Excel apply must create the governed design exactly once');
+  const awaitingImportedDesign = (await gql('query($search:String){tileDesignsPage(search:$search,status:"active",readiness:"awaiting_variant",source:"excel",sort:"updated",skip:0,take:10)}', { search: `Excel design ${suffix}` }, token)).tileDesignsPage;
+  assert(
+    awaitingImportedDesign.total === 1 &&
+      awaitingImportedDesign.items[0]?.id === designApplied.created[0]?.id &&
+      awaitingImportedDesign.items[0]?.variants?.length === 0,
+    'A confirmed Excel design must be immediately discoverable in the full registry as needing its first variant',
+  );
+  const importedPickerSearch = (await gql('query($search:String){tileDesignsPage(search:$search,status:"active",sort:"code_asc",skip:0,take:50)}', { search: `DX-${suffix}` }, token)).tileDesignsPage;
+  assert(importedPickerSearch.items.some((row) => row.id === designApplied.created[0]?.id), 'The server-backed variant design picker must find a newly imported design outside the current registry page');
   const importDesignCode = `IMP-${suffix}`;
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Product Master');

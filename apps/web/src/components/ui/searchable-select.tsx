@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Loader2 as LoaderCircle, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type SearchableSelectOption = {
@@ -21,6 +21,8 @@ type Props = {
   searchPlaceholder?: string;
   emptyText?: string;
   disabled?: boolean;
+  loading?: boolean;
+  onSearchChange?: (value: string) => void;
   className?: string;
   ariaLabel?: string;
 };
@@ -33,6 +35,8 @@ export function SearchableSelect({
   searchPlaceholder = "Type to search…",
   emptyText = "No matching options",
   disabled,
+  loading = false,
+  onSearchChange,
   className,
   ariaLabel,
 }: Props) {
@@ -68,6 +72,7 @@ export function SearchableSelect({
     onValueChange(option.value);
     setOpen(false);
     setQuery("");
+    onSearchChange?.("");
   }
 
   return (
@@ -75,7 +80,10 @@ export function SearchableSelect({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) setQuery("");
+        if (!next) {
+          setQuery("");
+          onSearchChange?.("");
+        }
       }}
     >
       <Popover.Trigger asChild>
@@ -112,12 +120,13 @@ export function SearchableSelect({
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
+                  onSearchChange?.(event.target.value);
                   setActive(0);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    setActive((index) => Math.min(filtered.length - 1, index + 1));
+                    setActive((index) => Math.min(Math.max(0, filtered.length - 1), index + 1));
                   } else if (event.key === "ArrowUp") {
                     event.preventDefault();
                     setActive((index) => Math.max(0, index - 1));
@@ -139,7 +148,13 @@ export function SearchableSelect({
               />
             </label>
           </div>
-          <div id="searchable-select-options" role="listbox" className="max-h-72 overflow-y-auto overscroll-contain p-1.5">
+          <div id="searchable-select-options" role="listbox" aria-busy={loading} className="max-h-72 overflow-y-auto overscroll-contain p-1.5">
+            {loading ? (
+              <div className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-[#7c706c]">
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                Searching the full registry…
+              </div>
+            ) : null}
             {filtered.map((option, index) => (
               <button
                 type="button"
@@ -166,7 +181,7 @@ export function SearchableSelect({
                 </span>
               </button>
             ))}
-            {!filtered.length ? (
+            {!loading && !filtered.length ? (
               <div className="px-4 py-8 text-center text-sm text-[#7c706c]">{emptyText}</div>
             ) : null}
           </div>

@@ -533,23 +533,59 @@ export class ProductsService {
     return { categories, brands, finishes, materials, tileSizes, uoms, taxCodes };
   }
 
-  async tileDesignsPage(args?: { search?: string; status?: string; sort?: string; skip?: number; take?: number }) {
+  async tileDesignsPage(args?: { search?: string; status?: string; readiness?: string; source?: string; sort?: string; skip?: number; take?: number }) {
     const where: any = {};
     if (args?.status && args.status !== 'all') where.status = args.status;
+    const readiness = String(args?.readiness || 'all').trim().toLowerCase();
+    if (readiness === 'awaiting_variant') {
+      where.status = 'active';
+      where.variants = { none: { status: { not: 'archived' } } };
+    } else if (readiness === 'variant_ready') {
+      where.variants = { some: { status: { not: 'archived' } } };
+    }
+    if (String(args?.source || '').trim().toLowerCase() === 'excel') {
+      where.metadata = { path: ['source'], equals: 'tile-design-excel-import' };
+    }
     const search = String(args?.search || '').trim();
-    if (search) where.OR = [
-      { designCode: { contains: search, mode: 'insensitive' } },
-      { name: { contains: search, mode: 'insensitive' } },
-      { brand: { contains: search, mode: 'insensitive' } },
-      { collection: { contains: search, mode: 'insensitive' } },
-      { surface: { contains: search, mode: 'insensitive' } },
-      { colour: { contains: search, mode: 'insensitive' } },
-      { variants: { some: { OR: [
-        { sku: { contains: search, mode: 'insensitive' } },
-        { internalCode: { contains: search, mode: 'insensitive' } },
-        { aliases: { some: { normalizedValue: { contains: search.toUpperCase() }, status: 'active' } } },
-      ] } } },
-    ];
+    if (search) {
+      const tokens = search.split(/\s+/).map((token) => token.trim()).filter(Boolean).slice(0, 8);
+      const governedBrands = await this.prisma.productBrand.findMany({
+        where: {
+          status: 'active',
+          OR: tokens.flatMap((token) => [
+            { name: { contains: token, mode: 'insensitive' as const } },
+            { code: { contains: token, mode: 'insensitive' as const } },
+          ]),
+        },
+        select: { name: true, code: true },
+      });
+      where.AND = tokens.map((token) => {
+        const tokenBrands = governedBrands
+          .filter((brand) => [brand.name, brand.code || ''].some((value) => value.toLowerCase().includes(token.toLowerCase())))
+          .map((brand) => brand.name);
+        return { OR: [
+          { designCode: { contains: token, mode: 'insensitive' } },
+          { name: { contains: token, mode: 'insensitive' } },
+          { brand: { contains: token, mode: 'insensitive' } },
+          ...(tokenBrands.length ? [{ brand: { in: tokenBrands } }] : []),
+          { collection: { contains: token, mode: 'insensitive' } },
+          { surface: { contains: token, mode: 'insensitive' } },
+          { colour: { contains: token, mode: 'insensitive' } },
+          { variants: { some: { OR: [
+            { sku: { contains: token, mode: 'insensitive' } },
+            { internalCode: { contains: token, mode: 'insensitive' } },
+            { name: { contains: token, mode: 'insensitive' } },
+            { finish: { contains: token, mode: 'insensitive' } },
+            { dimensions: { contains: token, mode: 'insensitive' } },
+            { aliases: { some: { normalizedValue: { contains: token.toUpperCase() }, status: 'active' } } },
+            { tileSizeMaster: { is: { OR: [
+              { code: { contains: token, mode: 'insensitive' } },
+              { name: { contains: token, mode: 'insensitive' } },
+            ] } } },
+          ] } } },
+        ] };
+      });
+    }
     const take = Math.min(100, Math.max(1, Number(args?.take || 30)));
     const skip = Math.max(0, Number(args?.skip || 0));
     const orderBy: any = args?.sort === 'code_asc' ? [{ designCode: 'asc' }, { id: 'asc' }]
@@ -578,14 +614,31 @@ export class ProductsService {
     if (args?.tileSizeId) where.tileSizeId = args.tileSizeId;
     if (args?.status && args.status !== 'all') where.status = args.status;
     const search = String(args?.search || '').trim();
-    if (search) where.OR = [
-      { sku: { contains: search, mode: 'insensitive' } },
-      { internalCode: { contains: search, mode: 'insensitive' } },
-      { name: { contains: search, mode: 'insensitive' } },
-      { finish: { contains: search, mode: 'insensitive' } },
-      { tileDesignMaster: { is: { designCode: { contains: search, mode: 'insensitive' } } } },
-      { aliases: { some: { normalizedValue: { contains: search.toUpperCase() }, status: 'active' } } },
-    ];
+    if (search) {
+      const tokens = search.split(/\s+/).map((token) => token.trim()).filter(Boolean).slice(0, 8);
+      where.AND = tokens.map((token) => ({ OR: [
+        { sku: { contains: token, mode: 'insensitive' } },
+        { internalCode: { contains: token, mode: 'insensitive' } },
+        { name: { contains: token, mode: 'insensitive' } },
+        { brand: { contains: token, mode: 'insensitive' } },
+        { finish: { contains: token, mode: 'insensitive' } },
+        { dimensions: { contains: token, mode: 'insensitive' } },
+        { tileDesignMaster: { is: { OR: [
+          { designCode: { contains: token, mode: 'insensitive' } },
+          { name: { contains: token, mode: 'insensitive' } },
+          { brand: { contains: token, mode: 'insensitive' } },
+        ] } } },
+        { tileSizeMaster: { is: { OR: [
+          { code: { contains: token, mode: 'insensitive' } },
+          { name: { contains: token, mode: 'insensitive' } },
+        ] } } },
+        { brandMaster: { is: { OR: [
+          { name: { contains: token, mode: 'insensitive' } },
+          { code: { contains: token, mode: 'insensitive' } },
+        ] } } },
+        { aliases: { some: { normalizedValue: { contains: token.toUpperCase() }, status: 'active' } } },
+      ] }));
+    }
     const take = Math.min(100, Math.max(1, Number(args?.take || 40)));
     const skip = Math.max(0, Number(args?.skip || 0));
     const orderBy: any = args?.sort === 'sku_asc' ? [{ sku: 'asc' }, { id: 'asc' }]
@@ -792,16 +845,21 @@ export class ProductsService {
 
   async tileDesignStats() {
     const tileWhere = { status: 'active', category: { equals: 'Tiles', mode: 'insensitive' as const } };
-    const [designs, products, displaySamples] = await Promise.all([
+    const [designs, products, displaySamples, awaitingFirstVariant, importedDesigns] = await Promise.all([
       (this.prisma as any).tileDesign.findMany({ where: { status: 'active' }, select: { media: true } }),
       this.prisma.product.findMany({ where: tileWhere, select: { internalCode: true, media: true } }),
       this.prisma.displaySample.count({ where: { status: 'active', product: tileWhere } }),
+      (this.prisma as any).tileDesign.count({ where: { status: 'active', variants: { none: { status: { not: 'archived' } } } } }),
+      (this.prisma as any).tileDesign.count({ where: { metadata: { path: ['source'], equals: 'tile-design-excel-import' } } }),
     ]);
     const hasImage = (media: any) => Boolean(media?.primaryUrl || media?.url || media?.imageUrl || (Array.isArray(media?.images) && media.images.length));
     return {
       designs: designs.length,
       variants: products.length,
       displaySamples,
+      awaitingFirstVariant,
+      variantReadyDesigns: Math.max(0, designs.length - awaitingFirstVariant),
+      importedDesigns,
       missingImages: designs.filter((design: any) => !hasImage(design.media)).length,
       missingInternalCodes: products.filter((product) => !String(product.internalCode || '').trim()).length,
     };
