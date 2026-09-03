@@ -96,7 +96,7 @@ class InternalLabelJobInput {
 
 @InputType()
 class InternalLabelPrintRunInput {
-  @Field(() => ID) labelJobId!: string;
+  @Field(() => ID, { nullable: true }) labelJobId?: string;
   @Field() templateCode!: string;
   @Field(() => [ID], { nullable: true }) labelIds?: string[];
   @Field(() => Int, { nullable: true }) copies?: number;

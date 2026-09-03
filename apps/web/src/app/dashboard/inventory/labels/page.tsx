@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { ArrowUpRight, Barcode, Box, Check, ChevronLeft, ChevronRight, ClipboardCheck, HelpCircle as CircleHelp, History, MapPin, PackageCheck, PackageSearch, Printer, QrCode, ScanLine, Search, Sparkles, Store, XCircle } from 'lucide-react';
+import { ArrowUpRight, Barcode, Box, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, HelpCircle as CircleHelp, History, Layers3, MapPin, Minus, PackageCheck, PackageSearch, Plus, Printer, QrCode, RotateCcw, ScanLine, Search, Sparkles, Store, Tags, Trash2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ProductImageFrame } from '@/components/product-image-frame';
@@ -27,6 +27,19 @@ const VOID = gql`mutation VoidLabel($id: ID!, $reason: String!) { voidInternalLa
 
 type DeskTab = 'receipts' | 'subjects' | 'print' | 'scan';
 type SubjectMode = 'product' | 'lot' | 'display';
+type TrayLabel = {
+  id: string;
+  jobId: string;
+  jobNumber: string;
+  labelCode: string;
+  source: string;
+  sourceType: string;
+  productCode: string;
+  printCount: number;
+};
+
+const MAX_BULK_LABELS = 500;
+const MAX_PHYSICAL_PAGES = 1000;
 
 function imageOf(value: any) {
   const media = value?.media || value?.product?.media || {};
@@ -41,6 +54,18 @@ function suggestedLabels(line: any) {
 function sourceName(job: any) {
   const first = job?.instances?.[0];
   return first?.displaySample?.internalCode || first?.product?.internalCode || first?.product?.sku || job?.sourceType?.replaceAll('_', ' ') || 'Label source';
+}
+function trayLabelOf(job: any, label: any): TrayLabel {
+  return {
+    id: String(label.id),
+    jobId: String(job.id),
+    jobNumber: String(job.jobNumber || 'Label job'),
+    labelCode: String(label.labelCode || ''),
+    source: sourceName(job),
+    sourceType: String(job.sourceType || 'product'),
+    productCode: String(label.displaySample?.internalCode || label.product?.internalCode || label.product?.sku || 'Product identity'),
+    printCount: Number(label.printCount || 0),
+  };
 }
 
 export default function LabelDeskPage() {
@@ -57,7 +82,7 @@ export default function LabelDeskPage() {
   const [registerSearch, setRegisterSearch] = useState('');
   const [page, setPage] = useState(0);
   const [expandedJobId, setExpandedJobId] = useState('');
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [trayLabels, setTrayLabels] = useState<Record<string, TrayLabel>>({});
   const [physicalTemplate, setPhysicalTemplate] = useState('thermal_4x2');
   const [copies, setCopies] = useState('1');
   const [printReason, setPrintReason] = useState('Operational label print');
@@ -72,7 +97,17 @@ export default function LabelDeskPage() {
   const [create, createState] = useMutation(CREATE);
   const [prepare, prepareState] = useMutation(PREPARE);
   const [scan, scanState] = useMutation(SCAN, { onCompleted: (response) => setScanResult(response.scanInternalLabel) });
-  const [voidLabel, voidState] = useMutation(VOID, { onCompleted: () => refetch() });
+  const [voidLabel, voidState] = useMutation(VOID, {
+    onCompleted: (response) => {
+      const id = String(response?.voidInternalLabel?.id || '');
+      if (id) setTrayLabels((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      refetch();
+    },
+  });
   const allJobs = data?.internalLabelJobs || [];
   const jobs = allJobs.slice(0, pageSize);
   const hasNext = allJobs.length > pageSize;
@@ -81,7 +116,6 @@ export default function LabelDeskPage() {
   const displays = sourceData?.displaySamplesPage?.items || [];
   const receipts = sourceData?.goodsReceiptPage?.items || [];
   const templates = sourceData?.internalLabelTemplates || [];
-  const expanded = jobs.find((job: any) => job.id === expandedJobId);
   const activeLabels = jobs.reduce((sum: number, job: any) => sum + (job.instances || []).filter((row: any) => row.status === 'active').length, 0);
   const unprintedLabels = jobs.reduce((sum: number, job: any) => sum + (job.instances || []).filter((row: any) => row.status === 'active' && !Number(row.printCount || 0)).length, 0);
 
@@ -96,9 +130,35 @@ export default function LabelDeskPage() {
     setPurpose(next === 'lot' ? 'stock_pack' : next === 'display' ? 'display_sample' : 'shelf');
   }
   function toggleJob(job: any) {
-    if (expandedJobId === job.id) { setExpandedJobId(''); setSelectedIds([]); return; }
-    setExpandedJobId(job.id);
-    setSelectedIds((job.instances || []).filter((row: any) => row.status === 'active').map((row: any) => row.id));
+    setExpandedJobId((current) => current === job.id ? '' : job.id);
+  }
+  function addManyToTray(entries: Array<{ job: any; label: any }>) {
+    const uniqueEntries = entries.filter(({ label }) => label?.id && label.status === 'active');
+    const newCount = uniqueEntries.filter(({ label }) => !trayLabels[label.id]).length;
+    if (Object.keys(trayLabels).length + newCount > MAX_BULK_LABELS) {
+      setNotice(`A bulk run can hold ${MAX_BULK_LABELS} unique labels. The tray was filled to that safe limit; print it, then start the next run.`);
+    }
+    setTrayLabels((current) => {
+      const next = { ...current };
+      let total = Object.keys(next).length;
+      for (const { job, label } of uniqueEntries) {
+        if (!next[label.id] && total >= MAX_BULK_LABELS) break;
+        if (!next[label.id]) total += 1;
+        next[label.id] = trayLabelOf(job, label);
+      }
+      return next;
+    });
+  }
+  function removeManyFromTray(labelIds: string[]) {
+    setTrayLabels((current) => {
+      const next = { ...current };
+      labelIds.forEach((id) => delete next[id]);
+      return next;
+    });
+  }
+  function toggleTrayLabel(job: any, label: any, selected: boolean) {
+    if (selected) addManyToTray([{ job, label }]);
+    else removeManyFromTray([label.id]);
   }
   async function generate() {
     const subject = mode === 'product' ? { productId: sourceId } : mode === 'lot' ? { lotId: sourceId } : { displaySampleId: sourceId };
@@ -106,7 +166,8 @@ export default function LabelDeskPage() {
     const job = response.data?.createInternalLabelJob;
     setSourceId(''); setSourceSearch(''); setQuantity('1');
     setPurpose(mode === 'lot' ? 'stock_pack' : mode === 'display' ? 'display_sample' : 'shelf');
-    setNotice(`${job?.jobNumber || 'Label job'} created. Select it in Print & reprint when the physical labels are ready.`);
+    if (job) addManyToTray((job.instances || []).map((label: any) => ({ job, label })));
+    setNotice(`${job?.jobNumber || 'Label job'} created and added to the print tray. Review the selection, then prepare one print run.`);
     await Promise.all([refetch(), refetchSources()]);
     setTab('print');
   }
@@ -123,16 +184,30 @@ export default function LabelDeskPage() {
       const response = await create({ variables: { input: { lotId: line.lotId, quantity: count, template: 'stock_pack', newJob: true } } });
       created.push(response.data?.createInternalLabelJob);
     }
+    created.filter(Boolean).forEach((job) => addManyToTray((job.instances || []).map((label: any) => ({ job, label }))));
     setReceiptSelection([]); setReceiptCounts({});
-    setNotice(`${created.length} receipt label job${created.length === 1 ? '' : 's'} created from exact GRN lots. Stock was not changed.`);
+    setNotice(`${created.length} receipt label job${created.length === 1 ? '' : 's'} created and added to one print tray. Stock was not changed.`);
     await Promise.all([refetch(), refetchSources()]);
     setTab('print');
   }
   async function preparePrint() {
-    if (!expanded || !selectedIds.length) return;
-    const response = await prepare({ variables: { input: { labelJobId: expanded.id, templateCode: physicalTemplate, labelIds: selectedIds, copies: Number(copies), reason: printReason } } });
-    const run = response.data?.prepareInternalLabelPrintRun;
-    if (run?.id) window.open(`/print/labels/${run.id}`, '_blank', 'noopener,noreferrer');
+    const labelIds = Object.keys(trayLabels);
+    const normalizedCopies = Math.max(1, Math.min(50, Number(copies) || 1));
+    if (!labelIds.length || labelIds.length * normalizedCopies > MAX_PHYSICAL_PAGES) return;
+    const printWindow = window.open('', '_blank');
+    try {
+      const response = await prepare({ variables: { input: { templateCode: physicalTemplate, labelIds, copies: normalizedCopies, reason: printReason } } });
+      const run = response.data?.prepareInternalLabelPrintRun;
+      if (run?.id && printWindow) {
+        printWindow.location.href = `/print/labels/${run.id}`;
+        printWindow.opener = null;
+      } else if (run?.id) {
+        window.location.href = `/print/labels/${run.id}`;
+      }
+      if (run?.id) setNotice(`${run.runNumber || 'Bulk print run'} prepared with ${labelIds.length} unique labels and ${labelIds.length * normalizedCopies} physical sticker pages.`);
+    } catch {
+      printWindow?.close();
+    }
   }
   async function executeScan(payload: string) {
     setScanResult(null);
@@ -169,7 +244,7 @@ export default function LabelDeskPage() {
       <aside className="space-y-4"><div className="rounded-2xl border border-sky-200 bg-sky-50 p-5"><CircleHelp className="h-5 w-5 text-sky-700"/><h3 className="mt-3 font-bold text-sky-950">Which subject should I choose?</h3><ul className="mt-3 space-y-3 text-xs leading-5 text-sky-900"><li><b>Product / shelf:</b> identifies a catalogue SKU, not a quantity.</li><li><b>Exact lot:</b> identifies physically received stock and retains batch, receipt and location context.</li><li><b>Display:</b> identifies a non-sellable showroom asset, even when it originated from stock.</li></ul></div><Button asChild variant="outline" className="w-full"><Link href="/dashboard/help#labels-lots"><CircleHelp className="mr-2 h-4 w-4"/>Open label lifecycle help</Link></Button></aside>
     </section>:null}
 
-    {tab==='print'?<div className="label-light-surface"><PrintRegister jobs={jobs} loading={jobsLoading} expandedJobId={expandedJobId} toggleJob={toggleJob} selectedIds={selectedIds} setSelectedIds={setSelectedIds} templates={templates} physicalTemplate={physicalTemplate} setPhysicalTemplate={setPhysicalTemplate} copies={copies} setCopies={setCopies} printReason={printReason} setPrintReason={setPrintReason} voidReason={voidReason} setVoidReason={setVoidReason} voidLabel={voidLabel} voidLoading={voidState.loading} preparePrint={preparePrint} prepareLoading={prepareState.loading} registerSearch={registerSearch} setRegisterSearch={(value:string)=>{setRegisterSearch(value);setPage(0)}} page={page} setPage={setPage} hasNext={hasNext}/></div>:null}
+    {tab==='print'?<div className="label-light-surface"><PrintRegister jobs={jobs} loading={jobsLoading} expandedJobId={expandedJobId} toggleJob={toggleJob} trayLabels={trayLabels} addManyToTray={addManyToTray} removeManyFromTray={removeManyFromTray} toggleTrayLabel={toggleTrayLabel} clearTray={()=>setTrayLabels({})} templates={templates} physicalTemplate={physicalTemplate} setPhysicalTemplate={setPhysicalTemplate} copies={copies} setCopies={setCopies} printReason={printReason} setPrintReason={setPrintReason} voidReason={voidReason} setVoidReason={setVoidReason} voidLabel={voidLabel} voidLoading={voidState.loading} preparePrint={preparePrint} prepareLoading={prepareState.loading} registerSearch={registerSearch} setRegisterSearch={(value:string)=>{setRegisterSearch(value);setPage(0)}} page={page} setPage={setPage} hasNext={hasNext}/></div>:null}
 
     {tab==='scan'?<section className="grid gap-5 xl:grid-cols-[1fr_22rem]">
       <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
@@ -195,8 +270,174 @@ function ScanIdentityResult({result,busy,onIntent,onQuote,onDismiss}:{result:any
 function Fact({label,value}:{label:string;value:any}){return <div className="rounded-xl bg-white/65 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">{label}</p><p className="mt-1 truncate text-xs font-bold text-[var(--ink)]">{value||'—'}</p></div>}
 
 function PrintRegister(props:any) {
-  const {jobs,loading,expandedJobId,toggleJob,selectedIds,setSelectedIds,templates,physicalTemplate,setPhysicalTemplate,copies,setCopies,printReason,setPrintReason,voidReason,setVoidReason,voidLabel,voidLoading,preparePrint,prepareLoading,registerSearch,setRegisterSearch,page,setPage,hasNext}=props;
-  return <section className="mp-panel overflow-hidden"><div className="flex flex-col gap-3 border-b border-[var(--line)] bg-[linear-gradient(105deg,#fff7f3,#fff)] p-5 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="text-lg font-bold text-[var(--ink)]">Print and reprint register</h2><p className="mt-1 text-sm text-[var(--ink-3)]">Open a job, select only the required labels, choose the physical stock, and give a reason. Preview alone never counts as printed.</p></div><label className="relative lg:w-96"><Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]"/><Input className="pl-9" value={registerSearch} onChange={(event)=>setRegisterSearch(event.target.value)} placeholder="Job, QR code, SKU, display code, lot or product"/></label></div><div className="divide-y divide-[var(--line)]">{jobs.map((job:any)=><div key={job.id}><button onClick={()=>toggleJob(job)} className="grid w-full gap-3 p-4 text-left transition hover:bg-rose-50/40 md:grid-cols-[1fr_auto_auto] md:items-center"><div><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-[var(--ink)]">{job.jobNumber}</p><span className="rounded-full bg-[#f4e7e2] px-2.5 py-1 text-[10px] font-bold uppercase text-[#8e2924]">{job.template.replaceAll('_',' ')}</span></div><p className="mt-1 text-sm font-semibold text-[var(--ink-3)]">{sourceName(job)}</p><p className="mt-1 text-xs text-[var(--ink-4)]">{job.quantity} labels · {job.sourceType.replaceAll('_',' ')} · {new Date(job.requestedAt).toLocaleString('en-IN')}</p></div><p className="text-xs font-semibold text-[var(--ink-3)]">{(job.instances||[]).filter((x:any)=>x.status==='active').length} active</p><span className="text-xs font-bold text-[#a92f28]">{expandedJobId===job.id?'Close':'Select / print →'}</span></button>{expandedJobId===job.id?<div className="border-t border-[var(--line)] bg-[var(--bg-soft)] p-4"><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{(job.instances||[]).map((label:any)=><label key={label.id} className={`flex items-start gap-3 rounded-xl border p-3 text-xs ${label.status==='active'?'bg-[var(--surface)]':'bg-slate-100 text-slate-500'}`}><input className="mt-1" type="checkbox" disabled={label.status!=='active'} checked={selectedIds.includes(label.id)} onChange={(event)=>setSelectedIds((current:string[])=>event.target.checked?[...current,label.id]:current.filter((id)=>id!==label.id))}/><span className="min-w-0 flex-1"><b className="block truncate font-mono">{label.labelCode}</b><span className="mt-1 block truncate">{label.displaySample?.internalCode||label.product?.internalCode||label.product?.sku} · {label.lot?.lotNumber||label.displaySample?.sampleNumber||'Product identity'}</span><span className="mt-1 block text-[var(--ink-4)]">Printed {label.printCount||0}× · {label.status}</span></span>{label.status==='active'?<button type="button" className="text-red-700 underline" disabled={!voidReason.trim()||voidLoading} onClick={(event)=>{event.preventDefault();voidLabel({variables:{id:label.id,reason:voidReason}})}}>Void</button>:null}</label>)}</div><div className="mt-4 grid gap-3 lg:grid-cols-[1fr_7rem_1fr]"><label className="text-xs font-semibold text-[var(--ink-4)]">Physical label stock<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3" value={physicalTemplate} onChange={(event)=>setPhysicalTemplate(event.target.value)}>{templates.map((t:any)=><option key={`${t.code}-${t.version}`} value={t.code}>{t.name} · v{t.version}</option>)}</select></label><label className="text-xs font-semibold text-[var(--ink-4)]">Copies<Input className="mt-1 bg-white" type="number" min={1} max={50} value={copies} onChange={(event)=>setCopies(event.target.value)}/></label><label className="text-xs font-semibold text-[var(--ink-4)]">Print / reprint reason<Input className="mt-1 bg-white" value={printReason} onChange={(event)=>setPrintReason(event.target.value)}/></label></div><label className="mt-3 block text-xs font-semibold text-[var(--ink-4)]">Void reason (used only if you click Void)<Input className="mt-1 bg-white" value={voidReason} onChange={(event)=>setVoidReason(event.target.value)}/></label><div className="mt-4 flex flex-wrap justify-between gap-2"><div className="flex gap-2"><Button variant="outline" onClick={()=>setSelectedIds((job.instances||[]).filter((x:any)=>x.status==='active').map((x:any)=>x.id))}>Select active</Button><Button variant="outline" onClick={()=>setSelectedIds([])}>Clear</Button></div><Button disabled={prepareLoading||!selectedIds.length||!printReason.trim()} onClick={preparePrint}><Printer className="mr-2 h-4 w-4"/>Prepare {selectedIds.length} selected</Button></div></div>:null}</div>)}</div>{!loading&&!jobs.length?<Empty icon={History} title="No matching label jobs" text="Create one from a recent receipt, product, exact lot or display asset."/>:null}<div className="flex items-center justify-between border-t border-[var(--line)] p-4"><p className="text-xs text-[var(--ink-4)]">Page {page+1} · 20 jobs per page</p><div className="flex gap-2"><Button aria-label="Previous label jobs" size="icon" variant="outline" disabled={page===0} onClick={()=>setPage((p:number)=>Math.max(0,p-1))}><ChevronLeft className="h-4 w-4"/></Button><Button aria-label="Next label jobs" size="icon" variant="outline" disabled={!hasNext} onClick={()=>setPage((p:number)=>p+1)}><ChevronRight className="h-4 w-4"/></Button></div></div></section>;
+  const {
+    jobs, loading, expandedJobId, toggleJob, trayLabels, addManyToTray, removeManyFromTray,
+    toggleTrayLabel, clearTray, templates, physicalTemplate, setPhysicalTemplate, copies,
+    setCopies, printReason, setPrintReason, voidReason, setVoidReason, voidLabel, voidLoading,
+    preparePrint, prepareLoading, registerSearch, setRegisterSearch, page, setPage, hasNext,
+  } = props;
+  const [printFilter, setPrintFilter] = useState<'all' | 'unprinted' | 'reprints'>('unprinted');
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const selectedLabels = Object.values(trayLabels) as TrayLabel[];
+  const selectedIds = new Set(selectedLabels.map((label) => label.id));
+  const copyCount = Math.max(1, Math.min(50, Number(copies) || 1));
+  const physicalPages = selectedLabels.length * copyCount;
+  const exceedsPageLimit = physicalPages > MAX_PHYSICAL_PAGES;
+  const selectedByJob = selectedLabels.reduce((groups: Record<string, TrayLabel[]>, label) => {
+    groups[label.jobId] = [...(groups[label.jobId] || []), label];
+    return groups;
+  }, {});
+  const selectedJobGroups = Object.values(selectedByJob);
+
+  function activeLabelsFor(job: any) {
+    return (job.instances || []).filter((label: any) => label.status === 'active');
+  }
+  function matchingLabelsFor(job: any) {
+    const active = activeLabelsFor(job);
+    if (printFilter === 'unprinted') return active.filter((label: any) => !Number(label.printCount || 0));
+    if (printFilter === 'reprints') return active.filter((label: any) => Number(label.printCount || 0) > 0);
+    return active;
+  }
+  const sourceFilteredJobs = jobs.filter((job: any) => sourceFilter === 'all' || job.sourceType === sourceFilter);
+  const filteredJobs = sourceFilteredJobs.filter((job: any) => matchingLabelsFor(job).length > 0);
+  const visibleEntries = filteredJobs.flatMap((job: any) => matchingLabelsFor(job).map((label: any) => ({ job, label })));
+  const visibleUnprintedEntries = filteredJobs.flatMap((job: any) => activeLabelsFor(job).filter((label: any) => !Number(label.printCount || 0)).map((label: any) => ({ job, label })));
+
+  function toggleWholeJob(job: any) {
+    const active = activeLabelsFor(job);
+    const allSelected = active.length > 0 && active.every((label: any) => selectedIds.has(label.id));
+    if (allSelected) removeManyFromTray(active.map((label: any) => label.id));
+    else addManyToTray(active.map((label: any) => ({ job, label })));
+  }
+
+  return <section data-testid="bulk-print-workspace" className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="mp-panel min-w-0 overflow-hidden">
+      <div className="border-b border-[var(--line)] bg-[#fffaf7] p-5 sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.18em] text-[#a92f28]"><Layers3 className="h-4 w-4"/>Bulk sticker workspace</div>
+            <h2 className="mt-2 text-2xl font-bold tracking-tight text-[var(--ink)]">Choose many. Print once.</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--ink-3)]">Search across jobs, add complete batches or individual labels, then send the whole tray to one 4 × 2 inch portrait print run. Your tray stays selected while you search or change pages.</p>
+          </div>
+          <label className="relative w-full lg:max-w-md">
+            <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-[var(--ink-4)]"/>
+            <Input data-testid="bulk-label-search" className="h-11 bg-white pl-10" value={registerSearch} onChange={(event)=>setRegisterSearch(event.target.value)} placeholder="Search job, QR, SKU, product, lot or display"/>
+          </label>
+        </div>
+        <div className="mt-5 flex flex-col gap-3 border-t border-[#eadfd9] pt-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            {([['all','All active'],['unprinted','Not printed'],['reprints','Printed before']] as const).map(([id,label])=><button key={id} type="button" aria-pressed={printFilter===id} onClick={()=>setPrintFilter(id)} className={`rounded-full border px-3 py-2 text-xs font-bold transition ${printFilter===id?'border-[#2b201f] bg-[#2b201f] text-white':'border-[#dfd2cc] bg-white text-[var(--ink-3)] hover:border-[#b87b70]'}`}>{label}</button>)}
+            <label className="relative">
+              <select value={sourceFilter} onChange={(event)=>setSourceFilter(event.target.value)} className="h-9 appearance-none rounded-full border border-[#dfd2cc] bg-white pl-3 pr-9 text-xs font-bold text-[var(--ink-3)]">
+                <option value="all">All label types</option>
+                <option value="inventory_lot">Exact stock lots</option>
+                <option value="product">Product / shelf</option>
+                <option value="display_sample">Display assets</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-[var(--ink-4)]"/>
+            </label>
+          </div>
+          <p className="text-xs font-semibold text-[var(--ink-4)]"><b className="text-[var(--ink)]">{visibleEntries.length}</b> matching labels on page {page+1}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 border-b border-[var(--line)] bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-2">
+          <Button data-testid="select-visible-labels" variant="outline" size="sm" disabled={!visibleEntries.length} onClick={()=>addManyToTray(visibleEntries)}><Tags className="mr-2 h-4 w-4"/>Add {visibleEntries.length} matching</Button>
+          <Button variant="outline" size="sm" disabled={!visibleUnprintedEntries.length} onClick={()=>addManyToTray(visibleUnprintedEntries)}><Sparkles className="mr-2 h-4 w-4"/>Add unprinted</Button>
+          <Button variant="ghost" size="sm" disabled={!visibleEntries.some(({label}:any)=>selectedIds.has(label.id))} onClick={()=>removeManyFromTray(visibleEntries.map(({label}:any)=>label.id))}>Clear visible</Button>
+        </div>
+        <span className="text-[11px] font-semibold text-[var(--ink-4)]">Up to {MAX_BULK_LABELS} unique labels per run</span>
+      </div>
+
+      <div className="divide-y divide-[var(--line)]">
+        {filteredJobs.map((job:any)=>{
+          const active = activeLabelsFor(job);
+          const unprinted = active.filter((label:any)=>!Number(label.printCount||0));
+          const selectedCount = active.filter((label:any)=>selectedIds.has(label.id)).length;
+          const allSelected = active.length > 0 && selectedCount === active.length;
+          const partiallySelected = selectedCount > 0 && !allSelected;
+          const first = job.instances?.[0];
+          return <article key={job.id} className={selectedCount?'bg-[#fffaf7]':'bg-[var(--surface)]'}>
+            <div className="grid gap-3 p-4 sm:grid-cols-[2.75rem_3.25rem_minmax(0,1fr)_auto] sm:items-center">
+              <button type="button" aria-label={`${allSelected?'Remove':'Add'} all active labels from ${job.jobNumber}`} onClick={()=>toggleWholeJob(job)} className={`grid h-10 w-10 place-items-center rounded-xl border transition ${selectedCount?'border-[#a92f28] bg-[#a92f28] text-white':'border-[#daccc6] bg-white text-transparent hover:border-[#a92f28]'}`}>
+                {partiallySelected?<Minus className="h-4 w-4"/>:<Check className="h-4 w-4"/>}
+              </button>
+              <ProductImageFrame src={imageOf(first)} alt={sourceName(job)} className="hidden h-12 w-12 rounded-xl sm:block"/>
+              <button type="button" onClick={()=>toggleJob(job)} className="min-w-0 text-left">
+                <div className="flex flex-wrap items-center gap-2"><b className="font-mono text-sm text-[var(--ink)]">{job.jobNumber}</b><span className="rounded-full bg-[#f2e5df] px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-[#8e2924]">{String(job.template).replaceAll('_',' ')}</span></div>
+                <p className="mt-1 truncate text-sm font-bold text-[var(--ink)]">{sourceName(job)}</p>
+                <p className="mt-1 text-xs text-[var(--ink-4)]">{String(job.sourceType).replaceAll('_',' ')} · {new Date(job.requestedAt).toLocaleString('en-IN')}</p>
+              </button>
+              <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
+                <div className="flex gap-4 text-right text-[11px]"><p><b className="block text-base tabular-nums text-[var(--ink)]">{unprinted.length}</b><span className="text-[var(--ink-4)]">unprinted</span></p><p><b className="block text-base tabular-nums text-[#a92f28]">{selectedCount}</b><span className="text-[var(--ink-4)]">in tray</span></p></div>
+                <Button variant="outline" size="sm" onClick={()=>toggleJob(job)}>{expandedJobId===job.id?'Hide':'Review'}<ChevronDown className={`ml-2 h-4 w-4 transition ${expandedJobId===job.id?'rotate-180':''}`}/></Button>
+              </div>
+            </div>
+            {expandedJobId===job.id?<div className="border-t border-[var(--line)] bg-[#f8f4f1] p-4">
+              <div className="mb-3 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+                <div><p className="text-sm font-bold text-[var(--ink)]">Individual stickers</p><p className="mt-1 text-xs text-[var(--ink-4)]">Use this only when the complete job is not required.</p></div>
+                <label className="text-xs font-semibold text-[var(--ink-4)] sm:w-72">Void reason<Input className="mt-1 bg-white" value={voidReason} onChange={(event)=>setVoidReason(event.target.value)}/></label>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-3">{(job.instances||[]).map((label:any)=>{
+                const selected=selectedIds.has(label.id);
+                const activeLabel=label.status==='active';
+                return <div key={label.id} className={`flex items-start gap-3 rounded-xl border p-3 text-xs transition ${!activeLabel?'border-slate-200 bg-slate-100 text-slate-500':selected?'border-[#d48d81] bg-white ring-2 ring-[#a92f28]/10':'border-[#dfd5d0] bg-white'}`}>
+                  <input aria-label={`Select label ${label.labelCode}`} className="mt-1 h-4 w-4 accent-[#a92f28]" type="checkbox" disabled={!activeLabel} checked={selected} onChange={(event)=>toggleTrayLabel(job,label,event.target.checked)}/>
+                  <span className="min-w-0 flex-1"><b className="block truncate font-mono text-[var(--ink)]">{label.labelCode}</b><span className="mt-1 block truncate">{label.displaySample?.internalCode||label.product?.internalCode||label.product?.sku} · {label.lot?.lotNumber||label.displaySample?.sampleNumber||'Product identity'}</span><span className="mt-1 block text-[var(--ink-4)]">{Number(label.printCount||0)?`Printed ${label.printCount}×`:'Never printed'} · {label.status}</span></span>
+                  {activeLabel?<button type="button" className="text-[10px] font-bold text-red-700 underline" disabled={!voidReason.trim()||voidLoading} onClick={()=>voidLabel({variables:{id:label.id,reason:voidReason}})}>Void</button>:null}
+                </div>})}
+              </div>
+            </div>:null}
+          </article>})}
+      </div>
+      {!loading&&!filteredJobs.length?<Empty icon={History} title="No matching labels" text="Change the print-state or label-type filters, or search for another job, QR, SKU, lot or display."/>:null}
+      <div className="flex items-center justify-between border-t border-[var(--line)] bg-white p-4"><p className="text-xs text-[var(--ink-4)]">Page {page+1} · 20 jobs per page · tray selection is preserved</p><div className="flex gap-2"><Button aria-label="Previous label jobs" size="icon" variant="outline" disabled={page===0} onClick={()=>setPage((p:number)=>Math.max(0,p-1))}><ChevronLeft className="h-4 w-4"/></Button><Button aria-label="Next label jobs" size="icon" variant="outline" disabled={!hasNext} onClick={()=>setPage((p:number)=>p+1)}><ChevronRight className="h-4 w-4"/></Button></div></div>
+    </div>
+
+    <aside data-testid="bulk-print-tray" className="order-first xl:order-last xl:sticky xl:top-5">
+      <div className="overflow-hidden rounded-[1.6rem] border border-[#3d2c2a] bg-[#251d1c] text-white shadow-[0_28px_70px_-38px_rgba(49,18,16,.9)]">
+        <div className="border-b border-white/10 p-5">
+          <div className="flex items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-[#e7a99d]"><Tags className="h-4 w-4"/>Print tray</p><h3 className="mt-2 text-2xl font-bold text-white">One run, many stickers</h3></div>{selectedLabels.length?<button type="button" aria-label="Clear print tray" onClick={clearTray} className="grid h-9 w-9 place-items-center rounded-full border border-white/15 text-white/70 transition hover:bg-white/10 hover:text-white"><Trash2 className="h-4 w-4"/></button>:null}</div>
+          <div className="mt-5 grid grid-cols-3 gap-2">
+            <TrayMetric testId="bulk-selected-count" label="Selected" value={selectedLabels.length}/>
+            <TrayMetric label="Jobs" value={selectedJobGroups.length}/>
+            <TrayMetric label="Pages" value={physicalPages}/>
+          </div>
+        </div>
+        <div className="space-y-5 bg-[#fffaf7] p-5 text-[var(--ink)]">
+          <div className="rounded-2xl border border-[#e2d5cf] bg-white p-4">
+            <div className="flex items-center justify-between gap-2"><div><p className="text-xs font-bold">4 × 2 inch sticker</p><p className="mt-1 text-[11px] text-[var(--ink-4)]">Portrait · one sticker per physical page</p></div><span className="grid h-14 w-8 place-items-center rounded-md border-2 border-[#2b201f] bg-[#fffdfb]"><QrCode className="h-4 w-4"/></span></div>
+          </div>
+          <label className="block text-xs font-bold text-[var(--ink-3)]">Physical label template
+            <select className="mt-1.5 h-11 w-full rounded-xl border border-[#d9cbc5] bg-white px-3 text-sm font-semibold" value={physicalTemplate} onChange={(event)=>setPhysicalTemplate(event.target.value)}>{templates.map((template:any)=><option key={`${template.code}-${template.version}`} value={template.code}>{template.name} · v{template.version}</option>)}</select>
+          </label>
+          <div>
+            <p className="text-xs font-bold text-[var(--ink-3)]">Copies of every selected sticker</p>
+            <div className="mt-1.5 grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] overflow-hidden rounded-xl border border-[#d9cbc5] bg-white">
+              <button type="button" aria-label="Reduce copies" disabled={copyCount<=1} onClick={()=>setCopies(String(Math.max(1,copyCount-1)))} className="grid h-11 place-items-center border-r border-[#e4dad5] disabled:opacity-30"><Minus className="h-4 w-4"/></button>
+              <Input className="h-11 rounded-none border-0 text-center text-base font-bold shadow-none focus-visible:ring-0" type="number" min={1} max={50} value={copies} onChange={(event)=>setCopies(event.target.value)}/>
+              <button type="button" aria-label="Increase copies" disabled={copyCount>=50} onClick={()=>setCopies(String(Math.min(50,copyCount+1)))} className="grid h-11 place-items-center border-l border-[#e4dad5] disabled:opacity-30"><Plus className="h-4 w-4"/></button>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[var(--ink-3)]">Why are these being printed?<Input className="mt-1.5 h-11 bg-white" value={printReason} onChange={(event)=>setPrintReason(event.target.value)} placeholder="Required for the audit trail"/></label>
+            <div className="mt-2 flex flex-wrap gap-1.5">{['Operational bulk label print','Replace damaged labels','Stock relabelling'].map((reason)=><button type="button" key={reason} onClick={()=>setPrintReason(reason)} className="rounded-full border border-[#e0d2cc] bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[var(--ink-3)] hover:border-[#b87468]">{reason}</button>)}</div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between"><p className="text-xs font-bold text-[var(--ink-3)]">Selected batches</p>{selectedLabels.length?<button type="button" onClick={clearTray} className="text-[10px] font-bold text-[#a92f28] underline">Clear all</button>:null}</div>
+            <div className="mt-2 max-h-52 space-y-2 overflow-y-auto pr-1">{selectedJobGroups.map((group)=>{
+              const first=group[0];
+              return <div key={first.jobId} className="flex items-center gap-2 rounded-xl border border-[#e4d8d2] bg-white p-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#f2e5df] text-[#a92f28]"><Barcode className="h-4 w-4"/></span><span className="min-w-0 flex-1"><b className="block truncate font-mono text-[11px]">{first.jobNumber}</b><small className="block truncate text-[10px] text-[var(--ink-4)]">{first.source} · {group.length} selected</small></span><button type="button" aria-label={`Remove ${first.jobNumber} from tray`} onClick={()=>removeManyFromTray(group.map((label)=>label.id))} className="grid h-7 w-7 place-items-center rounded-full text-[var(--ink-4)] hover:bg-red-50 hover:text-red-700"><XCircle className="h-4 w-4"/></button></div>})}{!selectedLabels.length?<div className="rounded-xl border border-dashed border-[#d8c9c2] bg-[#fffdfb] p-4 text-center"><Tags className="mx-auto h-5 w-5 text-[#b79e95]"/><p className="mt-2 text-xs font-bold">Your tray is empty</p><p className="mt-1 text-[10px] leading-4 text-[var(--ink-4)]">Add a complete job, all matching labels, or review a job and pick individual stickers.</p></div>:null}</div>
+          </div>
+          {exceedsPageLimit?<p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold leading-5 text-amber-900">This would create {physicalPages.toLocaleString('en-IN')} pages. Reduce the selection or copies to {MAX_PHYSICAL_PAGES} pages or fewer.</p>:null}
+          <Button data-testid="bulk-print-prepare" className="h-12 w-full bg-[#a92f28] text-sm hover:bg-[#8d2722]" disabled={prepareLoading||!selectedLabels.length||!printReason.trim()||exceedsPageLimit} onClick={preparePrint}><Printer className="mr-2 h-4 w-4"/>{prepareLoading?'Preparing run…':`Prepare ${physicalPages} sticker page${physicalPages===1?'':'s'}`}</Button>
+          <p className="text-center text-[10px] leading-4 text-[var(--ink-4)]">Previewing does not change print counts. Confirm only after the printer completes the physical run.</p>
+        </div>
+      </div>
+    </aside>
+  </section>;
 }
+function TrayMetric({label,value,testId}:{label:string;value:number;testId?:string}) { return <div className="rounded-xl border border-white/10 bg-white/[.07] p-3"><p data-testid={testId} className="text-xl font-bold tabular-nums">{Number(value||0).toLocaleString('en-IN')}</p><p className="mt-1 text-[9px] font-bold uppercase tracking-wider text-white/45">{label}</p></div>; }
 function HeroMetric({label,value}:{label:string;value:number}) { return <div className="rounded-2xl border border-white/10 bg-white/10 p-3 backdrop-blur"><p className="text-2xl font-bold tabular-nums">{Number(value||0).toLocaleString('en-IN')}</p><p className="mt-1 text-[10px] font-semibold leading-4 text-white/60">{label}</p></div>; }
 function Empty({icon:Icon,title,text}:{icon:any;title:string;text:string}) { return <div className="grid min-h-52 place-items-center p-8 text-center"><div><span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-[var(--bg-soft)]"><Icon className="h-6 w-6 text-[var(--ink-4)]"/></span><p className="mt-4 font-bold text-[var(--ink)]">{title}</p><p className="mx-auto mt-1 max-w-md text-sm leading-5 text-[var(--ink-4)]">{text}</p></div></div>; }

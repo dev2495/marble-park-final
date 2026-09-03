@@ -1337,22 +1337,42 @@ export class OperationsService {
       },
     });
     if (!job) throw new NotFoundException('Internal label job not found');
-    const sourceLot = job.instances.find((instance: any) => instance.lot)?.lot;
-    const sourceReceipt = sourceLot && ['grn', 'manual_grn'].includes(String(sourceLot.sourceType || ''))
-      ? await (this.prisma as any).goodsReceiptNote.findUnique({ where: { id: sourceLot.sourceId }, select: { grnNumber: true, vendorName: true, supplierChallan: true } })
-      : null;
     const selection = new Set((selectedIds || []).map(String));
     const printable = job.instances.filter((instance: any) => instance.status === 'active' && (!selection.size || selection.has(instance.id)));
+    if (!printable.length) throw new BadRequestException('No active labels were selected');
+    const labels = await this.renderInternalLabelInstances(printable, copies);
+    return { ...job, instances: labels, labels };
+  }
+
+  private async renderInternalLabelInstances(printable: any[], copies = 1) {
     if (!printable.length) throw new BadRequestException('No active labels were selected');
     const governedBrands = await this.prisma.productBrand.findMany({
       where: { status: 'active' },
       select: { id: true, name: true, code: true },
     });
     const governedBrandByName = new Map(governedBrands.map((brand: any) => [String(brand.name || '').trim().toUpperCase(), brand]));
+    const receiptIds = Array.from(new Set(printable
+      .filter((instance: any) => instance.lot && ['grn', 'manual_grn'].includes(String(instance.lot.sourceType || '')))
+      .map((instance: any) => String(instance.lot.sourceId))));
+    const sourceReceipts = receiptIds.length
+      ? await (this.prisma as any).goodsReceiptNote.findMany({
+        where: { id: { in: receiptIds } },
+        select: { id: true, grnNumber: true, vendorName: true, supplierChallan: true },
+      })
+      : [];
+    const sourceReceiptById = new Map(sourceReceipts.map((receipt: any) => [receipt.id, receipt]));
     const missingMrp = printable.find((instance: any) => !Number.isFinite(Number(instance.product?.defaultMrpInclusive)) || Number(instance.product?.defaultMrpInclusive) <= 0);
     if (missingMrp) {
       throw new BadRequestException(`${missingMrp.product?.sku || 'This SKU'} needs a verified Product Master MRP before its physical label can be printed. Complete it in MRP Readiness.`);
     }
+    const qrByValue = new Map<string, Promise<string>>();
+    const qrDataUrlFor = (value: string) => {
+      const cached = qrByValue.get(value);
+      if (cached) return cached;
+      const generated = brandedLabelQrDataUrl(value);
+      qrByValue.set(value, generated);
+      return generated;
+    };
     const labels = await Promise.all(printable.flatMap((instance: any) => Array.from({ length: Math.max(1, copies) }, (_, copyIndex) => ({ instance, copyIndex }))).map(async ({ instance, copyIndex }: any) => {
       const tile = String(instance.product?.category || '').trim().toLowerCase() === 'tiles';
       const designBrand = tile
@@ -1362,6 +1382,7 @@ export class OperationsService {
       const compactProductValue = tile
         ? instance.product?.tileDesignMaster?.name || instance.product?.name || instance.product?.internalCode || instance.product?.sku
         : instance.product?.internalCode || instance.product?.sku || instance.displaySample?.internalCode;
+      const sourceReceipt = instance.lot ? sourceReceiptById.get(String(instance.lot.sourceId)) as any : null;
       const payload = {
         version: 1,
         system: 'Marble Park Retail OS',
@@ -1393,15 +1414,16 @@ export class OperationsService {
         availableQuantity: instance.lot?.balances?.reduce((sum: number, row: any) => sum + Number(row.available || 0), 0) ?? null,
         displaySample: instance.displaySample?.sampleNumber || null,
       };
+      const qrValue = `MP-LABEL:${instance.labelCode}`;
       return {
         ...instance,
         copyIndex,
         payload,
-        qrValue: `MP-LABEL:${instance.labelCode}`,
-        qrDataUrl: await brandedLabelQrDataUrl(`MP-LABEL:${instance.labelCode}`),
+        qrValue,
+        qrDataUrl: await qrDataUrlFor(qrValue),
       };
     }));
-    return { ...job, instances: labels, labels };
+    return labels;
   }
 
   async prepareInternalLabelPrintRun(input: any, actorUserId: string) {
@@ -1413,26 +1435,58 @@ export class OperationsService {
     });
     if (!template) throw new BadRequestException('Select an active label template');
     return this.prisma.$transaction(async (tx: any) => {
-      const job = await tx.internalLabelJob.findUnique({ where: { id: input.labelJobId }, include: { instances: true } });
-      if (!job) throw new NotFoundException('Internal label job not found');
-      const subjectTypes = Array.isArray(template.subjectTypes) ? template.subjectTypes.map(String) : [];
-      if (subjectTypes.length && !subjectTypes.includes(job.sourceType)) throw new BadRequestException('This label template does not support the selected subject type');
-      const requested = new Set((input.labelIds || []).map(String));
-      const selected = job.instances.filter((row: any) => row.status === 'active' && (!requested.size || requested.has(row.id)));
+      const requestedIds = Array.from(new Set((input.labelIds || []).map((value: unknown) => String(value).trim()).filter(Boolean))) as string[];
+      if (requestedIds.length > 500) throw new BadRequestException('A bulk print run can contain at most 500 unique labels');
+      let selected: any[] = [];
+      let jobs: any[] = [];
+
+      if (requestedIds.length) {
+        const instances = await tx.internalLabelInstance.findMany({
+          where: { id: { in: requestedIds } },
+          include: { labelJob: true },
+        });
+        const instanceById = new Map(instances.map((row: any) => [row.id, row]));
+        selected = requestedIds.map((id) => instanceById.get(id)).filter(Boolean);
+        if (selected.length !== requestedIds.length) throw new BadRequestException('One or more selected labels no longer exist');
+        if (selected.some((row: any) => row.status !== 'active')) throw new BadRequestException('One or more selected labels are void and cannot be printed');
+        const jobById = new Map<string, any>();
+        selected.forEach((row: any) => jobById.set(row.labelJobId, row.labelJob));
+        jobs = Array.from(jobById.values());
+      } else {
+        const labelJobId = String(input.labelJobId || '').trim();
+        if (!labelJobId) throw new BadRequestException('Select at least one active label');
+        const job = await tx.internalLabelJob.findUnique({ where: { id: labelJobId }, include: { instances: true } });
+        if (!job) throw new NotFoundException('Internal label job not found');
+        selected = job.instances.filter((row: any) => row.status === 'active');
+        jobs = [job];
+      }
+
       if (!selected.length) throw new BadRequestException('Select at least one active label');
-      if (requested.size && selected.length !== requested.size) throw new BadRequestException('One or more selected labels are void or do not belong to this job');
+      if (selected.length * copies > 1000) throw new BadRequestException('A print run can contain at most 1,000 physical sticker pages. Reduce labels or copies.');
+      const subjectTypes = Array.isArray(template.subjectTypes) ? template.subjectTypes.map(String) : [];
+      const unsupported = jobs.find((job: any) => subjectTypes.length && !subjectTypes.includes(job.sourceType));
+      if (unsupported) throw new BadRequestException(`This label template does not support ${String(unsupported.sourceType).replaceAll('_', ' ')} labels`);
+      const requestedAnchorId = String(input.labelJobId || '').trim();
+      if (requestedAnchorId && !jobs.some((job: any) => job.id === requestedAnchorId)) {
+        throw new BadRequestException('The print-run anchor does not belong to the selected labels');
+      }
+      const anchorJob = jobs.find((job: any) => job.id === requestedAnchorId) || jobs[0];
+      const jobIds = jobs.map((job: any) => job.id);
       const now = new Date();
       const runNumber = await nextDocumentNumber(tx, 'internal_label_print_run', 'LPR', now, {
         existingNumbers: async (prefixForYear) => (await tx.internalLabelPrintRun.findMany({ where: { runNumber: { startsWith: prefixForYear } }, select: { runNumber: true } })).map((row: any) => row.runNumber),
       });
       const run = await tx.internalLabelPrintRun.create({ data: {
-        id: ulid(), runNumber, labelJobId: job.id, templateCode: template.code, templateVersion: template.version,
+        id: ulid(), runNumber, labelJobId: anchorJob.id, templateCode: template.code, templateVersion: template.version,
         selectedLabelIds: selected.map((row: any) => row.id), copies, status: 'prepared', reason: reason || null,
-        requestedBy: actorUserId, metadata: { labelCount: selected.length }, updatedAt: now,
+        requestedBy: actorUserId,
+        metadata: { labelCount: selected.length, jobCount: jobIds.length, jobIds, bulk: jobIds.length > 1, physicalPages: selected.length * copies },
+        updatedAt: now,
       } });
       await tx.auditEvent.create({ data: {
         id: ulid(), actorUserId, action: 'internal_label.print_prepare', entityType: 'InternalLabelPrintRun', entityId: run.id,
-        summary: `Prepared ${runNumber}`, metadata: { labelJobId: job.id, labelCount: selected.length, copies, templateCode: template.code, templateVersion: template.version, reason: reason || null },
+        summary: `Prepared ${runNumber}`,
+        metadata: { labelJobId: anchorJob.id, labelJobIds: jobIds, jobCount: jobIds.length, bulk: jobIds.length > 1, labelCount: selected.length, physicalPages: selected.length * copies, copies, templateCode: template.code, templateVersion: template.version, reason: reason || null },
       } });
       return run;
     });
@@ -1444,8 +1498,33 @@ export class OperationsService {
     const template = await (this.prisma as any).internalLabelTemplate.findUnique({
       where: { code_version: { code: run.templateCode, version: run.templateVersion } },
     });
-    const printData = await this.internalLabelPrintData(run.labelJobId, run.selectedLabelIds as string[], run.copies);
-    return { ...run, template, job: printData, labels: printData.labels };
+    const selectedIds = Array.isArray(run.selectedLabelIds) ? run.selectedLabelIds.map(String) : [];
+    if (!selectedIds.length) throw new BadRequestException('This print run has no selected labels');
+    const selectedInstances = await this.prisma.internalLabelInstance.findMany({
+      where: { id: { in: selectedIds } },
+      include: {
+        labelJob: true,
+        product: { include: { brandMaster: true, tileDesignMaster: true } },
+        lot: { include: { balances: { include: { location: true } } } },
+        displaySample: true,
+      },
+    });
+    const instanceById = new Map(selectedInstances.map((row: any) => [row.id, row]));
+    const orderedInstances = selectedIds.map((labelId: string) => instanceById.get(labelId)).filter(Boolean) as any[];
+    if (orderedInstances.length !== selectedIds.length) throw new BadRequestException('A selected label no longer exists');
+    if (orderedInstances.some((row: any) => row.status !== 'active')) throw new BadRequestException('A selected label was voided before the print run opened');
+    const jobById = new Map<string, any>();
+    orderedInstances.forEach((row: any) => jobById.set(row.labelJobId, row.labelJob));
+    const jobs = Array.from(jobById.values());
+    const labels = await this.renderInternalLabelInstances(orderedInstances, run.copies);
+    const firstJob = jobs[0];
+    return {
+      ...run,
+      template,
+      job: firstJob ? { ...firstJob, instances: labels, labels } : null,
+      jobs: jobs.map((job: any) => ({ id: job.id, jobNumber: job.jobNumber, sourceType: job.sourceType })),
+      labels,
+    };
   }
 
   async confirmInternalLabelPrintRun(id: string, actorUserId: string) {
@@ -1463,9 +1542,10 @@ export class OperationsService {
         data: { printCount: { increment: Number(run.copies || 1) }, lastPrintedAt: now, updatedAt: now },
       });
       const updated = await tx.internalLabelPrintRun.update({ where: { id }, data: { status: 'confirmed', confirmedBy: actorUserId, confirmedAt: now, updatedAt: now } });
+      const runMetadata = run.metadata && typeof run.metadata === 'object' && !Array.isArray(run.metadata) ? run.metadata : {};
       await tx.auditEvent.create({ data: {
         id: ulid(), actorUserId, action: 'internal_label.print_confirm', entityType: 'InternalLabelPrintRun', entityId: id,
-        summary: `Confirmed ${run.runNumber}`, metadata: { labelCount: labelIds.length, copies: run.copies },
+        summary: `Confirmed ${run.runNumber}`, metadata: { ...runMetadata, labelCount: labelIds.length, copies: run.copies },
       } });
       return updated;
     });
@@ -1481,9 +1561,10 @@ export class OperationsService {
       if (run.status === 'cancelled') return run;
       const now = new Date();
       const updated = await tx.internalLabelPrintRun.update({ where: { id }, data: { status: 'cancelled', cancelReason: cleanReason, cancelledBy: actorUserId, cancelledAt: now, updatedAt: now } });
+      const runMetadata = run.metadata && typeof run.metadata === 'object' && !Array.isArray(run.metadata) ? run.metadata : {};
       await tx.auditEvent.create({ data: {
         id: ulid(), actorUserId, action: 'internal_label.print_cancel', entityType: 'InternalLabelPrintRun', entityId: id,
-        summary: `Cancelled ${run.runNumber}`, metadata: { reason: cleanReason },
+        summary: `Cancelled ${run.runNumber}`, metadata: { ...runMetadata, reason: cleanReason },
       } });
       return updated;
     });

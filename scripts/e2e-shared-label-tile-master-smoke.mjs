@@ -74,10 +74,13 @@ async function main() {
   refreshedJob = (await gql(`query($sourceId: String) { internalLabelJobs(sourceId: $sourceId, take: 10) }`, { sourceId: generic.id }, token)).internalLabelJobs.find((row) => row.id === productJob.id);
   assert(refreshedJob.instances[0].printCount === 0, 'Cancelled browser print run must leave print count unchanged');
 
-  const confirmedRun = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: productJob.id, templateCode: 'thermal_4x2', labelIds: [productJob.instances[1].id], copies: 2, reason: 'Selected reprint acceptance' } }, token)).prepareInternalLabelPrintRun;
+  const confirmedRun = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { templateCode: 'thermal_4x2', labelIds: [productJob.instances[1].id, additiveJob.instances[0].id], copies: 2, reason: 'Cross-job bulk print acceptance' } }, token)).prepareInternalLabelPrintRun;
+  run = (await gql(`query($id: ID!) { internalLabelPrintRun(id: $id) }`, { id: confirmedRun.id }, token)).internalLabelPrintRun;
+  assert(run.labels.length === 4 && run.jobs.length === 2 && run.metadata.bulk === true && run.metadata.jobCount === 2 && run.metadata.physicalPages === 4, 'One governed print run must combine labels from several jobs and expand physical copies');
   await gql(`mutation($id: ID!) { confirmInternalLabelPrintRun(id: $id) }`, { id: confirmedRun.id }, token);
   refreshedJob = (await gql(`query($sourceId: String) { internalLabelJobs(sourceId: $sourceId, take: 10) }`, { sourceId: generic.id }, token)).internalLabelJobs.find((row) => row.id === productJob.id);
-  assert(refreshedJob.instances.find((row) => row.id === productJob.instances[0].id).printCount === 0 && refreshedJob.instances.find((row) => row.id === productJob.instances[1].id).printCount === 2, 'Selected reprint must increment only selected label by confirmed copies');
+  const refreshedAdditiveJob = (await gql(`query($sourceId: String) { internalLabelJobs(sourceId: $sourceId, take: 10) }`, { sourceId: generic.id }, token)).internalLabelJobs.find((row) => row.id === additiveJob.id);
+  assert(refreshedJob.instances.find((row) => row.id === productJob.instances[0].id).printCount === 0 && refreshedJob.instances.find((row) => row.id === productJob.instances[1].id).printCount === 2 && refreshedAdditiveJob.instances[0].printCount === 2, 'Bulk confirmation must increment only selected labels across every source job by the confirmed copy count');
 
   const displayRun = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: displayJob.id, templateCode: 'thermal_4x2', copies: 1, reason: 'Display acceptance' } }, token)).prepareInternalLabelPrintRun;
   run = (await gql(`query($id: ID!) { internalLabelPrintRun(id: $id) }`, { id: displayRun.id }, token)).internalLabelPrintRun;
@@ -95,7 +98,7 @@ async function main() {
   const balanceAfter = await prisma.inventoryBalance.findUnique({ where: { productId: tile.id } });
   assert(balanceAfter.onHand === balanceBefore.onHand && balanceAfter.available === balanceBefore.available && balanceAfter.reserved === balanceBefore.reserved, 'Label lifecycle must not mutate warehouse stock buckets');
 
-  console.log(JSON.stringify({ ok: true, tileSku: tile.sku, genericSku: generic.sku, tileSize: tileSize.name, aliasSearch: true, additiveJobs: true, productLabels: 3, lotLabels: lotJob.instances.length, displayCode: `WALL-${suffix}`, preparedCancelledWithoutCount: true, selectedConfirmedCopies: 2, qrPayloadScan: true, legacyPayloadScan: true, stockInvariant: { onHand: balanceAfter.onHand, available: balanceAfter.available, reserved: balanceAfter.reserved } }, null, 2));
+  console.log(JSON.stringify({ ok: true, tileSku: tile.sku, genericSku: generic.sku, tileSize: tileSize.name, aliasSearch: true, additiveJobs: true, crossJobBulkRun: { jobs: 2, uniqueLabels: 2, physicalPages: 4 }, productLabels: 3, lotLabels: lotJob.instances.length, displayCode: `WALL-${suffix}`, preparedCancelledWithoutCount: true, selectedConfirmedCopies: 2, qrPayloadScan: true, legacyPayloadScan: true, stockInvariant: { onHand: balanceAfter.onHand, available: balanceAfter.available, reserved: balanceAfter.reserved } }, null, 2));
 }
 
 main().catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; }).finally(async () => prisma.$disconnect());
