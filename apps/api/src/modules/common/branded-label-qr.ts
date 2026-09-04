@@ -34,12 +34,16 @@ export async function brandedLabelQrDataUrl(value: string) {
   const markX = margin + (size - markSize) / 2;
   const inner = markSize * 0.82;
   const innerX = margin + (size - inner) / 2;
+  // Draw MP as geometry: server-side PDF rasterisation must not depend on OS fonts.
+  const letterHeight = markSize * 0.4;
+  const letterX = canvas / 2 - letterHeight * 0.8;
+  const letterY = canvas / 2 - letterHeight / 2;
   const fixed = (number: number) => number.toFixed(3);
   const mark = [
     '<g aria-label="Marble Park MP brand mark">',
     `<rect x="${fixed(markX)}" y="${fixed(markX)}" width="${fixed(markSize)}" height="${fixed(markSize)}" rx="${fixed(markSize * 0.2)}" fill="#ffffff"/>`,
     `<rect x="${fixed(innerX)}" y="${fixed(innerX)}" width="${fixed(inner)}" height="${fixed(inner)}" rx="${fixed(inner * 0.2)}" fill="#9f302a"/>`,
-    `<text x="${fixed(canvas / 2)}" y="${fixed(canvas / 2 + markSize * 0.14)}" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="${fixed(markSize * 0.4)}" font-weight="900" letter-spacing="-.12" fill="#ffffff">MP</text>`,
+    `<path d="M0 1V0L.32 .6 .64 0V1M1 1V0H1.34Q1.6 0 1.6 .27T1.34 .54H1" transform="translate(${fixed(letterX)} ${fixed(letterY)}) scale(${fixed(letterHeight)})" fill="none" stroke="#ffffff" stroke-width=".12" stroke-linejoin="round" stroke-linecap="square"/>`,
     '</g>',
   ].join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${canvas} ${canvas}" width="360" height="360" shape-rendering="geometricPrecision" role="img" aria-label="Marble Park scannable identity QR"><rect width="${canvas}" height="${canvas}" fill="#ffffff"/>${dots.join('')}${eye(margin, margin)}${eye(margin + size - 7, margin)}${eye(margin, margin + size - 7)}${mark}</svg>`;

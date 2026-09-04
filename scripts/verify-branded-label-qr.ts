@@ -13,6 +13,7 @@ async function main() {
   for (const value of values) {
     const dataUrl = await brandedLabelQrDataUrl(value);
     const svg = Buffer.from(dataUrl.split(',')[1], 'base64');
+    if (/<text\b|font-family=/i.test(svg.toString())) throw new Error('QR artwork must not depend on installed fonts');
     const variants = [
       sharp(svg).png(),
       sharp(svg).resize(180, 180, { kernel: 'lanczos3' }).png(),

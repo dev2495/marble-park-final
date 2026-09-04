@@ -49,3 +49,13 @@ No commercial pricing, inventory quantity or procurement business logic changed.
 Physical printer acceptance remains unverified remotely. The in-app test browser cannot open its native print dialog; PDF generation/download and page geometry were verified separately. The actual printer model/driver settings were requested from the user. Software tests cannot guarantee correct paper feed or gap sensing on an uninspected device.
 
 During verification, 823 MB of rebuildable local Webpack cache was removed to resolve disk exhaustion. No local application data, credentials or unrelated user files were removed.
+
+## Production acceptance
+
+The first release (`d4f3e2a`) was deployed and its version-4 migration applied successfully. The new label PDF endpoint correctly returned HTTP 401 without a session, while API readiness and web health passed. A fresh backup at `/srv/marble-park/backups/20260904T095030Z` passed checksum, 89-table isolated restore and assets-archive checks. Prior release images were tagged for rollback; no business backups were removed.
+
+Read-only real-data rendering verified Salt Smoke (FB), Salt Nero (FB) and Diamond White (FB), brand code 1031, FULL BODY MATT, and SQFT rates. The deployed PDF engine generated six pages in each orientation from those identities with exact page sizes (floating-point tolerance below 0.00002 point). This diagnostic created no print jobs and changed no stock or print counts.
+
+The Linux check revealed that the centre MP mark depended on unavailable system fonts. The follow-up replaces only that lettering with SVG vector paths and adds a font-independence regression check; encoded QR identities are unchanged. This avoids a container-font dependency for both browser and PDF labels.
+
+Only rebuildable Docker build cache was cleared around deployment (2.228 GB before and 2.229 GB after the first rollout). Production backups and tagged rollback images were retained. Storage remains a separate capacity concern; do not treat this label release as a backup-retention redesign.
