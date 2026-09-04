@@ -1236,11 +1236,15 @@ export class OperationsService {
     };
   }
 
-  async internalLabelJobs(args?: { sourceType?: string; sourceId?: string; status?: string; search?: string; take?: number; skip?: number }) {
+  async internalLabelJobs(args?: { sourceType?: string; sourceId?: string; status?: string; search?: string; printState?: string; take?: number; skip?: number }) {
     const where: any = {};
     if (args?.sourceType) where.sourceType = args.sourceType;
     if (args?.sourceId) where.sourceId = args.sourceId;
     if (args?.status && args.status !== 'all') where.status = args.status;
+    if (args?.printState && args.printState !== 'all') {
+      if (!['unprinted', 'printed'].includes(args.printState)) throw new BadRequestException('Unsupported label print-state filter');
+      where.instances = { some: { status: 'active', printCount: args.printState === 'unprinted' ? 0 : { gt: 0 } } };
+    }
     const search = String(args?.search || '').trim();
     if (search) where.OR = [
       { jobNumber: { contains: search, mode: 'insensitive' } },
@@ -1427,13 +1431,20 @@ export class OperationsService {
   }
 
   async prepareInternalLabelPrintRun(input: any, actorUserId: string) {
-    const copies = Math.min(50, this.whole(input.copies || 1, 'Copies'));
+    const copies = this.whole(input.copies ?? 1, 'Copies');
+    if (copies > 50) throw new BadRequestException('Copies must be a whole number from 1 to 50');
     const reason = String(input.reason || '').trim();
     if (!reason) throw new BadRequestException('A print or reprint reason is required');
     const template = await (this.prisma as any).internalLabelTemplate.findFirst({
       where: { code: String(input.templateCode || '').trim(), status: 'active' }, orderBy: { version: 'desc' },
     });
     if (!template) throw new BadRequestException('Select an active label template');
+    const orientation = String(input.orientation || template.definition?.orientation || 'landscape');
+    if (!['portrait', 'landscape'].includes(orientation)) throw new BadRequestException('Choose portrait or landscape');
+    const adjustableThermal = template.code === 'thermal_4x2' && template.version >= 4;
+    if (input.orientation && !adjustableThermal && orientation !== template.definition?.orientation) {
+      throw new BadRequestException('This historical template has a fixed orientation; select the current 4 x 2 inch template');
+    }
     return this.prisma.$transaction(async (tx: any) => {
       const requestedIds = Array.from(new Set((input.labelIds || []).map((value: unknown) => String(value).trim()).filter(Boolean))) as string[];
       if (requestedIds.length > 500) throw new BadRequestException('A bulk print run can contain at most 500 unique labels');
@@ -1480,13 +1491,13 @@ export class OperationsService {
         id: ulid(), runNumber, labelJobId: anchorJob.id, templateCode: template.code, templateVersion: template.version,
         selectedLabelIds: selected.map((row: any) => row.id), copies, status: 'prepared', reason: reason || null,
         requestedBy: actorUserId,
-        metadata: { labelCount: selected.length, jobCount: jobIds.length, jobIds, bulk: jobIds.length > 1, physicalPages: selected.length * copies },
+        metadata: { labelCount: selected.length, jobCount: jobIds.length, jobIds, bulk: jobIds.length > 1, physicalPages: selected.length * copies, ...(adjustableThermal ? { orientation } : {}) },
         updatedAt: now,
       } });
       await tx.auditEvent.create({ data: {
         id: ulid(), actorUserId, action: 'internal_label.print_prepare', entityType: 'InternalLabelPrintRun', entityId: run.id,
         summary: `Prepared ${runNumber}`,
-        metadata: { labelJobId: anchorJob.id, labelJobIds: jobIds, jobCount: jobIds.length, bulk: jobIds.length > 1, labelCount: selected.length, physicalPages: selected.length * copies, copies, templateCode: template.code, templateVersion: template.version, reason: reason || null },
+        metadata: { labelJobId: anchorJob.id, labelJobIds: jobIds, jobCount: jobIds.length, bulk: jobIds.length > 1, labelCount: selected.length, physicalPages: selected.length * copies, copies, templateCode: template.code, templateVersion: template.version, orientation, reason: reason || null },
       } });
       return run;
     });
@@ -1498,6 +1509,12 @@ export class OperationsService {
     const template = await (this.prisma as any).internalLabelTemplate.findUnique({
       where: { code_version: { code: run.templateCode, version: run.templateVersion } },
     });
+    if (template?.code === 'thermal_4x2' && template.version >= 4) {
+      const orientation = run.metadata?.orientation === 'portrait' ? 'portrait' : 'landscape';
+      template.widthMm = template.pageWidthMm = orientation === 'portrait' ? 50.8 : 101.6;
+      template.heightMm = template.pageHeightMm = orientation === 'portrait' ? 101.6 : 50.8;
+      template.definition = { ...template.definition, orientation };
+    }
     const selectedIds = Array.isArray(run.selectedLabelIds) ? run.selectedLabelIds.map(String) : [];
     if (!selectedIds.length) throw new BadRequestException('This print run has no selected labels');
     const selectedInstances = await this.prisma.internalLabelInstance.findMany({

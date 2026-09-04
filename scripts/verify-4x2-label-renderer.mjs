@@ -2,12 +2,15 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../apps/web/src/app/print/labels/[runId]/page.tsx', import.meta.url), 'utf8');
 const migration = readFileSync(new URL('../apps/api/prisma/migrations/20260902160000_label_v3_grn_corrections/migration.sql', import.meta.url), 'utf8');
+const currentMigration = readFileSync(new URL('../apps/api/prisma/migrations/20260904110000_label_v4_landscape_finish/migration.sql', import.meta.url), 'utf8');
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const v2Start = source.indexOf('function PortraitFourByTwoLabelV2');
 const v3Start = source.indexOf('function CompactPortraitFourByTwoLabelV3');
+const v4Start = source.indexOf('function FinishFourByTwoLabelV4');
 const historicStart = source.indexOf('function StandardFourByTwoLabel');
 const v2Source = source.slice(v2Start, v3Start);
-const v3Source = source.slice(v3Start, source.indexOf('async function waitForPrintAssets'));
+const v3Source = source.slice(v3Start, v4Start);
+const v4Source = source.slice(v4Start, source.indexOf('async function waitForPrintAssets'));
 
 assert(source.includes('const PORTRAIT_WIDTH_MM = 50.8'), 'The active sticker width must remain exactly 2 inches (50.8 mm)');
 assert(source.includes('const PORTRAIT_HEIGHT_MM = 101.6'), 'The active sticker height must remain exactly 4 inches (101.6 mm)');
@@ -24,4 +27,8 @@ assert(source.includes('.mp-v3-label-page:not(:last-child)') && source.includes(
 assert(migration.includes("'thermal_4x2',\n  3") && migration.includes('"orientation":"portrait"') && migration.includes('50.8,\n  101.6,\n  50.8,\n  101.6'), 'The active template migration must be version 3 at exact portrait dimensions');
 assert(migration.includes('brand_product_rate_no_lot'), 'The template contract must explicitly exclude lot text');
 
-console.log(JSON.stringify({ ok: true, version: 3, sizeMm: { width: 50.8, height: 101.6 }, printedFields: ['qr', 'labelCode', 'brandCode', 'productOrTileDesign', 'rate', 'rateUom'], removed: ['brandName', 'lot', 'grn', 'taxText'] }));
+assert(v4Source.includes('payload.finish') && v4Source.indexOf('>PRODUCT<') < v4Source.indexOf('>FINISH<'), 'V4 must show finish below product');
+assert(source.includes('.mp-v4-label-page:not(:last-child)') && source.includes('main { min-height: 0 !important;'), 'V4 needs explicit page breaks without screen-height spill');
+assert(currentMigration.includes('101.6, 50.8, 101.6, 50.8') && currentMigration.includes('"orientation":"landscape"'), 'V4 defaults to one landscape 4x2 sticker');
+for (const forbidden of ['lotNumber', 'sourceDocument', 'brandName', 'productName', 'MRP', 'GST', 'TAX']) assert(!v4Source.includes(forbidden), `V4 must not print ${forbidden}`);
+console.log(JSON.stringify({ ok: true, version: 4, defaultSizeMm: { width: 101.6, height: 50.8 }, portraitSupported: true, printedFields: ['qr', 'labelCode', 'brandCode', 'productOrTileDesign', 'finish', 'rate', 'rateUom'], removed: ['brandName', 'lot', 'grn', 'taxText'] }));

@@ -101,6 +101,7 @@ class InternalLabelPrintRunInput {
   @Field(() => [ID], { nullable: true }) labelIds?: string[];
   @Field(() => Int, { nullable: true }) copies?: number;
   @Field({ nullable: true }) reason?: string;
+  @Field({ nullable: true }) orientation?: string;
 }
 
 @InputType()
@@ -383,11 +384,12 @@ export class OperationsResolver {
     @Args('sourceId', { nullable: true }) sourceId?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('search', { nullable: true }) search?: string,
+    @Args('printState', { nullable: true }) printState?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.operations.internalLabelJobs({ sourceType, sourceId, status, search, take, skip });
+    return this.operations.internalLabelJobs({ sourceType, sourceId, status, search, printState, take, skip });
   }
 
   @Query(() => [GraphQLJSON])

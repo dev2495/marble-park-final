@@ -1,14 +1,16 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { CheckCircle2, Printer, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Download, Printer, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 
 const RUN = gql`query LabelPrintRun($id: ID!) { internalLabelPrintRun(id: $id) }`;
 const CONFIRM = gql`mutation ConfirmLabelPrint($id: ID!) { confirmInternalLabelPrintRun(id: $id) }`;
 const CANCEL = gql`mutation CancelLabelPrint($id: ID!, $reason: String!) { cancelInternalLabelPrintRun(id: $id, reason: $reason) }`;
+const PREPARE = gql`mutation PrepareLabelReprint($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`;
 const STANDARD_TEMPLATE = 'thermal_4x2';
 const PORTRAIT_WIDTH_MM = 50.8;
 const PORTRAIT_HEIGHT_MM = 101.6;
@@ -114,13 +116,73 @@ function CompactPortraitFourByTwoLabelV3({ label }: { label: any }) {
   </article>;
 }
 
+function FinishFourByTwoLabelV4({ label, portrait }: { label: any; portrait: boolean }) {
+  const payload = label.payload || {};
+  const productValue = String(payload.compactProductValue || payload.productCode || payload.internalCode || payload.sku || 'PENDING').toUpperCase();
+  const productSize = productValue.length > 42 ? '10pt' : productValue.length > 28 ? '13pt' : productValue.length > 18 ? '16pt' : '20pt';
+  return <article className={`mp-v4-label-page${portrait ? ' is-portrait' : ''}`} aria-label={`Physical label ${label.labelCode}`}>
+    <div className="mp-v4-frame">
+      <section className="mp-v4-qr">
+        <img src={label.qrDataUrl} alt={`Scan ${label.labelCode}`} />
+        <p>{label.labelCode}</p>
+      </section>
+      <section className="mp-v4-copy">
+        <header className="mp-v4-header"><b>MP</b><strong>MARBLE PARK</strong></header>
+        <div className="mp-v4-brand"><span>BRAND</span><strong>{String(payload.governedBrandCode || payload.brandCode || 'PENDING').toUpperCase()}</strong></div>
+        <div className="mp-v4-product"><span>PRODUCT</span><strong style={{ fontSize: productSize }}>{productValue}</strong></div>
+        <div className="mp-v4-finish"><span>FINISH</span><strong>{String(payload.finish || 'NOT SET').toUpperCase()}</strong></div>
+        <footer className="mp-v4-rate"><span>RATE</span><strong>Rs. {money(payload.mrpInclusive)}</strong><b>/{String(payload.priceUom || 'PC').toUpperCase()}</b></footer>
+      </section>
+    </div>
+  </article>;
+}
+
 async function waitForPrintAssets() {
   if (typeof document === 'undefined') return;
-  if (document.fonts?.ready) await document.fonts.ready;
-  await Promise.all(Array.from(document.images).map(async (image) => {
-    if (image.complete) return;
-    try { await image.decode(); } catch { /* The print preview exposes any failed image. */ }
-  }));
+  const ready = async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
+    await Promise.all(Array.from(document.querySelectorAll<HTMLImageElement>('.mp-label-pages img, .label-sheet img')).map(async (image) => {
+      if (!image.complete) await image.decode();
+      if (!image.naturalWidth) throw new Error('A sticker QR could not load. Refresh this preview before printing.');
+    }));
+    const fitError = fitStickerText();
+    if (fitError) throw new Error(fitError);
+  };
+  let timeout: ReturnType<typeof setTimeout>;
+  try {
+    await Promise.race([ready(), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Print images took too long to load. Refresh this preview and try again.')), 15000); })]);
+  } finally { clearTimeout(timeout!); }
+}
+
+// Fit real master values before printing rather than clipping text at fixed row edges.
+function fitStickerText() {
+  let invalid = false;
+  const fit = (node: HTMLElement, width: number, height: number) => {
+    const initial = Number(node.dataset.preferredSize || parseFloat(getComputedStyle(node).fontSize));
+    node.dataset.preferredSize = String(initial);
+    let size = initial;
+    node.style.fontSize = `${size}px`;
+    const exceeds = () => node.scrollWidth > width + 0.5 || node.getBoundingClientRect().height > height + 0.5 || node.scrollHeight > height + 0.5;
+    while (exceeds() && size > 9.34) { size = Math.max(9.34, size - .5); node.style.fontSize = `${size}px`; }
+    if (exceeds()) invalid = true;
+  };
+  for (const label of document.querySelectorAll<HTMLElement>('.mp-v4-label-page')) {
+    for (const row of label.querySelectorAll<HTMLElement>('.mp-v4-brand, .mp-v4-product, .mp-v4-finish')) {
+      const text = row.querySelector<HTMLElement>('strong');
+      const caption = row.querySelector<HTMLElement>('span');
+      if (!text || !caption) continue;
+      const style = getComputedStyle(row);
+      fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - parseFloat(style.rowGap));
+    }
+    const rate = label.querySelector<HTMLElement>('.mp-v4-rate');
+    const amount = rate?.querySelector<HTMLElement>('strong');
+    if (rate && amount) {
+      const style = getComputedStyle(rate);
+      const otherWidth = Array.from(rate.children).filter((node) => node !== amount).reduce((sum, node) => sum + node.getBoundingClientRect().width, 0);
+      fit(amount, rate.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - otherWidth - 2 * parseFloat(style.columnGap), rate.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
+    }
+  }
+  return invalid ? 'A product code, finish or rate cannot fit legibly on this sticker. Use the PDF download for its checked layout or correct the printable master value.' : '';
 }
 
 function StandardFourByTwoLabel({ label }: { label: any }) {
@@ -183,10 +245,16 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
   const { runId } = use(params);
   const [dialogOpened, setDialogOpened] = useState(false);
   const [decision, setDecision] = useState('');
+  const [printError, setPrintError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [nextOrientation, setNextOrientation] = useState('landscape');
+  const [nextCopies, setNextCopies] = useState('1');
+  const [nextReason, setNextReason] = useState('Correct printer layout or reprint labels');
   const [cancelReason, setCancelReason] = useState('Browser print dialog cancelled or printer did not complete');
   const { data, loading, error } = useQuery(RUN, { variables: { id: runId }, fetchPolicy: 'network-only' });
   const [confirm, confirmState] = useMutation(CONFIRM, { onCompleted: () => setDecision('confirmed') });
   const [cancel, cancelState] = useMutation(CANCEL, { onCompleted: () => setDecision('cancelled') });
+  const [prepare, prepareState] = useMutation(PREPARE);
   const run = data?.internalLabelPrintRun;
   const template = run?.template || {};
   const labels = run?.labels || [];
@@ -194,11 +262,30 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
   const sourceJobCount = Number(run?.metadata?.jobCount || run?.jobs?.length || 1);
   const bulkRun = uniqueLabelCount > 1 || sourceJobCount > 1;
   const standardFourByTwo = template.code === STANDARD_TEMPLATE;
-  const portraitFourByTwo = standardFourByTwo && Number(template.version || 0) >= 2;
-  const compactPortraitFourByTwo = standardFourByTwo && Number(template.version || 0) >= 3;
+  const finishFourByTwo = standardFourByTwo && Number(template.version || 0) >= 4;
+  const portraitFourByTwo = standardFourByTwo && Number(template.version || 0) >= 2 && Number(template.version || 0) < 4;
+  const compactPortraitFourByTwo = standardFourByTwo && Number(template.version || 0) === 3;
   const pageWidth = Number(template.pageWidthMm || template.widthMm || (portraitFourByTwo ? PORTRAIT_WIDTH_MM : LANDSCAPE_WIDTH_MM));
   const pageHeight = Number(template.pageHeightMm || template.heightMm || (portraitFourByTwo ? PORTRAIT_HEIGHT_MM : LANDSCAPE_HEIGHT_MM));
   const columns = Number(template.columns || 1);
+  const portrait = pageHeight > pageWidth;
+  const runStatus = decision || run?.status;
+  const settled = runStatus === 'confirmed' || runStatus === 'cancelled';
+  const historical = standardFourByTwo && !finishFourByTwo;
+  const canPrint = Boolean(run && labels.length && !error && !settled && !historical && !busy);
+  useEffect(() => {
+    if (!run?.id) return;
+    setNextOrientation(portrait ? 'portrait' : 'landscape');
+    setNextCopies(String(run.copies || 1));
+    setDialogOpened(false);
+    setDecision('');
+    setPrintError('');
+  }, [runId, run?.id, run?.copies, portrait]);
+  useEffect(() => {
+    let active = true;
+    document.fonts.ready.then(() => { if (active) fitStickerText(); });
+    return () => { active = false; };
+  }, [data, pageWidth, pageHeight]);
   const printCss = `
     @page { size: ${pageWidth}mm ${pageHeight}mm; margin: 0; }
     :root .label-sheet, :root .label-sheet article, :root .mp-label-page, :root .mp-portrait-label-page, :root .mp-v3-label-page,
@@ -279,6 +366,27 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     .mp-label-footer p { display: grid; min-width: 0; margin: 0; gap: .35mm; }
     .mp-label-footer b { font: 800 4.7pt/1 Arial, sans-serif; letter-spacing: .45pt; }
     .mp-label-footer span { overflow: hidden; font: 700 5.6pt/1.05 'Courier New', monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-v4-label-page { box-sizing: border-box; width: ${pageWidth}mm; height: ${pageHeight}mm; padding: 1.8mm; background: #fff !important; color: #111 !important; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .mp-v4-frame { box-sizing: border-box; display: grid; grid-template-columns: 42mm minmax(0, 1fr); width: 100%; height: 100%; border: .3mm solid #111; }
+    .mp-v4-qr { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; border-right: .3mm solid #111; }
+    .mp-v4-qr img { display: block; width: 38mm; height: 38mm; object-fit: contain; }
+    .mp-v4-qr p { margin: 1mm 0 0; font: bold 6pt/1 'Courier New', monospace; white-space: nowrap; }
+    .mp-v4-copy { display: grid; min-width: 0; grid-template-rows: 6mm 7mm minmax(0, 1fr) 7mm 10mm; }
+    .mp-v4-header { display: flex; align-items: center; gap: 1.4mm; padding: .7mm 1.5mm; border-bottom: .25mm solid #111; font: 900 7pt/1 Arial, sans-serif; letter-spacing: .5pt; }
+    .mp-v4-header b { padding: .6mm; background: #111; color: #fff; }
+    .mp-v4-brand, .mp-v4-product, .mp-v4-finish { display: flex; flex-direction: column; justify-content: center; min-width: 0; min-height: 0; gap: .5mm; padding: .6mm 1.5mm; }
+    .mp-v4-copy strong, .mp-v4-copy span, .mp-v4-rate b { flex-shrink: 0; }
+    .mp-v4-copy span { font: 800 4.5pt/1 Arial, sans-serif; letter-spacing: .7pt; }
+    .mp-v4-brand strong { font: 800 11pt/1 Arial, sans-serif; }
+    .mp-v4-product strong { font-weight: 900; line-height: 1.03; letter-spacing: -.2pt; overflow-wrap: anywhere; }
+    .mp-v4-finish strong { font: 800 10pt/1.05 Arial, sans-serif; overflow-wrap: anywhere; }
+    .mp-v4-rate { display: flex; align-items: center; gap: 1.3mm; padding: 1mm 1.5mm; border-top: .35mm solid #111; }
+    .mp-v4-rate strong { font: 900 19pt/1 Arial, sans-serif; letter-spacing: -.5pt; white-space: nowrap; }
+    .mp-v4-rate b { font: 800 7pt/1 Arial, sans-serif; }
+    .mp-v4-label-page.is-portrait .mp-v4-frame { grid-template-columns: 1fr; grid-template-rows: 43mm minmax(0, 1fr); }
+    .mp-v4-label-page.is-portrait .mp-v4-qr { border-right: 0; border-bottom: .3mm solid #111; }
+    .mp-v4-label-page.is-portrait .mp-v4-copy { grid-template-rows: 6mm 7mm minmax(0, 1fr) 8mm 11mm; }
+    .mp-v4-label-page.is-portrait .mp-v4-qr img { width: 38mm; height: 38mm; }
     @media screen {
       .print-controls { background: #202126 !important; color: #fff !important; }
       .print-meta { color: #cbd5e1 !important; }
@@ -287,33 +395,105 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     @media print {
       html, body { width: ${pageWidth}mm !important; margin: 0 !important; padding: 0 !important; background: #fff !important; color: #111 !important; }
       body { min-height: 0 !important; background-image: none !important; }
+      main { min-height: 0 !important; height: auto !important; margin: 0 !important; padding: 0 !important; }
       .print-controls { display: none !important; }
       .mp-label-pages { display: block !important; }
       .mp-label-page, .mp-portrait-label-page, .mp-v3-label-page { margin: 0 !important; box-shadow: none !important; break-inside: avoid !important; page-break-inside: avoid !important; }
       .mp-label-page:not(:last-child), .mp-portrait-label-page:not(:last-child), .mp-v3-label-page:not(:last-child) { break-after: page !important; page-break-after: always !important; }
       .label-sheet { box-shadow: none !important; margin: 0 !important; }
+      .mp-v4-label-page { margin: 0 !important; break-inside: avoid !important; page-break-inside: avoid !important; }
+      .mp-v4-label-page:not(:last-child) { break-after: page !important; page-break-after: always !important; }
     }
   `;
 
   async function openPrintDialog() {
-    setDialogOpened(true);
-    await waitForPrintAssets();
-    window.print();
+    if (!canPrint) return;
+    setPrintError(''); setBusy(true);
+    try {
+      await waitForPrintAssets();
+      setDialogOpened(true);
+      window.print();
+    } catch (cause) { setPrintError(cause instanceof Error ? cause.message : 'Print preview could not open.'); }
+    finally { setBusy(false); }
   }
 
-  if (loading) return <div className="grid min-h-screen place-items-center bg-white text-black">Preparing exact 2 x 4 inch portrait labels...</div>;
+  async function downloadPdf() {
+    if (!canPrint || !finishFourByTwo) return;
+    setPrintError(''); setBusy(true);
+    try {
+      const response = await fetch(`/api/pdf/labels/${encodeURIComponent(runId)}?download=1`);
+      if (!response.ok || !response.headers.get('content-type')?.includes('application/pdf')) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || 'Sticker PDF could not be generated. Refresh this preview and try again.');
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url; link.download = `MarblePark_Labels_${run.runNumber.replaceAll('/', '-')}.pdf`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setDialogOpened(true);
+    } catch (cause) { setPrintError(cause instanceof Error ? cause.message : 'Sticker PDF download failed.'); }
+    finally { setBusy(false); }
+  }
+
+  async function prepareNewRun() {
+    const copies = Number(nextCopies);
+    if (!Number.isInteger(copies) || copies < 1 || copies > 50 || !nextReason.trim() || busy) return;
+    setPrintError(''); setBusy(true);
+    try {
+      if (!settled) await cancel({ variables: { id: runId, reason: `Replaced print setup: ${nextReason.trim()}` } });
+      const result = await prepare({ variables: { input: {
+        templateCode: STANDARD_TEMPLATE, labelIds: [...new Set(labels.map((label: any) => label.id))],
+        copies, orientation: nextOrientation, reason: nextReason.trim(),
+      } } });
+      const id = result.data?.prepareInternalLabelPrintRun?.id;
+      if (id) window.location.assign(`/print/labels/${id}`);
+    } catch (cause) { setPrintError(cause instanceof Error ? cause.message : 'A new print run could not be prepared.'); }
+    finally { setBusy(false); }
+  }
+
+  if (loading) return <div className="grid min-h-screen place-items-center bg-white text-black">Preparing sticker pages...</div>;
 
   return <main className="min-h-screen bg-[#f4f1ef] p-4 text-black print:bg-white print:p-0">
     <style dangerouslySetInnerHTML={{ __html: printCss }} />
-    {error ? <div className="print-controls mx-auto max-w-3xl"><QueryErrorBanner error={error}/></div> : null}
+    {[error, confirmState.error, cancelState.error, prepareState.error].map((item, index) => item ? <div key={index} className="print-controls mx-auto max-w-5xl"><QueryErrorBanner error={item}/></div> : null)}
     <section className="print-controls mx-auto mb-5 max-w-5xl overflow-hidden rounded-2xl border border-[#e4d8d3] shadow-[0_24px_70px_-48px_rgba(73,32,28,.7)]">
       <div className="h-1.5 bg-[linear-gradient(90deg,#2a201f,#a92f28,#d77761)]" />
-      <div className="p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#e38a7f]">Physical identity print - {run?.runNumber}</p><h1 className="mt-2 text-2xl font-black">{portraitFourByTwo ? `${bulkRun ? 'Bulk ' : ''}2 x 4 inch portrait sticker${bulkRun ? 's' : ''}` : standardFourByTwo ? 'Historic 4 x 2 inch sticker' : template.name}</h1><p className="print-meta mt-1 text-sm">{labels.length} physical sticker page{labels.length === 1 ? '' : 's'} · {uniqueLabelCount} unique label{uniqueLabelCount === 1 ? '' : 's'} from {sourceJobCount} job{sourceJobCount === 1 ? '' : 's'} · exact {pageWidth} × {pageHeight} mm.</p></div><Button className="bg-[#a92f28] hover:bg-[#8d2722]" disabled={!run || !labels.length || Boolean(error) || decision === 'confirmed' || decision === 'cancelled'} onClick={openPrintDialog}><Printer className="mr-2 h-4 w-4"/>Print all {labels.length} sticker{labels.length === 1 ? '' : 's'}</Button></div>
-        <div className="print-steps mt-4 grid gap-2 rounded-xl p-3 text-xs sm:grid-cols-4"><p><b>Paper</b><br/>{portraitFourByTwo ? '2 x 4 inch / 50.8 x 101.6 mm.' : `${pageWidth} x ${pageHeight} mm.`}</p><p><b>Orientation</b><br/>{portraitFourByTwo ? 'Portrait.' : 'Use saved run setting.'}</p><p><b>Scale</b><br/>100% or Actual size.</p><p><b>Options</b><br/>One page per sheet; margins none; headers off.</p></div>
-        {dialogOpened && !decision ? <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4"><p className="font-bold text-blue-950">Did the printer complete this run at full sticker size?</p><p className="mt-1 text-xs text-blue-800">Confirm only after the physical 2 x 4 inch portrait output is readable and the QR scans. If the dialog was cancelled, scaled down, clipped, or the printer failed, cancel the run; print counts remain unchanged.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><Button disabled={confirmState.loading} onClick={() => confirm({ variables: { id: runId } })}><CheckCircle2 className="mr-2 h-4 w-4"/>Confirm printed</Button><input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} className="h-10 flex-1 rounded-md border border-blue-200 bg-white px-3 text-sm"/><Button variant="outline" disabled={cancelState.loading || !cancelReason.trim()} onClick={() => cancel({ variables: { id: runId, reason: cancelReason } })}><XCircle className="mr-2 h-4 w-4"/>Cancel / failed</Button></div></div> : null}
-        {decision ? <div aria-live="polite" className={`mt-4 rounded-lg p-3 text-sm font-bold ${decision === 'confirmed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{decision === 'confirmed' ? 'Print confirmed and audited. Reprinting will create a new run.' : 'Run cancelled; no label print counts were changed.'}</div> : null}
+      <div className="p-5 sm:p-6">
+        <Link href="/dashboard/inventory/labels?tab=print" className="mb-4 inline-flex items-center gap-2 text-sm text-white/80"><ArrowLeft className="h-4 w-4"/>Back to label selection</Link>
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#e38a7f]">Sticker print - {run?.runNumber}</p>
+            <h1 className="mt-2 text-2xl font-black !text-white">{historical ? 'Historical sticker preview' : `${bulkRun ? 'Bulk ' : ''}${portrait ? '2 × 4 inch portrait' : '4 × 2 inch landscape'} stickers`}</h1>
+            <p className="print-meta mt-1 text-sm">{labels.length} sticker pages · {uniqueLabelCount} unique labels · {sourceJobCount} jobs · {run?.copies || 1} copies each.</p>
+          </div>
+          <div className="flex shrink-0 flex-col gap-2">
+            <Button className="bg-[#a92f28] hover:bg-[#8d2722]" disabled={!canPrint} onClick={openPrintDialog}><Printer className="mr-2 h-4 w-4"/>{busy ? 'Preparing…' : `Print all ${labels.length} stickers`}</Button>
+            {finishFourByTwo ? <Button variant="outline" className="bg-white text-black" disabled={!canPrint} onClick={downloadPdf}><Download className="mr-2 h-4 w-4"/>Download {labels.length}-page sticker PDF</Button> : null}
+          </div>
+        </div>
+        <div className="print-steps mt-4 grid gap-3 rounded-xl p-4 text-xs sm:grid-cols-4">
+          <p><b>Printer paper size</b><br/>{pageWidth} × {pageHeight} mm<br/>{portrait ? '2 in wide × 4 in feed' : '4 in wide × 2 in feed'}</p>
+          <p><b>Orientation</b><br/>{portrait ? 'Portrait' : 'Landscape'}<br/>Change the run setup below, not only the printer dialog.</p>
+          <p><b>Scaling</b><br/>100% / Actual size<br/>Margins none; headers off.</p>
+          <p><b>All stickers together</b><br/>All pages; one page per sheet.<br/>Printer copies = 1 (copies are already included).</p>
+        </div>
+        <p className="print-meta mt-3 text-xs leading-5">If a label crosses a gap, stop the printer. Set its custom paper size to match this run and calibrate gap detection. The PDF contains one exact-size page per sticker.</p>
+        {historical ? <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-950">This saved run uses an older fixed layout. Create a new run below for finish, correct orientation and multi-page PDF.</p> : null}
+        {printError ? <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-900">{printError}</p> : null}
+        {dialogOpened && !settled ? <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-950"><p className="font-bold">Did every sticker print correctly?</p><p className="mt-1 text-xs">Downloading is not confirmation. Check the physical stickers and scan a QR before confirming. Cancel if output was clipped, incomplete or did not print.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><Button disabled={confirmState.loading || cancelState.loading} onClick={() => { void confirm({ variables: { id: runId } }).catch(() => {}); }}><CheckCircle2 className="mr-2 h-4 w-4"/>Confirm printed</Button><input aria-label="Print cancellation reason" value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-blue-200 bg-white px-3 text-sm"/><Button variant="outline" disabled={cancelState.loading || confirmState.loading || !cancelReason.trim()} onClick={() => { void cancel({ variables: { id: runId, reason: cancelReason } }).catch(() => {}); }}><XCircle className="mr-2 h-4 w-4"/>Cancel / failed</Button></div></div> : null}
+        {settled ? <div aria-live="polite" className={`mt-4 rounded-lg p-3 text-sm font-bold ${runStatus === 'confirmed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{runStatus === 'confirmed' ? 'Print confirmed and audited. Use a new run for more copies.' : 'Run cancelled; print counts unchanged. Create a new run to retry.'}</div> : null}
+        {run ? <details className="mt-4 rounded-lg border border-white/20 p-3" open={historical || settled}>
+          <summary className="cursor-pointer text-sm font-bold">Change orientation, copies or reprint</summary>
+          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+            <label>Printer layout<select aria-label="New run orientation" className="mt-1 h-10 w-full rounded-md bg-white px-3 text-black" value={nextOrientation} onChange={(event) => setNextOrientation(event.target.value)}><option value="landscape">Landscape · 4 × 2 inches</option><option value="portrait">Portrait · 2 × 4 inches</option></select></label>
+            <label>Copies per selected sticker<input aria-label="New run copies" type="number" min={1} max={50} step={1} className="mt-1 h-10 w-full rounded-md bg-white px-3 text-black" value={nextCopies} onChange={(event) => setNextCopies(event.target.value)}/></label>
+            <label className="sm:col-span-2">Reason for new run<input aria-label="New run reason" className="mt-1 h-10 w-full rounded-md bg-white px-3 text-black" value={nextReason} onChange={(event) => setNextReason(event.target.value)}/></label>
+          </div>
+          <p className="print-meta my-3 text-xs">Keeps the same selected labels. Any unconfirmed setup is cancelled without changing print counts; a new audited run is created.</p>
+          <Button disabled={busy || !nextReason.trim() || !Number.isInteger(Number(nextCopies)) || Number(nextCopies) < 1 || Number(nextCopies) > 50 || uniqueLabelCount * Number(nextCopies) > 1000} onClick={prepareNewRun}>{busy ? 'Preparing…' : 'Create new print run'}</Button>
+        </details> : null}
       </div>
     </section>
-    {compactPortraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <CompactPortraitFourByTwoLabelV3 key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : portraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <PortraitFourByTwoLabelV2 key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : standardFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <StandardFourByTwoLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : <section className="label-sheet mx-auto grid bg-white shadow-xl" style={{ width: `${pageWidth}mm`, minHeight: `${pageHeight}mm`, gridTemplateColumns: `repeat(${columns}, ${Number(template.widthMm || 70)}mm)`, gridAutoRows: `${Number(template.heightMm || 37)}mm`, columnGap: `${Number(template.gapXMm || 0)}mm`, rowGap: `${Number(template.gapYMm || 0)}mm`, padding: `${Number(template.marginTopMm || 0)}mm ${Number(template.marginRightMm || 0)}mm ${Number(template.marginBottomMm || 0)}mm ${Number(template.marginLeftMm || 0)}mm` }}>{labels.map((label: any, index: number) => <LegacyLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label} template={template}/>)}</section>}
+    {finishFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <FinishFourByTwoLabelV4 key={`${label.id}-${label.copyIndex}-${index}`} label={label} portrait={portrait}/>)}</section> : compactPortraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <CompactPortraitFourByTwoLabelV3 key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : portraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <PortraitFourByTwoLabelV2 key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : standardFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <StandardFourByTwoLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : <section className="label-sheet mx-auto grid bg-white shadow-xl" style={{ width: `${pageWidth}mm`, minHeight: `${pageHeight}mm`, gridTemplateColumns: `repeat(${columns}, ${Number(template.widthMm || 70)}mm)`, gridAutoRows: `${Number(template.heightMm || 37)}mm`, columnGap: `${Number(template.gapXMm || 0)}mm`, rowGap: `${Number(template.gapYMm || 0)}mm`, padding: `${Number(template.marginTopMm || 0)}mm ${Number(template.marginRightMm || 0)}mm ${Number(template.marginBottomMm || 0)}mm ${Number(template.marginLeftMm || 0)}mm` }}>{labels.map((label: any, index: number) => <LegacyLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label} template={template}/>)}</section>}
   </main>;
 }

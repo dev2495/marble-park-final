@@ -19,7 +19,7 @@ const SOURCES = gql`query LabelSources($search: String) {
   goodsReceiptPage(sort: "newest", skip: 0, take: 12)
   internalLabelTemplates
 }`;
-const JOBS = gql`query LabelRegister($search: String, $skip: Int, $take: Int) { internalLabelJobs(search: $search, skip: $skip, take: $take) }`;
+const JOBS = gql`query LabelRegister($search: String, $sourceType: String, $printState: String, $skip: Int, $take: Int) { internalLabelJobs(search: $search, sourceType: $sourceType, printState: $printState, skip: $skip, take: $take) }`;
 const CREATE = gql`mutation CreateLabelJob($input: InternalLabelJobInput!) { createInternalLabelJob(input: $input) }`;
 const PREPARE = gql`mutation PreparePrint($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`;
 const SCAN = gql`mutation ScanLabel($labelCode: String!, $input: InternalLabelScanInput) { scanInternalLabel(labelCode: $labelCode, input: $input) }`;
@@ -27,6 +27,8 @@ const VOID = gql`mutation VoidLabel($id: ID!, $reason: String!) { voidInternalLa
 
 type DeskTab = 'receipts' | 'subjects' | 'print' | 'scan';
 type SubjectMode = 'product' | 'lot' | 'display';
+type PrintOrientation = 'landscape' | 'portrait';
+type PrintFilter = 'all' | 'unprinted' | 'printed';
 type TrayLabel = {
   id: string;
   jobId: string;
@@ -79,11 +81,16 @@ export default function LabelDeskPage() {
   const [receiptCounts, setReceiptCounts] = useState<Record<string, string>>({});
   const [receiptSelection, setReceiptSelection] = useState<string[]>([]);
   const [notice, setNotice] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [receiptCreationLoading, setReceiptCreationLoading] = useState(false);
   const [registerSearch, setRegisterSearch] = useState('');
+  const [printFilter, setPrintFilter] = useState<PrintFilter>('unprinted');
+  const [sourceFilter, setSourceFilter] = useState('all');
   const [page, setPage] = useState(0);
   const [expandedJobId, setExpandedJobId] = useState('');
   const [trayLabels, setTrayLabels] = useState<Record<string, TrayLabel>>({});
   const [physicalTemplate, setPhysicalTemplate] = useState('thermal_4x2');
+  const [printOrientation, setPrintOrientation] = useState<PrintOrientation>('landscape');
   const [copies, setCopies] = useState('1');
   const [printReason, setPrintReason] = useState('Operational label print');
   const [voidReason, setVoidReason] = useState('Damaged or superseded physical label');
@@ -93,7 +100,7 @@ export default function LabelDeskPage() {
   const debouncedRegister = useDebouncedValue(registerSearch.trim(), 250);
   const pageSize = 20;
   const { data: sourceData, loading: sourceLoading, error: sourceError, refetch: refetchSources } = useQuery(SOURCES, { variables: { search: debouncedSource || undefined }, fetchPolicy: 'cache-and-network' });
-  const { data, loading: jobsLoading, error, refetch } = useQuery(JOBS, { variables: { search: debouncedRegister || undefined, skip: page * pageSize, take: pageSize + 1 }, fetchPolicy: 'cache-and-network' });
+  const { data, loading: jobsLoading, error, refetch } = useQuery(JOBS, { variables: { search: debouncedRegister || undefined, sourceType: sourceFilter === 'all' ? undefined : sourceFilter, printState: printFilter, skip: page * pageSize, take: pageSize + 1 }, fetchPolicy: 'cache-and-network' });
   const [create, createState] = useMutation(CREATE);
   const [prepare, prepareState] = useMutation(PREPARE);
   const [scan, scanState] = useMutation(SCAN, { onCompleted: (response) => setScanResult(response.scanInternalLabel) });
@@ -119,7 +126,12 @@ export default function LabelDeskPage() {
   const activeLabels = jobs.reduce((sum: number, job: any) => sum + (job.instances || []).filter((row: any) => row.status === 'active').length, 0);
   const unprintedLabels = jobs.reduce((sum: number, job: any) => sum + (job.instances || []).filter((row: any) => row.status === 'active' && !Number(row.printCount || 0)).length, 0);
 
-  useEffect(() => { setRequestedGrn(new URLSearchParams(window.location.search).get('grn') || ''); }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setRequestedGrn(params.get('grn') || '');
+    const requestedTab = params.get('tab');
+    if (requestedTab === 'print' || requestedTab === 'scan' || requestedTab === 'subjects') setTab(requestedTab);
+  }, []);
   useEffect(() => {
     if (!requestedGrn || !receipts.length) return;
     document.getElementById(`grn-${requestedGrn}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -177,36 +189,74 @@ export default function LabelDeskPage() {
     setReceiptCounts((current) => ({ ...current, [line.id]: current[line.id] || String(suggestedLabels(line)) }));
   }
   async function generateReceiptLabels() {
+    if (receiptCreationLoading) return;
+    setActionError('');
+    setNotice('');
     const selected = receipts.flatMap((receipt: any) => receipt.lines || []).filter((line: any) => receiptSelection.includes(line.id));
-    const created: any[] = [];
-    for (const line of selected) {
-      const count = Math.max(1, Math.min(500, Number(receiptCounts[line.id] || suggestedLabels(line))));
-      const response = await create({ variables: { input: { lotId: line.lotId, quantity: count, template: 'stock_pack', newJob: true } } });
-      created.push(response.data?.createInternalLabelJob);
+    const requests = selected.map((line: any) => ({ line, count: Number(receiptCounts[line.id] || suggestedLabels(line)) }));
+    if (!requests.length) {
+      setActionError('Select at least one received line before creating labels.');
+      return;
     }
-    created.filter(Boolean).forEach((job) => addManyToTray((job.instances || []).map((label: any) => ({ job, label }))));
-    setReceiptSelection([]); setReceiptCounts({});
-    setNotice(`${created.length} receipt label job${created.length === 1 ? '' : 's'} created and added to one print tray. Stock was not changed.`);
-    await Promise.all([refetch(), refetchSources()]);
-    setTab('print');
+    if (requests.some(({ count }: { count: number }) => !Number.isInteger(count) || count < 1 || count > 500)) {
+      setActionError('Enter a whole number from 1 to 500 for each received line. No labels were created.');
+      return;
+    }
+    const requestedCount = requests.reduce((sum: number, request: { count: number }) => sum + request.count, 0);
+    if (Object.keys(trayLabels).length + requestedCount > MAX_BULK_LABELS) {
+      setActionError(`These lines need ${requestedCount} labels, but the tray has room for ${MAX_BULK_LABELS - Object.keys(trayLabels).length}. Print or clear the current tray, or select fewer lines. No labels were created.`);
+      return;
+    }
+    setReceiptCreationLoading(true);
+    let createdCount = 0;
+    try {
+      for (const { line, count } of requests) {
+        const response = await create({ variables: { input: { lotId: line.lotId, quantity: count, template: 'stock_pack', newJob: true } } });
+        const job = response.data?.createInternalLabelJob;
+        if (!job?.id) throw new Error('The server did not return a created label job. Refresh the register before retrying.');
+        addManyToTray((job.instances || []).map((label: any) => ({ job, label })));
+        createdCount += 1;
+        setReceiptSelection((current) => current.filter((id) => id !== line.id));
+        setReceiptCounts((current) => {
+          const next = { ...current };
+          delete next[line.id];
+          return next;
+        });
+      }
+      setNotice(`${createdCount} receipt label job${createdCount === 1 ? '' : 's'} created and added to one print tray. Stock was not changed.`);
+      setTab('print');
+    } catch (failure) {
+      const detail = failure instanceof Error ? failure.message : 'A label job could not be created.';
+      setActionError(`${createdCount ? `${createdCount} completed job${createdCount === 1 ? ' is' : 's are'} safe in the print tray. Only unfinished receipt lines remain selected. ` : 'No completed jobs were added to the tray. '}${detail}`);
+    } finally {
+      await Promise.allSettled([refetch(), refetchSources()]);
+      setReceiptCreationLoading(false);
+    }
   }
   async function preparePrint() {
+    setActionError('');
     const labelIds = Object.keys(trayLabels);
-    const normalizedCopies = Math.max(1, Math.min(50, Number(copies) || 1));
-    if (!labelIds.length || labelIds.length * normalizedCopies > MAX_PHYSICAL_PAGES) return;
+    const copyCount = Number(copies);
+    if (!Number.isInteger(copyCount) || copyCount < 1 || copyCount > 50) {
+      setActionError('Copies must be a whole number from 1 to 50.');
+      return;
+    }
+    if (!labelIds.length || labelIds.length * copyCount > MAX_PHYSICAL_PAGES || !printReason.trim()) return;
     const printWindow = window.open('', '_blank');
     try {
-      const response = await prepare({ variables: { input: { templateCode: physicalTemplate, labelIds, copies: normalizedCopies, reason: printReason } } });
+      const response = await prepare({ variables: { input: { templateCode: physicalTemplate, ...(physicalTemplate === 'thermal_4x2' ? { orientation: printOrientation } : {}), labelIds, copies: copyCount, reason: printReason } } });
       const run = response.data?.prepareInternalLabelPrintRun;
-      if (run?.id && printWindow) {
+      if (!run?.id) throw new Error('No print preview was returned. Your selected labels remain in the tray.');
+      if (printWindow && !printWindow.closed) {
         printWindow.location.href = `/print/labels/${run.id}`;
         printWindow.opener = null;
-      } else if (run?.id) {
+      } else {
         window.location.href = `/print/labels/${run.id}`;
       }
-      if (run?.id) setNotice(`${run.runNumber || 'Bulk print run'} prepared with ${labelIds.length} unique labels and ${labelIds.length * normalizedCopies} physical sticker pages.`);
-    } catch {
+      setNotice(`${run.runNumber || 'Bulk print run'} prepared with ${labelIds.length} unique labels and ${labelIds.length * copyCount} physical sticker pages.`);
+    } catch (failure) {
       printWindow?.close();
+      setActionError(failure instanceof Error ? failure.message : 'The print preview could not open. Your selected labels remain in the tray.');
     }
   }
   async function executeScan(payload: string) {
@@ -223,6 +273,7 @@ export default function LabelDeskPage() {
 
   return <div className="space-y-5 pb-12">
     {[sourceError,error,createState.error,prepareState.error,scanState.error,voidState.error].filter(Boolean).map((item:any,index)=><QueryErrorBanner key={index} error={item}/>) }
+    {actionError?<div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold leading-6 text-red-900">{actionError}</div>:null}
     <header className="relative overflow-hidden rounded-[1.75rem] border border-[#eadbd5] bg-[radial-gradient(circle_at_82%_12%,rgba(209,120,96,.24),transparent_30%),linear-gradient(125deg,#241b1a_0%,#4a211f_55%,#8f302b_100%)] p-6 text-white shadow-[0_30px_80px_-44px_rgba(86,25,22,.85)] sm:p-8">
       <div className="absolute -right-9 -top-12 h-44 w-44 rounded-full border border-white/10"/><div className="absolute -right-1 -top-6 h-28 w-28 rounded-full border border-white/10"/>
       <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end"><div><div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.18em] text-[#f4c9bc]"><Sparkles className="h-4 w-4"/>Physical identity desk</div><h1 className="mt-3 max-w-3xl font-display text-3xl font-bold tracking-tight sm:text-4xl">From inward receipt to the right label—without losing the lot.</h1><p className="mt-3 max-w-3xl text-sm leading-6 text-white/75">Choose a recent GRN, confirm the exact physical lot and label count, then print, scan or audit it. Product, carton and showroom labels use the same governed lifecycle.</p></div><div className="grid grid-cols-3 gap-2 sm:min-w-[27rem]"><HeroMetric label="Recent receipts shown" value={receipts.length}/><HeroMetric label="Active on this page" value={activeLabels}/><HeroMetric label="Unprinted on page" value={unprintedLabels}/></div></div>
@@ -236,7 +287,7 @@ export default function LabelDeskPage() {
     {tab==='receipts'?<section className="space-y-4">
       <div className="flex flex-col justify-between gap-3 rounded-2xl border border-amber-300/50 bg-[var(--surface)] p-5 md:flex-row md:items-center"><div><h2 className="text-lg font-bold text-[var(--ink)]">Label received stock</h2><p className="mt-1 text-sm text-[var(--ink-3)]">Select accepted GRN lines. Each job points to the already-posted exact lot; creating labels never changes quantity.</p></div><Button asChild variant="outline"><Link href="/dashboard/procurement?view=receiving">Open Receiving</Link></Button></div>
       <div className="space-y-3">{receipts.map((grn:any)=><article id={`grn-${grn.id}`} key={grn.id} className={`overflow-hidden rounded-2xl border bg-[var(--surface)] shadow-[0_18px_48px_-40px_rgba(30,20,18,.7)] transition ${requestedGrn===grn.id?'border-[#a92f28] ring-2 ring-[#a92f28]/15':'border-[var(--line)]'}`}><div className="flex flex-col justify-between gap-3 border-b border-[var(--line)] bg-[var(--bg-soft)] p-4 sm:flex-row sm:items-center"><div><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-[var(--ink)]">{grn.grnNumber}</p><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700">Posted</span><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase text-slate-600">{grn.purchaseOrderId?'Against PO':'Manual inward'}</span></div><p className="mt-1 text-xs text-[var(--ink-4)]">{grn.vendorName} · {new Date(grn.receivedDate).toLocaleString('en-IN')} · challan {grn.supplierChallan||'not captured'}</p></div><p className="text-xs font-semibold text-[var(--ink-4)]">{(grn.lines||[]).filter((line:any)=>line.lotId&&Number(line.acceptedQuantity)>0).length} label-ready lot line(s)</p></div><div className="grid gap-3 p-4 lg:grid-cols-2">{(grn.lines||[]).map((line:any)=>{const selected=receiptSelection.includes(line.id);const ready=line.lotId&&Number(line.acceptedQuantity)>0;return <div key={line.id} className={`rounded-xl border bg-[var(--surface)] p-3 transition ${selected?'border-[#b33a32] ring-2 ring-[#b33a32]/15':'border-[var(--line)]'} ${!ready?'opacity-60':''}`}><div className="flex gap-3"><ProductImageFrame src={imageOf(line.product)} alt={line.name} className="h-16 w-16 shrink-0 rounded-xl"/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><button type="button" disabled={!ready} onClick={()=>toggleReceiptLine(line)} className="min-w-0 text-left"><p className="truncate text-sm font-bold text-[var(--ink)]">{line.product?.internalCode||line.sku} · {line.name}</p><p className="mt-1 text-xs text-[var(--ink-4)]">SKU {line.sku} · accepted {line.acceptedQuantity} pc · damaged {line.damagedQuantity||0}</p></button><button type="button" disabled={!ready} onClick={()=>toggleReceiptLine(line)} aria-label={`Select ${line.name}`} className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border ${selected?'border-[#a92f28] bg-[#a92f28] text-white':'border-[var(--line)] text-transparent'}`}><Check className="h-4 w-4"/></button></div><div className="mt-2 rounded-lg bg-[var(--bg-soft)] px-3 py-2 text-[11px] leading-5 text-[var(--ink-3)]"><b className="text-[var(--ink)]">{line.lot?.lotNumber||line.lotId||'No lot'}</b>{line.lot?.supplierBatch?` · batch ${line.lot.supplierBatch}`:''}<br/>{line.lot?.balances?.map((b:any)=>`${b.location?.code||b.locationId}: ${b.available} available`).join(' · ')||'Lot balance not available'}</div>{selected?<label className="mt-3 flex items-center justify-between gap-3 text-xs font-semibold text-[var(--ink-3)]"><span>Unique physical labels<br/><small className="font-normal text-[var(--ink-4)]">Suggested from {line.product?.piecesPerPack||1} pc/pack; confirm before creating.</small></span><Input className="w-24" type="number" min={1} max={500} value={receiptCounts[line.id]||String(suggestedLabels(line))} onChange={(event)=>setReceiptCounts((current)=>({...current,[line.id]:event.target.value}))}/></label>:null}</div></div></div>})}</div></article>)}{!sourceLoading&&!receipts.length?<Empty icon={PackageCheck} title="No posted receipts yet" text="Post a PO or manual GRN first. The accepted stock lot will appear here automatically."/>:null}</div>
-      <div className="sticky bottom-4 z-20 flex flex-col justify-between gap-3 rounded-2xl border border-[#d9aaa0] bg-[#281b1a]/95 p-4 text-white shadow-2xl backdrop-blur sm:flex-row sm:items-center"><div><p className="font-bold">{receiptSelection.length} receipt line{receiptSelection.length===1?'':'s'} selected</p><p className="mt-1 text-xs text-white/65">One auditable label job per exact lot. No stock movement is posted.</p></div><Button disabled={!receiptSelection.length||createState.loading} onClick={generateReceiptLabels} className="bg-[#d55848] hover:bg-[#bf4538]"><Barcode className="mr-2 h-4 w-4"/>{createState.loading?'Creating…':'Create receipt label jobs'}</Button></div>
+      <div className="sticky bottom-4 z-20 flex flex-col justify-between gap-3 rounded-2xl border border-[#d9aaa0] bg-[#281b1a]/95 p-4 text-white shadow-2xl backdrop-blur sm:flex-row sm:items-center"><div><p className="font-bold">{receiptSelection.length} receipt line{receiptSelection.length===1?'':'s'} selected</p><p className="mt-1 text-xs text-white/65">One auditable label job per exact lot. No stock movement is posted.</p></div><Button disabled={!receiptSelection.length||createState.loading||receiptCreationLoading} onClick={generateReceiptLabels} className="bg-[#d55848] hover:bg-[#bf4538]"><Barcode className="mr-2 h-4 w-4"/>{receiptCreationLoading?'Creating selected jobs…':'Create receipt label jobs'}</Button></div>
     </section>:null}
 
     {tab==='subjects'?<section className="grid gap-5 xl:grid-cols-[1fr_21rem]">
@@ -244,7 +295,7 @@ export default function LabelDeskPage() {
       <aside className="space-y-4"><div className="rounded-2xl border border-sky-200 bg-sky-50 p-5"><CircleHelp className="h-5 w-5 text-sky-700"/><h3 className="mt-3 font-bold text-sky-950">Which subject should I choose?</h3><ul className="mt-3 space-y-3 text-xs leading-5 text-sky-900"><li><b>Product / shelf:</b> identifies a catalogue SKU, not a quantity.</li><li><b>Exact lot:</b> identifies physically received stock and retains batch, receipt and location context.</li><li><b>Display:</b> identifies a non-sellable showroom asset, even when it originated from stock.</li></ul></div><Button asChild variant="outline" className="w-full"><Link href="/dashboard/help#labels-lots"><CircleHelp className="mr-2 h-4 w-4"/>Open label lifecycle help</Link></Button></aside>
     </section>:null}
 
-    {tab==='print'?<div className="label-light-surface"><PrintRegister jobs={jobs} loading={jobsLoading} expandedJobId={expandedJobId} toggleJob={toggleJob} trayLabels={trayLabels} addManyToTray={addManyToTray} removeManyFromTray={removeManyFromTray} toggleTrayLabel={toggleTrayLabel} clearTray={()=>setTrayLabels({})} templates={templates} physicalTemplate={physicalTemplate} setPhysicalTemplate={setPhysicalTemplate} copies={copies} setCopies={setCopies} printReason={printReason} setPrintReason={setPrintReason} voidReason={voidReason} setVoidReason={setVoidReason} voidLabel={voidLabel} voidLoading={voidState.loading} preparePrint={preparePrint} prepareLoading={prepareState.loading} registerSearch={registerSearch} setRegisterSearch={(value:string)=>{setRegisterSearch(value);setPage(0)}} page={page} setPage={setPage} hasNext={hasNext}/></div>:null}
+    {tab==='print'?<div className="label-light-surface"><PrintRegister jobs={jobs} loading={jobsLoading} expandedJobId={expandedJobId} toggleJob={toggleJob} trayLabels={trayLabels} addManyToTray={addManyToTray} removeManyFromTray={removeManyFromTray} toggleTrayLabel={toggleTrayLabel} clearTray={()=>setTrayLabels({})} templates={templates} physicalTemplate={physicalTemplate} setPhysicalTemplate={setPhysicalTemplate} printOrientation={printOrientation} setPrintOrientation={setPrintOrientation} copies={copies} setCopies={setCopies} printReason={printReason} setPrintReason={setPrintReason} voidReason={voidReason} setVoidReason={setVoidReason} voidLabel={voidLabel} voidLoading={voidState.loading} preparePrint={preparePrint} prepareLoading={prepareState.loading} registerSearch={registerSearch} setRegisterSearch={(value:string)=>{setRegisterSearch(value);setPage(0)}} printFilter={printFilter} setPrintFilter={(value:PrintFilter)=>{setPrintFilter(value);setPage(0)}} sourceFilter={sourceFilter} setSourceFilter={(value:string)=>{setSourceFilter(value);setPage(0)}} page={page} setPage={setPage} hasNext={hasNext}/></div>:null}
 
     {tab==='scan'?<section className="grid gap-5 xl:grid-cols-[1fr_22rem]">
       <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
@@ -275,13 +326,13 @@ function PrintRegister(props:any) {
     toggleTrayLabel, clearTray, templates, physicalTemplate, setPhysicalTemplate, copies,
     setCopies, printReason, setPrintReason, voidReason, setVoidReason, voidLabel, voidLoading,
     preparePrint, prepareLoading, registerSearch, setRegisterSearch, page, setPage, hasNext,
+    printOrientation, setPrintOrientation, printFilter, setPrintFilter, sourceFilter, setSourceFilter,
   } = props;
-  const [printFilter, setPrintFilter] = useState<'all' | 'unprinted' | 'reprints'>('unprinted');
-  const [sourceFilter, setSourceFilter] = useState('all');
   const selectedLabels = Object.values(trayLabels) as TrayLabel[];
   const selectedIds = new Set(selectedLabels.map((label) => label.id));
-  const copyCount = Math.max(1, Math.min(50, Number(copies) || 1));
-  const physicalPages = selectedLabels.length * copyCount;
+  const copyCount = Number(copies);
+  const validCopies = Number.isInteger(copyCount) && copyCount >= 1 && copyCount <= 50;
+  const physicalPages = validCopies ? selectedLabels.length * copyCount : NaN;
   const exceedsPageLimit = physicalPages > MAX_PHYSICAL_PAGES;
   const selectedByJob = selectedLabels.reduce((groups: Record<string, TrayLabel[]>, label) => {
     groups[label.jobId] = [...(groups[label.jobId] || []), label];
@@ -295,7 +346,7 @@ function PrintRegister(props:any) {
   function matchingLabelsFor(job: any) {
     const active = activeLabelsFor(job);
     if (printFilter === 'unprinted') return active.filter((label: any) => !Number(label.printCount || 0));
-    if (printFilter === 'reprints') return active.filter((label: any) => Number(label.printCount || 0) > 0);
+    if (printFilter === 'printed') return active.filter((label: any) => Number(label.printCount || 0) > 0);
     return active;
   }
   const sourceFilteredJobs = jobs.filter((job: any) => sourceFilter === 'all' || job.sourceType === sourceFilter);
@@ -304,10 +355,10 @@ function PrintRegister(props:any) {
   const visibleUnprintedEntries = filteredJobs.flatMap((job: any) => activeLabelsFor(job).filter((label: any) => !Number(label.printCount || 0)).map((label: any) => ({ job, label })));
 
   function toggleWholeJob(job: any) {
-    const active = activeLabelsFor(job);
-    const allSelected = active.length > 0 && active.every((label: any) => selectedIds.has(label.id));
-    if (allSelected) removeManyFromTray(active.map((label: any) => label.id));
-    else addManyToTray(active.map((label: any) => ({ job, label })));
+    const matching = matchingLabelsFor(job);
+    const allSelected = matching.length > 0 && matching.every((label: any) => selectedIds.has(label.id));
+    if (allSelected) removeManyFromTray(matching.map((label: any) => label.id));
+    else addManyToTray(matching.map((label: any) => ({ job, label })));
   }
 
   return <section data-testid="bulk-print-workspace" className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -317,7 +368,7 @@ function PrintRegister(props:any) {
           <div>
             <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.18em] text-[#a92f28]"><Layers3 className="h-4 w-4"/>Bulk sticker workspace</div>
             <h2 className="mt-2 text-2xl font-bold tracking-tight text-[var(--ink)]">Choose many. Print once.</h2>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--ink-3)]">Search across jobs, add complete batches or individual labels, then send the whole tray to one 4 × 2 inch portrait print run. Your tray stays selected while you search or change pages.</p>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--ink-3)]">Add matching batches or individual labels, choose how the sticker sits on your roll, then print the whole tray in one run. Your tray stays selected while you search or change pages.</p>
           </div>
           <label className="relative w-full lg:max-w-md">
             <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-[var(--ink-4)]"/>
@@ -326,7 +377,7 @@ function PrintRegister(props:any) {
         </div>
         <div className="mt-5 flex flex-col gap-3 border-t border-[#eadfd9] pt-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            {([['all','All active'],['unprinted','Not printed'],['reprints','Printed before']] as const).map(([id,label])=><button key={id} type="button" aria-pressed={printFilter===id} onClick={()=>setPrintFilter(id)} className={`rounded-full border px-3 py-2 text-xs font-bold transition ${printFilter===id?'border-[#2b201f] bg-[#2b201f] text-white':'border-[#dfd2cc] bg-white text-[var(--ink-3)] hover:border-[#b87b70]'}`}>{label}</button>)}
+            {([['all','All active'],['unprinted','Not printed'],['printed','Printed before']] as const).map(([id,label])=><button key={id} type="button" aria-pressed={printFilter===id} onClick={()=>setPrintFilter(id)} className={`rounded-full border px-3 py-2 text-xs font-bold transition ${printFilter===id?'border-[#2b201f] bg-[#2b201f] text-white':'border-[#dfd2cc] bg-white text-[var(--ink-3)] hover:border-[#b87b70]'}`}>{label}</button>)}
             <label className="relative">
               <select value={sourceFilter} onChange={(event)=>setSourceFilter(event.target.value)} className="h-9 appearance-none rounded-full border border-[#dfd2cc] bg-white pl-3 pr-9 text-xs font-bold text-[var(--ink-3)]">
                 <option value="all">All label types</option>
@@ -343,8 +394,8 @@ function PrintRegister(props:any) {
 
       <div className="flex flex-col gap-3 border-b border-[var(--line)] bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-2">
-          <Button data-testid="select-visible-labels" variant="outline" size="sm" disabled={!visibleEntries.length} onClick={()=>addManyToTray(visibleEntries)}><Tags className="mr-2 h-4 w-4"/>Add {visibleEntries.length} matching</Button>
-          <Button variant="outline" size="sm" disabled={!visibleUnprintedEntries.length} onClick={()=>addManyToTray(visibleUnprintedEntries)}><Sparkles className="mr-2 h-4 w-4"/>Add unprinted</Button>
+          <Button data-testid="select-visible-labels" variant="outline" size="sm" disabled={loading||!visibleEntries.length} onClick={()=>addManyToTray(visibleEntries)}><Tags className="mr-2 h-4 w-4"/>Add {visibleEntries.length} matching</Button>
+          <Button variant="outline" size="sm" disabled={loading||!visibleUnprintedEntries.length} onClick={()=>addManyToTray(visibleUnprintedEntries)}><Sparkles className="mr-2 h-4 w-4"/>Add unprinted</Button>
           <Button variant="ghost" size="sm" disabled={!visibleEntries.some(({label}:any)=>selectedIds.has(label.id))} onClick={()=>removeManyFromTray(visibleEntries.map(({label}:any)=>label.id))}>Clear visible</Button>
         </div>
         <span className="text-[11px] font-semibold text-[var(--ink-4)]">Up to {MAX_BULK_LABELS} unique labels per run</span>
@@ -353,14 +404,15 @@ function PrintRegister(props:any) {
       <div className="divide-y divide-[var(--line)]">
         {filteredJobs.map((job:any)=>{
           const active = activeLabelsFor(job);
+          const matching = matchingLabelsFor(job);
           const unprinted = active.filter((label:any)=>!Number(label.printCount||0));
-          const selectedCount = active.filter((label:any)=>selectedIds.has(label.id)).length;
-          const allSelected = active.length > 0 && selectedCount === active.length;
+          const selectedCount = matching.filter((label:any)=>selectedIds.has(label.id)).length;
+          const allSelected = matching.length > 0 && selectedCount === matching.length;
           const partiallySelected = selectedCount > 0 && !allSelected;
           const first = job.instances?.[0];
           return <article key={job.id} className={selectedCount?'bg-[#fffaf7]':'bg-[var(--surface)]'}>
             <div className="grid gap-3 p-4 sm:grid-cols-[2.75rem_3.25rem_minmax(0,1fr)_auto] sm:items-center">
-              <button type="button" aria-label={`${allSelected?'Remove':'Add'} all active labels from ${job.jobNumber}`} onClick={()=>toggleWholeJob(job)} className={`grid h-10 w-10 place-items-center rounded-xl border transition ${selectedCount?'border-[#a92f28] bg-[#a92f28] text-white':'border-[#daccc6] bg-white text-transparent hover:border-[#a92f28]'}`}>
+              <button type="button" disabled={loading} aria-label={`${allSelected?'Remove':'Add'} all matching labels from ${job.jobNumber}`} onClick={()=>toggleWholeJob(job)} className={`grid h-10 w-10 place-items-center rounded-xl border transition ${selectedCount?'border-[#a92f28] bg-[#a92f28] text-white':'border-[#daccc6] bg-white text-transparent hover:border-[#a92f28]'}`}>
                 {partiallySelected?<Minus className="h-4 w-4"/>:<Check className="h-4 w-4"/>}
               </button>
               <ProductImageFrame src={imageOf(first)} alt={sourceName(job)} className="hidden h-12 w-12 rounded-xl sm:block"/>
@@ -406,19 +458,31 @@ function PrintRegister(props:any) {
           </div>
         </div>
         <div className="space-y-5 bg-[#fffaf7] p-5 text-[var(--ink)]">
-          <div className="rounded-2xl border border-[#e2d5cf] bg-white p-4">
-            <div className="flex items-center justify-between gap-2"><div><p className="text-xs font-bold">4 × 2 inch sticker</p><p className="mt-1 text-[11px] text-[var(--ink-4)]">Portrait · one sticker per physical page</p></div><span className="grid h-14 w-8 place-items-center rounded-md border-2 border-[#2b201f] bg-[#fffdfb]"><QrCode className="h-4 w-4"/></span></div>
-          </div>
+          {physicalTemplate === 'thermal_4x2' ? <fieldset className="rounded-2xl border border-[#e2d5cf] bg-white p-4">
+            <legend className="px-1 text-xs font-bold">Sticker orientation</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {([['landscape','Landscape','4 × 2 in'],['portrait','Portrait','2 × 4 in']] as const).map(([value,label,size])=><label key={value} className="cursor-pointer">
+                <input type="radio" name="label-orientation" value={value} checked={printOrientation===value} data-testid={`label-orientation-${value}`} onChange={()=>setPrintOrientation(value)} className="peer sr-only"/>
+                <span className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-xl border border-[#e2d5cf] bg-white px-2 py-3 transition hover:border-[#b87468] peer-checked:border-[#a92f28] peer-checked:bg-[#fff3ef] peer-checked:ring-1 peer-checked:ring-[#a92f28] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#a92f28]">
+                  <span aria-hidden="true" className={`grid place-items-center rounded border-2 border-[#2b201f] bg-[#fffdfb] ${value==='landscape'?'h-7 w-14':'h-12 w-6'}`}><QrCode className="h-4 w-4"/></span>
+                  <span className="text-center text-[11px] font-bold leading-4">{label}<small className="block text-[10px] font-semibold text-[var(--ink-4)]">{size}</small></span>
+                </span>
+              </label>)}
+            </div>
+            <p className="mt-3 text-[11px] leading-5 text-[var(--ink-3)]">Match the width and height of one sticker on the roll. This changes the actual print page, not just the preview.</p>
+            <p className="mt-2 border-t border-[#eee2dc] pt-2 text-[10px] leading-4 text-[var(--ink-4)]">Printer: {printOrientation==='landscape'?'101.6 mm wide × 50.8 mm high':'50.8 mm wide × 101.6 mm high'} · 100% scale · all pages · 1 printer copy. Set extra copies below.</p>
+          </fieldset> : null}
           <label className="block text-xs font-bold text-[var(--ink-3)]">Physical label template
             <select className="mt-1.5 h-11 w-full rounded-xl border border-[#d9cbc5] bg-white px-3 text-sm font-semibold" value={physicalTemplate} onChange={(event)=>setPhysicalTemplate(event.target.value)}>{templates.map((template:any)=><option key={`${template.code}-${template.version}`} value={template.code}>{template.name} · v{template.version}</option>)}</select>
           </label>
           <div>
             <p className="text-xs font-bold text-[var(--ink-3)]">Copies of every selected sticker</p>
             <div className="mt-1.5 grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] overflow-hidden rounded-xl border border-[#d9cbc5] bg-white">
-              <button type="button" aria-label="Reduce copies" disabled={copyCount<=1} onClick={()=>setCopies(String(Math.max(1,copyCount-1)))} className="grid h-11 place-items-center border-r border-[#e4dad5] disabled:opacity-30"><Minus className="h-4 w-4"/></button>
-              <Input className="h-11 rounded-none border-0 text-center text-base font-bold shadow-none focus-visible:ring-0" type="number" min={1} max={50} value={copies} onChange={(event)=>setCopies(event.target.value)}/>
-              <button type="button" aria-label="Increase copies" disabled={copyCount>=50} onClick={()=>setCopies(String(Math.min(50,copyCount+1)))} className="grid h-11 place-items-center border-l border-[#e4dad5] disabled:opacity-30"><Plus className="h-4 w-4"/></button>
+              <button type="button" aria-label="Reduce copies" disabled={!validCopies||copyCount<=1} onClick={()=>setCopies(String(copyCount-1))} className="grid h-11 place-items-center border-r border-[#e4dad5] disabled:opacity-30"><Minus className="h-4 w-4"/></button>
+              <Input aria-label="Copies of every selected sticker" aria-invalid={!validCopies} aria-describedby={!validCopies?'label-copies-error':undefined} data-testid="bulk-label-copies" className="h-11 rounded-none border-0 text-center text-base font-bold shadow-none focus-visible:ring-0" type="number" min={1} max={50} step={1} value={copies} onChange={(event)=>setCopies(event.target.value)}/>
+              <button type="button" aria-label="Increase copies" disabled={!validCopies||copyCount>=50} onClick={()=>setCopies(String(copyCount+1))} className="grid h-11 place-items-center border-l border-[#e4dad5] disabled:opacity-30"><Plus className="h-4 w-4"/></button>
             </div>
+            {!validCopies?<p id="label-copies-error" role="alert" className="mt-2 text-xs font-semibold text-red-700">Enter a whole number from 1 to 50.</p>:<p className="mt-2 text-[10px] leading-4 text-[var(--ink-4)]">{copyCount} cop{copyCount===1?'y':'ies'} of each label will be included in the print run. Leave printer-dialog copies at 1.</p>}
           </div>
           <div>
             <label className="text-xs font-bold text-[var(--ink-3)]">Why are these being printed?<Input className="mt-1.5 h-11 bg-white" value={printReason} onChange={(event)=>setPrintReason(event.target.value)} placeholder="Required for the audit trail"/></label>
@@ -431,13 +495,13 @@ function PrintRegister(props:any) {
               return <div key={first.jobId} className="flex items-center gap-2 rounded-xl border border-[#e4d8d2] bg-white p-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#f2e5df] text-[#a92f28]"><Barcode className="h-4 w-4"/></span><span className="min-w-0 flex-1"><b className="block truncate font-mono text-[11px]">{first.jobNumber}</b><small className="block truncate text-[10px] text-[var(--ink-4)]">{first.source} · {group.length} selected</small></span><button type="button" aria-label={`Remove ${first.jobNumber} from tray`} onClick={()=>removeManyFromTray(group.map((label)=>label.id))} className="grid h-7 w-7 place-items-center rounded-full text-[var(--ink-4)] hover:bg-red-50 hover:text-red-700"><XCircle className="h-4 w-4"/></button></div>})}{!selectedLabels.length?<div className="rounded-xl border border-dashed border-[#d8c9c2] bg-[#fffdfb] p-4 text-center"><Tags className="mx-auto h-5 w-5 text-[#b79e95]"/><p className="mt-2 text-xs font-bold">Your tray is empty</p><p className="mt-1 text-[10px] leading-4 text-[var(--ink-4)]">Add a complete job, all matching labels, or review a job and pick individual stickers.</p></div>:null}</div>
           </div>
           {exceedsPageLimit?<p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold leading-5 text-amber-900">This would create {physicalPages.toLocaleString('en-IN')} pages. Reduce the selection or copies to {MAX_PHYSICAL_PAGES} pages or fewer.</p>:null}
-          <Button data-testid="bulk-print-prepare" className="h-12 w-full bg-[#a92f28] text-sm hover:bg-[#8d2722]" disabled={prepareLoading||!selectedLabels.length||!printReason.trim()||exceedsPageLimit} onClick={preparePrint}><Printer className="mr-2 h-4 w-4"/>{prepareLoading?'Preparing run…':`Prepare ${physicalPages} sticker page${physicalPages===1?'':'s'}`}</Button>
+          <Button data-testid="bulk-print-prepare" className="h-12 w-full bg-[#a92f28] text-sm hover:bg-[#8d2722]" disabled={prepareLoading||!selectedLabels.length||!printReason.trim()||!validCopies||exceedsPageLimit} onClick={preparePrint}><Printer className="mr-2 h-4 w-4"/>{prepareLoading?'Preparing run…':!validCopies?'Enter whole-number copies':`Prepare ${physicalPages} sticker page${physicalPages===1?'':'s'}`}</Button>
           <p className="text-center text-[10px] leading-4 text-[var(--ink-4)]">Previewing does not change print counts. Confirm only after the printer completes the physical run.</p>
         </div>
       </div>
     </aside>
   </section>;
 }
-function TrayMetric({label,value,testId}:{label:string;value:number;testId?:string}) { return <div className="rounded-xl border border-white/10 bg-white/[.07] p-3"><p data-testid={testId} className="text-xl font-bold tabular-nums">{Number(value||0).toLocaleString('en-IN')}</p><p className="mt-1 text-[9px] font-bold uppercase tracking-wider text-white/45">{label}</p></div>; }
+function TrayMetric({label,value,testId}:{label:string;value:number;testId?:string}) { return <div className="rounded-xl border border-white/10 bg-white/[.07] p-3"><p data-testid={testId} className="text-xl font-bold tabular-nums">{Number.isFinite(value)?value.toLocaleString('en-IN'):'—'}</p><p className="mt-1 text-[9px] font-bold uppercase tracking-wider text-white/45">{label}</p></div>; }
 function HeroMetric({label,value}:{label:string;value:number}) { return <div className="rounded-2xl border border-white/10 bg-white/10 p-3 backdrop-blur"><p className="text-2xl font-bold tabular-nums">{Number(value||0).toLocaleString('en-IN')}</p><p className="mt-1 text-[10px] font-semibold leading-4 text-white/60">{label}</p></div>; }
 function Empty({icon:Icon,title,text}:{icon:any;title:string;text:string}) { return <div className="grid min-h-52 place-items-center p-8 text-center"><div><span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-[var(--bg-soft)]"><Icon className="h-6 w-6 text-[var(--ink-4)]"/></span><p className="mt-4 font-bold text-[var(--ink)]">{title}</p><p className="mx-auto mt-1 max-w-md text-sm leading-5 text-[var(--ink-4)]">{text}</p></div></div>; }

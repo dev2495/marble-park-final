@@ -60,10 +60,17 @@ async function main() {
   const displayJob = await createJob({ displaySampleId: display.id }, 1, 'display_sample');
 
   const templates = (await gql(`query { internalLabelTemplates }`, {}, token)).internalLabelTemplates;
-  assert(templates.length === 1 && templates[0].code === 'thermal_4x2' && templates[0].version === 3 && templates[0].widthMm === 50.8 && templates[0].heightMm === 101.6 && templates[0].pageWidthMm === 50.8 && templates[0].pageHeightMm === 101.6, 'The only active physical template must be the exact 2 x 4 inch portrait v3 sticker');
+  assert(templates.length === 1 && templates[0].code === 'thermal_4x2' && templates[0].version === 4 && templates[0].widthMm === 101.6 && templates[0].heightMm === 50.8 && templates[0].pageWidthMm === 101.6 && templates[0].pageHeightMm === 50.8, 'The active v4 sticker must default to exact 4 x 2 inch landscape media');
   const prepared = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: productJob.id, templateCode: 'thermal_4x2', labelIds: [productJob.instances[0].id], copies: 1, reason: 'Single-label acceptance' } }, token)).prepareInternalLabelPrintRun;
   let run = (await gql(`query($id: ID!) { internalLabelPrintRun(id: $id) }`, { id: prepared.id }, token)).internalLabelPrintRun;
   assert(run.status === 'prepared' && run.labels.length === 1 && run.labels[0].qrValue === `MP-LABEL:${run.labels[0].labelCode}`, 'Prepared run must isolate one selected label and encode scanner-ready QR payload');
+  assert(run.metadata.orientation === 'landscape' && run.template.definition.orientation === 'landscape' && run.template.pageWidthMm === 101.6 && run.template.pageHeightMm === 50.8, 'A run without an explicit orientation must persist landscape and expose matching physical page dimensions');
+  const invalidRunCountBefore = await prisma.internalLabelPrintRun.count({ where: { labelJobId: productJob.id } });
+  for (const invalid of [{ copies: 0 }, { copies: 51 }, { copies: 1.5 }, { orientation: 'sideways' }]) {
+    const validationError = await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: productJob.id, templateCode: 'thermal_4x2', labelIds: [productJob.instances[0].id], copies: 1, reason: 'Rejected print option acceptance', ...invalid } }, token, true);
+    assert(validationError && (invalid.orientation ? /portrait or landscape/i.test(validationError) : /copies|int/i.test(validationError)), `Invalid print options must be rejected: ${JSON.stringify(invalid)}`);
+  }
+  assert(await prisma.internalLabelPrintRun.count({ where: { labelJobId: productJob.id } }) === invalidRunCountBefore, 'Rejected options must not create print runs');
   let refreshedJob = (await gql(`query($sourceId: String) { internalLabelJobs(sourceId: $sourceId, take: 10) }`, { sourceId: generic.id }, token)).internalLabelJobs.find((row) => row.id === productJob.id);
   assert(refreshedJob.instances[0].printCount === 0, 'Preparing/opening print data must not increment print count');
   const scan = (await gql(`mutation($code: String!) { scanInternalLabel(labelCode: $code) }`, { code: run.labels[0].qrValue }, token)).scanInternalLabel;
@@ -81,14 +88,24 @@ async function main() {
   refreshedJob = (await gql(`query($sourceId: String) { internalLabelJobs(sourceId: $sourceId, take: 10) }`, { sourceId: generic.id }, token)).internalLabelJobs.find((row) => row.id === productJob.id);
   const refreshedAdditiveJob = (await gql(`query($sourceId: String) { internalLabelJobs(sourceId: $sourceId, take: 10) }`, { sourceId: generic.id }, token)).internalLabelJobs.find((row) => row.id === additiveJob.id);
   assert(refreshedJob.instances.find((row) => row.id === productJob.instances[0].id).printCount === 0 && refreshedJob.instances.find((row) => row.id === productJob.instances[1].id).printCount === 2 && refreshedAdditiveJob.instances[0].printCount === 2, 'Bulk confirmation must increment only selected labels across every source job by the confirmed copy count');
+  const jobsForPrintState = async (printState, skip = 0, take = 10) => (await gql(`query($sourceId: String, $printState: String, $skip: Int, $take: Int) { internalLabelJobs(sourceId: $sourceId, printState: $printState, skip: $skip, take: $take) }`, { sourceId: generic.id, printState, skip, take }, token)).internalLabelJobs;
+  const latestUnfiltered = await jobsForPrintState('all', 0, 1);
+  const olderUnprinted = await jobsForPrintState('unprinted', 0, 1);
+  const printedJobs = await jobsForPrintState('printed');
+  assert(latestUnfiltered[0]?.id === additiveJob.id && olderUnprinted[0]?.id === productJob.id, 'Print-state filtering must happen before pagination so an older unprinted job remains discoverable behind a newer fully printed job');
+  assert(printedJobs.length === 2 && printedJobs.every((job) => job.instances.some((label) => label.status === 'active' && label.printCount > 0)), 'Printed-before must return only jobs containing active printed labels');
+  assert((await jobsForPrintState('unprinted')).every((job) => job.instances.some((label) => label.status === 'active' && label.printCount === 0)), 'Not-printed must return only jobs containing active unprinted labels');
+  assert((await jobsForPrintState('printed', 1, 1))[0]?.id === productJob.id, 'Printed-before pagination must retain older matching jobs');
 
   const displayRun = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: displayJob.id, templateCode: 'thermal_4x2', copies: 1, reason: 'Display acceptance' } }, token)).prepareInternalLabelPrintRun;
   run = (await gql(`query($id: ID!) { internalLabelPrintRun(id: $id) }`, { id: displayRun.id }, token)).internalLabelPrintRun;
   assert(run.labels[0].payload.internalCode === `WALL-${suffix}` && run.labels[0].payload.displaySample === display.sampleNumber, 'Display label must print the physical display code, not the product display code');
-  const lotRun = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: lotJob.id, templateCode: 'thermal_4x2', labelIds: [lotJob.instances[0].id], copies: 1, reason: 'Lot acceptance' } }, token)).prepareInternalLabelPrintRun;
+  const lotRun = (await gql(`mutation($input: InternalLabelPrintRunInput!) { prepareInternalLabelPrintRun(input: $input) }`, { input: { labelJobId: lotJob.id, templateCode: 'thermal_4x2', labelIds: [lotJob.instances[0].id], copies: 1, orientation: 'portrait', reason: 'Lot portrait acceptance' } }, token)).prepareInternalLabelPrintRun;
   run = (await gql(`query($id: ID!) { internalLabelPrintRun(id: $id) }`, { id: lotRun.id }, token)).internalLabelPrintRun;
   assert(run.labels[0].payload.lotNumber === lot.lotNumber, 'Lot label must retain exact inward-lot identity');
   assert(Number(run.labels[0].payload.mrpInclusive) === 125 && run.labels[0].payload.priceUom === 'SQFT', 'Tile lot labels must use Product Master MRP per SQFT');
+  assert(run.metadata.orientation === 'portrait' && run.template.definition.orientation === 'portrait' && run.template.pageWidthMm === 50.8 && run.template.pageHeightMm === 101.6, 'Portrait choice must persist on the run and expose the correct media dimensions after reload');
+  assert(run.labels[0].payload.finish === 'Matt', 'The label payload must carry the actual SKU finish for the line below the product code');
 
   await gql(`mutation($id: ID!, $reason: String!) { voidInternalLabel(id: $id, reason: $reason) }`, { id: productJob.instances[0].id, reason: 'Acceptance void' }, token);
   const voidScan = (await gql(`mutation($code: String!) { scanInternalLabel(labelCode: $code) }`, { code: `MP-LABEL:${productJob.instances[0].labelCode}` }, token)).scanInternalLabel;
@@ -98,7 +115,7 @@ async function main() {
   const balanceAfter = await prisma.inventoryBalance.findUnique({ where: { productId: tile.id } });
   assert(balanceAfter.onHand === balanceBefore.onHand && balanceAfter.available === balanceBefore.available && balanceAfter.reserved === balanceBefore.reserved, 'Label lifecycle must not mutate warehouse stock buckets');
 
-  console.log(JSON.stringify({ ok: true, tileSku: tile.sku, genericSku: generic.sku, tileSize: tileSize.name, aliasSearch: true, additiveJobs: true, crossJobBulkRun: { jobs: 2, uniqueLabels: 2, physicalPages: 4 }, productLabels: 3, lotLabels: lotJob.instances.length, displayCode: `WALL-${suffix}`, preparedCancelledWithoutCount: true, selectedConfirmedCopies: 2, qrPayloadScan: true, legacyPayloadScan: true, stockInvariant: { onHand: balanceAfter.onHand, available: balanceAfter.available, reserved: balanceAfter.reserved } }, null, 2));
+  console.log(JSON.stringify({ ok: true, tileSku: tile.sku, genericSku: generic.sku, tileSize: tileSize.name, aliasSearch: true, additiveJobs: true, crossJobBulkRun: { jobs: 2, uniqueLabels: 2, physicalPages: 4 }, templateVersion: 4, defaultOrientation: 'landscape', persistedPortrait: true, rejectedInvalidOrientation: true, rejectedInvalidCopies: [0, 51, 1.5], finish: 'Matt', printStateBeforePagination: true, productLabels: 3, lotLabels: lotJob.instances.length, displayCode: `WALL-${suffix}`, preparedCancelledWithoutCount: true, selectedConfirmedCopies: 2, qrPayloadScan: true, legacyPayloadScan: true, stockInvariant: { onHand: balanceAfter.onHand, available: balanceAfter.available, reserved: balanceAfter.reserved } }, null, 2));
 }
 
 main().catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; }).finally(async () => prisma.$disconnect());
