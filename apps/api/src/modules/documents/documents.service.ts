@@ -307,13 +307,15 @@ export class DocumentsService {
     fs.mkdirSync(trashRoot, { recursive: true });
     if (fs.existsSync(source)) fs.renameSync(source, quarantined);
     try {
-      await this.prisma.vaultAsset.delete({ where: { id: assetId } });
+      await this.prisma.$transaction(async (tx) => {
+        await tx.vaultAsset.delete({ where: { id: assetId } });
+        await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'vault.delete', entityType: 'VaultAsset', entityId: assetId, summary: `Permanently deleted ${asset.title}`, metadata: { originalName: asset.originalName, sizeBytes: asset.sizeBytes, checksum: asset.checksum } } });
+      });
     } catch (error) {
       if (fs.existsSync(quarantined)) fs.renameSync(quarantined, source);
       throw error;
     }
     fs.rmSync(quarantined, { force: true });
-    await this.audit.record({ actorUserId, action: 'vault.delete', entityType: 'VaultAsset', entityId: assetId, summary: `Permanently deleted ${asset.title}`, metadata: { originalName: asset.originalName, sizeBytes: asset.sizeBytes, checksum: asset.checksum } });
     return { id: assetId, purged: true, reclaimedBytes: asset.sizeBytes };
   }
 

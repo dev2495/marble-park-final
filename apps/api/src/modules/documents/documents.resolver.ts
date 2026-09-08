@@ -123,7 +123,7 @@ export class DocumentsResolver {
     @Args('assetId', { type: () => ID }) assetId: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'documents.delete');
     return this.documents.purgeVaultAsset(assetId, user.id);
   }
 }

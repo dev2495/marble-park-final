@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { groupQuoteLines, requestedQuantityLabel } from '@marble-park/pricing-contract/quote-display';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
@@ -80,12 +81,7 @@ function lineRate(line: any, taxMode: 'gst' | 'non_gst' = 'gst') {
   return { qty, pricingQuantity, amount: ladder.grossBeforeQuoteDiscount, taxRate, mrpUom: mrpUom(line), ...ladder };
 }
 function groupLines(lines: any[]) {
-  const groups = new Map<string, any[]>();
-  for (const line of lines) {
-    const area = String(line.area || 'General Selection');
-    groups.set(area, [...(groups.get(area) || []), line]);
-  }
-  return Array.from(groups.entries()).map(([area, rows]) => ({ area, rows }));
+  return groupQuoteLines(lines);
 }
 
 function quoteFamilyBrandIds(settings: any, brands: any[], quoteType: string) {
@@ -334,7 +330,17 @@ export default function QuoteDetailPage() {
     : '';
   const pricingIssueCount = mrpIssues.length + discountIssues.length + (quoteDiscountIssue ? 1 : 0);
   const pricingReady = editLines.length > 0 && pricingIssueCount === 0;
-  const updateLine = (index: number, patch: any) => setEditLines((current) => current.map((line, idx) => idx === index ? { ...line, ...patch } : line));
+  const updateLine = (index: number, patch: any) => setEditLines((current) => current.map((line, idx) => {
+    if (idx !== index) return line;
+    const updated = { ...line, ...patch };
+    if ('qty' in patch) {
+      updated.quantity = updated.qty;
+      const basis = String(updated.rateBasis || updated.priceRateBasis || '').toUpperCase();
+      updated.pricingQuantity = Number(updated.qty) * (basis === 'AREA' ? Number(updated.coveragePerPack || 0) : basis === 'PIECE' ? Number(updated.piecesPerPack || updated.pcsPerBox || 1) : 1);
+      updated.calculatedPacks = updated.qty;
+    }
+    return updated;
+  }));
   const presentationInput = () => ({
     displayMode,
     coverImage,
@@ -551,19 +557,23 @@ export default function QuoteDetailPage() {
         </section>
 
         {grouped.map((group) => <div key={group.area} className="overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] shadow-md-soft">
-          <div className="border-b border-[var(--line)] bg-[var(--ink)] px-5 py-4 text-xs font-medium uppercase tracking-widest text-[var(--surface)]">{group.area} · {group.rows.length} item(s)</div>
+          <div className="flex items-center gap-3 border-b border-[var(--line)] bg-[var(--ink)] px-5 py-4 text-xs font-medium uppercase tracking-widest text-[var(--surface)]"><span className="flex-1">{group.area} · {group.rows.length} item(s)</span>{!commercialLocked ? <button type="button" aria-label={`Rename section ${group.area}`} className="rounded border border-current px-2 py-1" onClick={() => { const area = window.prompt('Section name (all items in this section)', group.area)?.trim(); if (area) setEditLines(current => current.map(line => group.rows.includes(line) ? { ...line, area } : line)); }}>Rename</button> : null}</div>
           <div className="divide-y divide-[var(--line)]">
             {group.rows.map((line: any) => {
               const index = editLines.indexOf(line);
               const rate = rateForLine(line);
               return <article id={`quote-edit-line-${index}`} key={`${line.sku}-${index}`} className="scroll-mt-24 grid gap-4 p-5 xl:grid-cols-[minmax(16rem,1fr)_5rem_7rem_9rem_10rem_8rem] xl:items-center">
                 <div className="space-y-2">
-                  <input value={line.area || ''} onChange={(event)=>updateLine(index,{area:event.target.value})} className="h-9 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]" placeholder="Area / room" />
                   <p className="text-lg font-semibold text-[var(--ink)]">{line.name}</p>
+                  {!commercialLocked ? <button type="button" className="text-xs text-[var(--ink-3)] underline" onClick={() => { const area = window.prompt('Move this item to section', group.area)?.trim(); if (area) updateLine(index, { area }); }}>Move to section</button> : null}
                   <p className="text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{line.sku || line.tileCode}{masterBrandCode(brands, line.brand) ? ` · ${masterBrandCode(brands, line.brand)}` : ''}</p>
                 </div>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty</span><input disabled={commercialLocked} type="number" value={line.qty || line.quantity || 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55" /></label>
-                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">MRP / {rate.mrpUom}</span><input data-pricing-error={rate.mrpMissing || !rate.mrpValid ? 'true' : undefined} readOnly tabIndex={-1} aria-label={`MRP per ${rate.mrpUom} for ${line.name}`} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-xl border px-3 text-sm font-black ${rate.mrpMissing || !rate.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`} /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Tax-inclusive · Product Master snapshot</span></label>
+                <div className="space-y-2">
+                  {requestedQuantityLabel(line) ? <label className="block space-y-1"><span className="text-xs font-bold text-[var(--ink)]">Requested ({Number(line.requestedArea || 0) > 0 ? line.pricingUom || 'SQFT' : 'PC'})</span><input aria-label={`Requested quantity for ${line.name}`} disabled={commercialLocked} type="number" min="0.01" step="any" value={line.requestedArea || line.requestedPieces} onChange={event => { const value = Number(event.target.value); const areaBased = Number(line.requestedArea || 0) > 0; const packs = Math.ceil(value * (areaBased ? 1 + Number(line.wastagePercent || 0) / 100 : 1) / Number(areaBased ? line.coveragePerPack : line.piecesPerPack || line.pcsPerBox)); updateLine(index, { [areaBased ? 'requestedArea' : 'requestedPieces']: value, qty: packs, quantity: packs }); }} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black" /></label> : null}
+                  <label className="block space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty ({line.inventoryUom || line.unit || 'PC'})</span><input aria-label={`Quantity for ${line.name}`} disabled={commercialLocked || Number(line.requestedArea || line.requestedPieces || 0) > 0} type="number" value={line.qty ?? line.quantity ?? 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value),quantity:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed" /></label>
+                  {Number(line.coveragePerPack || 0) > 0 ? <p className="text-xs text-[var(--ink-3)]">Coverage: {(Number(line.qty ?? line.quantity ?? 0) * Number(line.coveragePerPack)).toFixed(2)} {line.pricingUom || 'SQFT'}{requestedQuantityLabel(line) ? ' · rounded to whole packs' : ''}</p> : null}
+                </div>
+                <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">MRP / {rate.mrpUom}</span><input data-pricing-error={rate.mrpMissing || !rate.mrpValid ? 'true' : undefined} readOnly tabIndex={-1} aria-label={`MRP per ${rate.mrpUom} for ${line.name}`} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-xl border px-3 text-sm font-black ${rate.mrpMissing || !rate.mrpValid ? 'border-red-300 bg-red-50 text-red-950' : 'border-emerald-300 bg-emerald-50 text-emerald-950'}`} /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Tax-inclusive · Product Master snapshot</span></label>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Base pricing → NRP</span><div className="grid grid-cols-[1fr_6.2rem] gap-1"><input data-pricing-error={discountIssues.some((issue) => issue.line === line && issue.field === 'base') ? 'true' : undefined} disabled={commercialLocked} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} value={line.nrpInput ?? 0} onChange={(event)=>updateLine(index,{nrpInput:event.target.value,pricingVersion:'unified_retail_v1'})} className={`h-10 min-w-0 rounded-xl border bg-[var(--surface)] px-2 text-sm font-black disabled:opacity-55 ${discountIssues.some((issue) => issue.line === line && issue.field === 'base') ? 'border-red-300 bg-red-50' : 'border-[var(--line)]'}`}/><select disabled={commercialLocked} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(index,{nrpMode:event.target.value,nrpInput:0,pricingVersion:'unified_retail_v1'})} className="h-10 rounded-xl border border-[var(--line)] bg-white px-1 text-[10px] font-black"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><span className="block text-[10px] font-black text-[#8f2f28]">NRP {money(rate.nrpInclusive)}</span></label>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Optional special</span><div className="grid grid-cols-[1fr_7.5rem] gap-1"><input data-pricing-error={discountIssues.some((issue) => issue.line === line && issue.field === 'special') ? 'true' : undefined} disabled={commercialLocked || (line.specialMode || 'NONE') === 'NONE'} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} value={line.specialInput || 0} onChange={(event)=>updateLine(index,{specialInput:event.target.value,pricingVersion:'unified_retail_v1'})} className={`h-10 min-w-0 rounded-xl border bg-[var(--surface)] px-2 text-sm font-black disabled:opacity-55 ${discountIssues.some((issue) => issue.line === line && issue.field === 'special') ? 'border-red-300 bg-red-50' : 'border-[var(--line)]'}`}/><select disabled={commercialLocked} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(index,{specialMode:event.target.value,specialInput:0,pricingVersion:'unified_retail_v1'})} className="h-10 rounded-xl border border-[var(--line)] bg-white px-1 text-[10px] font-black"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><span className="block text-[10px] font-black text-[#1d4ed8]">Special {money(rate.specialRateInclusive)}</span></label>
                 <div className="text-right"><p className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Final total</p><p className="mt-2 text-sm font-black text-[var(--ink)]">{money(rate.finalUnitPayable)} / {rate.mrpUom}</p>{showPrices && <p className="mt-1 text-xl font-black text-[var(--success)]">{money(rate.grossAfterQuoteDiscount)}</p>}{Number(line.floorPriceInclusive || 0) > 0 && rate.finalUnitPayable + 0.005 < Number(line.floorPriceInclusive) ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-900">Below floor · owner approval</p> : null}</div>

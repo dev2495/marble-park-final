@@ -21,6 +21,7 @@
  * It writes the PDF binary to stdout.
  */
 const React = require('react');
+const { groupQuoteLines, requestedQuantityLabel } = require('@marble-park/pricing-contract/quote-display');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
 const { PRICING_VERSION, priceQuoteLines } = require('@marble-park/pricing-contract');
 
@@ -336,13 +337,7 @@ function assertQuoteCommercialReady(quote, taxMode) {
 }
 
 function groupByArea(lines) {
-  const groups = new Map();
-  for (const line of lines) {
-    const area = String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection';
-    if (!groups.has(area)) groups.set(area, []);
-    groups.get(area).push({ ...line, area });
-  }
-  return Array.from(groups.entries()).map(([area, rows]) => ({ area, rows }));
+  return groupQuoteLines(lines);
 }
 
 function chunk(items, size) {
@@ -722,7 +717,8 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
         ),
         e(View, { style: styles.tileDescCol },
           e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
-          size ? e(Text, { style: styles.meta }, size) : null,
+          size && !String(line.name || '').includes(size) ? e(Text, { style: styles.meta }, size) : null,
+          requestedQuantityLabel(line) ? e(Text, { style: styles.meta }, requestedQuantityLabel(line)) : null,
           identityCodes ? e(Text, { style: styles.meta }, identityCodes) : null,
         ),
         e(Text, { style: [styles.td, styles.tileFulfilCol] }, fulfilment),
@@ -871,7 +867,7 @@ async function main() {
   process.stdout.write(buffer);
 }
 
-module.exports = { brandCodeFor, productCodeFor, identityCodesFor };
+module.exports = { brandCodeFor, productCodeFor, identityCodesFor, buildDocument, groupByArea };
 
 if (require.main === module) {
   main().catch((error) => {

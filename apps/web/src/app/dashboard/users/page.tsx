@@ -114,6 +114,7 @@ const permissionGroups = [
       ['customers.force_create', 'Force-create duplicate customers'],
       ['documents.view', 'View document vault'],
       ['documents.manage', 'Upload, edit and share vault files'],
+      ['documents.delete', 'Permanently delete archived vault files (irreversible; needs vault access)'],
     ],
   },
 ] as const;

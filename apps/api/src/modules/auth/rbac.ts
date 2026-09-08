@@ -26,6 +26,7 @@ export type PermissionKey =
   | 'reports.export'
   | 'documents.view'
   | 'documents.manage'
+  | 'documents.delete'
   | 'customers.force_create';
 
 export const PERMISSION_KEYS: PermissionKey[] = [
@@ -56,6 +57,7 @@ export const PERMISSION_KEYS: PermissionKey[] = [
   'reports.export',
   'documents.view',
   'documents.manage',
+  'documents.delete',
   'customers.force_create',
 ];
 
