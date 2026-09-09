@@ -133,7 +133,7 @@ export class NotificationsWorker implements OnModuleInit, OnModuleDestroy {
         await source('documentJob', { status: 'failed' }, null, 'work_document', r => ({
           title: 'Document generation needs attention', message: `${r.documentType.replaceAll('_',' ')} failed. Review the source record and try again after correcting the issue.`,
           entityType: 'DocumentJob', entityId: r.id, targetUserId: r.generatedBy, targetRole: 'owner_admin', priority: 'high',
-          href: r.entityType === 'Quote' ? `/dashboard/quotes/${r.entityId}` : '/dashboard/documents', actionLabel: 'Review document',
+          href: r.entityType === 'Quote' ? `/dashboard/quotes/${r.entityId}` : r.entityType === 'SalesOrder' ? `/dashboard/orders?search=${encodeURIComponent(r.entityId)}` : '/dashboard/documents', actionLabel: 'Review document',
         }));
         await source('inventoryBalance', { AND: [
           { OR: [{ lowStockThreshold: { gt: 0 } }, { criticalStockThreshold: { gt: 0 } }] },

@@ -93,6 +93,24 @@ async function executeRenderer(input: RenderPdfInput, sessionToken: string) {
   });
 }
 
+async function recordCommercialResult(input: RenderPdfInput, sessionToken: string, success: boolean) {
+  const entityType = input.scriptName === 'render-quote-pdf.cjs' ? 'Quote'
+    : input.scriptName === 'render-sales-order-pdf.cjs' ? 'SalesOrder' : null;
+  // Public links cannot mutate private workflow state. Telemetry must never block a valid PDF.
+  if (!entityType || !sessionToken || input.publicShareToken) return;
+  try {
+    const response = await fetch(process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql', {
+      method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(3000),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ query: 'mutation PdfResult($entityType:String!,$id:ID!,$success:Boolean!){recordCommercialPdfResult(entityType:$entityType,id:$id,success:$success)}', variables: { entityType, id: input.id, success } }),
+    });
+    const result = await response.json();
+    if (!response.ok || result.errors?.length) throw new Error('Document result was not recorded');
+  } catch {
+    console.error(`[${input.action}] PDF_RESULT_RECORD_FAILED`);
+  }
+}
+
 export async function servePdf(input: RenderPdfInput) {
   const requestId = randomUUID();
   const sessionToken = requestSessionToken(input.request);
@@ -110,6 +128,7 @@ export async function servePdf(input: RenderPdfInput) {
 
   try {
     const buffer = await executeRenderer(input, sessionToken);
+    await recordCommercialResult(input, sessionToken, true);
     const disposition = input.request.nextUrl.searchParams.get('download') === '1' ? 'attachment' : 'inline';
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
@@ -123,6 +142,8 @@ export async function servePdf(input: RenderPdfInput) {
     });
   } catch (error) {
     const status = rendererErrorStatus(error);
+    // Pricing has its own actionable rule; auth/not-found errors are not render failures.
+    if (status === 500) await recordCommercialResult(input, sessionToken, false);
     console.error(`[${input.action}] ref=${requestId}`, error);
     if (status === 422 && input.validationRedirectPath && input.request.headers.get('accept')?.includes('text/html')) {
       const redirectUrl = new URL(input.validationRedirectPath, input.request.url);

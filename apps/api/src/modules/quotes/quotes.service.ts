@@ -1219,6 +1219,22 @@ export class QuotesService {
     });
   }
 
+  async recordCommercialPdfResult(entityType: string, entityId: string, success: boolean, actorUserId: string) {
+    if (!['Quote', 'SalesOrder'].includes(entityType)) throw new BadRequestException('Unsupported commercial document');
+    const documentType = entityType === 'Quote' ? 'quote_pdf' : 'sales_order_pdf';
+    const data = {
+      status: success ? 'generated' : 'failed',
+      error: success ? null : 'PDF generation failed. Retry from the source record; contact the owner if the problem continues.',
+      generatedBy: actorUserId, generatedAt: success ? new Date() : null, updatedAt: new Date(),
+      url: `/api/pdf/${entityType === 'Quote' ? 'quote' : 'order'}/${encodeURIComponent(entityId)}`,
+    };
+    await this.prisma.documentJob.upsert({
+      where: { entityType_entityId_documentType: { entityType, entityId, documentType } },
+      create: { id: ulid(), entityType, entityId, documentType, ...data },
+      update: { ...data, retryCount: { increment: success ? 0 : 1 } },
+    });
+  }
+
   private async upsertDocumentJobTx(tx: any, args: { entityType: string; entityId: string; documentType: string; url: string; actorUserId: string; metadata?: any }) {
     await tx.documentJob.upsert({
       where: { entityType_entityId_documentType: { entityType: args.entityType, entityId: args.entityId, documentType: args.documentType } },

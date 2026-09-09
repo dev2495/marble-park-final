@@ -88,6 +88,23 @@ async function main() {
   await check('quote approval changes recipient',async()=>{await db.quote.update({where:{id:quote.id},data:{pricingStatus:'complete',approvalStatus:'pending',status:'pending_approval'}});await worker.tick();const task=await db.notification.findUnique({where:{taskKey:'work_quote:nt-quote'}});assert.equal(task.targetRole,'owner_admin');await assert.rejects(()=>service.markRead(task.id,sales));});
   await check('permission revocation removes access',async()=>{const revoked={...office,effectivePermissions:[]};assert(!(await service.inbox(revoked,{view:'open'})).items.some(n=>n.type==='work_intent'));});
   await check('critical stock recovery resolves task',async()=>{await db.inventoryBalance.update({where:{id:'nt-balance'},data:{available:10,onHand:10}});await worker.tick();assert.equal((await db.notification.findUnique({where:{taskKey:'work_stock:nt-product'}})).status,'resolved');});
+  await check('PDF outcomes are source-scoped and successful retry resolves work',async()=>{
+    const { QuotesService }=require('../apps/api/dist/src/modules/quotes/quotes.service');
+    const { QuotesResolver }=require('../apps/api/dist/src/modules/quotes/quotes.resolver');
+    const quotes=new QuotesService(db,service),resolver=new QuotesResolver(quotes,db);
+    await fixture('Session',{id:'nt-pdf-session',token:'notification-test-local-pdf',userId:sales.id,expiresAt:new Date(Date.now()+3600000)});
+    const ctx={req:{headers:{authorization:'Bearer notification-test-local-pdf'}}};
+    await assert.rejects(()=>resolver.recordCommercialPdfResult('Quote',quote.id,true,{}));
+    await db.quote.update({where:{id:quote.id},data:{ownerId:a.id}});
+    await assert.rejects(()=>resolver.recordCommercialPdfResult('Quote',quote.id,true,ctx));
+    await db.quote.update({where:{id:quote.id},data:{ownerId:sales.id}});
+    await resolver.recordCommercialPdfResult('Quote',quote.id,true,ctx);await worker.tick();
+    assert.equal((await db.notification.findUnique({where:{taskKey:'work_document:nt-document'}})).status,'resolved');
+    await resolver.recordCommercialPdfResult('Quote',quote.id,false,ctx);await worker.tick();
+    assert.equal((await db.notification.findUnique({where:{taskKey:'work_document:nt-document'}})).status,'open');
+    assert.equal((await db.documentJob.findUnique({where:{id:'nt-document'}})).retryCount,1);
+    await assert.rejects(()=>resolver.recordCommercialPdfResult('Unsupported',quote.id,false,ctx));
+  });
   await check('delivery replay does not duplicate recipients',async()=>{await db.notification.update({where:{id:n.id},data:{deliveredAt:null}});const count=await db.notificationRecipient.count({where:{notificationId:n.id}});await worker.deliver();assert.equal(await db.notificationRecipient.count({where:{notificationId:n.id}}),count);});
   await check('failed delivery persists retry and then recovers',async()=>{const event=await service.create({title:'Retry fixture',message:'Replay safely',targetRole:'owner'});const transaction=db.$transaction.bind(db);db.$transaction=async()=>{throw Error('Injected delivery failure')};try{await worker.deliver();}finally{db.$transaction=transaction;}const failed=await db.notification.findUnique({where:{id:event.id}});assert.equal(failed.deliveryAttempts,1);assert.equal(failed.deliveredAt,null);await db.notification.update({where:{id:event.id},data:{retryAt:new Date(0)}});await worker.deliver();assert((await db.notification.findUnique({where:{id:event.id}})).deliveredAt);});
   await check('failed source scan preserves existing work',async()=>{const before=await db.notification.count({where:{category:'action',status:'open'}});const transaction=db.$transaction.bind(db);db.$transaction=async()=>{throw Error('Injected source failure')};try{await worker.tick();assert(worker.lastError);}finally{db.$transaction=transaction;}assert.equal(await db.notification.count({where:{category:'action',status:'open'}}),before);await worker.tick();assert.equal(worker.lastError,null);});

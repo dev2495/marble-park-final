@@ -361,6 +361,22 @@ export class QuotesResolver {
     return quote;
   }
 
+  @Mutation(() => Boolean)
+  async recordCommercialPdfResult(
+    @Args('entityType') entityType: string,
+    @Args('id', { type: () => ID }) id: string,
+    @Args('success') success: boolean,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    // Reuse the exact source-read scope; a guessed document ID is not authority.
+    if (entityType === 'Quote') await this.quote(id, ctx);
+    else if (entityType === 'SalesOrder') await this.salesOrder(id, ctx);
+    else throw new Error('Unsupported commercial document');
+    const user = await requireSession(this.prisma, ctx);
+    await this.quotes.recordCommercialPdfResult(entityType, id, success, user.id);
+    return true;
+  }
+
   @Mutation(() => QuoteOutput)
   async createQuote(
     @Args('input') input: CreateQuoteInput,

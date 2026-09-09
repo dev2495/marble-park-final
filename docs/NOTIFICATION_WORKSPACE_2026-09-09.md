@@ -38,6 +38,8 @@ Cost reminders do not block inward. Manual/opening lot reminders show a 20-day f
 
 Recorded import failures/blocked Excel imports from the last 30 days appear as updates to the uploader. Existing quote, order, inward and dispatch event notices remain available; direct orders now notify their salesperson for dispatch/delivery too. Quote messages distinguish missing pricing, pending approval and readiness.
 
+Authenticated quote and sales-order PDF routes now record actual render failure/success into their document job. A successful retry clears the alert on the next reconciliation. Source permissions are checked again before recording the result. Pricing-validation errors use the existing quote-pricing task; expired sessions and unknown records do not create document-failure noise. Public-share downloads do not mutate a private user's inbox. Other PDF types still need an explicit outcome hook if they are to produce these alerts. Result recording is bounded to three seconds and logged if unavailable, so monitoring cannot turn a successfully generated PDF into a failed download.
+
 ## Reliability and access
 
 - Additive schema: original Notification events remain. New per-user receipts hold read/archive/snooze state. Shared legacy read flags are not falsely attributed to every user.
@@ -61,7 +63,7 @@ Recorded import failures/blocked Excel imports from the last 30 days appear as u
 ## Verification
 
 - API build and production web build (58 routes): passed.
-- Disposable PostgreSQL integration gate: 29 checks, including legacy migration, all 14 action rules, uploader-only import updates, permissions, follow-up completion, read isolation, claims, reopening, pagination, retry injection and failed-source preservation.
+- Disposable PostgreSQL integration gate: 30 checks, including legacy migration, all 14 action rules, uploader-only import updates, permissions, follow-up completion, source-scoped PDF failure/recovery, read isolation, claims, reopening, pagination, retry injection and failed-source preservation.
 - 20 concurrent local fixture inbox requests: 33 ms aggregate; this is not an AWS load/capacity guarantee.
 - Browser: authenticated local owner, team claim to My work, exact intent destination, 390px mobile layout, bell/full-inbox navigation and simulated GraphQL error without forced logout; source refresh recovered the inbox.
 - Existing pricing matrix, quote product/brand identity and session-client-resilience smoke checks: passed.
