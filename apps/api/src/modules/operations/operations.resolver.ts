@@ -228,11 +228,12 @@ export class OperationsResolver {
   @Query(() => [GraphQLJSON])
   async stockCountSessions(
     @Context() ctx: GraphqlRequestContext,
+    @Args('recordId', { nullable: true }) recordId?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireSession(this.prisma, ctx);
-    return this.operations.stockCountSessions({ status, take });
+    return this.operations.stockCountSessions({ status, take, recordId });
   }
 
   @Query(() => [GraphQLJSON])
@@ -262,11 +263,12 @@ export class OperationsResolver {
   @Query(() => [GraphQLJSON])
   async openingStockSessions(
     @Context() ctx: GraphqlRequestContext,
+    @Args('recordId', { nullable: true }) recordId?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return inventoryCostView(await this.operations.openingStockSessions({ status, take }), user);
+    return inventoryCostView(await this.operations.openingStockSessions({ status, take, recordId }), user);
   }
 
   @Mutation(() => GraphQLJSON)
@@ -470,11 +472,12 @@ export class OperationsResolver {
   @Query(() => [GraphQLJSON])
   async stockAdjustmentRequests(
     @Context() ctx: GraphqlRequestContext,
+    @Args('recordId', { nullable: true }) recordId?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.operations.stockAdjustmentRequests({ status, take });
+    return this.operations.stockAdjustmentRequests({ status, take, recordId });
   }
 
   @Mutation(() => GraphQLJSON)

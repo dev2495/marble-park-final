@@ -49,6 +49,7 @@ export default function OrdersPage() {
   const [paymentMode, setPaymentMode] = useState('');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
   const [search, setSearch] = useState('');
+  useEffect(() => { setSearch(new URLSearchParams(window.location.search).get('search') || ''); }, []);
   const [brand, setBrand] = useState('');
   const [category, setCategory] = useState('');
   const [locationId, setLocationId] = useState('');

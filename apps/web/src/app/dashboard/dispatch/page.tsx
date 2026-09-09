@@ -84,6 +84,7 @@ const stages = [
 
 export default function DispatchPage() {
   const [registerSearch, setRegisterSearch] = useState("");
+  useEffect(() => { setRegisterSearch(new URLSearchParams(window.location.search).get('search') || ''); }, []);
   const [registerStatus, setRegisterStatus] = useState("");
   const [registerBrand, setRegisterBrand] = useState("");
   const [registerCategory, setRegisterCategory] = useState("");

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotesService } from '../quotes/quotes.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -32,6 +32,23 @@ const LEAD_STAGES = ['new', 'contacted', 'qualified', 'proposal', 'quoted', 'neg
 @Injectable()
 export class LeadsService {
   constructor(private prisma: PrismaService, private quotes: QuotesService, private notifications: NotificationsService) {}
+
+  async completeFollowUp(id: string, outcome: string, user: any) {
+    const note = String(outcome || '').trim();
+    if (note.length < 3 || note.length > 2000) throw new BadRequestException('Record an outcome between 3 and 2,000 characters.');
+    return this.prisma.$transaction(async tx => {
+      const task = await tx.followUpTask.findUnique({ where: { id } });
+      if (!task) throw new NotFoundException('Follow-up not found');
+      if (task.ownerId !== user.id && !['owner','admin','sales_manager'].includes(user.role)) throw new ForbiddenException('Only the assigned salesperson or their manager can complete this follow-up.');
+      if (task.status === 'completed') return task;
+      if (!['pending','open'].includes(task.status)) throw new BadRequestException('This follow-up is no longer open.');
+      const claimed = await tx.followUpTask.updateMany({ where: { id, status: { in: ['pending','open'] } }, data: { status: 'completed', updatedAt: new Date() } });
+      if (!claimed.count) throw new BadRequestException('Follow-up changed. Refresh before trying again.');
+      await tx.activity.create({ data: { id: ulid(), leadId: task.leadId, userId: user.id, type: 'followup_completed', message: note } });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId: user.id, action: 'followup.complete', entityType: 'FollowUpTask', entityId: id, summary: note, metadata: { leadId: task.leadId, previousStatus: task.status } } });
+      return tx.followUpTask.findUnique({ where: { id } });
+    });
+  }
 
   /**
    * GraphQL-facing list. Returns BARE rows; resolver fans relations through
@@ -94,7 +111,7 @@ export class LeadsService {
       } as any) as any;
 
       if (intentRows.length) {
-        await tx.leadIntent.create({
+        const intent = await tx.leadIntent.create({
           data: {
             id: ulid(),
             leadId: lead.id,
@@ -125,7 +142,7 @@ export class LeadsService {
             message: `${lead.title} has ${intentRows.length} selection row(s) waiting for office quote generation.`,
             type: 'intent_submitted',
             entityType: 'LeadIntent',
-            entityId: lead.id,
+            entityId: intent.id,
             href: '/dashboard/intents',
             targetRole: 'office_staff',
             metadata: { leadId: lead.id, rowCount: intentRows.length },
@@ -360,7 +377,7 @@ export class LeadsService {
         ownerId: intent.ownerId,
         dueAt: new Date(Date.now() + 86400000),
         status: 'pending',
-        notes: `Quote ${quote.quoteNumber} ready from office. Share PDF: ${pdfUrl}`,
+        notes: incompletePricing ? `Complete missing pricing for ${quote.quoteNumber} before sharing.` : quote.approvalStatus === 'pending' ? `Follow up on price approval for ${quote.quoteNumber} before confirmation.` : `Follow up with the customer on ${quote.quoteNumber}.`,
         updatedAt: new Date(),
       },
     }).catch(() => null);
@@ -376,10 +393,10 @@ export class LeadsService {
     }).catch(() => null);
     await this.notifications.createMany([
       {
-        title: 'Quote PDF generated',
+        title: incompletePricing ? 'Quote pricing needs completion' : quote.approvalStatus === 'pending' ? 'Quote awaiting price approval' : 'Quote prepared by office',
         message: incompletePricing
           ? `${quote.quoteNumber} is saved as a draft. Add MRP to every line before sharing or confirming.`
-          : `${quote.quoteNumber} is ready from office. Share the PDF and continue follow-up.`,
+          : quote.approvalStatus === 'pending' ? `${quote.quoteNumber} needs price approval before confirmation.` : `${quote.quoteNumber} is ready from office. Open the quote to share its PDF.`,
         type: 'quote_generated',
         entityType: 'Quote',
         entityId: quote.id,
@@ -388,10 +405,10 @@ export class LeadsService {
         metadata: { pdfUrl, intentId: intent.id, displayMode: quote.displayMode, incompletePricing },
       },
       {
-        title: 'Quote ready for owner visibility',
+        title: 'Quotation status updated',
         message: incompletePricing
           ? `${quote.quoteNumber} was generated from an intent and needs MRP completion before commercial actions.`
-          : `${quote.quoteNumber} was generated from an intent. It can be shared, confirmed, and converted without an owner approval stop.`,
+          : quote.approvalStatus === 'pending' ? `${quote.quoteNumber} requires price approval before confirmation.` : `${quote.quoteNumber} was prepared from an intent with complete pricing.`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: quote.id,
@@ -400,10 +417,10 @@ export class LeadsService {
         metadata: { intentId: intent.id, pdfUrl, displayMode: quote.displayMode, incompletePricing },
       },
       {
-        title: 'Quote ready for admin visibility',
+        title: 'Quotation status updated',
         message: incompletePricing
           ? `${quote.quoteNumber} was generated from an intent and needs MRP completion before confirmation.`
-          : `${quote.quoteNumber} was generated from an intent and is unblocked for confirmation.`,
+          : quote.approvalStatus === 'pending' ? `${quote.quoteNumber} requires price approval before confirmation.` : `${quote.quoteNumber} was prepared from an intent with complete pricing.`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: quote.id,

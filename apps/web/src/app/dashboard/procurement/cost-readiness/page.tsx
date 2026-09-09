@@ -29,6 +29,7 @@ function money(value: unknown) {
 
 export default function PurchaseOrderCostReadinessPage() {
   const [search, setSearch] = useState("");
+  useEffect(() => { setSearch(new URLSearchParams(window.location.search).get('search') || ''); }, []);
   const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState("");
   const [rates, setRates] = useState<Record<string, { enteredUnitCost: string; rateUom: string }>>({});

@@ -269,7 +269,7 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
               { icon: UserCog, label: 'Create user', href: '/dashboard/users' },
               { icon: Settings, label: 'System settings', href: '/dashboard/settings' },
               { icon: Database, label: 'Master data', href: '/dashboard/master-data' },
-              { icon: Activity, label: 'View notifications', href: '/dashboard' },
+              { icon: Activity, label: 'Work inbox', href: '/dashboard/notifications' },
               { icon: KeyRound, label: 'Change my password', href: '/dashboard/profile#change-password' },
             ].map((a) => (
               <Link

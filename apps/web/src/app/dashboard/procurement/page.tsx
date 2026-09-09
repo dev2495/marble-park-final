@@ -228,6 +228,8 @@ export default function ProcurementSuitePage() {
   const poComposerRef = useRef<HTMLDivElement>(null);
   const poProductInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
+    const search = new URLSearchParams(window.location.search).get('search') || '';
+    setPoSearch(search); setDSearch(search);
     const requested = new URLSearchParams(window.location.search).get(
       "view",
     ) as Tab | null;

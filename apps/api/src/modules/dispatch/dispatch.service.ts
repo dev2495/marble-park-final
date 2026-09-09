@@ -762,7 +762,7 @@ export class DispatchService {
       entityType: 'DispatchChallan',
       entityId: challan.id,
       href: '/dashboard/dispatch',
-      targetUserId: job.quote?.ownerId,
+      targetUserId: job.quote?.ownerId || job.ownerId || salesOrder.ownerId,
       metadata: { dispatchJobId, quoteId: challan.quoteId },
     });
     return challan;
@@ -840,8 +840,8 @@ export class DispatchService {
           data: { status: 'dispatched', updatedAt: new Date() },
         }).catch(() => null);
         await this.refreshJobStatusTx(tx, updated.dispatchJobId);
-        const job = await tx.dispatchJob.findUnique({ where: { id: updated.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
-        if (job?.quote?.ownerId) {
+        const job = await tx.dispatchJob.findUnique({ where: { id: updated.dispatchJobId }, include: { quote: true, customer: true, salesOrder: true } as any } as any).catch(() => null) as any;
+        if (job?.quote?.ownerId || job?.ownerId) {
           await tx.notification.create({
             data: {
               id: ulid(),
@@ -850,8 +850,8 @@ export class DispatchService {
               type: 'dispatch_dispatched',
               entityType: 'DispatchChallan',
               entityId: updated.id,
-              href: `/dashboard/leads/${job.quote.leadId}`,
-              targetUserId: job.quote.ownerId,
+              href: `/dashboard/dispatch?search=${encodeURIComponent(job.salesOrder?.orderNumber || job.customer?.name || "")}`,
+              targetUserId: job.quote?.ownerId || job.ownerId,
               metadata: { quoteId: updated.quoteId },
             },
           }).catch(() => null);
@@ -861,8 +861,8 @@ export class DispatchService {
         updated = await tx.dispatchChallan.update({ where: { id }, data });
         await this.markChallanDeliveredTx(tx, updated as any, actorUserId);
         await this.refreshJobStatusTx(tx, updated.dispatchJobId);
-        const job = await tx.dispatchJob.findUnique({ where: { id: updated.dispatchJobId }, include: { quote: true, customer: true } as any } as any).catch(() => null) as any;
-        if (job?.quote?.ownerId) {
+        const job = await tx.dispatchJob.findUnique({ where: { id: updated.dispatchJobId }, include: { quote: true, customer: true, salesOrder: true } as any } as any).catch(() => null) as any;
+        if (job?.quote?.ownerId || job?.ownerId) {
           await tx.notification.create({
             data: {
               id: ulid(),
@@ -871,8 +871,8 @@ export class DispatchService {
               type: 'dispatch_delivered',
               entityType: 'DispatchChallan',
               entityId: updated.id,
-              href: `/dashboard/leads/${job.quote.leadId}`,
-              targetUserId: job.quote.ownerId,
+              href: `/dashboard/dispatch?search=${encodeURIComponent(job.salesOrder?.orderNumber || job.customer?.name || "")}`,
+              targetUserId: job.quote?.ownerId || job.ownerId,
               metadata: { quoteId: updated.quoteId },
             },
           }).catch(() => null);

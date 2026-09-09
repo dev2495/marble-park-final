@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
   AlertTriangle, ArrowRight, Ban, BadgeCheck, CalendarCheck, Check, CheckCircle2,
@@ -13,10 +13,10 @@ import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
 import { StockControlWorkspace } from '@/components/inventory/stock-control-workspace';
 import { cn } from '@/lib/utils';
 
-const DATA = gql`query InventoryControlDesk {
+const DATA = gql`query InventoryControlDesk($recordId: String) {
   inventoryControlTower(take: 1)
   stockReconciliation(take: 50)
-  stockAdjustmentRequests(take: 100)
+  stockAdjustmentRequests(take: 100, recordId: $recordId)
   inventoryPeriodCloses(take: 50)
   stockCountSessions(take: 50)
   openingStockSessions(take: 30)
@@ -44,6 +44,8 @@ const statusTone = (status: string) => status === 'posted' || status === 'closed
 export default function InventoryControlPage() {
   const now = new Date();
   const [desk, setDesk] = useState<Desk>('board');
+  const [recordId, setRecordId] = useState('');
+  useEffect(() => { const id = new URLSearchParams(window.location.search).get('recordId') || ''; setRecordId(id); if (id) setDesk('adjustments'); }, []);
   const [lotId, setLotId] = useState('');
   const [lotSearch, setLotSearch] = useState('');
   const [requestStatus, setRequestStatus] = useState('pending');
@@ -51,7 +53,7 @@ export default function InventoryControlPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [adjustment, setAdjustment] = useState({ type: 'increase', quantity: '1', reason: '' });
   const [period, setPeriod] = useState({ periodType: 'monthly', periodKey: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`, countSessionId: '', effectiveAt: now.toISOString().slice(0, 10), notes: '' });
-  const { data, loading, error, refetch } = useQuery(DATA, { fetchPolicy: 'cache-and-network' });
+  const { data, loading, error, refetch } = useQuery(DATA, { variables: { recordId: recordId || undefined }, fetchPolicy: 'cache-and-network' });
   const [request, requestState] = useMutation(REQUEST, { onCompleted: () => { setAdjustment({ type: 'increase', quantity: '1', reason: '' }); setLotId(''); refetch(); } });
   const [decide, decideState] = useMutation(DECIDE, { onCompleted: () => { setRejectingId(''); setRejectReason(''); refetch(); } });
   const [close, closeState] = useMutation(CLOSE, { onCompleted: () => { setPeriod((current) => ({ ...current, countSessionId: '', notes: '' })); refetch(); } });

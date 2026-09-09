@@ -1,7 +1,7 @@
 'use client';
 
 import { gql, useLazyQuery, useMutation, useQuery } from '@apollo/client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, ArrowUpRight, Banknote, CalendarClock, Check, ChevronRight, CircleDollarSign,
   ClipboardCheck, FileCheck2, FileText, Landmark, Loader2, Plus, Receipt, RefreshCw, Search,
@@ -87,6 +87,12 @@ export default function PaymentsPage() {
   const [actionError, setActionError] = useState<Error | null>(null);
   const { data, loading, error, refetch } = useQuery(ACCOUNTS, { variables: { search: search || undefined, take: 180 }, fetchPolicy: 'network-only' });
   const [loadAccount, accountQuery] = useLazyQuery(CUSTOMER_ACCOUNT, { fetchPolicy: 'network-only' });
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('customerId');
+    if (!id) return;
+    setActiveCustomer({ id, name: 'Customer account' });
+    void loadAccount({ variables: { id } }).catch(reason => setActionError(reason));
+  }, [loadAccount]);
   const [recordPayment, paymentState] = useMutation(RECORD_PAYMENT);
   const [issueInvoice, invoiceState] = useMutation(ISSUE_INVOICE);
   const [allocatePayment, allocationState] = useMutation(ALLOCATE_PAYMENT);

@@ -11,10 +11,10 @@ import { StockControlWorkspace } from '@/components/inventory/stock-control-work
 import { cn } from '@/lib/utils';
 
 const DATA = gql`
-  query StockCountPage($search: String, $locationId: String) {
+  query StockCountPage($search: String, $locationId: String, $recordId: String) {
     inventoryLots(search: $search, locationId: $locationId, status: "active", take: 200)
     stockLocations(status: "active")
-    stockCountSessions(take: 80)
+    stockCountSessions(take: 80, recordId: $recordId)
     inventoryPeriodCloses(take: 12)
   }
 `;
@@ -34,7 +34,9 @@ export default function StockCountPage() {
   const [sessionFilter, setSessionFilter] = useState('all');
   const [page, setPage] = useState(0);
   const [selectedSessionId, setSelectedSessionId] = useState('');
-  const { data, loading, error, refetch } = useQuery(DATA, { variables: { search: search || undefined, locationId: locationId || undefined }, fetchPolicy: 'cache-and-network' });
+  const [recordId, setRecordId] = useState('');
+  useEffect(() => { const id = new URLSearchParams(window.location.search).get('recordId') || ''; setRecordId(id); setSelectedSessionId(id); }, []);
+  const { data, loading, error, refetch } = useQuery(DATA, { variables: { recordId: recordId || undefined, search: search || undefined, locationId: locationId || undefined }, fetchPolicy: 'cache-and-network' });
   const [create, { loading: creating, error: createError }] = useMutation(CREATE, { onCompleted: () => { setCounts({}); setNotes(''); setPage(0); refetch(); } });
   const [approve, { loading: approving, error: approveError }] = useMutation(APPROVE, { onCompleted: () => refetch() });
 

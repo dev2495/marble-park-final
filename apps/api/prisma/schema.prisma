@@ -483,11 +483,45 @@ model Notification {
   metadata     Json      @default("{}")
   readAt       DateTime?
   createdAt    DateTime  @default(now())
+  taskKey      String?   @unique
+  category     String    @default("updates")
+  priority     String    @default("normal")
+  status       String    @default("open")
+  targetPermission String?
+  assignedUserId String?
+  dueAt        DateTime?
+  resolvedAt   DateTime?
+  reconciledAt DateTime?
+  deliveredAt  DateTime?
+  deliveryAttempts Int   @default(0)
+  deliveryError String?
+  retryAt      DateTime?
+  recipients   NotificationRecipient[]
 
   @@index([targetUserId])
   @@index([targetRole])
   @@index([readAt])
   @@index([createdAt(sort: Desc)])
+  @@index([deliveredAt, retryAt])
+  @@index([category, status, dueAt])
+}
+
+model NotificationRecipient {
+  notificationId String
+  userId String
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  readAt DateTime?
+  archivedAt DateTime?
+  snoozedUntil DateTime?
+  createdAt DateTime @default(now())
+  @@id([notificationId, userId])
+  @@index([userId, archivedAt, readAt])
+}
+
+model NotificationPreference {
+  userId String @id
+  muteUpdates Boolean @default(false)
+  updatedAt DateTime @updatedAt
 }
 
 model PasswordResetToken {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, ChevronLeft, ChevronRight, Layers3, PackagePlus, Plus, Search, Trash2 } from 'lucide-react';
@@ -9,10 +9,10 @@ import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 import { StockControlWorkspace } from '@/components/inventory/stock-control-workspace';
 
-const DATA = gql`query OpeningStockDesk($search: String) {
+const DATA = gql`query OpeningStockDesk($search: String, $recordId: String) {
   products(search: $search, take: 80) { id sku internalCode name category brand salesUom piecesPerPack }
   stockLocations(status: "active")
-  openingStockSessions(take: 30)
+  openingStockSessions(take: 30, recordId: $recordId)
   me { id role }
 }`;
 const CREATE = gql`mutation CreateOpening($input: OpeningStockInput!) { createOpeningStockSession(input: $input) }`;
@@ -20,6 +20,8 @@ const POST = gql`mutation PostOpening($id: ID!, $ownerOverrideReason: String) { 
 
 export default function OpeningStockPage() {
   const [search, setSearch] = useState('');
+  const [recordId, setRecordId] = useState('');
+  useEffect(() => { const id = new URLSearchParams(window.location.search).get('recordId') || ''; setRecordId(id); setSelectedSessionId(id); }, []);
   const [locationId, setLocationId] = useState('');
   const [effectiveAt, setEffectiveAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
@@ -29,7 +31,7 @@ export default function OpeningStockPage() {
   const [sessionStatus, setSessionStatus] = useState('all');
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [productPage, setProductPage] = useState(0);
-  const { data, error, refetch } = useQuery(DATA, { variables: { search: search || undefined }, fetchPolicy: 'cache-and-network' });
+  const { data, error, refetch } = useQuery(DATA, { variables: { recordId: recordId || undefined, search: search || undefined }, fetchPolicy: 'cache-and-network' });
   const [create, { loading: creating, error: createError }] = useMutation(CREATE, { onCompleted: () => { setLines([]); setNotes(''); setSearch(''); setProductPage(0); refetch(); } });
   const [post, { loading: posting, error: postError }] = useMutation(POST, { onCompleted: () => { setMessage('Opening stock posted. Physical lots, stock ledger entries and requested labels are now traceable from the register.'); refetch(); } });
   const products = data?.products || [];

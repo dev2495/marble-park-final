@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 
@@ -45,6 +45,7 @@ function isCritical(action: string): boolean {
 
 @Injectable()
 export class AuditService {
+  private readonly logger = new Logger(AuditService.name);
   constructor(private prisma: PrismaService) {}
 
   /**
@@ -72,8 +73,10 @@ export class AuditService {
           metadata: (input.metadata as any) || {},
         },
       });
-    } catch {
-      // swallow — audit failures must never break a business write
+    } catch (error) {
+      // A post-commit failure must not invite duplicate business writes. Critical
+      // operations should use an audit insert in their source transaction.
+      this.logger.error(`AUDIT_WRITE_FAILED action=${input.action} entity=${input.entityType}:${input.entityId}`, (error as Error).stack);
     }
   }
 

@@ -96,6 +96,10 @@ export default function InventoryPage() {
   const [cursor, setCursor] = useState('');
   const [rows, setRows] = useState<any[]>([]);
   const [costEditorLotId, setCostEditorLotId] = useState('');
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setSearch(params.get('search') || ''); setCostEditorLotId(params.get('lotId') || '');
+  }, []);
   const [costCorrection, setCostCorrection] = useState({ unitCost: '', reason: '' });
   const deferredSearch = useDeferredValue(search.trim());
 
@@ -133,6 +137,9 @@ export default function InventoryPage() {
   useEffect(() => {
     if (!cursor && !loading) setRows(tower.items || []);
   }, [tower.items, cursor, loading]);
+  useEffect(() => {
+    if (costEditorLotId && tower.items?.length) setExpanded(Object.fromEntries(tower.items.map((row: any) => [row.id, true])));
+  }, [costEditorLotId, tower.items]);
 
   const resetPage = (next: () => void) => {
     setCursor('');

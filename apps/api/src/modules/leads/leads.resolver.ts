@@ -141,6 +141,11 @@ export class LeadsResolver {
 
   // ----- DataLoader-backed field resolvers -----
 
+  @Mutation(() => GraphQLJSON)
+  async completeFollowUp(@Args('id', { type: () => ID }) id: string, @Args('outcome') outcome: string, @Context() ctx: GraphqlRequestContext) {
+    return this.leads.completeFollowUp(id, outcome, await requireSession(this.prisma, ctx));
+  }
+
   @ResolveField('customer', () => GraphQLJSON, { nullable: true })
   async resolveCustomer(@Parent() lead: any, @Context() ctx: GraphqlRequestContext) {
     if (lead?.customer) return lead.customer;

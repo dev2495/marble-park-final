@@ -19,6 +19,19 @@ const LEAD_TIMELINE = gql`
   }
 `;
 
+const COMPLETE_FOLLOWUP = gql`mutation CompleteFollowUp($id: ID!, $outcome: String!) { completeFollowUp(id: $id, outcome: $outcome) }`;
+function FollowUpAction({ task, refresh }: { task: any; refresh: () => void }) {
+  const [outcome, setOutcome] = useState('');
+  const [complete, { loading, error }] = useMutation(COMPLETE_FOLLOWUP);
+  return <form className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4" onSubmit={async e => { e.preventDefault(); try { await complete({ variables: { id: task.id, outcome } }); refresh(); window.dispatchEvent(new Event('notification-updated')); } catch {} }}>
+    <h3 className="font-semibold">Customer follow-up</h3><p className="mt-1 text-sm text-[var(--ink-3)]">{task.notes}</p>
+    <p className="mt-2 text-xs text-[var(--ink-4)]">Due {new Date(task.dueAt).toLocaleString('en-IN')}</p>
+    <label className="mt-3 block text-sm">Outcome<textarea required minLength={3} maxLength={2000} value={outcome} onChange={e => setOutcome(e.target.value)} placeholder="What did the customer say? Record the result and any next step." className="mt-1 block min-h-20 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] p-3"/></label>
+    {error && <p role="alert" className="mt-2 text-sm text-[var(--danger)]">{error.message}</p>}
+    <Button type="submit" disabled={loading || outcome.trim().length < 3} className="mt-3">{loading ? 'Saving…' : 'Save outcome & complete'}</Button>
+  </form>;
+}
+
 const START_REVISION = gql`
   mutation StartRevision($quoteId: String!) {
     startQuoteRevision(quoteId: $quoteId)
@@ -252,6 +265,7 @@ export default function LeadDetailPage() {
       </section>
 
       {/* In flight section */}
+      {(lead.followUps || []).filter((task: any) => ['pending','open'].includes(task.status) && (task.ownerId === me?.id || ['owner','admin','sales_manager'].includes(me?.role))).map((task: any) => <FollowUpAction key={task.id} task={task} refresh={() => void refetch()}/>)}
       {(inFlight.activeIntents.length > 0 || inFlight.activeQuotes.length > 0) ? (
         <section className="rounded-r5 border border-amber-200 bg-amber-50/60 p-4">
           <div className="flex items-center gap-2">

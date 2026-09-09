@@ -14,6 +14,7 @@ const INTENTS = gql`
 `;
 
 const PICK_UP = gql`mutation Pick($id: ID!) { pickUpIntent(id: $id) }`;
+const FOCUSED_INTENT = gql`query FocusedInboxIntent($id: ID!) { intent(id: $id) }`;
 const RELEASE = gql`mutation Rel($id: ID!, $force: Boolean) { releaseIntent(id: $id, force: $force) }`;
 const GENERATE = gql`mutation Gen($intentId: String!, $note: String, $displayMode: String) { generateQuoteFromIntent(intentId: $intentId, note: $note, displayMode: $displayMode) }`;
 
@@ -45,6 +46,9 @@ export default function IntentDeskPage() {
   const [tab, setTab] = useState<'pending' | 'in_quote' | 'mine' | 'all'>('pending');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [search, setSearch] = useState('');
+  const [focusedId, setFocusedId] = useState('');
+  useEffect(() => { const id = new URLSearchParams(window.location.search).get('intentId') || ''; setFocusedId(id); if (id) setTab('all'); }, []);
+  const focused = useQuery(FOCUSED_INTENT, { variables: { id: focusedId }, skip: !focusedId, fetchPolicy: 'network-only' });
 
   const [me, setMe] = useState<any>(null);
   useEffect(() => { try { setMe(JSON.parse(localStorage.getItem('user') || 'null')); } catch { setMe(null); } }, []);
@@ -71,7 +75,7 @@ export default function IntentDeskPage() {
     ['admin', 'owner', 'sales_manager', 'office_staff'].includes(role) ||
     Boolean(me?.effectivePermissions?.includes('quotes.manage'));
 
-  const intents = (data?.intents || []).filter((intent: any) => {
+  const intents = (focusedId ? (focused.data?.intent ? [focused.data.intent] : []) : data?.intents || []).filter((intent: any) => {
     if (typeFilter && intent.intentType !== typeFilter) return false;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -94,6 +98,8 @@ export default function IntentDeskPage() {
   return (
     <div className="space-y-6 pb-10">
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
+      {focused.error ? <QueryErrorBanner error={focused.error} onRetry={() => focused.refetch()} /> : null}
+      {focusedId ? <div className="flex items-center justify-between rounded-lg border border-[var(--line)] p-3 text-sm"><span>Showing the selection opened from your inbox.</span><Button variant="outline" onClick={() => setFocusedId('')}>Show all selections</Button></div> : null}
       {generateError ? <QueryErrorBanner error={generateError} /> : null}
 
       <section className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-gradient-to-br from-blue-50 via-white to-emerald-50/40 p-6 shadow-sm-soft">

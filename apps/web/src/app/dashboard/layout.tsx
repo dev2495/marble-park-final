@@ -60,6 +60,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
     title: 'Operate',
     items: [
       { name: 'Command Center', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
+      { name: 'Work inbox', href: '/dashboard/notifications', icon: Bell, roles: ['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff'] },
       { name: 'Approvals', href: '/dashboard/approvals', icon: ClipboardCheck, roles: ['admin', 'owner'], permission: 'approvals.manage' },
       { name: 'Sales Desk', href: '/dashboard/sales', icon: Briefcase, roles: ['admin', 'owner', 'sales_manager', 'sales'] },
       { name: 'Reports', href: '/dashboard/reports', icon: BarChart3, roles: [], permissions: ['reports.executive', 'reports.sales', 'reports.inventory', 'reports.procurement', 'reports.finance', 'reports.fulfilment', 'reports.audit'] },
@@ -123,6 +124,7 @@ const ROLE_OPTIONS = [
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Command Center',
+  '/dashboard/notifications': 'Work inbox',
   '/dashboard/products': 'Catalogue',
   '/dashboard/inventory': 'Inventory',
   '/dashboard/inventory/stock-alerts': 'Stock Alert Policy',
@@ -238,12 +240,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     fetchPolicy: 'cache-first',
     notifyOnNetworkStatusChange: false,
   });
-  const { data: notificationData, refetch: refetchNotifications } = useQuery(NOTIFICATIONS_QUERY, {
+  const { data: notificationData, loading: notificationsLoading, error: notificationsError, refetch: refetchNotifications } = useQuery(NOTIFICATIONS_QUERY, {
     skip: !user,
-    pollInterval: 120000,
+    pollInterval: 60000,
     skipPollAttempt: () => typeof document !== 'undefined' && document.hidden,
   });
   const [markNotificationRead] = useMutation(MARK_NOTIFICATION_READ, { onCompleted: () => refetchNotifications() });
+  useEffect(() => {
+    const refresh = () => { if (user && !document.hidden) void refetchNotifications(); };
+    window.addEventListener('notification-updated', refresh);
+    window.addEventListener('focus', refresh);
+    return () => { window.removeEventListener('notification-updated', refresh); window.removeEventListener('focus', refresh); };
+  }, [user, refetchNotifications]);
 
   const handleLogout = async () => {
     await logout().catch(() => null);
@@ -427,7 +435,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </Link>
 
               {/* ─── Notifications dropdown (Radix — close on outside click) ─── */}
-              <DropdownMenu>
+              <DropdownMenu onOpenChange={open => { if (open) void refetchNotifications(); }}>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
@@ -437,25 +445,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <Bell className="h-4 w-4" />
                     {unreadCount > 0 ? (
                       <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#dc2626] px-1 text-[10px] font-semibold text-white">
-                        {unreadCount}
+                        {unreadCount > 99 ? '99+' : unreadCount}
                       </span>
                     ) : null}
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-[22rem]">
+                <DropdownMenuContent align="end" className="w-[min(22rem,calc(100vw-1rem))]">
                   <DropdownMenuLabel className="flex items-center justify-between">
-                    <span>Notifications</span>
+                    <span>Work inbox</span>
                     {unreadCount > 0 ? <span className="rounded-full bg-[var(--danger-bg)] px-1.5 text-[10px] font-semibold text-[var(--danger)]">{unreadCount} new</span> : null}
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <div className="max-h-96 overflow-y-auto custom-scrollbar">
-                    {(notificationData?.notifications || []).length ? (notificationData?.notifications || []).map((notification: any) => (
+                    {notificationsError ? <p role="alert" className="px-3 py-4 text-sm">Inbox unavailable. <button className="underline" onClick={() => void refetchNotifications()}>Retry</button></p> : notificationsLoading && !notificationData ? <p role="status" className="p-4 text-sm">Loading inbox…</p> : (notificationData?.notifications || []).length ? (notificationData?.notifications || []).map((notification: any) => (
                       <DropdownMenuItem
                         key={notification.id}
-                        onSelect={async (event) => {
-                          event.preventDefault();
-                          await markNotificationRead({ variables: { id: notification.id } });
-                          if (notification.href) router.push(notification.href);
+                        onSelect={() => {
+                          if (!notification.readAt) void markNotificationRead({ variables: { id: notification.id } }).catch(() => undefined);
+                          router.push(notification.href?.startsWith('/dashboard/') ? notification.href : '/dashboard/notifications');
                         }}
                         className={cn('items-start gap-2.5 px-2.5 py-2.5', !notification.readAt ? 'bg-[var(--brand-50)]' : '')}
                       >
@@ -464,7 +471,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           <p className="truncate text-sm font-semibold text-[var(--ink)]">{notification.title}</p>
                           <p className="mt-0.5 line-clamp-2 text-xs text-[var(--ink-3)]">{notification.message}</p>
                           <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[var(--ink-5)]">
-                            {notification.type} · {new Date(notification.createdAt).toLocaleString()}
+                            {notification.category === 'action' ? notification.status === 'resolved' ? 'Completed' : 'Needs action' : 'Update'} · {new Date(notification.createdAt).toLocaleString()}
                           </p>
                         </div>
                       </DropdownMenuItem>
@@ -472,6 +479,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       <p className="px-3 py-6 text-center text-sm text-[var(--ink-4)]">No notifications yet.</p>
                     )}
                   </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild><Link className="justify-center font-semibold" href="/dashboard/notifications">Open full inbox →</Link></DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
 

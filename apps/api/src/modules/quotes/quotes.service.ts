@@ -389,8 +389,8 @@ export class QuotesService {
     await this.audit(actorUserId || created.ownerId, 'quote.create', created.id, `Created ${created.quoteNumber}`, { customerId: created.customerId, incompletePricing, quoteType });
     await this.notifications.createMany([
       {
-        title: 'Quote ready',
-        message: incompletePricing ? `${created.quoteNumber} is saved as a draft. Add MRP to every line before sharing or confirming.` : `${created.quoteNumber} is ready to share or confirm for ${created.customer?.name || 'customer'}.`,
+        title: incompletePricing ? 'Quote pricing incomplete' : created.approvalStatus === 'pending' ? 'Quote price approval required' : 'Quote ready',
+        message: incompletePricing ? `${created.quoteNumber} is saved as a draft. Add MRP to every line before sharing or confirming.` : created.approvalStatus === 'pending' ? `${created.quoteNumber} requires price approval before confirmation.` : `${created.quoteNumber} is ready to share or confirm for ${created.customer?.name || 'customer'}.`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: created.id,
@@ -399,8 +399,8 @@ export class QuotesService {
         metadata: { quoteNumber: created.quoteNumber, displayMode, incompletePricing, pdfUrl: `/api/pdf/quote/${created.id}` },
       },
       {
-        title: 'Quote ready',
-        message: incompletePricing ? `${created.quoteNumber} needs MRP completion before commercial actions.` : `${created.quoteNumber} is visible to admin/owner without approval blocking.`,
+        title: incompletePricing ? 'Quote pricing incomplete' : created.approvalStatus === 'pending' ? 'Quote price approval required' : 'Quote ready',
+        message: incompletePricing ? `${created.quoteNumber} needs MRP completion before commercial actions.` : created.approvalStatus === 'pending' ? `${created.quoteNumber} requires price approval.` : `${created.quoteNumber} has complete commercial pricing.`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: created.id,
@@ -487,22 +487,21 @@ export class QuotesService {
       };
     }
     
-    const updated = await this.prisma.quote.update({
-      where: { id },
-      data: updateData,
-      include: quoteInclude,
-    } as any) as any;
-    if (updateData.lines) {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.quoteLine.deleteMany({ where: { quoteId: id } }).catch(() => null);
-        await this.syncQuoteLinesTx(tx, updated, this.normalizeLines(updateData.lines));
-      }, { timeout: 10000 });
-    }
-    await this.audit(actorUserId || updated.ownerId, 'quote.update', id, `Updated ${updated.quoteNumber}`, updateData);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.quote.update({ where: { id }, data: updateData, include: quoteInclude } as any) as any;
+      if (updateData.lines) {
+        await tx.quoteLine.deleteMany({ where: { quoteId: id } });
+        await this.syncQuoteLinesTx(tx, saved, this.normalizeLines(updateData.lines));
+      }
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId: actorUserId || saved.ownerId,
+        action: 'quote.update', entityType: 'Quote', entityId: id,
+        summary: `Saved ${saved.quoteNumber} and its normalized lines atomically`, metadata: JSON.parse(JSON.stringify(updateData)) } });
+      return saved;
+    }, { timeout: 15000 });
     await this.notifications.createMany([
       {
         title: 'Quote updated',
-        message: `${updated.quoteNumber} was updated and is ready to share or confirm.`,
+        message: `${updated.quoteNumber} updated. ${updated.pricingStatus === 'incomplete' ? 'Complete missing pricing before sharing.' : updated.approvalStatus === 'pending' ? 'Price approval is required before confirmation.' : 'Ready to share or confirm.'}`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: updated.id,
@@ -512,7 +511,7 @@ export class QuotesService {
       },
       {
         title: 'Quote updated',
-        message: `${updated.quoteNumber} was updated and remains unblocked for confirmation.`,
+        message: `${updated.quoteNumber} updated. ${updated.pricingStatus === 'incomplete' ? 'Pricing completion required.' : updated.approvalStatus === 'pending' ? 'Price approval required.' : 'Commercial pricing is complete.'}`,
         type: 'quote_ready',
         entityType: 'Quote',
         entityId: updated.id,
@@ -1051,6 +1050,10 @@ export class QuotesService {
           }
           await this.createPurchaseDemandForSalesOrderTx(tx, { quote: source, salesOrder, lines });
           await tx.activity.create({ data: { id: ulid(), leadId: lead.id, quoteId: null, userId: actorUserId, type: 'sales_order_created', message: `${orderNumber} created directly and assigned to ${owner.name}.` } });
+          await tx.notification.createMany({ data: [
+            { id: ulid(), title: 'Direct sales order created', message: `${orderNumber} is assigned to you. Track fulfilment from the order register.`, type: 'sales_order_created', entityType: 'SalesOrder', entityId: salesOrderId, targetUserId: ownerId, href: `/dashboard/orders?search=${encodeURIComponent(orderNumber)}` },
+            { id: ulid(), title: 'New direct order for fulfilment', message: `${orderNumber}. Review reserved and pending-inward quantities before dispatch.`, type: 'dispatch_ready', entityType: 'SalesOrder', entityId: salesOrderId, targetRole: 'dispatch_ops', href: `/dashboard/dispatch?search=${encodeURIComponent(orderNumber)}` },
+          ] });
           await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'sales_order.direct_create', entityType: 'SalesOrder', entityId: salesOrderId, summary: `Created direct order ${orderNumber}`, metadata: { customerId, ownerId, totalAmount: commercial.totals.grandTotal } } });
           return salesOrder;
         }, { isolationLevel: 'Serializable', timeout: 30000 });

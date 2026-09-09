@@ -30,7 +30,7 @@ export class IntentsResolver {
 
   @Query(() => GraphQLJSON, { name: 'intent', nullable: true })
   async intent(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    await requireSession(this.prisma, ctx);
+    await requirePermission(this.prisma, ctx, 'quotes.manage', ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
     return this.intents.findOne(id);
   }
 

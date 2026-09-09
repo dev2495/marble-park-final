@@ -237,8 +237,9 @@ export class OperationsService {
     return rows.map((row: any) => ({ ...row, product: row.productId ? productMap.get(row.productId) || null : null }));
   }
 
-  async stockCountSessions(args?: { status?: string; take?: number }) {
+  async stockCountSessions(args?: { status?: string; take?: number; recordId?: string }) {
     const where: any = {};
+    if (args?.recordId) where.id = args.recordId;
     if (args?.status && args.status !== 'all') where.status = args.status;
     return (this.prisma as any).stockCountSession.findMany({
       where,
@@ -496,6 +497,7 @@ export class OperationsService {
         where: { id },
         data: {
           unitCost: nextCost,
+          costStatus: 'complete',
           metadata: { ...(lot.metadata || {}), costCorrection: { previousUnitCost: Number(lot.unitCost || 0), correctedUnitCost: nextCost, reason: correctionReason, correctedAt: correctedAt.toISOString(), correctedBy: actorUserId } },
           updatedAt: correctedAt,
         },
@@ -512,8 +514,9 @@ export class OperationsService {
     }, { isolationLevel: 'Serializable', timeout: 15000 });
   }
 
-  async openingStockSessions(args?: { status?: string; take?: number }) {
+  async openingStockSessions(args?: { status?: string; take?: number; recordId?: string }) {
     const where: any = {};
+    if (args?.recordId) where.id = args.recordId;
     if (args?.status && args.status !== 'all') where.status = args.status;
     return (this.prisma as any).openingStockSession.findMany({
       where,
@@ -1712,8 +1715,9 @@ export class OperationsService {
     });
   }
 
-  async stockAdjustmentRequests(args?: { status?: string; take?: number }) {
+  async stockAdjustmentRequests(args?: { status?: string; take?: number; recordId?: string }) {
     const where: any = {};
+    if (args?.recordId) where.id = args.recordId;
     if (args?.status && args.status !== 'all') where.status = args.status;
     return this.prisma.stockAdjustmentApproval.findMany({
       where,
