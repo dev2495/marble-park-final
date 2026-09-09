@@ -16,6 +16,14 @@ export type HelpGuide = {
 
 export const HELP_GUIDES: HelpGuide[] = [
   {
+    id: 'work-inbox', title: 'Use your work inbox and team alerts', duration: '4 min', href: '/dashboard/notifications', roles: ['Sales', 'Sales Manager', 'Office', 'Inventory', 'Dispatch', 'Owner'],
+    summary: 'Find relevant work, take responsibility and open its source record. Reading a notification never approves or completes the business action.',
+    flow: ['My work / Team queue', 'Claim', 'Open record', 'Complete in source', 'Completed history'],
+    steps: ['Open Work inbox from the sidebar or the bell. My work contains direct assignments and tasks you claimed.', 'Check Team queue for work available to your current role and permissions. Claim task makes responsibility visible but does not grant new rights or change source locks.', 'Use the action button to open the matching quote, customer, stock request, PO or dispatch register.', 'For a customer follow-up, open the lead and save a written outcome with Save outcome & complete. Only the assigned salesperson or their manager can do this.', 'Finish approvals, inward, pricing or dispatch in the source workflow. The inbox checks committed records every minute and automatically resolves matching work.', 'Use search, unread-only and pagination to focus the list. Bulk mark read affects only your own receipts.', 'Snooze open work for one hour. Archive routine updates or completed work; use Archived to restore them.', 'Mute update badge to keep routine updates out of the bell while required work remains visible. Owner/admin users can inspect Delivery service for stale checks or failed deliveries.'],
+    checks: ['Reading is personal; it does not clear another team member’s alerts.', 'Open business work cannot be archived or marked complete directly from the inbox.', 'A failed load shows Retry and does not mean the queue is empty.', 'Cost reminders do not block valid inward without supplier rates.', 'Notifications are in-app; no WhatsApp, email or device push is configured by this feature.'],
+    related: ['crm-quote', 'procurement-inward', 'dispatch-return', 'reports-audit'],
+  },
+  {
     id: 'setup-master-data', title: 'Set up master data and products', duration: '12 min', href: '/dashboard/master-data/products', roles: ['Owner', 'Inventory', 'Office'],
     summary: 'Create controlled brands, categories and generic SKUs; for tiles, separate design content, governed geometry and inwardable variants before any transaction uses them.',
     video: '/help/videos/01-master-data-and-tiles.mp4', image: '/help/images/labels-and-lots.png',
@@ -160,6 +168,7 @@ export const HELP_GUIDES: HelpGuide[] = [
 ];
 
 export const HELP_ROUTE_MAP: Array<[string, string]> = [
+  ['/dashboard/notifications', 'work-inbox'],
   ['/dashboard/master-data', 'setup-master-data'], ['/dashboard/products', 'setup-master-data'],
   ['/dashboard/quotes/new', 'tile-pricing'], ['/dashboard/quotes', 'partial-order'],
   ['/dashboard/leads/new', 'showroom-scan-intent'], ['/dashboard/intents', 'showroom-scan-intent'], ['/dashboard/leads', 'crm-quote'],

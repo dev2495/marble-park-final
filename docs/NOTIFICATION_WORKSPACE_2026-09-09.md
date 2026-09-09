@@ -2,7 +2,7 @@
 
 ## Using the inbox
 
-Open **Work inbox** in the sidebar, or the bell → **Open full inbox**.
+Open **Work inbox** in the sidebar, or the bell → **Open full inbox**. The page's help icon opens the matching four-minute in-app guide.
 
 1. **My work** shows personal assignments and team tasks you have claimed.
 2. **Team queue** shows unclaimed work your current permissions allow you to handle. Claim a task to make responsibility clear. Claiming does not grant new permissions or bypass the source page's approvals/locks.
@@ -65,7 +65,7 @@ Recorded import failures/blocked Excel imports from the last 30 days appear as u
 - 20 concurrent local fixture inbox requests: 33 ms aggregate; this is not an AWS load/capacity guarantee.
 - Browser: authenticated local owner, team claim to My work, exact intent destination, 390px mobile layout, bell/full-inbox navigation and simulated GraphQL error without forced logout; source refresh recovered the inbox.
 - Existing pricing matrix, quote product/brand identity and session-client-resilience smoke checks: passed.
-- Runtime npm audit: zero known vulnerabilities at review time. Framework/security dependency updates preserve the current stack; development-only audit findings are separate.
+- Full npm audit, including development tools: zero known vulnerabilities at review time. Framework/security dependency updates preserve the current stack.
 
 Run integration tests only with a new disposable database whose name starts marble_notifications_test_. Apply migrations, build the API, then run `node scripts/notification-workspace-test.cjs`. Test accounts and test password are deliberately local-only fixtures and must never be seeded in production.
 
