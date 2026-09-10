@@ -68,15 +68,15 @@ async function qrPng(dataUrl) {
 
 function productFontSize(value, landscape) {
   const length = clean(value).length;
-  if (landscape) return length <= 24 ? 16 : length <= 40 ? 14 : length <= 64 ? 11.5 : length <= 90 ? 10 : 8.5;
-  return length <= 20 ? 15 : length <= 36 ? 13 : length <= 55 ? 11 : length <= 85 ? 9.5 : 8;
+  if (landscape) return length <= 24 ? 13.5 : length <= 40 ? 12 : length <= 64 ? 10 : length <= 90 ? 9 : 8;
+  return length <= 20 ? 13.5 : length <= 36 ? 11.5 : length <= 55 ? 10 : length <= 85 ? 8.5 : 7.5;
 }
 
 function rateText(value) {
   return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(Number(value));
 }
 
-function fitText(value, width, height, preferredFont) {
+function fitText(value, width, height, preferredFont, maxLines = Number.POSITIVE_INFINITY) {
   for (let fontSize = preferredFont; fontSize >= 7; fontSize -= 0.5) {
     fontMetrics.fontSize(fontSize);
     const lines = [];
@@ -92,9 +92,11 @@ function fitText(value, width, height, preferredFont) {
       lines.push(remaining.slice(0, end).trim());
       remaining = remaining.slice(end).trim();
     }
-    if (lines.length * fontSize * 1.1 <= height) return { text: lines.join('\n'), fontSize };
+    if (lines.length <= maxLines && lines.length * fontSize * 1.1 <= height) return { text: lines.join('\n'), fontSize };
   }
-  throw blocked('A master code or design name is too long to fit legibly on this sticker. Shorten the printable master value before printing.');
+  throw blocked(maxLines < Number.POSITIVE_INFINITY
+    ? 'A product code or design name is too long to fit legibly within two lines on this sticker. Shorten the printable master value before printing.'
+    : 'A master code or design name is too long to fit legibly on this sticker. Shorten the printable master value before printing.');
 }
 
 function singleLineFont(value, width, preferredFont = 20) {
@@ -121,7 +123,7 @@ function Sticker({ label, geometry }) {
   const innerWidth = width - 3.6;
   const productFont = productFontSize(product, landscape);
   const detailWidth = mm(landscape ? innerWidth - 42.4 : innerWidth);
-  const productFit = fitText(product, detailWidth, mm(landscape ? 13.5 : 13.2), productFont);
+  const productFit = fitText(product, detailWidth, mm(landscape ? 13.5 : 13.2), productFont, 2);
   const brandFit = fitText(brand, detailWidth, mm(4.5), brand.length > 20 ? 9 : 11);
   const finishFit = fitText(finish, detailWidth, mm(4.2), finish.length > 35 ? 8 : 9);
   const price = `Rs. ${rateText(payload.mrpInclusive)}`;

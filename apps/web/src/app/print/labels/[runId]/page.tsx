@@ -119,7 +119,13 @@ function CompactPortraitFourByTwoLabelV3({ label }: { label: any }) {
 function FinishFourByTwoLabelV4({ label, portrait }: { label: any; portrait: boolean }) {
   const payload = label.payload || {};
   const productValue = String(payload.compactProductValue || payload.productCode || payload.internalCode || payload.sku || 'PENDING').toUpperCase();
-  const productSize = productValue.length > 42 ? '10pt' : productValue.length > 28 ? '13pt' : productValue.length > 18 ? '16pt' : '20pt';
+  // Keep the governed product/design value inside its fixed two-line print row.
+  // Long master values must remain readable without pushing finish or rate out of the 4 x 2 frame.
+  const productSize = productValue.length > 48 ? '8.5pt'
+    : productValue.length > 36 ? '9.5pt'
+    : productValue.length > 28 ? '10.5pt'
+    : productValue.length > 20 ? '12pt'
+    : portrait ? '14pt' : '14.5pt';
   return <article className={`mp-v4-label-page${portrait ? ' is-portrait' : ''}`} aria-label={`Physical label ${label.labelCode}`}>
     <div className="mp-v4-frame">
       <section className="mp-v4-qr">
@@ -378,7 +384,7 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     .mp-v4-copy strong, .mp-v4-copy span, .mp-v4-rate b { flex-shrink: 0; }
     .mp-v4-copy span { font: 800 4.5pt/1 Arial, sans-serif; letter-spacing: .7pt; }
     .mp-v4-brand strong { font: 800 11pt/1 Arial, sans-serif; }
-    .mp-v4-product strong { font-weight: 900; line-height: 1.03; letter-spacing: -.2pt; overflow-wrap: anywhere; }
+    .mp-v4-product strong { display: -webkit-box; min-height: 0; max-height: 2.12em; overflow: hidden; font-weight: 900; line-height: 1.06; letter-spacing: -.2pt; overflow-wrap: anywhere; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .mp-v4-finish strong { font: 800 10pt/1.05 Arial, sans-serif; overflow-wrap: anywhere; }
     .mp-v4-rate { display: flex; align-items: center; gap: 1.3mm; padding: 1mm 1.5mm; border-top: .35mm solid #111; }
     .mp-v4-rate strong { font: 900 19pt/1 Arial, sans-serif; letter-spacing: -.5pt; white-space: nowrap; }

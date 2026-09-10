@@ -28,7 +28,7 @@ const fixture = async (id, product, finish, brand, rate, uom) => {
 const labels = [
   await fixture('00001', 'SALT NAVVE (FB)', 'Matt', '1031', 65, 'SQFT'),
   await fixture('00002', 'ALD-CHR-079N', 'Chrome', 'JQ', 4010, 'PC'),
-  await fixture('00003', 'A-VERY-LONG-UNINTERRUPTED-PRODUCT-CODE-FOR-COMPACT-STICKER-VERIFY', 'BRUSH HARD GRAPHITE', '1065', 129999.5, 'KG'),
+  await fixture('00003', 'LONG-COMPACT-PRODUCT-CODE-FOR-STICKER', 'BRUSH HARD GRAPHITE', '1065', 129999.5, 'KG'),
 ].flatMap((label) => [0, 1].map((copyIndex) => ({ ...label, copyIndex })));
 const base = { id: 'fixture', runNumber: 'LPR/FIXTURE', status: 'prepared', labels };
 const results = [];
@@ -65,4 +65,9 @@ assert.doesNotThrow(() => assertRunReady({ ...base, labels: [{ ...labels[0], pay
 for (const status of ['cancelled', 'confirmed']) assert.throws(() => assertRunReady({ ...base, status, template: { version: 4, widthMm: 101.6, heightMm: 50.8 } }), /no longer prepared/);
 assert.throws(() => assertRunReady({ ...base, template: { version: 4, widthMm: 210, heightMm: 297 } }), /exact 4 x 2/);
 await assert.rejects(() => renderLabelsPdf({ ...base, labels: [{ ...labels[0], qrDataUrl: 'https://example.com/qr.png' }], template: { version: 4, widthMm: 101.6, heightMm: 50.8 } }), /unsupported source/);
+await assert.rejects(() => renderLabelsPdf({
+  ...base,
+  labels: [{ ...labels[0], payload: { ...labels[0].payload, compactProductValue: 'A'.repeat(220) } }],
+  template: { version: 4, widthMm: 101.6, heightMm: 50.8 },
+}), /too long to fit legibly within two lines/);
 console.log(JSON.stringify({ ok: true, results, preservedCopies: true, finishPrinted: true, renderedQrDecodeChecks: 4, oldTemplatesRejected: true, externalImagesRejected: true }, null, 2));
