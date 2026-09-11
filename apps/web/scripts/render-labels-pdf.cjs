@@ -4,6 +4,7 @@ const React = require('react');
 const { Document, Page, Text, View, Image, renderToBuffer } = require('@react-pdf/renderer');
 const PDFDocument = require('@react-pdf/pdfkit').default;
 const sharp = require('sharp');
+const { compactTileSize } = require('@marble-park/pricing-contract/tile-size');
 
 const e = React.createElement;
 const mm = (value) => Number(value) * 72 / 25.4;
@@ -118,12 +119,13 @@ function Sticker({ label, geometry }) {
   const { width, height, landscape } = geometry;
   const payload = label.payload;
   const product = clean(payload.compactProductValue || payload.productCode || payload.internalCode || payload.sku).toUpperCase();
+  const tileSize = compactTileSize(payload);
   const brand = clean(payload.governedBrandCode || payload.brandCode).toUpperCase() || 'PENDING';
   const finish = clean(payload.finish).toUpperCase() || 'NOT SET';
   const innerWidth = width - 3.6;
   const productFont = productFontSize(product, landscape);
   const detailWidth = mm(landscape ? innerWidth - 42.4 : innerWidth);
-  const productFit = fitText(product, detailWidth, mm(landscape ? 13.5 : 13.2), productFont, 2);
+  const productFit = fitText(product, detailWidth, mm((landscape ? 13.5 : 13.2) - (tileSize ? 3.5 : 0)), productFont, 2);
   const brandFit = fitText(brand, detailWidth, mm(4.5), brand.length > 20 ? 9 : 11);
   const finishFit = fitText(finish, detailWidth, mm(4.2), finish.length > 35 ? 8 : 9);
   const price = `Rs. ${rateText(payload.mrpInclusive)}`;
@@ -151,7 +153,10 @@ function Sticker({ label, geometry }) {
       ),
       e(View, { style: detailsStyle },
         e(Field, { caption: 'BRAND', value: brandFit.text, fontSize: brandFit.fontSize, style: { height: mm(7.5) } }),
-        e(Field, { caption: 'PRODUCT', value: productFit.text, fontSize: productFit.fontSize, style: { height: mm(landscape ? 16.5 : 16.2) } }),
+        e(View, { style: { height: mm(landscape ? 16.5 : 16.2) } },
+          e(Field, { caption: 'PRODUCT', value: productFit.text, fontSize: productFit.fontSize }),
+          tileSize ? e(Text, { style: { fontSize: 7, marginTop: mm(0.7), lineHeight: 1.1 } }, tileSize) : null,
+        ),
         e(Field, { caption: 'FINISH', value: finishFit.text, fontSize: finishFit.fontSize, style: { height: mm(7), paddingTop: mm(0.3) } }),
         e(View, { style: { borderTopWidth: 0.8, borderColor: '#111111', paddingTop: mm(0.9), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' } },
           e(Text, { style: { fontSize: 5.8, fontFamily: 'Helvetica-Bold', letterSpacing: 0.7 } }, 'RATE'),

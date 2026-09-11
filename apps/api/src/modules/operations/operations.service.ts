@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ulid } from 'ulid';
+import { compactTileSize } from '@marble-park/pricing-contract/tile-size';
 import { brandedLabelQrDataUrl } from '../common/branded-label-qr';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
@@ -1335,7 +1336,7 @@ export class OperationsService {
       include: {
         instances: {
           include: {
-            product: { include: { brandMaster: true, tileDesignMaster: true } },
+            product: { include: { brandMaster: true, tileDesignMaster: true, tileSizeMaster: true } },
             lot: { include: { balances: { include: { location: true } } } },
             displaySample: true,
           },
@@ -1400,6 +1401,7 @@ export class OperationsService {
         compactProductValue: compactProductValue || null,
         tileDesignName: instance.product?.tileDesignMaster?.name || null,
         tileDesignCode: instance.product?.tileDesignMaster?.designCode || null,
+        tileSize: compactTileSize(instance.product) || null,
         productName: instance.product?.name || null,
         brandCode: instance.product?.brandMaster?.code || null,
         governedBrandCode: governedBrand?.code || null,
@@ -1524,7 +1526,7 @@ export class OperationsService {
       where: { id: { in: selectedIds } },
       include: {
         labelJob: true,
-        product: { include: { brandMaster: true, tileDesignMaster: true } },
+        product: { include: { brandMaster: true, tileDesignMaster: true, tileSizeMaster: true } },
         lot: { include: { balances: { include: { location: true } } } },
         displaySample: true,
       },

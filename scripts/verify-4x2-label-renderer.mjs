@@ -29,7 +29,9 @@ assert(migration.includes('brand_product_rate_no_lot'), 'The template contract m
 
 assert(v4Source.includes('payload.finish') && v4Source.indexOf('>PRODUCT<') < v4Source.indexOf('>FINISH<'), 'V4 must show finish below product');
 assert(source.includes('-webkit-line-clamp: 2') && source.includes('max-height: 2.12em'), 'V4 product values must be bounded to two readable lines');
+assert(v4Source.includes('compactTileSize(payload)') && v4Source.includes('mp-v4-tile-size'), 'V4 prints compact tile-only dimensions');
+assert(source.includes('grid-template-columns: minmax(0, 1fr); grid-template-rows: 6mm'), 'The copy grid must not expand to its content minimum width');
 assert(source.includes('.mp-v4-label-page:not(:last-child)') && source.includes('main { min-height: 0 !important;'), 'V4 needs explicit page breaks without screen-height spill');
 assert(currentMigration.includes('101.6, 50.8, 101.6, 50.8') && currentMigration.includes('"orientation":"landscape"'), 'V4 defaults to one landscape 4x2 sticker');
 for (const forbidden of ['lotNumber', 'sourceDocument', 'brandName', 'productName', 'MRP', 'GST', 'TAX']) assert(!v4Source.includes(forbidden), `V4 must not print ${forbidden}`);
-console.log(JSON.stringify({ ok: true, version: 4, defaultSizeMm: { width: 101.6, height: 50.8 }, portraitSupported: true, printedFields: ['qr', 'labelCode', 'brandCode', 'productOrTileDesign', 'finish', 'rate', 'rateUom'], removed: ['brandName', 'lot', 'grn', 'taxText'] }));
+console.log(JSON.stringify({ ok: true, version: 4, defaultSizeMm: { width: 101.6, height: 50.8 }, portraitSupported: true, printedFields: ['qr', 'labelCode', 'brandCode', 'productOrTileDesign', 'tileSizeOnlyForTiles', 'finish', 'rate', 'rateUom'], removed: ['brandName', 'lot', 'grn', 'taxText'] }));

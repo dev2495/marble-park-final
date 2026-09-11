@@ -1,0 +1,1 @@
+export function compactTileSize(product: { category?: unknown; tileSize?: unknown; dimensions?: unknown; tileSizeMaster?: { name?: unknown; widthMm?: unknown; heightMm?: unknown } } | null | undefined): string;

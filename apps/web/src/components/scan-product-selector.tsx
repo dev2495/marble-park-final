@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Layers3, PackageCheck, Search, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ProductImageFrame } from '@/components/product-image-frame';
+import { compactTileSize } from '@marble-park/pricing-contract/tile-size';
 
 function imageOf(product: any) {
   const media = product?.media || {};
@@ -15,7 +16,7 @@ function imageOf(product: any) {
 }
 
 function productSize(product: any) {
-  return product?.tileSizeMaster?.name || product?.dimensions || 'Size not recorded';
+  return compactTileSize(product) || product?.tileSizeMaster?.name || product?.dimensions || 'Size not recorded';
 }
 
 export function scanRelatedProducts(result: any) {
@@ -48,6 +49,7 @@ export function ScanProductSelector({
   const scanned = products.find((product: any) => product.isScannedProduct) || result?.label?.product || products[0];
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [filter, setFilter] = useState('');
+  const [sizeFilter, setSizeFilter] = useState('');
   const [working, setWorking] = useState<'primary' | 'secondary' | ''>('');
   const existing = useMemo(() => new Set(existingProductIds), [existingProductIds]);
 
@@ -55,17 +57,21 @@ export function ScanProductSelector({
     const scannedId = scanned?.id;
     setSelectedIds(scannedId ? [scannedId] : []);
     setFilter('');
+    setSizeFilter('');
   }, [result?.event?.id, scanned?.id]);
 
   const visible = products.filter((product: any) => {
+    if (sizeFilter && productSize(product) !== sizeFilter) return false;
     const query = filter.trim().toLowerCase();
     if (!query) return true;
     return [product.internalCode, product.sku, product.name, productSize(product), product.finish, product.brand]
       .some((value) => String(value || '').toLowerCase().includes(query));
   });
   const selected = products.filter((product: any) => selectedIds.includes(product.id));
-  const allSelected = products.length > 0 && products.every((product: any) => selectedIds.includes(product.id));
+  const allSelected = visible.length > 0 && visible.every((product: any) => selectedIds.includes(product.id));
   const related = result?.relatedSummary?.type === 'tile_design' && products.length > 1;
+  const tileDesign = result?.relatedSummary?.type === 'tile_design';
+  const sizes = Array.from(new Set<string>(products.map((product: any) => productSize(product))));
 
   function toggle(productId: string) {
     setSelectedIds((current) => current.includes(productId)
@@ -89,7 +95,7 @@ export function ScanProductSelector({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/12"><Sparkles className="h-5 w-5 text-emerald-200"/></span>
-          <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.16em] text-emerald-200">Exact scan resolved</p><h3 className="mt-1 truncate text-lg font-bold">{scanned?.internalCode || scanned?.sku} · {scanned?.name}</h3><p className="mt-1 text-xs leading-5 text-white/70">{related ? `${products.length} active size / finish variants share ${result?.relatedSummary?.designCode || 'this design'}. Choose only what the customer wants.` : 'This physical label maps to one active Product Master item.'}</p></div>
+          <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.16em] text-emerald-200">Exact scan resolved</p><h3 className="mt-1 break-words text-lg font-bold">{tileDesign ? result.relatedSummary.designName : `${scanned?.internalCode || scanned?.sku} · ${scanned?.name}`}</h3><p className="mt-1 text-xs leading-5 text-white/70">{tileDesign ? `${sizes.length} size${sizes.length === 1 ? '' : 's'} · ${products.length} active size / finish variant${products.length === 1 ? '' : 's'} in this design. Choose the sizes and finishes the customer wants.` : 'This physical label maps to one active Product Master item.'}</p></div>
         </div>
         {onDismiss ? <button type="button" onClick={onDismiss} aria-label="Close scanned selection" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-white/75 hover:bg-white/10 hover:text-white"><X className="h-4 w-4"/></button> : null}
       </div>
@@ -105,9 +111,10 @@ export function ScanProductSelector({
         </article>
 
         <div className="min-w-0">
+          {tileDesign ? <div className="mb-3"><h4 className="text-sm font-bold text-[var(--ink)]">{sizes.length > 1 ? 'Other sizes in this design' : 'Sizes and finishes in this design'}</h4><p className="mt-1 text-xs text-[var(--ink-3)]">{related ? 'The scanned item is selected. Add another size below, or choose a finish. Items without stock can still be added.' : 'Only this variant is currently registered and active.'}</p><div className="mt-3 flex flex-wrap gap-2">{['', ...sizes].map((size) => <button key={size || 'all'} type="button" aria-pressed={sizeFilter === size} onClick={() => setSizeFilter(size)} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${sizeFilter === size ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-[var(--line)] text-[var(--ink-3)]'}`}>{size || 'All sizes'}{size && size === productSize(scanned) ? ' · scanned' : ''}</button>)}</div></div> : null}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <label className="flex min-h-11 min-w-0 flex-1 items-center rounded-lg border border-[var(--line)] bg-[var(--bg-soft)] px-3"><Search className="mr-2 h-4 w-4 shrink-0 text-[var(--ink-4)]"/><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter size, finish or code" className="min-w-0 flex-1 bg-transparent text-sm outline-none"/></label>
-            {related ? <Button type="button" variant="outline" onClick={() => setSelectedIds(allSelected ? [] : products.map((product: any) => product.id))}>{allSelected ? 'Clear all' : 'Select all variants'}</Button> : null}
+            {related ? <Button type="button" variant="outline" disabled={!visible.length} onClick={() => setSelectedIds((current) => allSelected ? current.filter((id) => !visible.some((product: any) => product.id === id)) : Array.from(new Set([...current, ...visible.map((product: any) => product.id)])))}>{allSelected ? 'Clear shown' : 'Select shown'}</Button> : null}
           </div>
           <div className="mt-3 grid max-h-[25rem] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 2xl:grid-cols-3">
             {visible.map((product: any) => {

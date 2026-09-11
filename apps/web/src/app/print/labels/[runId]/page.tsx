@@ -6,6 +6,7 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import { ArrowLeft, CheckCircle2, Download, Printer, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
+import { compactTileSize } from '@marble-park/pricing-contract/tile-size';
 
 const RUN = gql`query LabelPrintRun($id: ID!) { internalLabelPrintRun(id: $id) }`;
 const CONFIRM = gql`mutation ConfirmLabelPrint($id: ID!) { confirmInternalLabelPrintRun(id: $id) }`;
@@ -118,6 +119,7 @@ function CompactPortraitFourByTwoLabelV3({ label }: { label: any }) {
 
 function FinishFourByTwoLabelV4({ label, portrait }: { label: any; portrait: boolean }) {
   const payload = label.payload || {};
+  const tileSize = compactTileSize(payload);
   const productValue = String(payload.compactProductValue || payload.productCode || payload.internalCode || payload.sku || 'PENDING').toUpperCase();
   // Keep the governed product/design value inside its fixed two-line print row.
   // Long master values must remain readable without pushing finish or rate out of the 4 x 2 frame.
@@ -135,7 +137,7 @@ function FinishFourByTwoLabelV4({ label, portrait }: { label: any; portrait: boo
       <section className="mp-v4-copy">
         <header className="mp-v4-header"><b>MP</b><strong>MARBLE PARK</strong></header>
         <div className="mp-v4-brand"><span>BRAND</span><strong>{String(payload.governedBrandCode || payload.brandCode || 'PENDING').toUpperCase()}</strong></div>
-        <div className="mp-v4-product"><span>PRODUCT</span><strong style={{ fontSize: productSize }}>{productValue}</strong></div>
+        <div className="mp-v4-product"><span>PRODUCT</span><strong style={{ fontSize: productSize }}>{productValue}</strong>{tileSize ? <small className="mp-v4-tile-size">{tileSize}</small> : null}</div>
         <div className="mp-v4-finish"><span>FINISH</span><strong>{String(payload.finish || 'NOT SET').toUpperCase()}</strong></div>
         <footer className="mp-v4-rate"><span>RATE</span><strong>Rs. {money(payload.mrpInclusive)}</strong><b>/{String(payload.priceUom || 'PC').toUpperCase()}</b></footer>
       </section>
@@ -168,7 +170,10 @@ function fitStickerText() {
     node.dataset.preferredSize = String(initial);
     let size = initial;
     node.style.fontSize = `${size}px`;
-    const exceeds = () => node.scrollWidth > width + 0.5 || node.getBoundingClientRect().height > height + 0.5 || node.scrollHeight > height + 0.5;
+    const exceeds = () => {
+      const maxHeight = node.parentElement?.classList.contains('mp-v4-product') ? Math.min(height, parseFloat(getComputedStyle(node).lineHeight) * 2) : height;
+      return node.scrollWidth > width + 0.5 || node.getBoundingClientRect().height > maxHeight + 0.5 || node.scrollHeight > maxHeight + 0.5;
+    };
     while (exceeds() && size > 9.34) { size = Math.max(9.34, size - .5); node.style.fontSize = `${size}px`; }
     if (exceeds()) invalid = true;
   };
@@ -176,9 +181,10 @@ function fitStickerText() {
     for (const row of label.querySelectorAll<HTMLElement>('.mp-v4-brand, .mp-v4-product, .mp-v4-finish')) {
       const text = row.querySelector<HTMLElement>('strong');
       const caption = row.querySelector<HTMLElement>('span');
+      const tileSize = row.querySelector<HTMLElement>('.mp-v4-tile-size');
       if (!text || !caption) continue;
       const style = getComputedStyle(row);
-      fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - parseFloat(style.rowGap));
+      fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - (tileSize?.offsetHeight || 0) - parseFloat(style.rowGap) * (tileSize ? 2 : 1));
     }
     const rate = label.querySelector<HTMLElement>('.mp-v4-rate');
     const amount = rate?.querySelector<HTMLElement>('strong');
@@ -373,11 +379,11 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     .mp-label-footer b { font: 800 4.7pt/1 Arial, sans-serif; letter-spacing: .45pt; }
     .mp-label-footer span { overflow: hidden; font: 700 5.6pt/1.05 'Courier New', monospace; text-overflow: ellipsis; white-space: nowrap; }
     .mp-v4-label-page { box-sizing: border-box; width: ${pageWidth}mm; height: ${pageHeight}mm; padding: 1.8mm; background: #fff !important; color: #111 !important; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .mp-v4-frame { box-sizing: border-box; display: grid; grid-template-columns: 42mm minmax(0, 1fr); width: 100%; height: 100%; border: .3mm solid #111; }
+    .mp-v4-frame { box-sizing: border-box; display: grid; grid-template-columns: 42mm minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); width: 100%; height: 100%; border: .3mm solid #111; }
     .mp-v4-qr { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; border-right: .3mm solid #111; }
     .mp-v4-qr img { display: block; width: 38mm; height: 38mm; object-fit: contain; }
     .mp-v4-qr p { margin: 1mm 0 0; font: bold 6pt/1 'Courier New', monospace; white-space: nowrap; }
-    .mp-v4-copy { display: grid; min-width: 0; grid-template-rows: 6mm 7mm minmax(0, 1fr) 7mm 10mm; }
+    .mp-v4-copy { display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: 6mm 7mm minmax(0, 1fr) 7mm 10mm; }
     .mp-v4-header { display: flex; align-items: center; gap: 1.4mm; padding: .7mm 1.5mm; border-bottom: .25mm solid #111; font: 900 7pt/1 Arial, sans-serif; letter-spacing: .5pt; }
     .mp-v4-header b { padding: .6mm; background: #111; color: #fff; }
     .mp-v4-brand, .mp-v4-product, .mp-v4-finish { display: flex; flex-direction: column; justify-content: center; min-width: 0; min-height: 0; gap: .5mm; padding: .6mm 1.5mm; }
@@ -385,6 +391,7 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     .mp-v4-copy span { font: 800 4.5pt/1 Arial, sans-serif; letter-spacing: .7pt; }
     .mp-v4-brand strong { font: 800 11pt/1 Arial, sans-serif; }
     .mp-v4-product strong { display: -webkit-box; min-height: 0; max-height: 2.12em; overflow: hidden; font-weight: 900; line-height: 1.06; letter-spacing: -.2pt; overflow-wrap: anywhere; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .mp-v4-tile-size { flex-shrink: 0; font: 600 7pt/1.1 Arial, sans-serif; white-space: nowrap; letter-spacing: 0; }
     .mp-v4-finish strong { font: 800 10pt/1.05 Arial, sans-serif; overflow-wrap: anywhere; }
     .mp-v4-rate { display: flex; align-items: center; gap: 1.3mm; padding: 1mm 1.5mm; border-top: .35mm solid #111; }
     .mp-v4-rate strong { font: 900 19pt/1 Arial, sans-serif; letter-spacing: -.5pt; white-space: nowrap; }

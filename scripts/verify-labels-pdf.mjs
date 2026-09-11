@@ -15,20 +15,21 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'tmp/pdfs/label-v4-verification');
 mkdirSync(output, { recursive: true });
 
-const fixture = async (id, product, finish, brand, rate, uom) => {
+const fixture = async (id, product, finish, brand, rate, uom, category = 'Sanitaryware', dimensions = 'DO NOT PRINT GENERIC SIZE') => {
   const labelCode = `LBL/2026/${id}`;
   return {
     id, labelCode, qrDataUrl: await brandedLabelQrDataUrl(`MP-LABEL:${labelCode}`),
     payload: {
       compactProductValue: product, governedBrandCode: brand, finish, mrpInclusive: rate, priceUom: uom,
+      category, dimensions,
       brandName: 'MUST NOT PRINT BRAND NAME', productName: 'MUST NOT PRINT LONG DESCRIPTION', lotNumber: 'GRN/MUST-NOT-PRINT',
     },
   };
 };
 const labels = [
-  await fixture('00001', 'SALT NAVVE (FB)', 'Matt', '1031', 65, 'SQFT'),
+  await fixture('00001', 'ARORA ARAMANI COCO', 'Glossy', '1047', 65, 'SQFT', 'Tiles', '1200 x 600 mm (3 PC)'),
   await fixture('00002', 'ALD-CHR-079N', 'Chrome', 'JQ', 4010, 'PC'),
-  await fixture('00003', 'LONG-COMPACT-PRODUCT-CODE-FOR-STICKER', 'BRUSH HARD GRAPHITE', '1065', 129999.5, 'KG'),
+  await fixture('00003', 'LONG-COMPACT-PRODUCT-CODE-FOR-STICKER', 'BRUSH HARD GRAPHITE', '1065', 129999.5, 'SQFT', 'Tiles', '1200X2400 MM'),
 ].flatMap((label) => [0, 1].map((copyIndex) => ({ ...label, copyIndex })));
 const base = { id: 'fixture', runNumber: 'LPR/FIXTURE', status: 'prepared', labels };
 const results = [];
@@ -45,10 +46,10 @@ for (const orientation of ['landscape', 'portrait']) {
   const dimensions = landscape ? /size:\s+288 x 144 pts/g : /size:\s+144 x 288 pts/g;
   assert.equal([...info.matchAll(dimensions)].length, 6, 'Every sticker must have exact-size PDF media dimensions');
   const text = execFileSync(process.env.PDFTOTEXT || 'pdftotext', ['-layout', pdfPath, '-'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  for (const expected of ['SALT NAVVE', 'MATT', 'CHROME', 'BRUSH HARD GRAPHITE', '/SQFT', '/PC', '/KG', '1031', '1065']) assert.ok(text.includes(expected), `Missing ${expected}`);
+  for (const expected of ['ARORA', 'COCO', 'GLOSSY', 'CHROME', 'BRUSH HARD GRAPHITE', '/SQFT', '/PC', '1047', '1065', '1200 x 600 mm', '1200 x 2400 mm']) assert.ok(text.includes(expected), `Missing ${expected}`);
   assert.equal((text.match(/LBL\/2026\/00001/g) || []).length, 2, 'Copies should be real duplicate pages');
   assert.equal((text.match(/FINISH/g) || []).length, 6, 'Finish must be present on every label');
-  for (const forbidden of ['MUST NOT', 'GRN/', 'GST', 'MRP', 'LOT']) assert.ok(!text.includes(forbidden), `Forbidden label text: ${forbidden}`);
+  for (const forbidden of ['MUST NOT', 'GRN/', 'GST', 'MRP', 'LOT', '3 PC', 'DO NOT PRINT GENERIC SIZE']) assert.ok(!text.includes(forbidden), `Forbidden label text: ${forbidden}`);
   execFileSync('pdftoppm', ['-f', '1', '-singlefile', '-scale-to', '1600', '-png', pdfPath, path.join(output, orientation)], { stdio: ['ignore', 'pipe', 'pipe'] });
   execFileSync('pdftoppm', ['-f', '5', '-singlefile', '-scale-to', '1600', '-png', pdfPath, path.join(output, `${orientation}-long-product`)], { stdio: ['ignore', 'pipe', 'pipe'] });
   for (const suffix of ['', '-long-product']) {
