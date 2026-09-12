@@ -125,8 +125,10 @@ function Sticker({ label, geometry }) {
   const innerWidth = width - 3.6;
   const productFont = productFontSize(product, landscape);
   const detailWidth = mm(landscape ? innerWidth - 42.4 : innerWidth);
-  const productFit = fitText(product, detailWidth, mm((landscape ? 13.5 : 13.2) - (tileSize ? 3.5 : 0)), productFont, 2);
-  const brandFit = fitText(brand, detailWidth, mm(4.5), brand.length > 20 ? 9 : 11);
+  const productFit = fitText(product, detailWidth, mm(landscape ? 13.5 : 13.2), productFont, 2);
+  const brandWidth = tileSize ? detailWidth * 0.36 : detailWidth;
+  const brandFit = fitText(brand, brandWidth, mm(4.5), brand.length > 20 ? 9 : 11);
+  const sizeFit = tileSize ? fitText(tileSize, detailWidth * 0.64 - mm(1), mm(6), 10, 1) : null;
   const finishFit = fitText(finish, detailWidth, mm(4.2), finish.length > 35 ? 8 : 9);
   const price = `Rs. ${rateText(payload.mrpInclusive)}`;
   const rateFont = singleLineFont(price, detailWidth - mm(9));
@@ -152,11 +154,11 @@ function Sticker({ label, geometry }) {
         e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: 6.5, marginTop: mm(0.5), textAlign: 'center' } }, clean(label.labelCode)),
       ),
       e(View, { style: detailsStyle },
-        e(Field, { caption: 'BRAND', value: brandFit.text, fontSize: brandFit.fontSize, style: { height: mm(7.5) } }),
-        e(View, { style: { height: mm(landscape ? 16.5 : 16.2) } },
-          e(Field, { caption: 'PRODUCT', value: productFit.text, fontSize: productFit.fontSize }),
-          tileSize ? e(Text, { style: { fontSize: 7, marginTop: mm(0.7), lineHeight: 1.1 } }, tileSize) : null,
+        e(View, { style: { height: mm(7.5), flexDirection: 'row', alignItems: 'center' } },
+          e(Field, { caption: 'BRAND', value: brandFit.text, fontSize: brandFit.fontSize, style: { width: brandWidth, height: mm(7.5) } }),
+          sizeFit ? e(Text, { style: { width: detailWidth * 0.64, paddingLeft: mm(1), fontFamily: 'Helvetica-Bold', fontSize: sizeFit.fontSize, textAlign: 'right', lineHeight: 1.1 } }, sizeFit.text) : null,
         ),
+        e(Field, { caption: 'PRODUCT', value: productFit.text, fontSize: productFit.fontSize, style: { height: mm(landscape ? 16.5 : 16.2) } }),
         e(Field, { caption: 'FINISH', value: finishFit.text, fontSize: finishFit.fontSize, style: { height: mm(7), paddingTop: mm(0.3) } }),
         e(View, { style: { borderTopWidth: 0.8, borderColor: '#111111', paddingTop: mm(0.9), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' } },
           e(Text, { style: { fontSize: 5.8, fontFamily: 'Helvetica-Bold', letterSpacing: 0.7 } }, 'RATE'),

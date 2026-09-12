@@ -49,6 +49,11 @@ for (const orientation of ['landscape', 'portrait']) {
   for (const expected of ['ARORA', 'COCO', 'GLOSSY', 'CHROME', 'BRUSH HARD GRAPHITE', '/SQFT', '/PC', '1047', '1065', '1200 x 600 mm', '1200 x 2400 mm']) assert.ok(text.includes(expected), `Missing ${expected}`);
   assert.equal((text.match(/LBL\/2026\/00001/g) || []).length, 2, 'Copies should be real duplicate pages');
   assert.equal((text.match(/FINISH/g) || []).length, 6, 'Finish must be present on every label');
+  assert.equal((text.match(/1200 x 600 mm/g) || []).length, 2, 'Tile size appears once per tile copy');
+  const pages = text.split('\f');
+  for (const page of pages.filter((page) => page.includes('1200 x'))) {
+    assert.ok(page.indexOf('1200 x') < page.indexOf('PRODUCT'), 'Tile size must sit in the brand row above the product');
+  }
   for (const forbidden of ['MUST NOT', 'GRN/', 'GST', 'MRP', 'LOT', '3 PC', 'DO NOT PRINT GENERIC SIZE']) assert.ok(!text.includes(forbidden), `Forbidden label text: ${forbidden}`);
   execFileSync('pdftoppm', ['-f', '1', '-singlefile', '-scale-to', '1600', '-png', pdfPath, path.join(output, orientation)], { stdio: ['ignore', 'pipe', 'pipe'] });
   execFileSync('pdftoppm', ['-f', '5', '-singlefile', '-scale-to', '1600', '-png', pdfPath, path.join(output, `${orientation}-long-product`)], { stdio: ['ignore', 'pipe', 'pipe'] });

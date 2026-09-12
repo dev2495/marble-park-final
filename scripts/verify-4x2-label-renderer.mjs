@@ -30,6 +30,8 @@ assert(migration.includes('brand_product_rate_no_lot'), 'The template contract m
 assert(v4Source.includes('payload.finish') && v4Source.indexOf('>PRODUCT<') < v4Source.indexOf('>FINISH<'), 'V4 must show finish below product');
 assert(source.includes('-webkit-line-clamp: 2') && source.includes('max-height: 2.12em'), 'V4 product values must be bounded to two readable lines');
 assert(v4Source.includes('compactTileSize(payload)') && v4Source.includes('mp-v4-tile-size'), 'V4 prints compact tile-only dimensions');
+assert(v4Source.indexOf('mp-v4-tile-size') < v4Source.indexOf('className="mp-v4-product"'), 'Tile size belongs beside the brand above the product, never below it');
+assert(source.includes('.mp-v4-identity.has-tile-size') && source.includes('800 10pt/1.1'), 'Tile size has its own bounded, readable identity-row column');
 assert(source.includes('grid-template-columns: minmax(0, 1fr); grid-template-rows: 6mm'), 'The copy grid must not expand to its content minimum width');
 assert(source.includes('.mp-v4-label-page:not(:last-child)') && source.includes('main { min-height: 0 !important;'), 'V4 needs explicit page breaks without screen-height spill');
 assert(currentMigration.includes('101.6, 50.8, 101.6, 50.8') && currentMigration.includes('"orientation":"landscape"'), 'V4 defaults to one landscape 4x2 sticker');

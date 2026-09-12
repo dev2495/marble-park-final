@@ -136,8 +136,11 @@ function FinishFourByTwoLabelV4({ label, portrait }: { label: any; portrait: boo
       </section>
       <section className="mp-v4-copy">
         <header className="mp-v4-header"><b>MP</b><strong>MARBLE PARK</strong></header>
-        <div className="mp-v4-brand"><span>BRAND</span><strong>{String(payload.governedBrandCode || payload.brandCode || 'PENDING').toUpperCase()}</strong></div>
-        <div className="mp-v4-product"><span>PRODUCT</span><strong style={{ fontSize: productSize }}>{productValue}</strong>{tileSize ? <small className="mp-v4-tile-size">{tileSize}</small> : null}</div>
+        <div className={`mp-v4-identity${tileSize ? ' has-tile-size' : ''}`}>
+          <div className="mp-v4-brand"><span>BRAND</span><strong>{String(payload.governedBrandCode || payload.brandCode || 'PENDING').toUpperCase()}</strong></div>
+          {tileSize ? <div className="mp-v4-size"><strong className="mp-v4-tile-size">{tileSize}</strong></div> : null}
+        </div>
+        <div className="mp-v4-product"><span>PRODUCT</span><strong style={{ fontSize: productSize }}>{productValue}</strong></div>
         <div className="mp-v4-finish"><span>FINISH</span><strong>{String(payload.finish || 'NOT SET').toUpperCase()}</strong></div>
         <footer className="mp-v4-rate"><span>RATE</span><strong>Rs. {money(payload.mrpInclusive)}</strong><b>/{String(payload.priceUom || 'PC').toUpperCase()}</b></footer>
       </section>
@@ -181,10 +184,15 @@ function fitStickerText() {
     for (const row of label.querySelectorAll<HTMLElement>('.mp-v4-brand, .mp-v4-product, .mp-v4-finish')) {
       const text = row.querySelector<HTMLElement>('strong');
       const caption = row.querySelector<HTMLElement>('span');
-      const tileSize = row.querySelector<HTMLElement>('.mp-v4-tile-size');
       if (!text || !caption) continue;
       const style = getComputedStyle(row);
-      fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - (tileSize?.offsetHeight || 0) - parseFloat(style.rowGap) * (tileSize ? 2 : 1));
+      fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - parseFloat(style.rowGap));
+    }
+    const sizeRow = label.querySelector<HTMLElement>('.mp-v4-size');
+    const sizeText = sizeRow?.querySelector<HTMLElement>('strong');
+    if (sizeRow && sizeText) {
+      const style = getComputedStyle(sizeRow);
+      fit(sizeText, sizeRow.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), sizeRow.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
     }
     const rate = label.querySelector<HTMLElement>('.mp-v4-rate');
     const amount = rate?.querySelector<HTMLElement>('strong');
@@ -391,7 +399,10 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     .mp-v4-copy span { font: 800 4.5pt/1 Arial, sans-serif; letter-spacing: .7pt; }
     .mp-v4-brand strong { font: 800 11pt/1 Arial, sans-serif; }
     .mp-v4-product strong { display: -webkit-box; min-height: 0; max-height: 2.12em; overflow: hidden; font-weight: 900; line-height: 1.06; letter-spacing: -.2pt; overflow-wrap: anywhere; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .mp-v4-tile-size { flex-shrink: 0; font: 600 7pt/1.1 Arial, sans-serif; white-space: nowrap; letter-spacing: 0; }
+    .mp-v4-identity { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; }
+    .mp-v4-identity.has-tile-size { grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr); }
+    .mp-v4-size { display: flex; align-items: center; justify-content: flex-end; min-width: 0; min-height: 0; padding: .6mm 1.5mm .6mm 0; }
+    .mp-v4-tile-size { font: 800 10pt/1.1 Arial, sans-serif; white-space: nowrap; letter-spacing: 0; }
     .mp-v4-finish strong { font: 800 10pt/1.05 Arial, sans-serif; overflow-wrap: anywhere; }
     .mp-v4-rate { display: flex; align-items: center; gap: 1.3mm; padding: 1mm 1.5mm; border-top: .35mm solid #111; }
     .mp-v4-rate strong { font: 900 19pt/1 Arial, sans-serif; letter-spacing: -.5pt; white-space: nowrap; }
