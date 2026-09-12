@@ -65,7 +65,7 @@ curl --fail --silent "https://${APP_HOST}/healthz"
 curl --fail --silent "https://${APP_HOST}/readyz"
 curl --fail --silent "https://${APP_HOST}/api/health"
 ./backup.sh
-./restore-verify.sh "$(find "${DATA_ROOT}/backups" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)"
+sudo ./restore-verify.sh /srv/marble-park/backups/<timestamp-printed-by-backup.sh>
 ```
 
 Then run the repository smoke suites with `API_URL=https://${APP_HOST}/graphql`
@@ -75,6 +75,41 @@ real browser before handing over the owner credentials.
 Local backups are included in the initial server-only deployment. An S3 target
 can be added later by setting `BACKUP_S3_URI` and attaching a narrowly scoped IAM
 instance profile, but that is intentionally not created without client approval.
+
+### Bounded local backup retention
+
+The existing nightly timer runs at 02:15 UTC plus up to 15 minutes of jitter
+(07:45–08:00 IST). After a successful backup and optional S3 upload, `backup.sh`
+automatically retains the **three newest checksum-verified full backups** and
+**14 calendar days of database-only snapshots** in `backups/database-history`.
+Older database snapshots do not include historical uploaded-file archives;
+recovering older deleted uploads requires an off-server full backup.
+
+Backups publish atomically after dump validation and archive creation. One lock
+prevents overlapping backup/retention runs. Cleanup refuses stale backups (over
+48 hours), corrupt retained archives, corrupt database dumps, symlinks, unexpected
+files, or incomplete timestamped sets. It never removes special pre-release
+files, live assets, PostgreSQL storage, containers, or images. Fewer than three
+complete sets results in no cleanup. Unexpected `.partial-*` or `.pruning-*`
+directories require operator inspection; normal failed runs remove their own
+partial output. Failures are visible in the systemd unit/journal.
+
+Preview and apply retention manually (no application restart):
+
+```bash
+sudo python3 /opt/marble-park/deploy/aws/backup-retention.py --root /srv/marble-park/backups
+sudo python3 /opt/marble-park/deploy/aws/backup-retention.py --root /srv/marble-park/backups --apply
+systemctl status marble-park-backup.timer marble-park-backup.service
+journalctl -u marble-park-backup.service -n 50 --no-pager
+df -h /
+```
+
+This bounds the number of full copies, not their individual size. At 3.4 GB of
+assets, steady-state backups occupy roughly 10 GB, with another 3.4 GB needed
+while creating the next backup. Growing uploads and Docker builds still require
+disk monitoring. Local retention does **not** configure S3 retention/lifecycle or
+protect against instance loss. Avoid broad `docker system prune` and never prune
+database WAL or uploaded files to recover disk space.
 
 ## Upgrade and rollback
 
