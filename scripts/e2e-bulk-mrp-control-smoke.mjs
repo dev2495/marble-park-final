@@ -98,7 +98,7 @@ try {
   cleanup.userIds.push(sales.id);
   const salesToken = await login(sales.email, salesPassword);
   const permissionError = await gql('query{productMrpBulkFilterOptions}', {}, salesToken, true);
-  assert(/owner|admin|permission|author/i.test(permissionError), 'Sales user must be blocked from bulk MRP controls');
+  assert(/owner|admin|permission|author|restricted/i.test(permissionError), `Sales user must be blocked from bulk MRP controls; received: ${permissionError || 'no error'}`);
 
   const first = await createProduct(1, 1000);
   const second = await createProduct(2, 2000);
