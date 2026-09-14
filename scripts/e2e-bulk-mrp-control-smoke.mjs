@@ -70,6 +70,21 @@ async function createProduct(index, mrp) {
 }
 
 try {
+  // An interrupted acceptance run must never make the next run non-repeatable.
+  const staleProducts = await prisma.product.findMany({ where: { sku: { startsWith: 'MRP-BULK-SKU-' } }, select: { id: true } });
+  const staleProductIds = staleProducts.map((row) => row.id);
+  if (staleProductIds.length) {
+    await prisma.auditEvent.deleteMany({ where: { OR: [{ entityId: { in: staleProductIds } }, { action: { startsWith: 'product.mrp.bulk_' }, summary: { contains: 'acceptance' } }] } });
+    await prisma.productMrpHistory.deleteMany({ where: { productId: { in: staleProductIds } } });
+    await prisma.product.deleteMany({ where: { id: { in: staleProductIds } } });
+  }
+  const staleUsers = await prisma.user.findMany({ where: { email: { startsWith: 'mrp-bulk-', endsWith: '@marblepark.test' } }, select: { id: true } });
+  if (staleUsers.length) {
+    const staleUserIds = staleUsers.map((row) => row.id);
+    await prisma.session.deleteMany({ where: { userId: { in: staleUserIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: staleUserIds } } });
+  }
+
   const ownerPassword = `Bulk-MRP-Owner-${stamp}-Pass!`;
   const owner = await prisma.user.create({ data: {
     id: `MRP-BULK-OWNER-${stamp}`,
