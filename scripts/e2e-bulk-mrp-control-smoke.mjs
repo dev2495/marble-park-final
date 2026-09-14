@@ -130,7 +130,7 @@ try {
   await originalWorkbook.xlsx.load(Buffer.from(packet.contentBase64, 'base64'));
   const sheet = originalWorkbook.getWorksheet('MRP Update');
   assert(sheet && sheet.getColumn(1).hidden && sheet.getColumn(2).hidden && sheet.getColumn(3).hidden, 'Identity, snapshot and signature columns must be hidden');
-  assert(sheet.getCell('N4').protection.locked === false && sheet.getCell('M4').protection.locked !== false, 'Only New MRP cells may be unlocked');
+  assert(sheet.getCell('N4').protection?.locked === false && sheet.getCell('M4').protection?.locked !== false, 'Only New MRP cells may be unlocked');
   assert(originalWorkbook.getWorksheet('_Marble Park')?.state === 'veryHidden', 'Governed workbook metadata must be very hidden');
 
   const productRows = new Map();
