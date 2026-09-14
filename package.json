@@ -58,6 +58,7 @@
     "smoke:quote-product-brand-code": "node scripts/quote-product-brand-code-smoke.cjs",
     "smoke:legacy-quote-pdf": "node scripts/e2e-legacy-quote-pdf-remediation-smoke.mjs",
     "smoke:master-edit-audit": "node scripts/e2e-master-edit-audit-smoke.mjs",
+    "smoke:bulk-mrp-control": "node scripts/e2e-bulk-mrp-control-smoke.mjs",
     "smoke:reporting-suite": "node scripts/e2e-reporting-suite-smoke.mjs",
     "smoke:session-inactivity": "node scripts/e2e-session-inactivity-smoke.mjs",
     "smoke:session-client-resilience": "tsx scripts/session-client-resilience-smoke.ts",

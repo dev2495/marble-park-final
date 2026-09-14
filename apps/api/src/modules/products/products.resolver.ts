@@ -3,6 +3,7 @@ import { ProductsService } from './products.service';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { ProductMrpBulkService } from './product-mrp-bulk.service';
 
 @ObjectType()
 export class ProductOutput {
@@ -300,6 +301,7 @@ class ProductPricingCompletionInput {
 export class ProductsResolver {
   constructor(
     private products: ProductsService,
+    private mrpBulk: ProductMrpBulkService,
     private prisma: PrismaService,
   ) {}
 
@@ -438,11 +440,58 @@ export class ProductsResolver {
     @Args('search', { nullable: true }) search?: string,
     @Args('status', { nullable: true }) status?: string,
     @Args('sort', { nullable: true }) sort?: string,
+    @Args('brand', { nullable: true }) brand?: string,
+    @Args('category', { nullable: true }) category?: string,
+    @Args('includeCost', { nullable: true }) includeCost?: boolean,
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
     await requireRoles(this.prisma, ctx, ['admin', 'owner']);
-    return this.products.pricingReadinessPage({ search, status, sort, skip, take });
+    return this.products.pricingReadinessPage({ search, status, sort, brand, category, includeCost, skip, take });
+  }
+
+  @Query(() => GraphQLJSON)
+  async productMrpBulkFilterOptions(@Context() ctx: GraphqlRequestContext) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.mrpBulk.filterOptions();
+  }
+
+  @Query(() => GraphQLJSON)
+  async productMrpBulkWorkbook(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('mrpStatus', { nullable: true }) mrpStatus?: string,
+    @Args('brand', { nullable: true }) brand?: string,
+    @Args('category', { nullable: true }) category?: string,
+    @Args('selectedIds', { type: () => [String], nullable: true }) selectedIds?: string[],
+    @Args('excludedIds', { type: () => [String], nullable: true }) excludedIds?: string[],
+    @Args('selectAllMatching', { nullable: true }) selectAllMatching?: boolean,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.mrpBulk.workbook({ search, mrpStatus, brand, category, selectedIds, excludedIds, selectAllMatching }, user);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async previewProductMrpBulkWorkbook(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('filename') filename: string,
+    @Args('contentBase64') contentBase64: string,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.mrpBulk.preview(filename, contentBase64, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async applyProductMrpBulkWorkbook(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('filename') filename: string,
+    @Args('contentBase64') contentBase64: string,
+    @Args('confirmationToken') confirmationToken: string,
+    @Args('reason') reason: string,
+    @Args('effectiveFrom') effectiveFrom: string,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.mrpBulk.apply(filename, contentBase64, confirmationToken, reason, effectiveFrom, user);
   }
 
   @Query(() => GraphQLJSON)

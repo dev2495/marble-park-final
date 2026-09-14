@@ -1118,15 +1118,19 @@ export class ProductsService {
     return /^https:\/\//i.test(url) || /^\/catalogue-images\/manual\/[A-Za-z0-9_-]+\.(?:jpe?g|png|webp)$/i.test(url);
   }
 
-  async pricingReadinessPage(args?: { search?: string; status?: string; sort?: string; skip?: number; take?: number }) {
+  async pricingReadinessPage(args?: { search?: string; status?: string; sort?: string; brand?: string; category?: string; includeCost?: boolean; skip?: number; take?: number }) {
     const skip = Math.max(0, Number(args?.skip || 0));
     const take = Math.min(100, Math.max(1, Number(args?.take || 25)));
     const search = String(args?.search || '').trim();
-    const missingOnly = String(args?.status || 'missing').toLowerCase() !== 'all';
+    const pricingStatus = String(args?.status || 'missing').toLowerCase();
+    if (!['all', 'ready', 'missing'].includes(pricingStatus)) throw new BadRequestException('Pricing status must be all, ready, or missing');
     const missingMrp = { OR: [{ defaultMrpInclusive: null }, { defaultMrpInclusive: { lte: 0 } }] };
     const where: any = {
       status: { not: 'archived' },
-      ...(missingOnly ? missingMrp : {}),
+      ...(String(args?.brand || '').trim() ? { brand: String(args?.brand).trim() } : {}),
+      ...(String(args?.category || '').trim() ? { category: String(args?.category).trim() } : {}),
+      ...(pricingStatus === 'missing' ? missingMrp : {}),
+      ...(pricingStatus === 'ready' ? { defaultMrpInclusive: { gt: 0 } } : {}),
       ...(search ? { AND: [{ OR: [
         { sku: { contains: search, mode: 'insensitive' } },
         { internalCode: { contains: search, mode: 'insensitive' } },
@@ -1147,10 +1151,10 @@ export class ProductsService {
         where, orderBy, skip, take,
         include: {
           brandMaster: { select: { code: true, name: true } },
-          inventoryLots: {
+          ...(args?.includeCost !== false ? { inventoryLots: {
             where: { status: 'active' },
             select: { unitCost: true, costStatus: true, balances: { select: { onHand: true } } },
-          },
+          } } : {}),
         },
       }),
     ]);

@@ -2,6 +2,51 @@
   "generatedAt": "2026-08-21",
   "guides": [
     {
+      "id": "work-inbox",
+      "title": "Use your work inbox and team alerts",
+      "duration": "4 min",
+      "href": "/dashboard/notifications",
+      "roles": [
+        "Sales",
+        "Sales Manager",
+        "Office",
+        "Inventory",
+        "Dispatch",
+        "Owner"
+      ],
+      "summary": "Find relevant work, take responsibility and open its source record. Reading a notification never approves or completes the business action.",
+      "flow": [
+        "My work / Team queue",
+        "Claim",
+        "Open record",
+        "Complete in source",
+        "Completed history"
+      ],
+      "steps": [
+        "Open Work inbox from the sidebar or the bell. My work contains direct assignments and tasks you claimed.",
+        "Check Team queue for work available to your current role and permissions. Claim task makes responsibility visible but does not grant new rights or change source locks.",
+        "Use the action button to open the matching quote, customer, stock request, PO or dispatch register.",
+        "For a customer follow-up, open the lead and save a written outcome with Save outcome & complete. Only the assigned salesperson or their manager can do this.",
+        "Finish approvals, inward, pricing or dispatch in the source workflow. The inbox checks committed records every minute and automatically resolves matching work.",
+        "Use search, unread-only and pagination to focus the list. Bulk mark read affects only your own receipts.",
+        "Snooze open work for one hour. Archive routine updates or completed work; use Archived to restore them.",
+        "Mute update badge to keep routine updates out of the bell while required work remains visible. Owner/admin users can inspect Delivery service for stale checks or failed deliveries."
+      ],
+      "checks": [
+        "Reading is personal; it does not clear another team member’s alerts.",
+        "Open business work cannot be archived or marked complete directly from the inbox.",
+        "A failed load shows Retry and does not mean the queue is empty.",
+        "Cost reminders do not block valid inward without supplier rates.",
+        "Notifications are in-app; no WhatsApp, email or device push is configured by this feature."
+      ],
+      "related": [
+        "crm-quote",
+        "procurement-inward",
+        "dispatch-return",
+        "reports-audit"
+      ]
+    },
+    {
       "id": "setup-master-data",
       "title": "Set up master data and products",
       "duration": "12 min",
@@ -29,7 +74,7 @@
         "In Tile Workspace, create the design once with only permanent code, design name, a Brand Master dropdown value and images.",
         "Use Design Excel sample for bulk creation. Download it fresh so its Brand dropdown reflects live Brand Master, preview every row, then confirm the all-or-nothing import.",
         "Create each sellable design × size × finish variant; choose finish from Finish Master, enter its mandatory MRP per SQFT, then review pieces per box, stock UOM, loose-piece policy and the permanent warehouse SKU.",
-        "For every generic SKU, enter its mandatory MRP and pricing unit in Product Master. Use MRP Readiness to complete older products that predate this rule.",
+        "For every generic SKU, enter its mandatory MRP and pricing unit in Product Master. Owner/admin users can use MRP Control Desk for governed bulk updates or its Missing MRP tab for older products.",
         "Floor price is optional and routes any lower negotiated price for approval. Actual cost is not entered on a quote; owner/admin users see the weighted received-lot cost where it exists.",
         "Add supplier, legacy, barcode or showroom codes as aliases instead of renaming the warehouse SKU.",
         "Record opening stock or a PO/manual GRN against the variant to create exact lots; for tiles enter boxes plus optional loose pieces, batch, shade, caliber and grade.",
@@ -77,7 +122,7 @@
       "steps": [
         "Search or scan the internal showroom code or SKU in Quote Studio.",
         "For a tile, enter required area and wastage. Pricing remains fixed to SQFT while the system derives the physical boxes and pieces needed for fulfilment.",
-        "Review MRP. It is read-only and comes from Product or Tile Variant Master; use MRP Readiness if it is missing or correct the master if it is wrong.",
+        "Review MRP. It is read-only and comes from Product or Tile Variant Master; use the Missing MRP tab in MRP Control Desk if it is missing, or update the master if it is wrong.",
         "Enter the NRP/base discount as % or ₹. Percent is the default and always applies to MRP.",
         "If authorised, enter the special discount as % or ₹. It applies to NRP, not back to MRP.",
         "After all items are ready, enter the optional whole-quote discount as % or ₹. It is allocated proportionally so PDF, register and Sales Order use one reconciled total.",
@@ -317,7 +362,7 @@
       "checks": [
         "Creating or printing labels never posts stock; only a GRN, opening session or governed movement changes inventory.",
         "Every label shows the governed Brand Master code and Product Master MRP; tile labels always show MRP per SQFT.",
-        "Printing is blocked when the selected product has no positive MRP, with a linkable correction path through MRP Readiness.",
+        "Printing is blocked when the selected product has no positive MRP, with a linkable correction path through the Missing MRP tab in MRP Control Desk.",
         "Every QR encodes MP-LABEL:<unique label code>; the MP centre mark is branding and the human-readable code remains the fallback.",
         "Reprints retain the same physical identity and add print audit history.",
         "A display label identifies a non-sellable showroom asset and must never be treated as available stock.",
@@ -585,7 +630,8 @@
         "Open Data readiness from Reports; only owners and administrators can manage this page.",
         "For Targets, select the governed metric and month, enter the approved amount and retain an approval or planning note.",
         "Saving the same metric and month creates a new version and supersedes the old one; use Void only with a clear reason.",
-        "For missing product MRP, open Master Data -> MRP Readiness. Enter a positive MRP, confirm the pricing unit, and optionally enter the floor price; tile prices are always per SQFT.",
+        "For brand price revisions, open Master Data -> MRP Control Desk. Filter and select Product Master SKUs, download the governed Excel packet, fill only New MRP, upload and preview it, enter the effective date and business reason, then explicitly confirm the atomic update.",
+        "Use the Missing MRP tab for individual legacy products; enter a positive MRP, confirm the pricing unit, and optionally enter the floor price. Tile prices are always per SQFT.",
         "For other product and tile exceptions, correct the authoritative category, brand, finish, UOM, HSN, size and pack in Product, Tile or Size Master.",
         "Record actual cost only through an owner/admin-authorized PO, GRN, opening-stock exception or lot correction. Quotes never invent cost; invoices snapshot the exact dispatched lot cost.",
         "Treat purchase orders and GRNs as commitments and receipts—not supplier bills or payments.",
@@ -595,6 +641,8 @@
       "checks": [
         "Targets are positive, company-level, monthly and versioned.",
         "Target revisions and voids appear in System Audit.",
+        "Bulk MRP Excel changes update only MRP; protected reference fields, NRP, floor, cost, UOM and product details cannot be changed by that upload.",
+        "Every bulk MRP change keeps the previous and new amount, effective date, reason, actor and batch in MRP history and System Audit.",
         "Product corrections happen only in Product, Tile and Size masters.",
         "Supplier AP requires invoices, payments and allocation lineage.",
         "Accounting statements require chart of accounts, journals, expenses and opening balances.",

@@ -3,7 +3,7 @@ import { BadgeCheck, BadgeIndianRupee, Building2, Compass, Database, Grid3X3, La
 
 const modules = [
   ['Product Master','Create and edit SKUs, prices, media galleries, quote-ready descriptions and inventory defaults.','/dashboard/master-data/products',PackagePlus],
-  ['MRP Readiness Desk','Owner/admin queue to complete legacy missing MRP, optional NRP and floor with read-only lot-cost coverage.','/dashboard/master-data/pricing-readiness',BadgeIndianRupee],
+  ['MRP Control Desk','Owner/admin bulk MRP updates through governed Excel, with preview, MRP history, audit and a separate missing-MRP queue.','/dashboard/master-data/pricing-readiness',BadgeIndianRupee],
   ['Excel Import Center','Download live master dropdowns, preview every row and bulk-create protected new SKUs with image URLs or embedded worksheet images.','/dashboard/master-data/imports',Database],
   ['Category Master','Control product categories used by Product Master, catalogue filters, quote intent and reports.','/dashboard/master-data/categories',Layers3],
   ['Tiles Master','Search and govern tile design SKUs, showroom display codes, aliases and physical display placement.','/dashboard/master-data/tiles',Grid3X3],
