@@ -233,7 +233,7 @@ function ProductMrpControlPage(){
   return <div className="space-y-5 pb-12">
     <section className="overflow-hidden rounded-[26px] border border-[#7f1d1d]/20 bg-[linear-gradient(118deg,#201615_0%,#57231f_58%,#9f352d_100%)] p-6 text-white shadow-[0_22px_60px_-32px_rgba(69,24,20,.8)]">
       <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-        <div><p className="text-[10px] font-black uppercase tracking-[.22em] text-[#f4c6bd]">Owner pricing control</p><h1 className="mt-3 max-w-3xl font-display text-4xl font-bold tracking-[-.04em]">MRP changes, ready for the next brand price list.</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-white/75">Select Product Master SKUs, work in one protected Excel packet, preview every change, then post only MRP with permanent history and audit.</p></div>
+        <div><p className="text-[10px] font-black uppercase tracking-[.22em] text-[#f4c6bd]">Owner pricing control</p><h1 className="mt-3 max-w-3xl font-display text-4xl font-bold tracking-[-.04em] text-[#fff8f4]">MRP changes, ready for the next brand price list.</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-white/75">Select Product Master SKUs, work in one protected Excel packet, preview every change, then post only MRP with permanent history and audit.</p></div>
         <div className="grid grid-cols-3 gap-2"><Metric value={result.totalMissing??'—'} label="MRP missing"/><Metric value={`${progress}%`} label="Ready"/><Metric value={result.totalActive??'—'} label="Active SKUs"/></div>
       </div>
     </section>
