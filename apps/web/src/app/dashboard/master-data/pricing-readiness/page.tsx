@@ -49,6 +49,7 @@ const COMPLETE = gql`
 
 type Tab = 'bulk' | 'missing';
 type FilterOption = { value: string; label: string; count?: number };
+const MAX_WORKBOOK_BYTES = 5 * 1024 * 1024;
 
 function money(value: unknown, digits = 2) {
   if (value == null || value === '') return 'Missing';
@@ -161,6 +162,7 @@ function ProductMrpControlPage(){
   const [selectAllMatching,setSelectAllMatching]=useState(false);
   const [file,setFile]=useState<File|null>(null);
   const [fileBase64,setFileBase64]=useState('');
+  const [fileReading,setFileReading]=useState(false);
   const [preview,setPreview]=useState<any>(null);
   const [applied,setApplied]=useState<any>(null);
   const [reason,setReason]=useState('');
@@ -168,6 +170,7 @@ function ProductMrpControlPage(){
   const [confirmed,setConfirmed]=useState(false);
   const [notice,setNotice]=useState('');
   const inputRef=useRef<HTMLInputElement>(null);
+  const previewRef=useRef<HTMLDivElement>(null);
   const debounced=useDebouncedValue(search.trim(),300);
   const pageSize=40;
   const {data:boot,loading:bootLoading,error:bootError}=useQuery(BOOT,{fetchPolicy:'network-only',errorPolicy:'all'});
@@ -186,6 +189,10 @@ function ProductMrpControlPage(){
   const progress=result.totalActive?Math.round(Number(result.ready||0)/Number(result.totalActive)*100):100;
 
   useEffect(()=>{setPage(0);setSelected(new Set());setExcluded(new Set());setSelectAllMatching(false);setPreview(null);setApplied(null);},[tab,debounced,brand,category,mrpStatus]);
+  useEffect(()=>{
+    if(!preview)return;
+    window.requestAnimationFrame(()=>previewRef.current?.scrollIntoView({behavior:'smooth',block:'start'}));
+  },[preview]);
 
   function isSelected(id:string){return selectAllMatching?!excluded.has(id):selected.has(id)}
   function toggle(id:string){
@@ -206,15 +213,42 @@ function ProductMrpControlPage(){
     }catch(error:any){setNotice(error?.message||'The workbook could not be downloaded.')}
   }
   async function chooseFile(chosen:File|null){
-    setPreview(null);setApplied(null);setConfirmed(false);setNotice('');setFile(chosen);setFileBase64('');
+    setPreview(null);setApplied(null);setConfirmed(false);setNotice('');setFile(null);setFileBase64('');setFileReading(false);
     if(!chosen&&inputRef.current)inputRef.current.value='';
     if(!chosen)return;
-    try{setFileBase64(await toBase64(chosen))}catch(error:any){setNotice(error?.message||'The workbook could not be read.')}
+    if(!/\.xlsx$/i.test(chosen.name)){
+      setNotice('Choose the .xlsx workbook downloaded from this MRP page.');
+      if(inputRef.current)inputRef.current.value='';
+      return;
+    }
+    if(!chosen.size||chosen.size>MAX_WORKBOOK_BYTES){
+      setNotice('The MRP workbook must be smaller than 5 MB.');
+      if(inputRef.current)inputRef.current.value='';
+      return;
+    }
+    setFile(chosen);setFileReading(true);
+    try{
+      const encoded=await toBase64(chosen);
+      if(!encoded)throw new Error('The workbook is empty or could not be read.');
+      setFileBase64(encoded);
+      setNotice('Workbook ready. Select “Validate and preview” to check it without changing any MRP.');
+    }catch(error:any){
+      setFile(null);setFileBase64('');setNotice(error?.message||'The workbook could not be read.');
+      if(inputRef.current)inputRef.current.value='';
+    }finally{setFileReading(false)}
   }
   async function runPreview(){
-    if(!file||!fileBase64)return;
+    if(!file){setNotice('Upload the completed MRP workbook first.');return;}
     setNotice('');setApplied(null);setConfirmed(false);
-    try{const response=await previewWorkbook({variables:{filename:file.name,contentBase64:fileBase64}});setPreview(response.data.previewProductMrpBulkWorkbook)}
+    try{
+      const encoded=fileBase64||await toBase64(file);
+      if(!encoded)throw new Error('The workbook is empty or could not be read.');
+      if(!fileBase64)setFileBase64(encoded);
+      const response=await previewWorkbook({variables:{filename:file.name,contentBase64:encoded}});
+      const nextPreview=response.data.previewProductMrpBulkWorkbook;
+      setPreview(nextPreview);
+      setNotice(nextPreview.changed?`Preview ready: ${nextPreview.changed.toLocaleString('en-IN')} MRP change(s). Nothing has been updated yet.`:nextPreview.message);
+    }
     catch(error:any){setPreview(null);setNotice(error?.message||'The workbook did not pass validation.')}
   }
   async function applyChanges(){
@@ -256,6 +290,7 @@ function ProductMrpControlPage(){
         <Field label="Category"><SearchableSelect value={category} onValueChange={setCategory} options={categoryOptions} placeholder="All categories" searchPlaceholder="Search categories…"/></Field>
         <Field label="MRP status"><select value={mrpStatus} onChange={e=>setMrpStatus(e.target.value)} className="h-10 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm"><option value="all">All active</option><option value="ready">MRP ready</option><option value="missing">MRP missing</option></select></Field>
       </section>
+      {preview?<div ref={previewRef} className="scroll-mt-5"><PreviewPanel preview={preview} reason={reason} setReason={setReason} effectiveFrom={effectiveFrom} setEffectiveFrom={setEffectiveFrom} confirmed={confirmed} setConfirmed={setConfirmed} applying={applying} onApply={applyChanges}/></div>:null}
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.7fr)_minmax(350px,.7fr)]">
         <section className="mp-card overflow-hidden rounded-2xl">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] p-4">
@@ -278,15 +313,14 @@ function ProductMrpControlPage(){
               <input ref={inputRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={e=>chooseFile(e.target.files?.[0]||null)}/>
               <button type="button" onClick={()=>inputRef.current?.click()} className="grid w-full place-items-center rounded-xl border border-dashed border-[#cdaaa0] bg-white px-4 py-6 text-center transition hover:border-[#962f29] hover:bg-[#fff7f2]"><Upload className="h-5 w-5 text-[#962f29]"/><b className="mt-2 text-sm text-[var(--ink)]">Upload completed workbook</b><span className="mt-1 text-[11px] text-[var(--ink-4)]">.xlsx only · maximum 5 MB</span></button>
               {file?<div className="flex items-center gap-2 rounded-lg border border-[#e6d7d1] bg-white p-3"><FileSpreadsheet className="h-5 w-5 shrink-0 text-emerald-700"/><div className="min-w-0 flex-1"><p className="truncate text-xs font-black">{file.name}</p><p className="text-[10px] text-[var(--ink-4)]">{Math.ceil(file.size/1024).toLocaleString('en-IN')} KB</p></div><button type="button" onClick={()=>chooseFile(null)} aria-label="Remove workbook"><X className="h-4 w-4"/></button></div>:null}
-              <Button variant="outline" className="w-full" onClick={runPreview} disabled={!fileBase64||previewing}>{previewing?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<FileCheck2 className="mr-2 h-4 w-4"/>}Validate and preview</Button>
+              <Button variant="outline" className="w-full" onClick={runPreview} disabled={!file||fileReading||previewing}>{fileReading||previewing?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<FileCheck2 className="mr-2 h-4 w-4"/>}{fileReading?'Reading workbook…':previewing?'Validating workbook…':'Validate and preview'}</Button>
+              {notice?<p role="status" aria-live="polite" className={cn('rounded-lg border p-3 text-xs font-bold leading-5',preview?.changed?'border-emerald-200 bg-emerald-50 text-emerald-900':'border-amber-200 bg-amber-50 text-amber-900')}>{notice}</p>:null}
             </div>
           </section>
           <Link href="/dashboard/audit" className="flex items-center justify-between rounded-xl border border-[var(--line)] bg-white p-4 text-sm font-black text-[var(--ink)] hover:border-[#cdaaa0]"><span className="flex items-center gap-2"><History className="h-4 w-4 text-[#962f29]"/>Open MRP audit history</span><ArrowRight className="h-4 w-4"/></Link>
         </aside>
       </div>
-      {notice?<p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">{notice}</p>:null}
       {applied?<section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><div className="flex gap-3"><CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-700"/><div><h2 className="font-black text-emerald-950">MRP batch posted</h2><p className="mt-1 text-sm font-semibold text-emerald-900">{applied.message}</p><p className="mt-2 text-xs text-emerald-800">Batch {applied.batchId} · every SKU has its own MRP history and audit record.</p></div></div></section>:null}
-      {preview?<PreviewPanel preview={preview} reason={reason} setReason={setReason} effectiveFrom={effectiveFrom} setEffectiveFrom={setEffectiveFrom} confirmed={confirmed} setConfirmed={setConfirmed} applying={applying} onApply={applyChanges}/>:null}
     </>:<MissingQueue search={search} setSearch={setSearch} sort={sort} setSort={setSort} rows={rows} result={result} loading={loading} error={error} page={page} setPage={setPage} refetch={refetch}/>}
   </div>;
 }
