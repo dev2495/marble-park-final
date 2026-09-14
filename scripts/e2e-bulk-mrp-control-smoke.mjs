@@ -70,11 +70,19 @@ async function createProduct(index, mrp) {
 }
 
 try {
-  const ownerEmail = String(process.env.BOOTSTRAP_OWNER_EMAIL || '').trim().toLowerCase();
-  const ownerPassword = String(process.env.BOOTSTRAP_OWNER_PASSWORD || '');
-  assert(ownerEmail && ownerPassword, 'Acceptance owner credentials are not configured');
-  const ownerToken = await login(ownerEmail, ownerPassword);
-  const owner = await prisma.user.findUniqueOrThrow({ where: { email: ownerEmail } });
+  const ownerPassword = `Bulk-MRP-Owner-${stamp}-Pass!`;
+  const owner = await prisma.user.create({ data: {
+    id: `MRP-BULK-OWNER-${stamp}`,
+    name: 'Bulk MRP owner acceptance',
+    email: `mrp-bulk-owner-${stamp.toLowerCase()}@marblepark.test`,
+    passwordHash: await bcrypt.hash(ownerPassword, 12),
+    role: 'owner',
+    phone: '9000000087',
+    active: true,
+    permissionOverrides: {},
+  } });
+  cleanup.userIds.push(owner.id);
+  const ownerToken = await login(owner.email, ownerPassword);
 
   const salesPassword = `Bulk-MRP-${stamp}-Pass!`;
   const sales = await prisma.user.create({ data: {
