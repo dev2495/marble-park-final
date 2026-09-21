@@ -34,17 +34,22 @@ const labels = [
 const base = { id: 'fixture', runNumber: 'LPR/FIXTURE', status: 'prepared', labels };
 const results = [];
 
-for (const orientation of ['landscape', 'portrait']) {
-  const landscape = orientation === 'landscape';
-  const run = { ...base, template: { code: 'thermal_4x2', version: 4, pageWidthMm: landscape ? 101.6 : 50.8, pageHeightMm: landscape ? 50.8 : 101.6, columns: 1, rows: 1 } };
-  const pdfPath = path.join(output, `${orientation}.pdf`);
+const formats = [
+  { name: '4x2-landscape', width: 101.6, height: 50.8, points: [288, 144] },
+  { name: '4x2-portrait', width: 50.8, height: 101.6, points: [144, 288] },
+  { name: '60x45-landscape', width: 60, height: 45, points: [170.079, 127.559] },
+  { name: '60x45-portrait', width: 45, height: 60, points: [127.559, 170.079] },
+];
+for (const format of formats) {
+  const run = { ...base, template: { code: 'thermal_4x2', version: 4, pageWidthMm: format.width, pageHeightMm: format.height, columns: 1, rows: 1 } };
+  const pdfPath = path.join(output, `${format.name}.pdf`);
   const pdf = await renderLabelsPdf(run);
   writeFileSync(pdfPath, pdf);
   assert.equal(pdf.subarray(0, 4).toString(), '%PDF');
   const info = execFileSync('pdfinfo', ['-f', '1', '-l', '6', pdfPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   assert.match(info, /Pages:\s+6\b/);
-  const dimensions = landscape ? /size:\s+288 x 144 pts/g : /size:\s+144 x 288 pts/g;
-  assert.equal([...info.matchAll(dimensions)].length, 6, 'Every sticker must have exact-size PDF media dimensions');
+  const pageSize = new RegExp(`size:\\s+${format.points[0]}(?:0+)? x ${format.points[1]}(?:0+)? pts`, 'g');
+  assert.equal([...info.matchAll(pageSize)].length, 6, 'Every sticker must have exact-size PDF media dimensions');
   const text = execFileSync(process.env.PDFTOTEXT || 'pdftotext', ['-layout', pdfPath, '-'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   for (const expected of ['ARORA', 'COCO', 'GLOSSY', 'CHROME', 'BRUSH HARD GRAPHITE', '/SQFT', '/PC', '1047', '1065', '1200 x 600 mm', '1200 x 2400 mm']) assert.ok(text.includes(expected), `Missing ${expected}`);
   assert.equal((text.match(/LBL\/2026\/00001/g) || []).length, 2, 'Copies should be real duplicate pages');
@@ -55,25 +60,25 @@ for (const orientation of ['landscape', 'portrait']) {
     assert.ok(page.indexOf('1200 x') < page.indexOf('PRODUCT'), 'Tile size must sit in the brand row above the product');
   }
   for (const forbidden of ['MUST NOT', 'GRN/', 'GST', 'MRP', 'LOT', '3 PC', 'DO NOT PRINT GENERIC SIZE']) assert.ok(!text.includes(forbidden), `Forbidden label text: ${forbidden}`);
-  execFileSync('pdftoppm', ['-f', '1', '-singlefile', '-scale-to', '1600', '-png', pdfPath, path.join(output, orientation)], { stdio: ['ignore', 'pipe', 'pipe'] });
-  execFileSync('pdftoppm', ['-f', '5', '-singlefile', '-scale-to', '1600', '-png', pdfPath, path.join(output, `${orientation}-long-product`)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  execFileSync('pdftoppm', ['-f', '1', '-singlefile', '-scale-to', '1600', '-png', pdfPath, path.join(output, format.name)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  execFileSync('pdftoppm', ['-f', '5', '-singlefile', '-scale-to', '1600', '-png', pdfPath, path.join(output, `${format.name}-long-product`)], { stdio: ['ignore', 'pipe', 'pipe'] });
   for (const suffix of ['', '-long-product']) {
-    const { data, info } = await sharp(path.join(output, `${orientation}${suffix}.png`)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const { data, info } = await sharp(path.join(output, `${format.name}${suffix}.png`)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const decoded = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: 'dontInvert' });
     assert.equal(decoded?.data, `MP-LABEL:LBL/2026/${suffix ? '00003' : '00001'}`, 'The generated PDF QR must decode from its rendered physical page');
   }
-  results.push({ orientation, pages: 6, sizePoints: landscape ? [288, 144] : [144, 288], pdfPath });
+  results.push({ format: format.name, pages: 6, sizePoints: format.points, pdfPath });
 }
 
 assert.throws(() => assertRunReady({ ...base, template: { version: 3 } }), /older sticker layout/);
 assert.throws(() => assertRunReady({ ...base, template: { code: 'other', version: 4, widthMm: 101.6, heightMm: 50.8 } }), /current 4 x 2 thermal/);
 assert.doesNotThrow(() => assertRunReady({ ...base, labels: [{ ...labels[0], payload: { ...labels[0].payload, governedBrandCode: null, brandCode: null, finish: null } }], template: { version: 4, widthMm: 101.6, heightMm: 50.8 } }));
 for (const status of ['cancelled', 'confirmed']) assert.throws(() => assertRunReady({ ...base, status, template: { version: 4, widthMm: 101.6, heightMm: 50.8 } }), /no longer prepared/);
-assert.throws(() => assertRunReady({ ...base, template: { version: 4, widthMm: 210, heightMm: 297 } }), /exact 4 x 2/);
+assert.throws(() => assertRunReady({ ...base, template: { version: 4, widthMm: 210, heightMm: 297 } }), /exact 4 x 2 inch/);
 await assert.rejects(() => renderLabelsPdf({ ...base, labels: [{ ...labels[0], qrDataUrl: 'https://example.com/qr.png' }], template: { version: 4, widthMm: 101.6, heightMm: 50.8 } }), /unsupported source/);
 await assert.rejects(() => renderLabelsPdf({
   ...base,
   labels: [{ ...labels[0], payload: { ...labels[0].payload, compactProductValue: 'A'.repeat(220) } }],
   template: { version: 4, widthMm: 101.6, heightMm: 50.8 },
 }), /too long to fit legibly within two lines/);
-console.log(JSON.stringify({ ok: true, results, preservedCopies: true, finishPrinted: true, renderedQrDecodeChecks: 4, oldTemplatesRejected: true, externalImagesRejected: true }, null, 2));
+console.log(JSON.stringify({ ok: true, results, preservedCopies: true, finishPrinted: true, renderedQrDecodeChecks: 8, oldTemplatesRejected: true, externalImagesRejected: true }, null, 2));

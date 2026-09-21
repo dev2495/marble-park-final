@@ -28,6 +28,7 @@ const VOID = gql`mutation VoidLabel($id: ID!, $reason: String!) { voidInternalLa
 type DeskTab = 'receipts' | 'subjects' | 'print' | 'scan';
 type SubjectMode = 'product' | 'lot' | 'display';
 type PrintOrientation = 'landscape' | 'portrait';
+type LabelSize = '' | '4x2_in' | '60x45_mm';
 type PrintFilter = 'all' | 'unprinted' | 'printed';
 type TrayLabel = {
   id: string;
@@ -91,6 +92,7 @@ export default function LabelDeskPage() {
   const [trayLabels, setTrayLabels] = useState<Record<string, TrayLabel>>({});
   const [physicalTemplate, setPhysicalTemplate] = useState('thermal_4x2');
   const [printOrientation, setPrintOrientation] = useState<PrintOrientation>('landscape');
+  const [labelSize, setLabelSize] = useState<LabelSize>('');
   const [copies, setCopies] = useState('1');
   const [printReason, setPrintReason] = useState('Operational label print');
   const [voidReason, setVoidReason] = useState('Damaged or superseded physical label');
@@ -241,10 +243,14 @@ export default function LabelDeskPage() {
       setActionError('Copies must be a whole number from 1 to 50.');
       return;
     }
+    if (physicalTemplate === 'thermal_4x2' && !labelSize) {
+      setActionError('Choose the physical sticker size before preparing this print run.');
+      return;
+    }
     if (!labelIds.length || labelIds.length * copyCount > MAX_PHYSICAL_PAGES || !printReason.trim()) return;
     const printWindow = window.open('', '_blank');
     try {
-      const response = await prepare({ variables: { input: { templateCode: physicalTemplate, ...(physicalTemplate === 'thermal_4x2' ? { orientation: printOrientation } : {}), labelIds, copies: copyCount, reason: printReason } } });
+      const response = await prepare({ variables: { input: { templateCode: physicalTemplate, ...(physicalTemplate === 'thermal_4x2' ? { orientation: printOrientation, labelSize } : {}), labelIds, copies: copyCount, reason: printReason } } });
       const run = response.data?.prepareInternalLabelPrintRun;
       if (!run?.id) throw new Error('No print preview was returned. Your selected labels remain in the tray.');
       if (printWindow && !printWindow.closed) {
@@ -295,7 +301,7 @@ export default function LabelDeskPage() {
       <aside className="space-y-4"><div className="rounded-2xl border border-sky-200 bg-sky-50 p-5"><CircleHelp className="h-5 w-5 text-sky-700"/><h3 className="mt-3 font-bold text-sky-950">Which subject should I choose?</h3><ul className="mt-3 space-y-3 text-xs leading-5 text-sky-900"><li><b>Product / shelf:</b> identifies a catalogue SKU, not a quantity.</li><li><b>Exact lot:</b> identifies physically received stock and retains batch, receipt and location context.</li><li><b>Display:</b> identifies a non-sellable showroom asset, even when it originated from stock.</li></ul></div><Button asChild variant="outline" className="w-full"><Link href="/dashboard/help#labels-lots"><CircleHelp className="mr-2 h-4 w-4"/>Open label lifecycle help</Link></Button></aside>
     </section>:null}
 
-    {tab==='print'?<div className="label-light-surface"><PrintRegister jobs={jobs} loading={jobsLoading} expandedJobId={expandedJobId} toggleJob={toggleJob} trayLabels={trayLabels} addManyToTray={addManyToTray} removeManyFromTray={removeManyFromTray} toggleTrayLabel={toggleTrayLabel} clearTray={()=>setTrayLabels({})} templates={templates} physicalTemplate={physicalTemplate} setPhysicalTemplate={setPhysicalTemplate} printOrientation={printOrientation} setPrintOrientation={setPrintOrientation} copies={copies} setCopies={setCopies} printReason={printReason} setPrintReason={setPrintReason} voidReason={voidReason} setVoidReason={setVoidReason} voidLabel={voidLabel} voidLoading={voidState.loading} preparePrint={preparePrint} prepareLoading={prepareState.loading} registerSearch={registerSearch} setRegisterSearch={(value:string)=>{setRegisterSearch(value);setPage(0)}} printFilter={printFilter} setPrintFilter={(value:PrintFilter)=>{setPrintFilter(value);setPage(0)}} sourceFilter={sourceFilter} setSourceFilter={(value:string)=>{setSourceFilter(value);setPage(0)}} page={page} setPage={setPage} hasNext={hasNext}/></div>:null}
+    {tab==='print'?<div className="label-light-surface"><PrintRegister jobs={jobs} loading={jobsLoading} expandedJobId={expandedJobId} toggleJob={toggleJob} trayLabels={trayLabels} addManyToTray={addManyToTray} removeManyFromTray={removeManyFromTray} toggleTrayLabel={toggleTrayLabel} clearTray={()=>setTrayLabels({})} templates={templates} physicalTemplate={physicalTemplate} setPhysicalTemplate={setPhysicalTemplate} printOrientation={printOrientation} setPrintOrientation={setPrintOrientation} labelSize={labelSize} setLabelSize={setLabelSize} copies={copies} setCopies={setCopies} printReason={printReason} setPrintReason={setPrintReason} voidReason={voidReason} setVoidReason={setVoidReason} voidLabel={voidLabel} voidLoading={voidState.loading} preparePrint={preparePrint} prepareLoading={prepareState.loading} registerSearch={registerSearch} setRegisterSearch={(value:string)=>{setRegisterSearch(value);setPage(0)}} printFilter={printFilter} setPrintFilter={(value:PrintFilter)=>{setPrintFilter(value);setPage(0)}} sourceFilter={sourceFilter} setSourceFilter={(value:string)=>{setSourceFilter(value);setPage(0)}} page={page} setPage={setPage} hasNext={hasNext}/></div>:null}
 
     {tab==='scan'?<section className="grid gap-5 xl:grid-cols-[1fr_22rem]">
       <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
@@ -326,7 +332,7 @@ function PrintRegister(props:any) {
     toggleTrayLabel, clearTray, templates, physicalTemplate, setPhysicalTemplate, copies,
     setCopies, printReason, setPrintReason, voidReason, setVoidReason, voidLabel, voidLoading,
     preparePrint, prepareLoading, registerSearch, setRegisterSearch, page, setPage, hasNext,
-    printOrientation, setPrintOrientation, printFilter, setPrintFilter, sourceFilter, setSourceFilter,
+    printOrientation, setPrintOrientation, labelSize, setLabelSize, printFilter, setPrintFilter, sourceFilter, setSourceFilter,
   } = props;
   const selectedLabels = Object.values(trayLabels) as TrayLabel[];
   const selectedIds = new Set(selectedLabels.map((label) => label.id));
@@ -458,20 +464,33 @@ function PrintRegister(props:any) {
           </div>
         </div>
         <div className="space-y-5 bg-[#fffaf7] p-5 text-[var(--ink)]">
-          {physicalTemplate === 'thermal_4x2' ? <fieldset className="rounded-2xl border border-[#e2d5cf] bg-white p-4">
-            <legend className="px-1 text-xs font-bold">Sticker orientation</legend>
+          {physicalTemplate === 'thermal_4x2' ? <div className="space-y-3">
+            <fieldset className={`rounded-2xl border p-4 ${labelSize ? 'border-[#e2d5cf] bg-white' : 'border-[#cf7669] bg-[#fff3ef] ring-1 ring-[#cf7669]/30'}`}>
+              <legend className="px-1 text-xs font-bold">1 · Physical sticker size <span className="text-[#a92f28]">Required every run</span></legend>
+              <div className="grid grid-cols-2 gap-2">
+                {([['4x2_in','4 × 2 inch','101.6 × 50.8 mm'],['60x45_mm','Compact','60 × 45 mm']] as const).map(([value,title,dimensions])=><label key={value} className="cursor-pointer">
+                  <input type="radio" name="label-size" value={value} checked={labelSize===value} data-testid={`label-size-${value}`} onChange={()=>setLabelSize(value)} className="peer sr-only"/>
+                  <span className="flex min-h-20 flex-col justify-center rounded-xl border border-[#e2d5cf] bg-white px-3 py-2 transition hover:border-[#b87468] peer-checked:border-[#a92f28] peer-checked:bg-[#fff3ef] peer-checked:ring-1 peer-checked:ring-[#a92f28] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#a92f28]">
+                    <b className="text-sm">{title}</b><small className="mt-1 text-[10px] font-semibold text-[var(--ink-4)]">{dimensions}</small>
+                  </span>
+                </label>)}
+              </div>
+              {!labelSize?<p role="alert" className="mt-2 text-[11px] font-semibold text-[#9f342d]">Select the roll loaded in the printer. No size is assumed.</p>:null}
+            </fieldset>
+            <fieldset disabled={!labelSize} className="rounded-2xl border border-[#e2d5cf] bg-white p-4 disabled:opacity-45">
+            <legend className="px-1 text-xs font-bold">2 · Sticker orientation</legend>
             <div className="grid grid-cols-2 gap-2">
-              {([['landscape','Landscape','4 × 2 in'],['portrait','Portrait','2 × 4 in']] as const).map(([value,label,size])=><label key={value} className="cursor-pointer">
+              {([['landscape','Landscape'],['portrait','Portrait']] as const).map(([value,label])=><label key={value} className="cursor-pointer">
                 <input type="radio" name="label-orientation" value={value} checked={printOrientation===value} data-testid={`label-orientation-${value}`} onChange={()=>setPrintOrientation(value)} className="peer sr-only"/>
                 <span className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-xl border border-[#e2d5cf] bg-white px-2 py-3 transition hover:border-[#b87468] peer-checked:border-[#a92f28] peer-checked:bg-[#fff3ef] peer-checked:ring-1 peer-checked:ring-[#a92f28] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#a92f28]">
                   <span aria-hidden="true" className={`grid place-items-center rounded border-2 border-[#2b201f] bg-[#fffdfb] ${value==='landscape'?'h-7 w-14':'h-12 w-6'}`}><QrCode className="h-4 w-4"/></span>
-                  <span className="text-center text-[11px] font-bold leading-4">{label}<small className="block text-[10px] font-semibold text-[var(--ink-4)]">{size}</small></span>
+                  <span className="text-center text-[11px] font-bold leading-4">{label}<small className="block text-[10px] font-semibold text-[var(--ink-4)]">{labelSize==='60x45_mm'?(value==='landscape'?'60 × 45 mm':'45 × 60 mm'):(value==='landscape'?'4 × 2 in':'2 × 4 in')}</small></span>
                 </span>
               </label>)}
             </div>
             <p className="mt-3 text-[11px] leading-5 text-[var(--ink-3)]">Match the width and height of one sticker on the roll. This changes the actual print page, not just the preview.</p>
-            <p className="mt-2 border-t border-[#eee2dc] pt-2 text-[10px] leading-4 text-[var(--ink-4)]">Printer: {printOrientation==='landscape'?'101.6 mm wide × 50.8 mm high':'50.8 mm wide × 101.6 mm high'} · 100% scale · all pages · 1 printer copy. Set extra copies below.</p>
-          </fieldset> : null}
+            <p className="mt-2 border-t border-[#eee2dc] pt-2 text-[10px] leading-4 text-[var(--ink-4)]">Printer: {labelSize==='60x45_mm'?(printOrientation==='landscape'?'60 mm wide × 45 mm high':'45 mm wide × 60 mm high'):(printOrientation==='landscape'?'101.6 mm wide × 50.8 mm high':'50.8 mm wide × 101.6 mm high')} · 100% scale · all pages · 1 printer copy. Set extra copies below.</p>
+          </fieldset></div> : null}
           <label className="block text-xs font-bold text-[var(--ink-3)]">Physical label template
             <select className="mt-1.5 h-11 w-full rounded-xl border border-[#d9cbc5] bg-white px-3 text-sm font-semibold" value={physicalTemplate} onChange={(event)=>setPhysicalTemplate(event.target.value)}>{templates.map((template:any)=><option key={`${template.code}-${template.version}`} value={template.code}>{template.name} · v{template.version}</option>)}</select>
           </label>
@@ -495,7 +514,7 @@ function PrintRegister(props:any) {
               return <div key={first.jobId} className="flex items-center gap-2 rounded-xl border border-[#e4d8d2] bg-white p-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#f2e5df] text-[#a92f28]"><Barcode className="h-4 w-4"/></span><span className="min-w-0 flex-1"><b className="block truncate font-mono text-[11px]">{first.jobNumber}</b><small className="block truncate text-[10px] text-[var(--ink-4)]">{first.source} · {group.length} selected</small></span><button type="button" aria-label={`Remove ${first.jobNumber} from tray`} onClick={()=>removeManyFromTray(group.map((label)=>label.id))} className="grid h-7 w-7 place-items-center rounded-full text-[var(--ink-4)] hover:bg-red-50 hover:text-red-700"><XCircle className="h-4 w-4"/></button></div>})}{!selectedLabels.length?<div className="rounded-xl border border-dashed border-[#d8c9c2] bg-[#fffdfb] p-4 text-center"><Tags className="mx-auto h-5 w-5 text-[#b79e95]"/><p className="mt-2 text-xs font-bold">Your tray is empty</p><p className="mt-1 text-[10px] leading-4 text-[var(--ink-4)]">Add a complete job, all matching labels, or review a job and pick individual stickers.</p></div>:null}</div>
           </div>
           {exceedsPageLimit?<p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold leading-5 text-amber-900">This would create {physicalPages.toLocaleString('en-IN')} pages. Reduce the selection or copies to {MAX_PHYSICAL_PAGES} pages or fewer.</p>:null}
-          <Button data-testid="bulk-print-prepare" className="h-12 w-full bg-[#a92f28] text-sm hover:bg-[#8d2722]" disabled={prepareLoading||!selectedLabels.length||!printReason.trim()||!validCopies||exceedsPageLimit} onClick={preparePrint}><Printer className="mr-2 h-4 w-4"/>{prepareLoading?'Preparing run…':!validCopies?'Enter whole-number copies':`Prepare ${physicalPages} sticker page${physicalPages===1?'':'s'}`}</Button>
+          <Button data-testid="bulk-print-prepare" className="h-12 w-full bg-[#a92f28] text-sm hover:bg-[#8d2722]" disabled={prepareLoading||!selectedLabels.length||!printReason.trim()||!validCopies||exceedsPageLimit||(physicalTemplate==='thermal_4x2'&&!labelSize)} onClick={preparePrint}><Printer className="mr-2 h-4 w-4"/>{prepareLoading?'Preparing run…':!labelSize&&physicalTemplate==='thermal_4x2'?'Choose sticker size':!validCopies?'Enter whole-number copies':`Prepare ${physicalPages} sticker page${physicalPages===1?'':'s'}`}</Button>
           <p className="text-center text-[10px] leading-4 text-[var(--ink-4)]">Previewing does not change print counts. Confirm only after the printer completes the physical run.</p>
         </div>
       </div>

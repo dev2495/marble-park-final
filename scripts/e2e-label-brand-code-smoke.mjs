@@ -39,7 +39,7 @@ try {
   productId = product.id;
   const job = (await gql('mutation($input:InternalLabelJobInput!){createInternalLabelJob(input:$input)}', { input: { productId, quantity: 1, template: 'shelf', newJob: true } }, token)).createInternalLabelJob;
   jobId = job.id;
-  const prepared = (await gql('mutation($input:InternalLabelPrintRunInput!){prepareInternalLabelPrintRun(input:$input)}', { input: { labelJobId: job.id, templateCode: template.code, copies: 1, reason: 'Brand code acceptance' } }, token)).prepareInternalLabelPrintRun;
+  const prepared = (await gql('mutation($input:InternalLabelPrintRunInput!){prepareInternalLabelPrintRun(input:$input)}', { input: { labelJobId: job.id, templateCode: template.code, labelSize: '4x2_in', copies: 1, reason: 'Brand code acceptance' } }, token)).prepareInternalLabelPrintRun;
   const run = (await gql('query($id:ID!){internalLabelPrintRun(id:$id)}', { id: prepared.id }, token)).internalLabelPrintRun;
   assert(run.labels?.length === 1, 'Prepared run must contain one label');
   assert(run.labels[0].payload.brandCode === brand.code, `Label must use Brand Master code ${brand.code}`);

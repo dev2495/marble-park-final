@@ -23,9 +23,15 @@ function assertRunReady(run) {
   const width = Number(template.pageWidthMm || template.widthMm);
   const height = Number(template.pageHeightMm || template.heightMm);
   const close = (a, b) => Math.abs(a - b) < 0.01;
-  const landscape = close(width, 101.6) && close(height, 50.8);
-  const portrait = close(width, 50.8) && close(height, 101.6);
-  if (!landscape && !portrait) throw blocked('Select an exact 4 x 2 inch or 2 x 4 inch single-sticker template.');
+  const fourByTwoLandscape = close(width, 101.6) && close(height, 50.8);
+  const fourByTwoPortrait = close(width, 50.8) && close(height, 101.6);
+  const compactLandscape = close(width, 60) && close(height, 45);
+  const compactPortrait = close(width, 45) && close(height, 60);
+  const landscape = fourByTwoLandscape || compactLandscape;
+  const compact = compactLandscape || compactPortrait;
+  if (!fourByTwoLandscape && !fourByTwoPortrait && !compactLandscape && !compactPortrait) {
+    throw blocked('Select an exact 4 x 2 inch, 2 x 4 inch, 60 x 45 mm or 45 x 60 mm single-sticker size.');
+  }
   if (Number(template.columns || 1) !== 1 || Number(template.rows || 1) !== 1) {
     throw blocked('The thermal PDF requires one sticker per page. Prepare a new single-sticker run.');
   }
@@ -43,7 +49,7 @@ function assertRunReady(run) {
     }
     if (!clean(label.qrDataUrl)) throw blocked(`${label.labelCode} has no QR image. Retry this run before printing.`);
   }
-  return { width, height, landscape };
+  return { width, height, landscape, compact };
 }
 
 async function qrPng(dataUrl) {
@@ -77,8 +83,8 @@ function rateText(value) {
   return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(Number(value));
 }
 
-function fitText(value, width, height, preferredFont, maxLines = Number.POSITIVE_INFINITY) {
-  for (let fontSize = preferredFont; fontSize >= 7; fontSize -= 0.5) {
+function fitText(value, width, height, preferredFont, maxLines = Number.POSITIVE_INFINITY, minimumFont = 7) {
+  for (let fontSize = preferredFont; fontSize >= minimumFont; fontSize -= 0.5) {
     fontMetrics.fontSize(fontSize);
     const lines = [];
     let remaining = clean(value);
@@ -100,71 +106,76 @@ function fitText(value, width, height, preferredFont, maxLines = Number.POSITIVE
     : 'A master code or design name is too long to fit legibly on this sticker. Shorten the printable master value before printing.');
 }
 
-function singleLineFont(value, width, preferredFont = 20) {
-  for (let fontSize = preferredFont; fontSize >= 8; fontSize -= 0.5) {
+function singleLineFont(value, width, preferredFont = 20, minimumFont = 8) {
+  for (let fontSize = preferredFont; fontSize >= minimumFont; fontSize -= 0.5) {
     fontMetrics.fontSize(fontSize);
     if (fontMetrics.widthOfString(value) <= width - 4) return fontSize;
   }
   throw blocked('The rate is too long to fit legibly on this sticker. Check the master rate before printing.');
 }
 
-function Field({ caption, value, style, fontSize = 10 }) {
+function Field({ caption, value, style, fontSize = 10, compact = false }) {
   return e(View, { style },
-    e(Text, { style: { fontSize: 5.3, letterSpacing: 0.7, fontFamily: 'Helvetica-Bold', marginBottom: mm(0.5) } }, caption),
+    e(Text, { style: { fontSize: compact ? 3.5 : 5.3, letterSpacing: compact ? 0.35 : 0.7, fontFamily: 'Helvetica-Bold', marginBottom: mm(compact ? 0.2 : 0.5) } }, caption),
     e(Text, { style: { fontSize, fontFamily: 'Helvetica-Bold', lineHeight: 1.06 }, hyphenationCallback: (word) => [word] }, value),
   );
 }
 
 function Sticker({ label, geometry }) {
-  const { width, height, landscape } = geometry;
+  const { width, height, landscape, compact } = geometry;
   const payload = label.payload;
   const product = clean(payload.compactProductValue || payload.productCode || payload.internalCode || payload.sku).toUpperCase();
   const tileSize = compactTileSize(payload);
   const brand = clean(payload.governedBrandCode || payload.brandCode).toUpperCase() || 'PENDING';
   const finish = clean(payload.finish).toUpperCase() || 'NOT SET';
-  const innerWidth = width - 3.6;
+  const pagePadding = compact ? 1.2 : 1.8;
+  const innerWidth = width - pagePadding * 2;
   const productFont = productFontSize(product, landscape);
-  const detailWidth = mm(landscape ? innerWidth - 42.4 : innerWidth);
-  const productFit = fitText(product, detailWidth, mm(landscape ? 13.5 : 13.2), productFont, 2);
+  const qrPanelSize = compact ? (landscape ? 28.4 : 25) : (landscape ? 40.4 : 48);
+  const detailWidth = mm(landscape ? innerWidth - qrPanelSize : innerWidth);
+  const productHeight = compact ? (landscape ? 11 : 8.5) : (landscape ? 13.5 : 13.2);
+  const productFit = fitText(product, detailWidth, mm(productHeight), compact ? Math.min(productFont, landscape ? 10 : 9) : productFont, 2, compact ? 5 : 7);
   const brandWidth = tileSize ? detailWidth * 0.36 : detailWidth;
-  const brandFit = fitText(brand, brandWidth, mm(4.5), brand.length > 20 ? 9 : 11);
-  const sizeFit = tileSize ? fitText(tileSize, detailWidth * 0.64 - mm(1), mm(6), 10, 1) : null;
-  const finishFit = fitText(finish, detailWidth, mm(4.2), finish.length > 35 ? 8 : 9);
+  const brandFit = fitText(brand, brandWidth, mm(compact ? 3.7 : 4.5), brand.length > 20 ? (compact ? 7 : 9) : (compact ? 8 : 11), Number.POSITIVE_INFINITY, compact ? 5 : 7);
+  const sizeFit = tileSize ? fitText(tileSize, detailWidth * 0.64 - mm(1), mm(compact ? 4.5 : 6), compact ? 7 : 10, 1, compact ? 5 : 7) : null;
+  const finishFit = fitText(finish, detailWidth, mm(compact ? 3.5 : 4.2), finish.length > 35 ? (compact ? 7 : 8) : (compact ? 7.5 : 9), Number.POSITIVE_INFINITY, compact ? 5 : 7);
   const price = `Rs. ${rateText(payload.mrpInclusive)}`;
-  const rateFont = singleLineFont(price, detailWidth - mm(9));
-  const qrSize = landscape ? 37.8 : 42;
+  const rateFont = singleLineFont(price, detailWidth - mm(compact ? 6 : 9), compact ? 12 : 20, compact ? 6 : 8);
+  const qrSize = compact ? (landscape ? 26.2 : 22.8) : (landscape ? 37.8 : 42);
+  const headerHeight = compact ? 4.2 : 4.4;
+  const bodyHeight = height - pagePadding * 2 - headerHeight - 0.8;
   const bodyStyle = landscape
-    ? { flexDirection: 'row', height: mm(42) }
-    : { flexDirection: 'column', height: mm(92.8) };
+    ? { flexDirection: 'row', height: mm(bodyHeight) }
+    : { flexDirection: 'column', height: mm(bodyHeight) };
   const detailsStyle = landscape
-    ? { width: mm(innerWidth - 40.4), paddingLeft: mm(2), borderLeftWidth: 0.65, borderColor: '#111111' }
-    : { width: '100%', paddingTop: mm(1.3), borderTopWidth: 0.65, borderColor: '#111111' };
+    ? { width: mm(innerWidth - qrPanelSize), paddingLeft: mm(compact ? 1 : 2), borderLeftWidth: 0.65, borderColor: '#111111' }
+    : { width: '100%', height: mm(bodyHeight - qrPanelSize), paddingTop: mm(compact ? 0.6 : 1.3), borderTopWidth: 0.65, borderColor: '#111111' };
   return e(Page, {
     key: `${label.id || label.labelCode}:${label.copyIndex || 0}`,
     size: [mm(width), mm(height)], wrap: false,
-    style: { padding: mm(1.8), backgroundColor: '#ffffff', color: '#111111', fontFamily: 'Helvetica' },
+    style: { width: mm(width), height: mm(height), minHeight: mm(height), maxHeight: mm(height), padding: mm(pagePadding), backgroundColor: '#ffffff', color: '#111111', fontFamily: 'Helvetica' },
   },
-  e(View, { wrap: false, style: { width: mm(innerWidth), height: mm(height - 3.6) } },
-    e(View, { style: { height: mm(4.4), borderBottomWidth: 0.65, borderColor: '#111111', marginBottom: mm(0.8), flexDirection: 'row', alignItems: 'center' } },
-      e(Text, { style: { fontSize: 6.5, fontFamily: 'Helvetica-Bold', letterSpacing: 1 } }, 'MP  MARBLE PARK'),
+  e(View, { wrap: false, style: { width: mm(innerWidth), height: mm(compact ? height - pagePadding * 2 : height - 3.6) } },
+    e(View, { style: { height: mm(headerHeight), borderBottomWidth: 0.65, borderColor: '#111111', marginBottom: mm(0.8), flexDirection: 'row', alignItems: 'center' } },
+      e(Text, { style: { fontSize: compact ? 5.2 : 6.5, fontFamily: 'Helvetica-Bold', letterSpacing: compact ? 0.6 : 1 } }, 'MP  MARBLE PARK'),
     ),
     e(View, { style: bodyStyle },
-      e(View, { style: { width: landscape ? mm(40.4) : '100%', height: landscape ? '100%' : mm(48), alignItems: 'center', justifyContent: 'center', paddingRight: landscape ? mm(1.2) : 0 } },
+      e(View, { style: { width: landscape ? mm(qrPanelSize) : '100%', height: landscape ? '100%' : mm(qrPanelSize), alignItems: 'center', justifyContent: 'center', paddingRight: landscape ? mm(compact ? .6 : 1.2) : 0 } },
         e(Image, { src: { data: label.qrPng, format: 'png' }, style: { width: mm(qrSize), height: mm(qrSize) } }),
-        e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: 6.5, marginTop: mm(0.5), textAlign: 'center' } }, clean(label.labelCode)),
+        e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: compact ? 4.3 : 6.5, marginTop: mm(compact ? 0.25 : 0.5), textAlign: 'center' } }, clean(label.labelCode)),
       ),
       e(View, { style: detailsStyle },
-        e(View, { style: { height: mm(7.5), flexDirection: 'row', alignItems: 'center' } },
-          e(Field, { caption: 'BRAND', value: brandFit.text, fontSize: brandFit.fontSize, style: { width: brandWidth, height: mm(7.5) } }),
+        e(View, { style: { height: mm(compact ? 5 : 7.5), flexDirection: 'row', alignItems: 'center' } },
+          e(Field, { caption: 'BRAND', value: brandFit.text, fontSize: brandFit.fontSize, compact, style: { width: brandWidth, height: mm(compact ? 5 : 7.5) } }),
           sizeFit ? e(Text, { style: { width: detailWidth * 0.64, paddingLeft: mm(1), fontFamily: 'Helvetica-Bold', fontSize: sizeFit.fontSize, textAlign: 'right', lineHeight: 1.1 } }, sizeFit.text) : null,
         ),
-        e(Field, { caption: 'PRODUCT', value: productFit.text, fontSize: productFit.fontSize, style: { height: mm(landscape ? 16.5 : 16.2) } }),
-        e(Field, { caption: 'FINISH', value: finishFit.text, fontSize: finishFit.fontSize, style: { height: mm(7), paddingTop: mm(0.3) } }),
+        e(Field, { caption: 'PRODUCT', value: productFit.text, fontSize: productFit.fontSize, compact, style: { height: mm(compact ? productHeight : (landscape ? 16.5 : 16.2)) } }),
+        e(Field, { caption: 'FINISH', value: finishFit.text, fontSize: finishFit.fontSize, compact, style: { height: mm(compact ? 5 : 7), paddingTop: mm(compact ? .1 : 0.3) } }),
         e(View, { style: { borderTopWidth: 0.8, borderColor: '#111111', paddingTop: mm(0.9), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' } },
-          e(Text, { style: { fontSize: 5.8, fontFamily: 'Helvetica-Bold', letterSpacing: 0.7 } }, 'RATE'),
+          e(Text, { style: { fontSize: compact ? 4.2 : 5.8, fontFamily: 'Helvetica-Bold', letterSpacing: compact ? .35 : 0.7 } }, 'RATE'),
           e(View, { style: { alignItems: 'flex-end' } },
             e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: rateFont, lineHeight: 1 } }, price),
-            e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: 7, marginTop: mm(0.4) } }, `/${clean(payload.priceUom).toUpperCase()}`),
+            e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: compact ? 5 : 7, marginTop: mm(compact ? .2 : 0.4) } }, `/${clean(payload.priceUom).toUpperCase()}`),
           ),
         ),
       ),

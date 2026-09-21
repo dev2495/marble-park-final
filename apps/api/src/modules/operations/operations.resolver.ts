@@ -102,6 +102,7 @@ class InternalLabelPrintRunInput {
   @Field(() => Int, { nullable: true }) copies?: number;
   @Field({ nullable: true }) reason?: string;
   @Field({ nullable: true }) orientation?: string;
+  @Field({ nullable: true }) labelSize?: string;
 }
 
 @InputType()

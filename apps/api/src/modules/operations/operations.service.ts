@@ -1447,6 +1447,10 @@ export class OperationsService {
     const orientation = String(input.orientation || template.definition?.orientation || 'landscape');
     if (!['portrait', 'landscape'].includes(orientation)) throw new BadRequestException('Choose portrait or landscape');
     const adjustableThermal = template.code === 'thermal_4x2' && template.version >= 4;
+    const labelSize = String(input.labelSize || '').trim();
+    if (adjustableThermal && !['4x2_in', '60x45_mm'].includes(labelSize)) {
+      throw new BadRequestException('Choose the physical sticker size: 4 x 2 inch or 60 x 45 mm');
+    }
     if (input.orientation && !adjustableThermal && orientation !== template.definition?.orientation) {
       throw new BadRequestException('This historical template has a fixed orientation; select the current 4 x 2 inch template');
     }
@@ -1496,13 +1500,13 @@ export class OperationsService {
         id: ulid(), runNumber, labelJobId: anchorJob.id, templateCode: template.code, templateVersion: template.version,
         selectedLabelIds: selected.map((row: any) => row.id), copies, status: 'prepared', reason: reason || null,
         requestedBy: actorUserId,
-        metadata: { labelCount: selected.length, jobCount: jobIds.length, jobIds, bulk: jobIds.length > 1, physicalPages: selected.length * copies, ...(adjustableThermal ? { orientation } : {}) },
+        metadata: { labelCount: selected.length, jobCount: jobIds.length, jobIds, bulk: jobIds.length > 1, physicalPages: selected.length * copies, ...(adjustableThermal ? { orientation, labelSize } : {}) },
         updatedAt: now,
       } });
       await tx.auditEvent.create({ data: {
         id: ulid(), actorUserId, action: 'internal_label.print_prepare', entityType: 'InternalLabelPrintRun', entityId: run.id,
         summary: `Prepared ${runNumber}`,
-        metadata: { labelJobId: anchorJob.id, labelJobIds: jobIds, jobCount: jobIds.length, bulk: jobIds.length > 1, labelCount: selected.length, physicalPages: selected.length * copies, copies, templateCode: template.code, templateVersion: template.version, orientation, reason: reason || null },
+        metadata: { labelJobId: anchorJob.id, labelJobIds: jobIds, jobCount: jobIds.length, bulk: jobIds.length > 1, labelCount: selected.length, physicalPages: selected.length * copies, copies, templateCode: template.code, templateVersion: template.version, orientation, labelSize: adjustableThermal ? labelSize : null, reason: reason || null },
       } });
       return run;
     });
@@ -1516,9 +1520,13 @@ export class OperationsService {
     });
     if (template?.code === 'thermal_4x2' && template.version >= 4) {
       const orientation = run.metadata?.orientation === 'portrait' ? 'portrait' : 'landscape';
-      template.widthMm = template.pageWidthMm = orientation === 'portrait' ? 50.8 : 101.6;
-      template.heightMm = template.pageHeightMm = orientation === 'portrait' ? 101.6 : 50.8;
-      template.definition = { ...template.definition, orientation };
+      // Runs created before physical-stock selection remain reproducible as 4 x 2 inch.
+      const labelSize = run.metadata?.labelSize === '60x45_mm' ? '60x45_mm' : '4x2_in';
+      const landscapeWidth = labelSize === '60x45_mm' ? 60 : 101.6;
+      const landscapeHeight = labelSize === '60x45_mm' ? 45 : 50.8;
+      template.widthMm = template.pageWidthMm = orientation === 'portrait' ? landscapeHeight : landscapeWidth;
+      template.heightMm = template.pageHeightMm = orientation === 'portrait' ? landscapeWidth : landscapeHeight;
+      template.definition = { ...template.definition, orientation, labelSize };
     }
     const selectedIds = Array.isArray(run.selectedLabelIds) ? run.selectedLabelIds.map(String) : [];
     if (!selectedIds.length) throw new BadRequestException('This print run has no selected labels');
