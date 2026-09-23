@@ -31,6 +31,9 @@ const labels = [
   await fixture('00002', 'ALD-CHR-079N', 'Chrome', 'JQ', 4010, 'PC'),
   await fixture('00003', 'LONG-COMPACT-PRODUCT-CODE-FOR-STICKER', 'BRUSH HARD GRAPHITE', '1065', 129999.5, 'SQFT', 'Tiles', '1200X2400 MM'),
 ].flatMap((label) => [0, 1].map((copyIndex) => ({ ...label, copyIndex })));
+// Production incident LPR/2026/0161: browser print rejected this tile even
+// though its governed fields should fit both physical sticker stocks.
+const incident = await fixture('INCIDENT', 'DUNE MIST (SUEDE FINISH)', 'QUARTZ', '1038', 1112, 'SQFT', 'Tiles', '3275 x 1460 x 20 (mm)');
 const base = { id: 'fixture', runNumber: 'LPR/FIXTURE', status: 'prepared', labels };
 const results = [];
 
@@ -67,6 +70,18 @@ for (const format of formats) {
     const decoded = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: 'dontInvert' });
     assert.equal(decoded?.data, `MP-LABEL:LBL/2026/${suffix ? '00003' : '00001'}`, 'The generated PDF QR must decode from its rendered physical page');
   }
+  const incidentPdf = await renderLabelsPdf({ ...run, labels: [incident] });
+  const incidentPath = path.join(output, `${format.name}-incident.pdf`);
+  writeFileSync(incidentPath, incidentPdf);
+  const incidentText = execFileSync(process.env.PDFTOTEXT || 'pdftotext', ['-layout', incidentPath, '-'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  for (const expected of ['1038', '3275 x 1460', 'DUNE MIST', 'SUEDE', 'FINISH)', 'QUARTZ', '1,112', '/SQFT']) {
+    assert.ok(incidentText.includes(expected), `Production incident missing ${expected} on ${format.name}`);
+  }
+  assert.equal((incidentText.match(/3275 x 1460/g) || []).length, 1, 'Tile dimensions must print only once');
+  execFileSync('pdftoppm', ['-f', '1', '-singlefile', '-scale-to', '1600', '-png', incidentPath, path.join(output, `${format.name}-incident`)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const { data: incidentPixels, info: incidentImage } = await sharp(path.join(output, `${format.name}-incident.png`)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const incidentQr = jsQR(new Uint8ClampedArray(incidentPixels.buffer, incidentPixels.byteOffset, incidentPixels.byteLength), incidentImage.width, incidentImage.height, { inversionAttempts: 'dontInvert' });
+  assert.equal(incidentQr?.data, 'MP-LABEL:LBL/2026/INCIDENT', `Production incident QR must scan on ${format.name}`);
   results.push({ format: format.name, pages: 6, sizePoints: format.points, pdfPath });
 }
 
@@ -81,4 +96,4 @@ await assert.rejects(() => renderLabelsPdf({
   labels: [{ ...labels[0], payload: { ...labels[0].payload, compactProductValue: 'A'.repeat(220) } }],
   template: { version: 4, widthMm: 101.6, heightMm: 50.8 },
 }), /too long to fit legibly within two lines/);
-console.log(JSON.stringify({ ok: true, results, preservedCopies: true, finishPrinted: true, renderedQrDecodeChecks: 8, oldTemplatesRejected: true, externalImagesRejected: true }, null, 2));
+console.log(JSON.stringify({ ok: true, results, preservedCopies: true, finishPrinted: true, renderedQrDecodeChecks: 12, incidentCheckedInAllFormats: true, oldTemplatesRejected: true, externalImagesRejected: true }, null, 2));

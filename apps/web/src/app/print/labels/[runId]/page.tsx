@@ -171,42 +171,56 @@ async function waitForPrintAssets() {
 
 // Fit real master values before printing rather than clipping text at fixed row edges.
 function fitStickerText() {
-  let invalid = false;
-  const fit = (node: HTMLElement, width: number, height: number) => {
+  let invalid = '';
+  const fit = (node: HTMLElement, width: number, height: number, minimum: number) => {
     const initial = Number(node.dataset.preferredSize || parseFloat(getComputedStyle(node).fontSize));
     node.dataset.preferredSize = String(initial);
     let size = initial;
     node.style.fontSize = `${size}px`;
     const exceeds = () => {
+      const box = node.getBoundingClientRect();
       const maxHeight = node.parentElement?.classList.contains('mp-v4-product') ? Math.min(height, parseFloat(getComputedStyle(node).lineHeight) * 2) : height;
-      return node.scrollWidth > width + 0.5 || node.getBoundingClientRect().height > maxHeight + 0.5 || node.scrollHeight > maxHeight + 0.5;
+      // scrollWidth/clientWidth are rounded to whole pixels, while mm-based row
+      // geometry is fractional. Compare against the element's own visible box
+      // so Safari cannot reject an otherwise fitting label at a rounding edge.
+      return box.width > width + 1 || node.scrollWidth > node.clientWidth + 1
+        || box.height > maxHeight + 1 || node.scrollHeight > node.clientHeight + 1;
     };
-    while (exceeds() && size > 9.34) { size = Math.max(9.34, size - .5); node.style.fontSize = `${size}px`; }
-    if (exceeds()) invalid = true;
+    while (exceeds() && size > minimum) { size = Math.max(minimum, size - .5); node.style.fontSize = `${size}px`; }
+    return !exceeds();
   };
   for (const label of document.querySelectorAll<HTMLElement>('.mp-v4-label-page')) {
+    const compact = label.classList.contains('is-compact');
+    const minimum = compact ? 6.7 : 9.34;
+    const labelCode = label.querySelector('.mp-v4-qr p')?.textContent?.trim() || 'This label';
     for (const row of label.querySelectorAll<HTMLElement>('.mp-v4-brand, .mp-v4-product, .mp-v4-finish')) {
       const text = row.querySelector<HTMLElement>('strong');
       const caption = row.querySelector<HTMLElement>('span');
       if (!text || !caption) continue;
       const style = getComputedStyle(row);
-      fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - parseFloat(style.rowGap));
+      if (!fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - parseFloat(style.rowGap), minimum)) {
+        invalid ||= `${labelCode}: ${caption.textContent?.trim().toLowerCase() || 'text'} does not fit on this sticker. Use the checked PDF layout or shorten its printable master value.`;
+      }
     }
     const sizeRow = label.querySelector<HTMLElement>('.mp-v4-size');
     const sizeText = sizeRow?.querySelector<HTMLElement>('strong');
     if (sizeRow && sizeText) {
       const style = getComputedStyle(sizeRow);
-      fit(sizeText, sizeRow.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), sizeRow.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
+      if (!fit(sizeText, sizeRow.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), sizeRow.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom), minimum)) {
+        invalid ||= `${labelCode}: tile size does not fit on this sticker. Use the checked PDF layout or shorten its printable master value.`;
+      }
     }
     const rate = label.querySelector<HTMLElement>('.mp-v4-rate');
     const amount = rate?.querySelector<HTMLElement>('strong');
     if (rate && amount) {
       const style = getComputedStyle(rate);
       const otherWidth = Array.from(rate.children).filter((node) => node !== amount).reduce((sum, node) => sum + node.getBoundingClientRect().width, 0);
-      fit(amount, rate.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - otherWidth - 2 * parseFloat(style.columnGap), rate.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
+      if (!fit(amount, rate.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - otherWidth - 2 * parseFloat(style.columnGap), rate.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom), compact ? 8 : 9.34)) {
+        invalid ||= `${labelCode}: rate does not fit on this sticker. Use the checked PDF layout or correct its master rate.`;
+      }
     }
   }
-  return invalid ? 'A product code, finish or rate cannot fit legibly on this sticker. Use the PDF download for its checked layout or correct the printable master value.' : '';
+  return invalid;
 }
 
 function StandardFourByTwoLabel({ label }: { label: any }) {
@@ -516,10 +530,10 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#e38a7f]">Sticker print - {run?.runNumber}</p>
             <h1 className="mt-2 text-2xl font-black !text-white">{historical ? 'Historical sticker preview' : `${bulkRun ? 'Bulk ' : ''}${compactLabel ? (portrait ? '45 × 60 mm portrait' : '60 × 45 mm landscape') : (portrait ? '2 × 4 inch portrait' : '4 × 2 inch landscape')} stickers`}</h1>
-            <p className="print-meta mt-1 text-sm">{labels.length} sticker pages · {uniqueLabelCount} unique labels · {sourceJobCount} jobs · {run?.copies || 1} copies each.</p>
+            <p className="print-meta mt-1 text-sm">{labels.length} sticker {labels.length === 1 ? 'page' : 'pages'} · {uniqueLabelCount} unique {uniqueLabelCount === 1 ? 'label' : 'labels'} · {sourceJobCount} {sourceJobCount === 1 ? 'job' : 'jobs'} · {run?.copies || 1} {Number(run?.copies || 1) === 1 ? 'copy' : 'copies'} each.</p>
           </div>
           <div className="flex shrink-0 flex-col gap-2">
-            <Button className="bg-[#a92f28] hover:bg-[#8d2722]" disabled={!canPrint} onClick={openPrintDialog}><Printer className="mr-2 h-4 w-4"/>{busy ? 'Preparing…' : `Print all ${labels.length} stickers`}</Button>
+            <Button className="bg-[#a92f28] hover:bg-[#8d2722]" disabled={!canPrint} onClick={openPrintDialog}><Printer className="mr-2 h-4 w-4"/>{busy ? 'Preparing…' : labels.length === 1 ? 'Print sticker' : `Print all ${labels.length} stickers`}</Button>
             {finishFourByTwo ? <Button variant="outline" className="bg-white text-black" disabled={!canPrint} onClick={downloadPdf}><Download className="mr-2 h-4 w-4"/>Download {labels.length}-page sticker PDF</Button> : null}
           </div>
         </div>
