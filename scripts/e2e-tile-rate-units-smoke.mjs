@@ -149,15 +149,13 @@ async function main() {
   near(quote.commercialTotal, Number(pieceLine.grossLineTotal) + Number(areaLine.grossLineTotal), 'Quote total reconciliation');
 
   const job = (await gql('mutation($input:InternalLabelJobInput!){createInternalLabelJob(input:$input)}', {
-    input: { productId: sqm.id, quantity: 1, template: 'shelf', priceUom: 'PC', newJob: true },
+    input: { productId: sqm.id, quantity: 1, template: 'shelf', newJob: true },
   }, token)).createInternalLabelJob;
   created.labelJobIds.push(job.id);
-  assert.equal(job.metadata?.priceSnapshot?.priceUom, 'PC');
-  near(job.metadata.priceSnapshot.mrpInclusive, 92.9, 'Converted PC label rate');
   const preview = (await gql('query($id:ID!){internalLabelPrintData(id:$id)}', { id: job.id }, token)).internalLabelPrintData;
   assert.equal(preview.labels.length, 1, 'Label preview must contain the newly created sticker.');
-  assert.equal(preview.labels[0].payload.priceUom, 'PC');
-  near(preview.labels[0].payload.mrpInclusive, 92.9, 'Label preview selected PC rate');
+  assert.equal(preview.labels[0].payload.priceUom, 'SQM');
+  near(preview.labels[0].payload.mrpInclusive, 100, 'Label preview uses the master SQM rate');
   const prepare = async (reason, copies) => (await gql(
     'mutation($input:InternalLabelPrintRunInput!){prepareInternalLabelPrintRun(input:$input)}',
     { input: { labelJobId: job.id, templateCode: template.code, labelSize: '4x2_in', copies, reason } }, token,
@@ -167,9 +165,9 @@ async function main() {
   const first = (await gql('query($id:ID!){internalLabelPrintRun(id:$id)}', { id: firstRun.id }, token)).internalLabelPrintRun;
   assert.equal(first.labels.length, 2);
   for (const label of first.labels) {
-    assert.equal(label.payload.priceUom, 'PC');
-    assert.equal(label.payload.priceRateBasis, 'PIECE');
-    near(label.payload.mrpInclusive, 92.9, 'First-run label snapshot');
+    assert.equal(label.payload.priceUom, 'SQM');
+    assert.equal(label.payload.priceRateBasis, 'AREA');
+    near(label.payload.mrpInclusive, 100, 'First-run master SQM rate');
     assert.equal(label.qrValue, `MP-LABEL:${label.labelCode}`);
   }
 
@@ -178,21 +176,21 @@ async function main() {
     input: { defaultMrpInclusive: 200, defaultNrpInclusive: 160, mrpChangeReason: 'Disposable unit smoke rate revision' },
   }, token);
   const savedFirst = (await gql('query($id:ID!){internalLabelPrintRun(id:$id)}', { id: firstRun.id }, token)).internalLabelPrintRun;
-  assert.equal(savedFirst.labels[0].payload.priceUom, 'PC');
-  near(savedFirst.labels[0].payload.mrpInclusive, 92.9, 'Saved first run after master rate revision');
+  assert.equal(savedFirst.labels[0].payload.priceUom, 'SQM');
+  near(savedFirst.labels[0].payload.mrpInclusive, 200, 'Reopened run shows the revised master rate');
   const reprintRun = await prepare('Reprint saved label after master rate revision', 1);
   created.labelRunIds.push(reprintRun.id);
   const reprint = (await gql('query($id:ID!){internalLabelPrintRun(id:$id)}', { id: reprintRun.id }, token)).internalLabelPrintRun;
   assert.equal(reprint.labels.length, 1);
-  assert.equal(reprint.labels[0].payload.priceUom, 'PC');
-  near(reprint.labels[0].payload.mrpInclusive, 92.9, 'Reprint must retain the original saved PC rate');
+  assert.equal(reprint.labels[0].payload.priceUom, 'SQM');
+  near(reprint.labels[0].payload.mrpInclusive, 200, 'Reprint must show the revised master SQM rate');
 
   console.log(JSON.stringify({
     ok: true, database: 'marble_tile_rate_test',
     quote: { status: quote.status, pcBoxes: pieceLine.qty, pcBilled: pieceLine.pricingQuantity,
       sqmBoxes: areaLine.qty, sqmBilled: areaLine.pricingQuantity, total: quote.commercialTotal },
-    label: { selectedUom: 'PC', rate: reprint.labels[0].payload.mrpInclusive, copiedPages: first.labels.length,
-      reprintSnapshotPreserved: true }, invalidMismatchRejected: true,
+    label: { masterUom: 'SQM', rate: reprint.labels[0].payload.mrpInclusive, copiedPages: first.labels.length,
+      reprintFollowsMaster: true }, invalidMismatchRejected: true,
   }, null, 2));
 }
 

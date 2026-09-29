@@ -27,12 +27,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { QueryErrorBanner } from "@/components/query-state";
-import {
-  TileLabelRateChoice,
-  defaultPriceUomOf,
-  tileLabelRateReady,
-  type TileLabelPriceUom,
-} from "@/components/tile-label-rate-choice";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
 const WORKSPACE = gql`
@@ -226,7 +220,6 @@ const emptyDisplay: any = {
   condition: "good",
   nextInspectionAt: "",
   status: "active",
-  labelPriceUom: "",
   labelProduct: null,
 };
 
@@ -326,7 +319,7 @@ export default function TileWorkspacePage() {
   const [displayPage, setDisplayPage] = useState(0);
   const [displayStatus, setDisplayStatus] = useState("all");
   const [display, setDisplay] = useState<any>(emptyDisplay);
-  const [displayLabelRecovery, setDisplayLabelRecovery] = useState<{ displayId: string; displayCode: string; priceUom: TileLabelPriceUom } | null>(null);
+  const [displayLabelRecovery, setDisplayLabelRecovery] = useState<{ displayId: string; displayCode: string } | null>(null);
   const [notice, setNotice] = useState("");
   const [uploading, setUploading] = useState(false);
   const [transitionReason, setTransitionReason] = useState(
@@ -378,7 +371,6 @@ export default function TileWorkspacePage() {
   const selectedVariant = (data?.tileVariantsPage?.items || []).find(
     (row: any) => row.id === display.productId,
   ) || display.labelProduct;
-  const displayLabelPriceUom: TileLabelPriceUom = display.labelPriceUom || defaultPriceUomOf(selectedVariant);
   const { data: lotData } = useQuery(LOTS, {
     variables: { search: selectedVariant?.sku || undefined },
     skip: !selectedVariant?.id,
@@ -596,10 +588,6 @@ export default function TileWorkspacePage() {
   }
   async function submitDisplay(event: any) {
     event.preventDefault();
-    if (!display.id && (!selectedVariant || !tileLabelRateReady(selectedVariant, displayLabelPriceUom))) {
-      setNotice("Review the tile MRP and governed coverage before registering its display and QR label.");
-      return;
-    }
     const input: any = {
       internalCode: display.internalCode,
       locationId: display.locationId || undefined,
@@ -646,13 +634,12 @@ export default function TileWorkspacePage() {
               quantity: 1,
               template: "display_sample",
               newJob: false,
-              priceUom: displayLabelPriceUom,
             },
           },
         });
         setDisplayLabelRecovery(null);
       } catch {
-        setDisplayLabelRecovery({ displayId: saved.id, displayCode: saved.sampleNumber || display.internalCode, priceUom: displayLabelPriceUom });
+        setDisplayLabelRecovery({ displayId: saved.id, displayCode: saved.sampleNumber || display.internalCode });
         setDisplay(emptyDisplay);
         setNotice(`${saved.sampleNumber || "Display"} was registered, but its QR label job needs retry. The asset is already in the register; do not register it again.`);
         await refetch();
@@ -676,7 +663,6 @@ export default function TileWorkspacePage() {
           quantity: 1,
           template: "display_sample",
           newJob: false,
-          priceUom: displayLabelRecovery.priceUom,
         },
       },
     });
@@ -1860,7 +1846,6 @@ export default function TileWorkspacePage() {
                       imageUrl: imageOf(row?.tileDesignMaster) || imageOf(row),
                       locationId: locations[0]?.id || "",
                       labelProduct: row || null,
-                      labelPriceUom: row ? defaultPriceUomOf(row) : "",
                     });
                   }}
                   className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
@@ -1875,15 +1860,6 @@ export default function TileWorkspacePage() {
                   ))}
                 </select>
               </label>
-              {!display.id && selectedVariant ? (
-                <TileLabelRateChoice
-                  product={selectedVariant}
-                  value={displayLabelPriceUom}
-                  onChange={(priceUom) => setDisplay({ ...display, labelPriceUom: priceUom })}
-                  id="tile-workspace-display-label-rate"
-                />
-              ) : null}
-              {!display.id && selectedVariant && !tileLabelRateReady(selectedVariant, displayLabelPriceUom) ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Review the tile MRP and governed coverage before registering this display and its QR label.</p> : null}
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
                 Display code
                 <Input
@@ -2008,7 +1984,6 @@ export default function TileWorkspacePage() {
                 type="submit"
                 disabled={
                   !display.productId ||
-                  (!display.id && (!selectedVariant || !tileLabelRateReady(selectedVariant, displayLabelPriceUom))) ||
                   !display.internalCode ||
                   createDisplayState.loading ||
                   updateDisplayState.loading ||

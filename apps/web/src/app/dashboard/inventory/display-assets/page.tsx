@@ -22,13 +22,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProductImageFrame } from "@/components/product-image-frame";
-import {
-  TileLabelRateChoice,
-  defaultPriceUomOf,
-  isTileProduct,
-  tileLabelRateReady,
-  type TileLabelPriceUom,
-} from "@/components/tile-label-rate-choice";
 import { QueryErrorBanner } from "@/components/query-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
@@ -180,8 +173,7 @@ export default function DisplayAssetsPage() {
   const [form, setForm] = useState<any>(blank);
   const [notice, setNotice] = useState("");
   const [formError, setFormError] = useState("");
-  const [requestedLabelPriceUom, setRequestedLabelPriceUom] = useState<TileLabelPriceUom | "">("");
-  const [labelRecovery, setLabelRecovery] = useState<{ displayId: string; displayCode: string; priceUom?: TileLabelPriceUom } | null>(null);
+  const [labelRecovery, setLabelRecovery] = useState<{ displayId: string; displayCode: string } | null>(null);
   const [reason, setReason] = useState(
     "Routine showroom display lifecycle update",
   );
@@ -219,7 +211,6 @@ export default function DisplayAssetsPage() {
     directProductData?.product ||
     products.find((row: any) => row.id === form.productId);
   const selectedProduct = productCandidate?.id === form.productId ? productCandidate : null;
-  const labelPriceUom = requestedLabelPriceUom || defaultPriceUomOf(selectedProduct);
   const selectedLot = lots.find((row: any) => row.id === form.sourceLotId);
   const locationOptions =
     sourceMode === "inventory" && selectedLot
@@ -273,7 +264,6 @@ export default function DisplayAssetsPage() {
   }, [form.locationId, form.sourceLotId, lots]);
 
   function chooseProduct(product: any) {
-    setRequestedLabelPriceUom("");
     setFormError("");
     setForm((current: any) => ({
       ...blank,
@@ -287,7 +277,6 @@ export default function DisplayAssetsPage() {
   }
   function clear() {
     setForm(blank);
-    setRequestedLabelPriceUom("");
     setFormError("");
     setProductSearch("");
     setLotSearch("");
@@ -295,10 +284,6 @@ export default function DisplayAssetsPage() {
   }
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (!form.id && isTileProduct(selectedProduct) && !tileLabelRateReady(selectedProduct, labelPriceUom)) {
-      setFormError("The selected tile rate cannot be printed. Check its Product Master MRP, pieces and area per pack.");
-      return;
-    }
     setFormError("");
     const common = {
       internalCode: form.internalCode,
@@ -343,7 +328,6 @@ export default function DisplayAssetsPage() {
               quantity: 1,
               template: "display_sample",
               newJob: false,
-              ...(isTileProduct(selectedProduct) ? { priceUom: labelPriceUom } : {}),
             },
           },
         });
@@ -352,7 +336,6 @@ export default function DisplayAssetsPage() {
         setLabelRecovery({
           displayId: saved.id,
           displayCode: saved.sampleNumber || form.internalCode,
-          priceUom: isTileProduct(selectedProduct) ? labelPriceUom : undefined,
         });
         setNotice(`${saved.sampleNumber || "Display"} was created, but its QR label job needs retry. The asset is already in the register; do not create it again.`);
         clear();
@@ -377,7 +360,6 @@ export default function DisplayAssetsPage() {
           quantity: 1,
           template: "display_sample",
           newJob: false,
-          ...(labelRecovery.priceUom ? { priceUom: labelRecovery.priceUom } : {}),
         },
       },
     });
@@ -583,8 +565,6 @@ export default function DisplayAssetsPage() {
                     </div>
                   </div>
                 ) : null}
-                {selectedProduct ? <TileLabelRateChoice product={selectedProduct} value={labelPriceUom} onChange={setRequestedLabelPriceUom} id="display-asset-label-rate" /> : null}
-                {isTileProduct(selectedProduct) && !tileLabelRateReady(selectedProduct, labelPriceUom) ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Review Product Master MRP and governed tile coverage before creating this asset and label.</p> : null}
               </>
             ) : (
               <div className="rounded-xl bg-[var(--bg-soft)] p-3 text-xs">
@@ -803,7 +783,6 @@ export default function DisplayAssetsPage() {
                 busy ||
                 !form.productId ||
                 (!form.id && !selectedProduct) ||
-                (!form.id && isTileProduct(selectedProduct) && !tileLabelRateReady(selectedProduct, labelPriceUom)) ||
                 !form.internalCode ||
                 !form.locationId ||
                 !form.displayZone.trim() ||

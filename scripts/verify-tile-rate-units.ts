@@ -179,105 +179,12 @@ test('changing a tile rate unit requires explicit values and records a governed 
   assert.equal(Number(history[0].newMrpInclusive), 100);
 });
 
-test('label creation saves the chosen tile unit and converted rate on job and instances', async () => {
-  const jobs: any[] = [];
-  const labels: any[] = [];
-  const tx = {
-    product: { findUnique: async () => sqmTile },
-    internalLabelJob: {
-      findMany: async () => [],
-      create: async ({ data }: any) => { jobs.push(data); return data; },
-      findUnique: async ({ where }: any) => ({ ...jobs.find((job) => job.id === where.id), instances: labels }),
-    },
-    internalLabelInstance: { create: async ({ data }: any) => { labels.push(data); return data; } },
-    sequenceCounter: {
-      upsert: async () => ({}),
-      update: async () => ({ value: 1 }),
-    },
-    auditEvent: { create: async () => ({}) },
-  };
-  const prisma = { $transaction: async (callback: (tx: any) => Promise<any>) => callback(tx) };
-  const service = new OperationsService(prisma as any, null as any);
-  const job = await service.createInternalLabelJob({
-    productId: sqmTile.id, quantity: 2, template: 'shelf', newJob: true, priceUom: 'PC',
-  }, 'test-actor');
-  assert.equal(job.metadata.priceSnapshot.sourcePriceUom, 'SQM');
-  assert.equal(job.metadata.priceSnapshot.priceUom, 'PC');
-  assert.equal(job.metadata.priceSnapshot.priceRateBasis, 'PIECE');
-  assert.equal(job.metadata.priceSnapshot.mrpInclusive, 92.9);
-  assert.equal(labels.length, 2);
-  for (const label of labels) assert.deepEqual(label.metadata.priceSnapshot, job.metadata.priceSnapshot);
-});
-
-test('an opening-stock label captures pending MRP once at first print preparation', async () => {
-  const product: any = { ...sqmTile, defaultMrpInclusive: 100 };
-  const job: any = {
-    id: 'opening-job', jobNumber: 'LB/2026/0099', sourceType: 'product',
-    metadata: { priceSnapshot: null },
-  };
-  const instance: any = {
-    id: 'opening-label', labelCode: 'LB/2026/0099-0001', labelJobId: job.id,
-    productId: product.id, product, labelJob: job, status: 'active', metadata: { priceSnapshot: null },
-    lot: null, displaySample: null,
-  };
-  job.instances = [instance];
-  const runs = new Map<string, any>();
-  let snapshotWrites = 0;
-  const template = {
-    code: 'thermal_4x2', version: 4, definition: { orientation: 'landscape' },
-    widthMm: 101.6, heightMm: 50.8, pageWidthMm: 101.6, pageHeightMm: 50.8,
-  };
-  const tx = {
-    product: { findUnique: async () => product },
-    internalLabelJob: {
-      findUnique: async () => job,
-      update: async ({ data }: any) => { snapshotWrites += 1; job.metadata = data.metadata; return job; },
-    },
-    internalLabelPrintRun: {
-      findMany: async () => [],
-      create: async ({ data }: any) => { runs.set(data.id, data); return data; },
-    },
-    sequenceCounter: { upsert: async () => ({}), update: async () => ({ value: 1 }) },
-    auditEvent: { create: async () => ({}) },
-  };
-  const prisma = {
-    $transaction: async (callback: (tx: any) => Promise<any>) => callback(tx),
-    internalLabelTemplate: { findFirst: async () => ({ ...template }), findUnique: async () => ({ ...template }) },
-    internalLabelPrintRun: { findUnique: async ({ where }: any) => runs.get(where.id) },
-    internalLabelInstance: { findMany: async () => [instance] },
-    productBrand: { findMany: async () => [] },
-  };
-  const service = new OperationsService(prisma as any, null as any);
-  const prepare = () => service.prepareInternalLabelPrintRun({
-    labelJobId: job.id, templateCode: template.code, labelSize: '4x2_in', copies: 1,
-    reason: 'Opening stock print',
-  }, 'test-actor');
-  const first = await prepare();
-  assert.equal(snapshotWrites, 1);
-  assert.equal(job.metadata.priceSnapshot.mrpInclusive, 100);
-  assert.equal(job.metadata.priceSnapshot.priceUom, 'SQM');
-  product.defaultMrpInclusive = 999;
-  product.priceRateBasis = 'PIECE';
-  product.priceUom = 'PC';
-  const second = await prepare();
-  assert.equal(snapshotWrites, 1, 'a later print must not overwrite the first captured rate');
-  for (const run of [first, second]) {
-    const opened = await service.internalLabelPrintRun(run.id);
-    assert.equal(opened.labels[0].payload.mrpInclusive, 100);
-    assert.equal(opened.labels[0].payload.priceUom, 'SQM');
-  }
-});
-
-test('reopening and copying a label run preserves its governed rate snapshot', async () => {
-  const product = { ...sqmTile, defaultMrpInclusive: 999, priceRateBasis: 'PIECE', priceUom: 'PC' };
-  const snapshot = {
-    mrpInclusive: 100, priceRateBasis: 'AREA', priceUom: 'SQM',
-    sourceMrpInclusive: 100, sourcePriceUom: 'SQM',
-  };
-  const job = { id: 'job-1', jobNumber: 'LB/2026/0001', sourceType: 'product', metadata: { priceSnapshot: snapshot } };
+test('stickers print the live master rate in the master rate unit', async () => {
+  const product: any = { ...sqmTile };
+  const job = { id: 'job-1', jobNumber: 'LB/2026/0001', sourceType: 'product', metadata: {} };
   const instance = {
     id: 'label-1', labelCode: 'LB/2026/0001-0001', labelJobId: job.id,
-    labelJob: job, product, status: 'active', metadata: { priceSnapshot: snapshot },
+    labelJob: job, product, status: 'active', metadata: {},
     lot: null, displaySample: null,
   };
   const run = {
@@ -295,15 +202,22 @@ test('reopening and copying a label run preserves its governed rate snapshot', a
     productBrand: { findMany: async () => [] },
   };
   const service = new OperationsService(prisma as any, null as any);
-  for (const currentMrp of [999, 1200]) {
-    product.defaultMrpInclusive = currentMrp;
+  const cases = [
+    { priceRateBasis: 'AREA', priceUom: 'SQM', mrp: 850, basis: 'AREA', uom: 'SQM' },
+    { priceRateBasis: 'PIECE', priceUom: 'PC', mrp: 1200, basis: 'PIECE', uom: 'PC' },
+    { priceRateBasis: 'AREA', priceUom: 'SQFT', mrp: 85, basis: 'AREA', uom: 'SQFT' },
+    { priceRateBasis: 'AREA', priceUom: 'M2', mrp: 90, basis: 'AREA', uom: 'SQM' },
+    { priceRateBasis: null, priceUom: null, mrp: 70, basis: 'AREA', uom: 'SQFT' },
+  ];
+  for (const row of cases) {
+    Object.assign(product, { priceRateBasis: row.priceRateBasis, priceUom: row.priceUom, defaultMrpInclusive: row.mrp });
     const rendered = await service.internalLabelPrintRun(run.id);
     assert.equal(rendered.labels.length, 2);
     assert.deepEqual(rendered.labels.map((label: any) => label.copyIndex), [0, 1]);
     for (const label of rendered.labels) {
-      assert.equal(label.payload.mrpInclusive, 100);
-      assert.equal(label.payload.priceRateBasis, 'AREA');
-      assert.equal(label.payload.priceUom, 'SQM');
+      assert.equal(label.payload.mrpInclusive, row.mrp, `${row.priceUom} master MRP must print unchanged`);
+      assert.equal(label.payload.priceRateBasis, row.basis);
+      assert.equal(label.payload.priceUom, row.uom, `${row.priceUom} master unit must print on the sticker`);
       assert.equal(label.qrValue, `MP-LABEL:${instance.labelCode}`);
       assert.match(label.qrDataUrl, /^data:image\/svg\+xml;base64,/);
     }
