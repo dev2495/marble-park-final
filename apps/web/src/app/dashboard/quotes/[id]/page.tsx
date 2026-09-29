@@ -9,6 +9,7 @@ import { AlertTriangle, ArrowLeft, BadgeIndianRupee, Building2, Download, ImageP
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { allocateQuoteDiscount, retailLadder, type DiscountMode } from '@/lib/quote-pricing';
+import { tilePriceBasis, tilePriceUom, tilePricingCoverage, tilePricingQuantity, tileStockUnitGeometry } from '@/lib/tile-rate';
 
 const QUOTE_DETAIL = gql`
   query QuoteDetail($id: ID!) {
@@ -56,7 +57,7 @@ function masterBrandCode(brands: any[], name: unknown) {
   return String(brands.find((brand: any) => String(brand.name || '').trim().toLowerCase() === normalized)?.code || '').trim();
 }
 function mrpUom(line: any) {
-  if (String(line.category || '').toLowerCase() === 'tiles' && String(line.priceRateBasis || line.rateBasis || '').toUpperCase() === 'AREA') return 'SQFT';
+  if (String(line.category || '').toLowerCase() === 'tiles') return tilePriceUom(line.pricingUom || line.priceUom);
   const basis = String(line.rateBasis || '').toUpperCase();
   if (basis === 'AREA') return String(line.pricingUom || line.salesUom || 'SQFT').toUpperCase();
   if (basis === 'PIECE') return 'PC';
@@ -65,7 +66,7 @@ function mrpUom(line: any) {
 function lineRate(line: any, taxMode: 'gst' | 'non_gst' = 'gst') {
   const qty = Number(line.qty || line.quantity || 0);
   const basis = String(line.priceRateBasis || line.rateBasis || 'BOX').toUpperCase();
-  const pricingQuantity = Number(line.pricingQuantity || (basis === 'AREA'
+  const pricingQuantity = Number(line.pricingQuantity || (String(line.category || '').toLowerCase() === 'tiles' ? tilePricingQuantity(line) : basis === 'AREA'
     ? qty * Number(line.coveragePerPack || 0)
     : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
   const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
@@ -109,13 +110,16 @@ function legacyNegotiatedRate(line: any, pricingQuantity: number) {
 
 function prepareLegacyLine(line: any, product: any) {
   const isTile = String(product?.category || line.category || '').toLowerCase() === 'tiles';
+  const tileUom = tilePriceUom(product?.priceUom || line.pricingUom);
   const basis = isTile
-    ? 'AREA'
+    ? tilePriceBasis(tileUom)
     : String(product?.priceRateBasis || line.priceRateBasis || line.rateBasis || 'BOX').toUpperCase().replace('PACK', 'BOX');
   const qty = Number(line.qty || line.quantity || 0);
-  const piecesPerPack = Number(product?.piecesPerPack || line.piecesPerPack || line.pcsPerBox || 1);
-  const coveragePerPack = Number(product?.coveragePerPack || line.coveragePerPack || 0);
-  const pricingQuantity = basis === 'AREA' ? qty * coveragePerPack : basis === 'PIECE' ? qty * piecesPerPack : qty;
+  const geometry = isTile && product ? tileStockUnitGeometry(product) : null;
+  const piecesPerPack = geometry?.piecesPerUnit ?? Number(product?.piecesPerPack || line.piecesPerPack || line.pcsPerBox || 1);
+  const coveragePerPack = geometry?.coveragePerUnitSqFt ?? Number(product?.coveragePerPack || line.coveragePerPack || 0);
+  const pricingCoveragePerPack = isTile ? tilePricingCoverage(coveragePerPack, tileUom) : coveragePerPack;
+  const pricingQuantity = basis === 'AREA' ? qty * pricingCoveragePerPack : basis === 'PIECE' ? qty * piecesPerPack : qty;
   const legacyRate = legacyNegotiatedRate(line, pricingQuantity);
   const masterNrp = Number(product?.defaultNrpInclusive || 0);
   const fallbackRate = legacyRate > 0 ? legacyRate : masterNrp;
@@ -136,11 +140,12 @@ function prepareLegacyLine(line: any, product: any) {
     floorPriceInclusive: product?.floorPriceInclusive == null ? line.floorPriceInclusive : Number(product.floorPriceInclusive),
     priceRateBasis: basis,
     rateBasis: basis,
-    pricingUom: isTile ? 'SQFT' : String(product?.priceUom || line.pricingUom || (basis === 'PIECE' ? 'PC' : product?.salesUom || product?.unit || line.unit || 'BOX')).toUpperCase(),
+    pricingUom: isTile ? tileUom : String(product?.priceUom || line.pricingUom || (basis === 'PIECE' ? 'PC' : product?.salesUom || product?.unit || line.unit || 'BOX')).toUpperCase(),
     inventoryUom: String(product?.purchaseUom || line.inventoryUom || line.purchaseUom || line.unit || 'BOX').toUpperCase(),
     piecesPerPack,
     pcsPerBox: piecesPerPack,
     coveragePerPack,
+    pricingCoveragePerPack,
     nrpMode: 'FIXED_NRP',
     nrpInput: fallbackRate > 0 ? fallbackRate : 0,
     specialMode: 'NONE',
@@ -336,7 +341,9 @@ export default function QuoteDetailPage() {
     if ('qty' in patch) {
       updated.quantity = updated.qty;
       const basis = String(updated.rateBasis || updated.priceRateBasis || '').toUpperCase();
-      updated.pricingQuantity = Number(updated.qty) * (basis === 'AREA' ? Number(updated.coveragePerPack || 0) : basis === 'PIECE' ? Number(updated.piecesPerPack || updated.pcsPerBox || 1) : 1);
+      updated.pricingQuantity = String(updated.category || '').toLowerCase() === 'tiles'
+        ? tilePricingQuantity(updated)
+        : Number(updated.qty) * (basis === 'AREA' ? Number(updated.coveragePerPack || 0) : basis === 'PIECE' ? Number(updated.piecesPerPack || updated.pcsPerBox || 1) : 1);
       updated.calculatedPacks = updated.qty;
     }
     return updated;
@@ -395,7 +402,7 @@ export default function QuoteDetailPage() {
       quoteType: quote.quoteType || 'cp_sanitary',
       saveAsDraft,
       architectId: selectedArchitectId || '',
-      lines: JSON.stringify(editLines.map((line) => { const rate = rateForLine(line); const isTile = String(line.category || '').toLowerCase() === 'tiles'; return { ...line, pricingVersion: 'unified_retail_v1', taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), priceRateBasis: isTile ? 'AREA' : line.priceRateBasis || line.rateBasis || 'BOX', pricingUom: isTile ? 'SQFT' : line.pricingUom, mrpInclusive: rate.mrpInclusive, mrpSource: 'PRODUCT_MASTER', nrpMode: rate.nrpMode, nrpInput: rate.nrpInput, nrpInclusive: rate.nrpInclusive, nrpExclusive: rate.nrpExclusive, specialMode: rate.specialMode, specialInput: rate.specialInput, specialRateInclusive: rate.specialRateInclusive, specialRateExclusive: rate.specialRateExclusive, pricingQuantity: rate.pricingQuantity, quoteDiscountMode: quoteDiscountType, quoteDiscountValue: Number(quoteDiscountValue || 0), quoteDiscountAllocatedInclusive: rate.quoteDiscountAllocatedInclusive, taxableValue: rate.taxableValue, taxAmount: rate.taxAmount, grossLineTotal: rate.grossAfterQuoteDiscount, total: rate.grossAfterQuoteDiscount }; })),
+      lines: JSON.stringify(editLines.map((line) => { const rate = rateForLine(line); const isTile = String(line.category || '').toLowerCase() === 'tiles'; return { ...line, pricingVersion: 'unified_retail_v1', taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), priceRateBasis: isTile ? tilePriceBasis(line.pricingUom) : line.priceRateBasis || line.rateBasis || 'BOX', pricingUom: line.pricingUom, mrpInclusive: rate.mrpInclusive, mrpSource: 'PRODUCT_MASTER', nrpMode: rate.nrpMode, nrpInput: rate.nrpInput, nrpInclusive: rate.nrpInclusive, nrpExclusive: rate.nrpExclusive, specialMode: rate.specialMode, specialInput: rate.specialInput, specialRateInclusive: rate.specialRateInclusive, specialRateExclusive: rate.specialRateExclusive, pricingQuantity: rate.pricingQuantity, quoteDiscountMode: quoteDiscountType, quoteDiscountValue: Number(quoteDiscountValue || 0), quoteDiscountAllocatedInclusive: rate.quoteDiscountAllocatedInclusive, taxableValue: rate.taxableValue, taxAmount: rate.taxAmount, grossLineTotal: rate.grossAfterQuoteDiscount, total: rate.grossAfterQuoteDiscount }; })),
     } } });
   };
 
@@ -569,9 +576,22 @@ export default function QuoteDetailPage() {
                   <p className="text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{line.sku || line.tileCode}{masterBrandCode(brands, line.brand) ? ` · ${masterBrandCode(brands, line.brand)}` : ''}</p>
                 </div>
                 <div className="space-y-2">
-                  {requestedQuantityLabel(line) ? <label className="block space-y-1"><span className="text-xs font-bold text-[var(--ink)]">Requested ({Number(line.requestedArea || 0) > 0 ? line.pricingUom || 'SQFT' : 'PC'})</span><input aria-label={`Requested quantity for ${line.name}`} disabled={commercialLocked} type="number" min="0.01" step="any" value={line.requestedArea || line.requestedPieces} onChange={event => { const value = Number(event.target.value); const areaBased = Number(line.requestedArea || 0) > 0; const packs = Math.ceil(value * (areaBased ? 1 + Number(line.wastagePercent || 0) / 100 : 1) / Number(areaBased ? line.coveragePerPack : line.piecesPerPack || line.pcsPerBox)); updateLine(index, { [areaBased ? 'requestedArea' : 'requestedPieces']: value, qty: packs, quantity: packs }); }} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black" /></label> : null}
+                  {((String(line.category || '').toLowerCase() === 'tiles') || requestedQuantityLabel(line)) ? (() => {
+                    const areaBased = String(line.category || '').toLowerCase() === 'tiles'
+                      ? tilePriceBasis(line.pricingUom) === 'AREA'
+                      : Number(line.requestedArea || 0) > 0;
+                    return <label className="block space-y-1">
+                      <span className="text-xs font-bold text-[var(--ink)]">Requested ({areaBased ? line.pricingUom || 'SQFT' : 'PC'})</span>
+                      <input aria-label={`Requested quantity for ${line.name}`} disabled={commercialLocked} type="number" min={areaBased ? '0.01' : '1'} step={areaBased ? 'any' : '1'} value={areaBased ? line.requestedArea ?? 0 : line.requestedPieces ?? 0} onChange={event => {
+                        const value = Number(event.target.value);
+                        const coverage = String(line.category || '').toLowerCase() === 'tiles' ? tilePricingCoverage(line.coveragePerPack, line.pricingUom) : Number(line.coveragePerPack || 0);
+                        const packs = Math.ceil(value * (areaBased ? 1 + Number(line.wastagePercent || 0) / 100 : 1) / Number(areaBased ? coverage : line.piecesPerPack || line.pcsPerBox));
+                        updateLine(index, { [areaBased ? 'requestedArea' : 'requestedPieces']: value, qty: packs, quantity: packs });
+                      }} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black" />
+                    </label>;
+                  })() : null}
                   <label className="block space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Qty ({line.inventoryUom || line.unit || 'PC'})</span><input aria-label={`Quantity for ${line.name}`} disabled={commercialLocked || Number(line.requestedArea || line.requestedPieces || 0) > 0} type="number" value={line.qty ?? line.quantity ?? 0} onChange={(event)=>updateLine(index,{qty:Number(event.target.value),quantity:Number(event.target.value)})} className="h-10 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-black disabled:cursor-not-allowed" /></label>
-                  {Number(line.coveragePerPack || 0) > 0 ? <p className="text-xs text-[var(--ink-3)]">Coverage: {(Number(line.qty ?? line.quantity ?? 0) * Number(line.coveragePerPack)).toFixed(2)} {line.pricingUom || 'SQFT'}{requestedQuantityLabel(line) ? ' · rounded to whole packs' : ''}</p> : null}
+                  {Number(line.coveragePerPack || 0) > 0 ? <p className="text-xs text-[var(--ink-3)]">Coverage: {(Number(line.qty ?? line.quantity ?? 0) * (String(line.category || '').toLowerCase() === 'tiles' ? tilePricingCoverage(line.coveragePerPack, line.pricingUom === 'SQM' ? 'SQM' : 'SQFT') : Number(line.coveragePerPack))).toFixed(line.pricingUom === 'SQM' ? 3 : 2)} {String(line.category || '').toLowerCase() === 'tiles' && line.pricingUom === 'PC' ? 'SQFT' : line.pricingUom || 'SQFT'}{requestedQuantityLabel(line) ? ' · rounded to whole packs' : ''}</p> : null}
                 </div>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">MRP / {rate.mrpUom}</span><input data-pricing-error={rate.mrpMissing || !rate.mrpValid ? 'true' : undefined} readOnly tabIndex={-1} aria-label={`MRP per ${rate.mrpUom} for ${line.name}`} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-xl border px-3 text-sm font-black ${rate.mrpMissing || !rate.mrpValid ? 'border-red-300 bg-red-50 text-red-950' : 'border-emerald-300 bg-emerald-50 text-emerald-950'}`} /><span className="block text-[10px] font-semibold text-[var(--ink-5)]">Tax-inclusive · Product Master snapshot</span></label>
                 <label className="space-y-1"><span className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">Base pricing → NRP</span><div className="grid grid-cols-[1fr_6.2rem] gap-1"><input data-pricing-error={discountIssues.some((issue) => issue.line === line && issue.field === 'base') ? 'true' : undefined} disabled={commercialLocked} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} value={line.nrpInput ?? 0} onChange={(event)=>updateLine(index,{nrpInput:event.target.value,pricingVersion:'unified_retail_v1'})} className={`h-10 min-w-0 rounded-xl border bg-[var(--surface)] px-2 text-sm font-black disabled:opacity-55 ${discountIssues.some((issue) => issue.line === line && issue.field === 'base') ? 'border-red-300 bg-red-50' : 'border-[var(--line)]'}`}/><select disabled={commercialLocked} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(index,{nrpMode:event.target.value,nrpInput:0,pricingVersion:'unified_retail_v1'})} className="h-10 rounded-xl border border-[var(--line)] bg-white px-1 text-[10px] font-black"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><span className="block text-[10px] font-black text-[#8f2f28]">NRP {money(rate.nrpInclusive)}</span></label>

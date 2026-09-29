@@ -121,61 +121,83 @@ function Field({ caption, value, style, fontSize = 10, compact = false }) {
   );
 }
 
-function Sticker({ label, geometry }) {
+// Die-cut thermal rolls drift by up to ~1 mm and most heads cannot print the
+// outermost edge, so every printed mark stays inside this quiet margin.
+const SAFE_MARGIN_MM = { standard: 2.6, compact: 1.8 };
+const MAX_ALIGNMENT_OFFSET_MM = 6;
+
+function alignmentOffset(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.round(Math.min(MAX_ALIGNMENT_OFFSET_MM, Math.max(-MAX_ALIGNMENT_OFFSET_MM, number)) * 10) / 10;
+}
+
+// Row heights (mm) inside the safe area. Each set sums below its body height,
+// so a sticker can never overflow onto a second physical label.
+const LAYOUT = {
+  standardLandscape: { header: 4.2, qrPanel: 37.5, qr: 33.5, brand: 6.8, product: 14.6, productText: 11.8, finish: 6.4, codeFont: 6.2 },
+  standardPortrait: { header: 4.2, qrPanel: 43, qr: 39, brand: 7, product: 15.4, productText: 12.4, finish: 6.8, codeFont: 6.2 },
+  compactLandscape: { header: 3.6, qrPanel: 25, qr: 22.6, brand: 5, product: 12, productText: 9.4, finish: 5, codeFont: 4.2 },
+  compactPortrait: { header: 3.4, qrPanel: 24.4, qr: 21.4, brand: 4.8, product: 10, productText: 7.6, finish: 4.8, codeFont: 4.1 },
+};
+
+function Sticker({ label, geometry, offset }) {
   const { width, height, landscape, compact } = geometry;
+  const layout = LAYOUT[`${compact ? 'compact' : 'standard'}${landscape ? 'Landscape' : 'Portrait'}`];
   const payload = label.payload;
   const product = clean(payload.compactProductValue || payload.productCode || payload.internalCode || payload.sku).toUpperCase();
   const tileSize = compactTileSize(payload);
   const brand = clean(payload.governedBrandCode || payload.brandCode).toUpperCase() || 'PENDING';
   const finish = clean(payload.finish).toUpperCase() || 'NOT SET';
-  const pagePadding = compact ? 1.2 : 1.8;
-  const innerWidth = width - pagePadding * 2;
+  const safe = compact ? SAFE_MARGIN_MM.compact : SAFE_MARGIN_MM.standard;
+  const innerWidth = width - safe * 2;
+  const innerHeight = height - safe * 2;
+  const headerGap = compact ? 0.5 : 0.7;
+  const bodyHeight = innerHeight - layout.header - headerGap;
+  const detailPad = compact ? 1 : 1.8;
+  const detailWidth = mm(landscape ? innerWidth - layout.qrPanel - detailPad : innerWidth);
   const productFont = productFontSize(product, landscape);
-  const qrPanelSize = compact ? (landscape ? 28.4 : 25) : (landscape ? 40.4 : 48);
-  const detailWidth = mm(landscape ? innerWidth - qrPanelSize : innerWidth);
-  const productHeight = compact ? (landscape ? 11 : 8.5) : (landscape ? 13.5 : 13.2);
-  const productFit = fitText(product, detailWidth, mm(productHeight), compact ? Math.min(productFont, landscape ? 10 : 9) : productFont, 2, compact ? 5 : 7);
+  const productFit = fitText(product, detailWidth, mm(layout.productText), compact ? Math.min(productFont, landscape ? 10 : 9) : Math.min(productFont, 13), 2, compact ? 5 : 7);
   const brandWidth = tileSize ? detailWidth * 0.36 : detailWidth;
-  const brandFit = fitText(brand, brandWidth, mm(compact ? 3.7 : 4.5), brand.length > 20 ? (compact ? 7 : 9) : (compact ? 8 : 11), Number.POSITIVE_INFINITY, compact ? 5 : 7);
-  const sizeFit = tileSize ? fitText(tileSize, detailWidth * 0.64 - mm(1), mm(compact ? 4.5 : 6), compact ? 7 : 10, 1, compact ? 5 : 7) : null;
-  const finishFit = fitText(finish, detailWidth, mm(compact ? 3.5 : 4.2), finish.length > 35 ? (compact ? 7 : 8) : (compact ? 7.5 : 9), Number.POSITIVE_INFINITY, compact ? 5 : 7);
+  const brandFit = fitText(brand, brandWidth, mm(compact ? 3.4 : 4.3), brand.length > 20 ? (compact ? 7 : 9) : (compact ? 8 : 11), Number.POSITIVE_INFINITY, compact ? 5 : 7);
+  const sizeFit = tileSize ? fitText(tileSize, detailWidth * 0.64 - mm(1), mm(compact ? 4.2 : 5.6), compact ? 7 : 10, 1, compact ? 5 : 7) : null;
+  const finishFit = fitText(finish, detailWidth, mm(compact ? 3.2 : 4), finish.length > 35 ? (compact ? 7 : 8) : (compact ? 7.5 : 9), Number.POSITIVE_INFINITY, compact ? 5 : 7);
   const price = `Rs. ${rateText(payload.mrpInclusive)}`;
-  const rateFont = singleLineFont(price, detailWidth - mm(compact ? 6 : 9), compact ? 12 : 20, compact ? 6 : 8);
-  const qrSize = compact ? (landscape ? 26.2 : 22.8) : (landscape ? 37.8 : 42);
-  const headerHeight = compact ? 4.2 : 4.4;
-  const bodyHeight = height - pagePadding * 2 - headerHeight - 0.8;
+  const rateFont = singleLineFont(price, detailWidth - mm(compact ? 6 : 9), compact ? 11.5 : 19, compact ? 6 : 8);
   const bodyStyle = landscape
     ? { flexDirection: 'row', height: mm(bodyHeight) }
     : { flexDirection: 'column', height: mm(bodyHeight) };
   const detailsStyle = landscape
-    ? { width: mm(innerWidth - qrPanelSize), paddingLeft: mm(compact ? 1 : 2), borderLeftWidth: 0.65, borderColor: '#111111' }
-    : { width: '100%', height: mm(bodyHeight - qrPanelSize), paddingTop: mm(compact ? 0.6 : 1.3), borderTopWidth: 0.65, borderColor: '#111111' };
+    ? { width: mm(innerWidth - layout.qrPanel), height: '100%', paddingLeft: mm(detailPad), borderLeftWidth: 0.65, borderColor: '#111111', justifyContent: 'space-between' }
+    : { width: '100%', height: mm(bodyHeight - layout.qrPanel), paddingTop: mm(compact ? 0.5 : 1.1), borderTopWidth: 0.65, borderColor: '#111111', justifyContent: 'space-between' };
   return e(Page, {
     key: `${label.id || label.labelCode}:${label.copyIndex || 0}`,
     size: [mm(width), mm(height)], wrap: false,
-    style: { width: mm(width), height: mm(height), minHeight: mm(height), maxHeight: mm(height), padding: mm(pagePadding), backgroundColor: '#ffffff', color: '#111111', fontFamily: 'Helvetica' },
+    style: { width: mm(width), height: mm(height), minHeight: mm(height), maxHeight: mm(height), padding: 0, backgroundColor: '#ffffff', color: '#111111', fontFamily: 'Helvetica' },
   },
-  e(View, { wrap: false, style: { width: mm(innerWidth), height: mm(compact ? height - pagePadding * 2 : height - 3.6) } },
-    e(View, { style: { height: mm(headerHeight), borderBottomWidth: 0.65, borderColor: '#111111', marginBottom: mm(0.8), flexDirection: 'row', alignItems: 'center' } },
-      e(Text, { style: { fontSize: compact ? 5.2 : 6.5, fontFamily: 'Helvetica-Bold', letterSpacing: compact ? 0.6 : 1 } }, 'MP  MARBLE PARK'),
+  // Absolute placement lets a per-printer alignment offset move the whole
+  // design without changing its size or reflowing any field.
+  e(View, { wrap: false, style: { position: 'absolute', left: mm(safe + offset.x), top: mm(safe + offset.y), width: mm(innerWidth), height: mm(innerHeight) } },
+    e(View, { style: { height: mm(layout.header), borderBottomWidth: 0.65, borderColor: '#111111', marginBottom: mm(headerGap), flexDirection: 'row', alignItems: 'center' } },
+      e(Text, { style: { fontSize: compact ? 5 : 6.3, fontFamily: 'Helvetica-Bold', letterSpacing: compact ? 0.6 : 1 } }, 'MP  MARBLE PARK'),
     ),
     e(View, { style: bodyStyle },
-      e(View, { style: { width: landscape ? mm(qrPanelSize) : '100%', height: landscape ? '100%' : mm(qrPanelSize), alignItems: 'center', justifyContent: 'center', paddingRight: landscape ? mm(compact ? .6 : 1.2) : 0 } },
-        e(Image, { src: { data: label.qrPng, format: 'png' }, style: { width: mm(qrSize), height: mm(qrSize) } }),
-        e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: compact ? 4.3 : 6.5, marginTop: mm(compact ? 0.25 : 0.5), textAlign: 'center' } }, clean(label.labelCode)),
+      e(View, { style: { width: landscape ? mm(layout.qrPanel) : '100%', height: landscape ? '100%' : mm(layout.qrPanel), alignItems: 'center', justifyContent: 'center', paddingRight: landscape ? mm(compact ? .5 : 1) : 0 } },
+        e(Image, { src: { data: label.qrPng, format: 'png' }, style: { width: mm(layout.qr), height: mm(layout.qr) } }),
+        e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: layout.codeFont, marginTop: mm(compact ? 0.25 : 0.45), textAlign: 'center' } }, clean(label.labelCode)),
       ),
       e(View, { style: detailsStyle },
-        e(View, { style: { height: mm(compact ? 5 : 7.5), flexDirection: 'row', alignItems: 'center' } },
-          e(Field, { caption: 'BRAND', value: brandFit.text, fontSize: brandFit.fontSize, compact, style: { width: brandWidth, height: mm(compact ? 5 : 7.5) } }),
+        e(View, { style: { height: mm(layout.brand), flexDirection: 'row', alignItems: 'center' } },
+          e(Field, { caption: 'BRAND', value: brandFit.text, fontSize: brandFit.fontSize, compact, style: { width: brandWidth, height: mm(layout.brand) } }),
           sizeFit ? e(Text, { style: { width: detailWidth * 0.64, paddingLeft: mm(1), fontFamily: 'Helvetica-Bold', fontSize: sizeFit.fontSize, textAlign: 'right', lineHeight: 1.1 } }, sizeFit.text) : null,
         ),
-        e(Field, { caption: 'PRODUCT', value: productFit.text, fontSize: productFit.fontSize, compact, style: { height: mm(compact ? productHeight : (landscape ? 16.5 : 16.2)) } }),
-        e(Field, { caption: 'FINISH', value: finishFit.text, fontSize: finishFit.fontSize, compact, style: { height: mm(compact ? 5 : 7), paddingTop: mm(compact ? .1 : 0.3) } }),
-        e(View, { style: { borderTopWidth: 0.8, borderColor: '#111111', paddingTop: mm(0.9), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' } },
+        e(Field, { caption: 'PRODUCT', value: productFit.text, fontSize: productFit.fontSize, compact, style: { height: mm(layout.product) } }),
+        e(Field, { caption: 'FINISH', value: finishFit.text, fontSize: finishFit.fontSize, compact, style: { height: mm(layout.finish) } }),
+        e(View, { style: { borderTopWidth: 0.8, borderColor: '#111111', paddingTop: mm(compact ? 0.5 : 0.8), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' } },
           e(Text, { style: { fontSize: compact ? 4.2 : 5.8, fontFamily: 'Helvetica-Bold', letterSpacing: compact ? .35 : 0.7 } }, 'RATE'),
           e(View, { style: { alignItems: 'flex-end' } },
             e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: rateFont, lineHeight: 1 } }, price),
-            e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: compact ? 5 : 7, marginTop: mm(compact ? .2 : 0.4) } }, `/${clean(payload.priceUom).toUpperCase()}`),
+            e(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: compact ? 4.8 : 6.8, marginTop: mm(compact ? .15 : 0.3) } }, `/${clean(payload.priceUom).toUpperCase()}`),
           ),
         ),
       ),
@@ -183,8 +205,9 @@ function Sticker({ label, geometry }) {
   ));
 }
 
-async function renderLabelsPdf(run) {
+async function renderLabelsPdf(run, options = {}) {
   const geometry = assertRunReady(run);
+  const offset = { x: alignmentOffset(options.offsetXMm), y: alignmentOffset(options.offsetYMm) };
   const qrCache = new Map();
   // Copies share one converted image; serial conversion bounds native image memory.
   for (const label of run.labels) {
@@ -192,7 +215,7 @@ async function renderLabelsPdf(run) {
   }
   const labels = run.labels.map((label) => ({ ...label, qrPng: qrCache.get(label.qrDataUrl) }));
   return renderToBuffer(e(Document, { title: `Marble Park stickers ${clean(run.runNumber)}`, author: 'Marble Park', creator: 'Marble Park Retail OS' },
-    ...labels.map((label, index) => e(Sticker, { key: `${label.id || label.labelCode}:${index}`, label, geometry })),
+    ...labels.map((label, index) => e(Sticker, { key: `${label.id || label.labelCode}:${index}`, label, geometry, offset })),
   ));
 }
 
@@ -215,10 +238,12 @@ async function fetchRun(id, apiUrl) {
 async function main() {
   const [, , id, requestUrl, apiUrl] = process.argv;
   if (!id || !requestUrl || !apiUrl) throw new Error('Usage: render-labels-pdf.cjs <runId> <requestUrl> <apiUrl>');
-  process.stdout.write(await renderLabelsPdf(await fetchRun(id, apiUrl)));
+  // dx/dy are this workstation's printer alignment (mm, right/down positive).
+  const params = new URL(requestUrl).searchParams;
+  process.stdout.write(await renderLabelsPdf(await fetchRun(id, apiUrl), { offsetXMm: params.get('dx'), offsetYMm: params.get('dy') }));
 }
 
-module.exports = { assertRunReady, renderLabelsPdf };
+module.exports = { assertRunReady, renderLabelsPdf, SAFE_MARGIN_MM, MAX_ALIGNMENT_OFFSET_MM };
 if (require.main === module) {
   main().catch((error) => {
     console.error(error?.stack || error?.message || error);

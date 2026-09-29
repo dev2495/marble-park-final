@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { ArrowLeft, CheckCircle2, Download, Printer, XCircle } from 'lucide-react';
@@ -19,6 +19,23 @@ const LANDSCAPE_WIDTH_MM = 101.6;
 const LANDSCAPE_HEIGHT_MM = 50.8;
 const COMPACT_WIDTH_MM = 60;
 const COMPACT_HEIGHT_MM = 45;
+const MAX_ALIGNMENT_MM = 6;
+
+// Printer alignment belongs to the workstation (its printer, driver and roll),
+// not to the label, so it is remembered in this browser only.
+function alignmentKey(size: string, portrait: boolean) {
+  return `mp-label-alignment:${size}:${portrait ? 'portrait' : 'landscape'}`;
+}
+function readAlignment(key: string) {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(key) || '{}');
+    return { dx: clampAlignment(saved.dx), dy: clampAlignment(saved.dy) };
+  } catch { return { dx: 0, dy: 0 }; }
+}
+function clampAlignment(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(Math.min(MAX_ALIGNMENT_MM, Math.max(-MAX_ALIGNMENT_MM, number)) * 10) / 10 : 0;
+}
 
 function money(value: unknown) {
   return Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
@@ -290,6 +307,10 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
   const [nextCopies, setNextCopies] = useState('1');
   const [nextReason, setNextReason] = useState('Correct printer layout or reprint labels');
   const [cancelReason, setCancelReason] = useState('Browser print dialog cancelled or printer did not complete');
+  const [alignment, setAlignment] = useState({ dx: 0, dy: 0 });
+  const [pdfUrl, setPdfUrl] = useState('');
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const pdfFrame = useRef<HTMLIFrameElement>(null);
   const { data, loading, error } = useQuery(RUN, { variables: { id: runId }, fetchPolicy: 'network-only' });
   const [confirm, confirmState] = useMutation(CONFIRM, { onCompleted: () => setDecision('confirmed') });
   const [cancel, cancelState] = useMutation(CANCEL, { onCompleted: () => setDecision('cancelled') });
@@ -323,6 +344,37 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     setDecision('');
     setPrintError('');
   }, [runId, run?.id, run?.copies, portrait]);
+  const alignKey = alignmentKey(currentLabelSize, portrait);
+  const pdfPrintable = Boolean(run && labels.length && !error && !settled && finishFourByTwo);
+  useEffect(() => { setAlignment(readAlignment(alignKey)); }, [alignKey]);
+  // The exact-size PDF is the only print source for current stickers. Browser
+  // HTML printing lets Windows label drivers rotate landscape pages across two
+  // stickers, so the preview and the print both use this one file.
+  useEffect(() => {
+    if (!pdfPrintable) return;
+    let active = true;
+    let url = '';
+    const timer = setTimeout(async () => {
+      setPdfLoading(true); setPrintError('');
+      try {
+        const response = await fetch(`/api/pdf/labels/${encodeURIComponent(runId)}?dx=${alignment.dx}&dy=${alignment.dy}`, { cache: 'no-store' });
+        if (!response.ok || !response.headers.get('content-type')?.includes('application/pdf')) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error || 'Sticker PDF could not be generated. Refresh this page and try again.');
+        }
+        url = URL.createObjectURL(await response.blob());
+        if (active) setPdfUrl(url); else URL.revokeObjectURL(url);
+      } catch (cause) {
+        if (active) { setPdfUrl(''); setPrintError(cause instanceof Error ? cause.message : 'Sticker PDF could not be generated.'); }
+      } finally { if (active) setPdfLoading(false); }
+    }, 350);
+    return () => { active = false; clearTimeout(timer); if (url) setTimeout(() => URL.revokeObjectURL(url), 60000); };
+  }, [pdfPrintable, runId, alignment.dx, alignment.dy]);
+  function changeAlignment(axis: 'dx' | 'dy', value: string) {
+    const next = { ...alignment, [axis]: clampAlignment(value) };
+    setAlignment(next);
+    try { window.localStorage.setItem(alignKey, JSON.stringify(next)); } catch { /* alignment still applies for this visit */ }
+  }
   useEffect(() => {
     let active = true;
     document.fonts.ready.then(() => { if (active) fitStickerText(); });
@@ -476,6 +528,20 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     if (!canPrint) return;
     setPrintError(''); setBusy(true);
     try {
+      if (finishFourByTwo) {
+        if (!pdfUrl) throw new Error('The sticker PDF is still being prepared. Wait for the preview, then print.');
+        setDialogOpened(true);
+        const frame = pdfFrame.current?.contentWindow;
+        const safari = /^((?!chrome|android|crios|edg).)*safari/i.test(navigator.userAgent);
+        try {
+          if (!frame || safari) throw new Error('open');
+          frame.focus(); frame.print();
+        } catch {
+          // Some browsers cannot print an embedded PDF; its own viewer can.
+          if (!window.open(pdfUrl, '_blank')) throw new Error('Allow pop-ups for this site, or use Download PDF and print it at 100% scale.');
+        }
+        return;
+      }
       await waitForPrintAssets();
       setDialogOpened(true);
       window.print();
@@ -487,16 +553,19 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     if (!canPrint || !finishFourByTwo) return;
     setPrintError(''); setBusy(true);
     try {
-      const response = await fetch(`/api/pdf/labels/${encodeURIComponent(runId)}?download=1`);
-      if (!response.ok || !response.headers.get('content-type')?.includes('application/pdf')) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.error || 'Sticker PDF could not be generated. Refresh this preview and try again.');
+      let url = pdfUrl;
+      if (!url) {
+        const response = await fetch(`/api/pdf/labels/${encodeURIComponent(runId)}?download=1&dx=${alignment.dx}&dy=${alignment.dy}`);
+        if (!response.ok || !response.headers.get('content-type')?.includes('application/pdf')) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error || 'Sticker PDF could not be generated. Refresh this preview and try again.');
+        }
+        url = URL.createObjectURL(await response.blob());
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
       }
-      const url = URL.createObjectURL(await response.blob());
       const link = document.createElement('a');
       link.href = url; link.download = `MarblePark_Labels_${run.runNumber.replaceAll('/', '-')}.pdf`;
       document.body.appendChild(link); link.click(); link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
       setDialogOpened(true);
     } catch (cause) { setPrintError(cause instanceof Error ? cause.message : 'Sticker PDF download failed.'); }
     finally { setBusy(false); }
@@ -533,17 +602,25 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
             <p className="print-meta mt-1 text-sm">{labels.length} sticker {labels.length === 1 ? 'page' : 'pages'} · {uniqueLabelCount} unique {uniqueLabelCount === 1 ? 'label' : 'labels'} · {sourceJobCount} {sourceJobCount === 1 ? 'job' : 'jobs'} · {run?.copies || 1} {Number(run?.copies || 1) === 1 ? 'copy' : 'copies'} each.</p>
           </div>
           <div className="flex shrink-0 flex-col gap-2">
-            <Button className="bg-[#a92f28] hover:bg-[#8d2722]" disabled={!canPrint} onClick={openPrintDialog}><Printer className="mr-2 h-4 w-4"/>{busy ? 'Preparing…' : labels.length === 1 ? 'Print sticker' : `Print all ${labels.length} stickers`}</Button>
+            <Button className="bg-[#a92f28] hover:bg-[#8d2722]" disabled={!canPrint || (finishFourByTwo && !pdfUrl)} onClick={openPrintDialog}><Printer className="mr-2 h-4 w-4"/>{busy || (finishFourByTwo && pdfLoading && !pdfUrl) ? 'Preparing…' : labels.length === 1 ? 'Print sticker' : `Print all ${labels.length} stickers`}</Button>
             {finishFourByTwo ? <Button variant="outline" className="bg-white text-black" disabled={!canPrint} onClick={downloadPdf}><Download className="mr-2 h-4 w-4"/>Download {labels.length}-page sticker PDF</Button> : null}
           </div>
         </div>
         <div className="print-steps mt-4 grid gap-3 rounded-xl p-4 text-xs sm:grid-cols-4">
           <p><b>Printer paper size</b><br/>{pageWidth} × {pageHeight} mm<br/>{compactLabel ? 'Compact 60 × 45 mm stock' : (portrait ? '2 in wide × 4 in feed' : '4 in wide × 2 in feed')}</p>
           <p><b>Orientation</b><br/>{portrait ? 'Portrait' : 'Landscape'}<br/>Change the run setup below, not only the printer dialog.</p>
-          <p><b>Scaling</b><br/>100% / Actual size<br/>Margins none; headers off.</p>
+          <p><b>Scaling</b><br/>100% / Actual size (never Fit)<br/>Margins none; auto-rotate off.</p>
           <p><b>All stickers together</b><br/>All pages; one page per sheet.<br/>Printer copies = 1 (copies are already included).</p>
         </div>
-        <p className="print-meta mt-3 text-xs leading-5">If a label crosses a gap, stop the printer. Set its custom paper size to match this run and calibrate gap detection. The PDF contains one exact-size page per sticker.</p>
+        <p className="print-meta mt-3 text-xs leading-5">Printing uses the exact-size PDF shown below: one page per sticker. In the printer&apos;s own Preferences set the paper to {pageWidth} × {pageHeight} mm and run gap calibration once. If a sticker crosses a gap, stop the printer and cancel this run.</p>
+        {pdfPrintable ? <div className="mt-4 rounded-xl border border-white/15 p-4">
+          <p className="text-sm font-bold">Printer alignment on this computer</p>
+          <p className="print-meta mt-1 text-xs leading-5">If text is cut at an edge, move the design the other way. Example: cut at the top/left → set Down +2 and Right +2, then print one test sticker. Saved in this browser for the {currentLabelSize === '60x45_mm' ? '60 × 45 mm' : '4 × 2 inch'} {portrait ? 'portrait' : 'landscape'} roll.</p>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-xs sm:max-w-md">
+            <label>Right (+) / left (−), mm<input aria-label="Move sticker right in millimetres" type="number" min={-MAX_ALIGNMENT_MM} max={MAX_ALIGNMENT_MM} step={0.5} value={alignment.dx} onChange={(event) => changeAlignment('dx', event.target.value)} className="mt-1 h-10 w-full rounded-md bg-white px-3 text-sm text-black"/></label>
+            <label>Down (+) / up (−), mm<input aria-label="Move sticker down in millimetres" type="number" min={-MAX_ALIGNMENT_MM} max={MAX_ALIGNMENT_MM} step={0.5} value={alignment.dy} onChange={(event) => changeAlignment('dy', event.target.value)} className="mt-1 h-10 w-full rounded-md bg-white px-3 text-sm text-black"/></label>
+          </div>
+        </div> : null}
         {historical ? <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-950">This saved run uses an older fixed layout. Create a new run below for finish, correct orientation and multi-page PDF.</p> : null}
         {printError ? <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-900">{printError}</p> : null}
         {dialogOpened && !settled ? <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-950"><p className="font-bold">Did every sticker print correctly?</p><p className="mt-1 text-xs">Downloading is not confirmation. Check the physical stickers and scan a QR before confirming. Cancel if output was clipped, incomplete or did not print.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><Button disabled={confirmState.loading || cancelState.loading} onClick={() => { void confirm({ variables: { id: runId } }).catch(() => {}); }}><CheckCircle2 className="mr-2 h-4 w-4"/>Confirm printed</Button><input aria-label="Print cancellation reason" value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-blue-200 bg-white px-3 text-sm"/><Button variant="outline" disabled={cancelState.loading || confirmState.loading || !cancelReason.trim()} onClick={() => { void cancel({ variables: { id: runId, reason: cancelReason } }).catch(() => {}); }}><XCircle className="mr-2 h-4 w-4"/>Cancel / failed</Button></div></div> : null}
@@ -561,6 +638,9 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
         </details> : null}
       </div>
     </section>
-    {finishFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <FinishFourByTwoLabelV4 key={`${label.id}-${label.copyIndex}-${index}`} label={label} portrait={portrait} compact={compactLabel}/>)}</section> : compactPortraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <CompactPortraitFourByTwoLabelV3 key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : portraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <PortraitFourByTwoLabelV2 key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : standardFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <StandardFourByTwoLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : <section className="label-sheet mx-auto grid bg-white shadow-xl" style={{ width: `${pageWidth}mm`, minHeight: `${pageHeight}mm`, gridTemplateColumns: `repeat(${columns}, ${Number(template.widthMm || 70)}mm)`, gridAutoRows: `${Number(template.heightMm || 37)}mm`, columnGap: `${Number(template.gapXMm || 0)}mm`, rowGap: `${Number(template.gapYMm || 0)}mm`, padding: `${Number(template.marginTopMm || 0)}mm ${Number(template.marginRightMm || 0)}mm ${Number(template.marginBottomMm || 0)}mm ${Number(template.marginLeftMm || 0)}mm` }}>{labels.map((label: any, index: number) => <LegacyLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label} template={template}/>)}</section>}
+    {pdfPrintable ? <section className="print-controls mx-auto max-w-5xl">
+      <p className="mb-2 text-xs font-bold uppercase tracking-[.14em] text-[#7a5a52]">Exact print file{pdfLoading ? ' · updating…' : ''}</p>
+      {pdfUrl ? <iframe ref={pdfFrame} title="Sticker PDF to print" src={pdfUrl} className="h-[420px] w-full rounded-xl border border-[#e4d8d3] bg-white"/> : <div className="grid h-40 place-items-center rounded-xl border border-dashed border-[#d8c9c2] bg-white text-sm text-[#7a5a52]">{pdfLoading ? 'Preparing exact-size sticker PDF…' : 'Sticker PDF unavailable. See the message above.'}</div>}
+    </section> : finishFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <FinishFourByTwoLabelV4 key={`${label.id}-${label.copyIndex}-${index}`} label={label} portrait={portrait} compact={compactLabel}/>)}</section> : compactPortraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <CompactPortraitFourByTwoLabelV3 key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : portraitFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <PortraitFourByTwoLabelV2 key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : standardFourByTwo ? <section className="mp-label-pages">{labels.map((label: any, index: number) => <StandardFourByTwoLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label}/>)}</section> : <section className="label-sheet mx-auto grid bg-white shadow-xl" style={{ width: `${pageWidth}mm`, minHeight: `${pageHeight}mm`, gridTemplateColumns: `repeat(${columns}, ${Number(template.widthMm || 70)}mm)`, gridAutoRows: `${Number(template.heightMm || 37)}mm`, columnGap: `${Number(template.gapXMm || 0)}mm`, rowGap: `${Number(template.gapYMm || 0)}mm`, padding: `${Number(template.marginTopMm || 0)}mm ${Number(template.marginRightMm || 0)}mm ${Number(template.marginBottomMm || 0)}mm ${Number(template.marginLeftMm || 0)}mm` }}>{labels.map((label: any, index: number) => <LegacyLabel key={`${label.id}-${label.copyIndex}-${index}`} label={label} template={template}/>)}</section>}
   </main>;
 }

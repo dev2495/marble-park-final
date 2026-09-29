@@ -27,6 +27,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { QueryErrorBanner } from "@/components/query-state";
+import {
+  TileLabelRateChoice,
+  defaultPriceUomOf,
+  tileLabelRateReady,
+  type TileLabelPriceUom,
+} from "@/components/tile-label-rate-choice";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
 const WORKSPACE = gql`
@@ -200,6 +206,7 @@ const emptyVariant: any = {
   floorPriceInclusive: "",
   priceRateBasis: "AREA",
   priceUom: "SQFT",
+  originalPriceUom: "SQFT",
   mrpSource: "MANUAL",
   mrpChangeReason: "",
   originalMrp: "",
@@ -219,6 +226,8 @@ const emptyDisplay: any = {
   condition: "good",
   nextInspectionAt: "",
   status: "active",
+  labelPriceUom: "",
+  labelProduct: null,
 };
 
 function imageOf(value: any) {
@@ -317,6 +326,7 @@ export default function TileWorkspacePage() {
   const [displayPage, setDisplayPage] = useState(0);
   const [displayStatus, setDisplayStatus] = useState("all");
   const [display, setDisplay] = useState<any>(emptyDisplay);
+  const [displayLabelRecovery, setDisplayLabelRecovery] = useState<{ displayId: string; displayCode: string; priceUom: TileLabelPriceUom } | null>(null);
   const [notice, setNotice] = useState("");
   const [uploading, setUploading] = useState(false);
   const [transitionReason, setTransitionReason] = useState(
@@ -367,7 +377,8 @@ export default function TileWorkspacePage() {
   });
   const selectedVariant = (data?.tileVariantsPage?.items || []).find(
     (row: any) => row.id === display.productId,
-  );
+  ) || display.labelProduct;
+  const displayLabelPriceUom: TileLabelPriceUom = display.labelPriceUom || defaultPriceUomOf(selectedVariant);
   const { data: lotData } = useQuery(LOTS, {
     variables: { search: selectedVariant?.sku || undefined },
     skip: !selectedVariant?.id,
@@ -394,7 +405,7 @@ export default function TileWorkspacePage() {
   const [createDisplay, createDisplayState] = useMutation(CREATE_DISPLAY);
   const [updateDisplay, updateDisplayState] = useMutation(UPDATE_DISPLAY);
   const [transition, transitionState] = useMutation(TRANSITION_DISPLAY);
-  const [createLabel] = useMutation(CREATE_LABEL);
+  const [createLabel, createLabelState] = useMutation(CREATE_LABEL);
   const [uploadAsset] = useMutation(UPLOAD_ASSET);
   const [loadDesignTemplate, designTemplateState] = useLazyQuery(
     DESIGN_IMPORT_TEMPLATE,
@@ -449,6 +460,7 @@ export default function TileWorkspacePage() {
     createDisplayState.error,
     updateDisplayState.error,
     transitionState.error,
+    createLabelState.error,
     designTemplateState.error,
     designImportPreviewState.error,
     designImportApplyState.error,
@@ -543,14 +555,15 @@ export default function TileWorkspacePage() {
       mrpChangeReason: "",
       defaultNrpInclusive: row.defaultNrpInclusive == null ? "" : String(row.defaultNrpInclusive),
       floorPriceInclusive: row.floorPriceInclusive == null ? "" : String(row.floorPriceInclusive),
-      priceRateBasis: "AREA",
-      priceUom: "SQFT",
+      priceRateBasis: row.priceRateBasis || (row.priceUom === "PC" ? "PIECE" : "AREA"),
+      priceUom: row.priceUom || "SQFT",
+      originalPriceUom: row.priceUom || "SQFT",
       pricingEffectiveFrom: row.pricingEffectiveFrom ? String(row.pricingEffectiveFrom).slice(0, 10) : "",
     });
   }
   async function submitVariant(event: any) {
     event.preventDefault();
-    const mrpChanged = Boolean(variant.id && variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001);
+    const pricingChanged = Boolean(variant.id && (variant.originalPriceUom !== variant.priceUom || (variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001)));
     const response = await saveVariant({
       variables: {
         input: {
@@ -566,12 +579,12 @@ export default function TileWorkspacePage() {
           allowLoose: Boolean(variant.allowLoose),
           hsnCode: variant.hsnCode || undefined,
           defaultMrpInclusive: variant.defaultMrpInclusive === "" ? undefined : Number(variant.defaultMrpInclusive),
-          defaultNrpInclusive: variant.defaultNrpInclusive === "" ? undefined : Number(variant.defaultNrpInclusive),
+          defaultNrpInclusive: variant.defaultNrpInclusive === "" ? (variant.id ? null : undefined) : Number(variant.defaultNrpInclusive),
           floorPriceInclusive: variant.floorPriceInclusive === "" ? null : Number(variant.floorPriceInclusive),
-          priceRateBasis: "AREA",
-          priceUom: "SQFT",
+          priceRateBasis: variant.priceUom === "PC" ? "PIECE" : "AREA",
+          priceUom: variant.priceUom,
           mrpSource: variant.defaultMrpInclusive !== "" ? variant.mrpSource : undefined,
-          mrpChangeReason: mrpChanged ? variant.mrpChangeReason.trim() : undefined,
+          mrpChangeReason: pricingChanged ? variant.mrpChangeReason.trim() : undefined,
           pricingEffectiveFrom: variant.pricingEffectiveFrom || undefined,
           status: variant.status,
           alias: variant.alias || undefined,
@@ -583,6 +596,10 @@ export default function TileWorkspacePage() {
   }
   async function submitDisplay(event: any) {
     event.preventDefault();
+    if (!display.id && (!selectedVariant || !tileLabelRateReady(selectedVariant, displayLabelPriceUom))) {
+      setNotice("Review the tile MRP and governed coverage before registering its display and QR label.");
+      return;
+    }
     const input: any = {
       internalCode: display.internalCode,
       locationId: display.locationId || undefined,
@@ -616,17 +633,31 @@ export default function TileWorkspacePage() {
           },
         })
       ).data?.createDisplaySample;
-      if (saved?.id)
+      if (!saved?.id) {
+        setNotice("The display response did not include an asset ID. Refresh the register before trying again.");
+        await refetch();
+        return;
+      }
+      try {
         await createLabel({
           variables: {
             input: {
               displaySampleId: saved.id,
               quantity: 1,
               template: "display_sample",
-              newJob: true,
+              newJob: false,
+              priceUom: displayLabelPriceUom,
             },
           },
         });
+        setDisplayLabelRecovery(null);
+      } catch {
+        setDisplayLabelRecovery({ displayId: saved.id, displayCode: saved.sampleNumber || display.internalCode, priceUom: displayLabelPriceUom });
+        setDisplay(emptyDisplay);
+        setNotice(`${saved.sampleNumber || "Display"} was registered, but its QR label job needs retry. The asset is already in the register; do not register it again.`);
+        await refetch();
+        return;
+      }
     }
     setDisplay(emptyDisplay);
     setNotice(
@@ -635,6 +666,22 @@ export default function TileWorkspacePage() {
         : "Display asset registered, stock issue posted when selected, and its QR label job is ready.",
     );
     await refetch();
+  }
+  async function retryDisplayLabel() {
+    if (!displayLabelRecovery) return;
+    await createLabel({
+      variables: {
+        input: {
+          displaySampleId: displayLabelRecovery.displayId,
+          quantity: 1,
+          template: "display_sample",
+          newJob: false,
+          priceUom: displayLabelRecovery.priceUom,
+        },
+      },
+    });
+    setNotice(`${displayLabelRecovery.displayCode} QR label job is ready to print.`);
+    setDisplayLabelRecovery(null);
   }
   async function runTransition(action: string) {
     if (!display.id || !transitionReason.trim()) return;
@@ -817,7 +864,7 @@ export default function TileWorkspacePage() {
           [
             ["designs", "Design registry", Layers3],
             ["variants", "Variant registry", Boxes],
-            ["display", "Display assets ↗", Store],
+            ["display", "Display assets + labels ↗", Store],
           ] as any[]
         ).map(([id, label, Icon]) => (
           <button
@@ -837,9 +884,10 @@ export default function TileWorkspacePage() {
       {notice ? (
         <div
           role="status"
-          className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800"
+          className={`flex items-center gap-3 rounded-md border p-3 text-sm font-semibold ${displayLabelRecovery ? "border-amber-300 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}
         >
           {notice}
+          {displayLabelRecovery ? <Button type="button" size="sm" variant="outline" className="ml-auto shrink-0" disabled={createLabelState.loading} onClick={retryDisplayLabel}>{createLabelState.loading ? "Retrying…" : "Retry label"}</Button> : null}
         </div>
       ) : null}
       {designImportPlan ? (
@@ -1647,10 +1695,18 @@ export default function TileWorkspacePage() {
               </label>
               <div className="rounded-xl bg-[#f8f4ef] p-4">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#9f342d]">Governed tile selling policy</p>
-                <p className="mt-1 text-xs text-[var(--ink-4)]">MRP is required and always entered per sq ft. NRP and floor are optional. Actual cost comes from PO → GRN → inventory lot.</p>
+                <p className="mt-1 text-xs text-[var(--ink-4)]">Choose the tile selling unit, then enter MRP in that unit. NRP and floor use the same unit. Stock remains in boxes and pieces; actual cost comes from PO → GRN → inventory lot.</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="block text-xs font-semibold text-[var(--ink-4)]">Tile rate unit *
+                  <select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.priceUom} onChange={(e) => setVariant({ ...variant, priceUom: e.target.value, priceRateBasis: e.target.value === "PC" ? "PIECE" : "AREA" })}>
+                    <option value="SQFT">Per sq ft (SQFT)</option>
+                    <option value="SQM">Per sq metre (SQM)</option>
+                    <option value="PC">Per piece (PC)</option>
+                  </select>
+                </label>
+                <p className="self-end rounded-md bg-white p-2 text-[11px] text-[var(--ink-3)]">Changing the unit does not change the numbers below. Review MRP, NRP and floor as ₹ per {variant.priceUom} before saving.</p>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  MRP ₹ incl. GST / sq ft *
+                  MRP ₹ incl. GST / {variant.priceUom} *
                   <Input
                     className="mt-1"
                     type="number"
@@ -1663,7 +1719,7 @@ export default function TileWorkspacePage() {
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Default NRP ₹ incl. GST
+                  Default NRP ₹ incl. GST / {variant.priceUom}
                   <Input
                     className="mt-1"
                     type="number"
@@ -1676,17 +1732,12 @@ export default function TileWorkspacePage() {
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Floor price ₹ incl. GST / sq ft
+                  Floor price ₹ incl. GST / {variant.priceUom}
                   <Input className="mt-1" type="number" min="0.01" step="0.01" value={variant.floorPriceInclusive} onChange={(e) => setVariant({ ...variant, floorPriceInclusive: e.target.value })} placeholder="Optional · owner approval below floor" />
                 </label>
-                <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Price basis
-                  <Input className="mt-1" value="Area" disabled />
-                </label>
-                <label className="block text-xs font-semibold text-[var(--ink-4)]">Price UOM<Input className="mt-1" value="SQFT" disabled /></label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">MRP source<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.mrpSource} onChange={(e) => setVariant({ ...variant, mrpSource: e.target.value })}><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">Effective from<Input className="mt-1" type="date" value={variant.pricingEffectiveFrom} onChange={(e) => setVariant({ ...variant, pricingEffectiveFrom: e.target.value })}/></label>
-                {variant.id && variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001 ? <label className="block text-xs font-semibold text-[#9f342d] sm:col-span-2">MRP change reason *<Input className="mt-1" value={variant.mrpChangeReason} onChange={(e) => setVariant({ ...variant, mrpChangeReason: e.target.value })} placeholder="Example: Revised brand price list"/><span className="mt-1 block text-[10px] font-medium text-[var(--ink-4)]">Old and new MRP, user, source and effective date will be added to this tile SKU history.</span></label> : null}
+                {variant.id && (variant.originalPriceUom !== variant.priceUom || (variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001)) ? <label className="block text-xs font-semibold text-[#9f342d] sm:col-span-2">Price change reason *<Input className="mt-1" value={variant.mrpChangeReason} onChange={(e) => setVariant({ ...variant, mrpChangeReason: e.target.value })} placeholder="Example: Brand list changed to per sq metre"/><span className="mt-1 block text-[10px] font-medium text-[var(--ink-4)]">The old and new MRP and rate unit, user and effective date will be added to this tile SKU history.</span></label> : null}
                 </div>
               </div>
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
@@ -1711,7 +1762,7 @@ export default function TileWorkspacePage() {
                   !variant.tileSizeId ||
                   !variant.finish ||
                   Number(variant.defaultMrpInclusive) <= 0 ||
-                  (variant.id && variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001 && variant.mrpChangeReason.trim().length < 3)
+                  (variant.id && (variant.originalPriceUom !== variant.priceUom || (variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001)) && variant.mrpChangeReason.trim().length < 3)
                 }
               >
                 {variantState.loading ? "Saving…" : "Save and clear variant"}
@@ -1808,6 +1859,8 @@ export default function TileWorkspacePage() {
                       internalCode: row?.internalCode || row?.sku || "",
                       imageUrl: imageOf(row?.tileDesignMaster) || imageOf(row),
                       locationId: locations[0]?.id || "",
+                      labelProduct: row || null,
+                      labelPriceUom: row ? defaultPriceUomOf(row) : "",
                     });
                   }}
                   className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
@@ -1822,6 +1875,15 @@ export default function TileWorkspacePage() {
                   ))}
                 </select>
               </label>
+              {!display.id && selectedVariant ? (
+                <TileLabelRateChoice
+                  product={selectedVariant}
+                  value={displayLabelPriceUom}
+                  onChange={(priceUom) => setDisplay({ ...display, labelPriceUom: priceUom })}
+                  id="tile-workspace-display-label-rate"
+                />
+              ) : null}
+              {!display.id && selectedVariant && !tileLabelRateReady(selectedVariant, displayLabelPriceUom) ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Review the tile MRP and governed coverage before registering this display and its QR label.</p> : null}
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
                 Display code
                 <Input
@@ -1946,9 +2008,11 @@ export default function TileWorkspacePage() {
                 type="submit"
                 disabled={
                   !display.productId ||
+                  (!display.id && (!selectedVariant || !tileLabelRateReady(selectedVariant, displayLabelPriceUom))) ||
                   !display.internalCode ||
                   createDisplayState.loading ||
-                  updateDisplayState.loading
+                  updateDisplayState.loading ||
+                  createLabelState.loading
                 }
               >
                 {display.id

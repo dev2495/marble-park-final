@@ -22,6 +22,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProductImageFrame } from "@/components/product-image-frame";
+import {
+  TileLabelRateChoice,
+  defaultPriceUomOf,
+  isTileProduct,
+  tileLabelRateReady,
+  type TileLabelPriceUom,
+} from "@/components/tile-label-rate-choice";
 import { QueryErrorBanner } from "@/components/query-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
@@ -47,6 +54,10 @@ const DATA = gql`
       media
       purchaseUom
       piecesPerPack
+      coveragePerPack
+      defaultMrpInclusive
+      priceRateBasis
+      priceUom
     }
     inventoryLots(
       productId: $productId
@@ -78,6 +89,10 @@ const PRODUCT = gql`
       media
       purchaseUom
       piecesPerPack
+      coveragePerPack
+      defaultMrpInclusive
+      priceRateBasis
+      priceUom
     }
   }
 `;
@@ -164,6 +179,9 @@ export default function DisplayAssetsPage() {
   const [page, setPage] = useState(0);
   const [form, setForm] = useState<any>(blank);
   const [notice, setNotice] = useState("");
+  const [formError, setFormError] = useState("");
+  const [requestedLabelPriceUom, setRequestedLabelPriceUom] = useState<TileLabelPriceUom | "">("");
+  const [labelRecovery, setLabelRecovery] = useState<{ displayId: string; displayCode: string; priceUom?: TileLabelPriceUom } | null>(null);
   const [reason, setReason] = useState(
     "Routine showroom display lifecycle update",
   );
@@ -197,9 +215,11 @@ export default function DisplayAssetsPage() {
   );
   const locations = data?.stockLocations || [];
   const register = data?.displaySamplesPage?.items || [];
-  const selectedProduct =
+  const productCandidate =
     directProductData?.product ||
     products.find((row: any) => row.id === form.productId);
+  const selectedProduct = productCandidate?.id === form.productId ? productCandidate : null;
+  const labelPriceUom = requestedLabelPriceUom || defaultPriceUomOf(selectedProduct);
   const selectedLot = lots.find((row: any) => row.id === form.sourceLotId);
   const locationOptions =
     sourceMode === "inventory" && selectedLot
@@ -253,6 +273,8 @@ export default function DisplayAssetsPage() {
   }, [form.locationId, form.sourceLotId, lots]);
 
   function chooseProduct(product: any) {
+    setRequestedLabelPriceUom("");
+    setFormError("");
     setForm((current: any) => ({
       ...blank,
       productId: product.id,
@@ -265,12 +287,19 @@ export default function DisplayAssetsPage() {
   }
   function clear() {
     setForm(blank);
+    setRequestedLabelPriceUom("");
+    setFormError("");
     setProductSearch("");
     setLotSearch("");
     setReason("Routine showroom display lifecycle update");
   }
   async function save(event: React.FormEvent) {
     event.preventDefault();
+    if (!form.id && isTileProduct(selectedProduct) && !tileLabelRateReady(selectedProduct, labelPriceUom)) {
+      setFormError("The selected tile rate cannot be printed. Check its Product Master MRP, pieces and area per pack.");
+      return;
+    }
+    setFormError("");
     const common = {
       internalCode: form.internalCode,
       locationId: form.locationId || undefined,
@@ -301,17 +330,35 @@ export default function DisplayAssetsPage() {
       }
       const saved = (await create({ variables: { input } })).data
         ?.createDisplaySample;
-      if (saved?.id)
+      if (!saved?.id) {
+        setFormError("The display response did not include an asset ID. Refresh the register before trying again.");
+        await refetch();
+        return;
+      }
+      try {
         await label({
           variables: {
             input: {
               displaySampleId: saved.id,
               quantity: 1,
               template: "display_sample",
-              newJob: true,
+              newJob: false,
+              ...(isTileProduct(selectedProduct) ? { priceUom: labelPriceUom } : {}),
             },
           },
         });
+        setLabelRecovery(null);
+      } catch {
+        setLabelRecovery({
+          displayId: saved.id,
+          displayCode: saved.sampleNumber || form.internalCode,
+          priceUom: isTileProduct(selectedProduct) ? labelPriceUom : undefined,
+        });
+        setNotice(`${saved.sampleNumber || "Display"} was created, but its QR label job needs retry. The asset is already in the register; do not create it again.`);
+        clear();
+        await refetch();
+        return;
+      }
       setNotice(
         sourceMode === "inventory"
           ? `${saved?.sampleNumber || "Display"} created. ${form.issuedQuantity} unit(s) moved out of the exact saleable lot and a label job is ready.`
@@ -320,6 +367,22 @@ export default function DisplayAssetsPage() {
     }
     clear();
     await refetch();
+  }
+  async function retryLabel() {
+    if (!labelRecovery) return;
+    await label({
+      variables: {
+        input: {
+          displaySampleId: labelRecovery.displayId,
+          quantity: 1,
+          template: "display_sample",
+          newJob: false,
+          ...(labelRecovery.priceUom ? { priceUom: labelRecovery.priceUom } : {}),
+        },
+      },
+    });
+    setNotice(`${labelRecovery.displayCode} QR label job is ready to print.`);
+    setLabelRecovery(null);
   }
   async function act(action: string) {
     if (!form.id || !reason.trim()) return;
@@ -398,21 +461,15 @@ export default function DisplayAssetsPage() {
           </div>
         </div>
       </header>
+      {formError ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">{formError}</div> : null}
       {notice ? (
         <div
           role="status"
-          className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900"
+          className={`flex items-start gap-3 rounded-xl border p-4 text-sm font-semibold ${labelRecovery ? "border-amber-300 bg-amber-50 text-amber-950" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}
         >
-          <Check className="mt-0.5 h-4 w-4 shrink-0" />
+          {labelRecovery ? <CircleHelp className="mt-0.5 h-4 w-4 shrink-0" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
           {notice}
-          <Button
-            asChild
-            size="sm"
-            variant="outline"
-            className="ml-auto shrink-0"
-          >
-            <Link href="/dashboard/inventory/labels">Print label</Link>
-          </Button>
+          {labelRecovery ? <Button type="button" size="sm" variant="outline" className="ml-auto shrink-0" disabled={labelState.loading} onClick={retryLabel}>{labelState.loading ? "Retrying…" : "Retry label"}</Button> : <Button asChild size="sm" variant="outline" className="ml-auto shrink-0"><Link href="/dashboard/inventory/labels?tab=print">Print label</Link></Button>}
         </div>
       ) : null}
       <section className="grid min-w-0 gap-5 xl:grid-cols-[27rem_1fr]">
@@ -526,6 +583,8 @@ export default function DisplayAssetsPage() {
                     </div>
                   </div>
                 ) : null}
+                {selectedProduct ? <TileLabelRateChoice product={selectedProduct} value={labelPriceUom} onChange={setRequestedLabelPriceUom} id="display-asset-label-rate" /> : null}
+                {isTileProduct(selectedProduct) && !tileLabelRateReady(selectedProduct, labelPriceUom) ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Review Product Master MRP and governed tile coverage before creating this asset and label.</p> : null}
               </>
             ) : (
               <div className="rounded-xl bg-[var(--bg-soft)] p-3 text-xs">
@@ -743,6 +802,8 @@ export default function DisplayAssetsPage() {
               disabled={
                 busy ||
                 !form.productId ||
+                (!form.id && !selectedProduct) ||
+                (!form.id && isTileProduct(selectedProduct) && !tileLabelRateReady(selectedProduct, labelPriceUom)) ||
                 !form.internalCode ||
                 !form.locationId ||
                 !form.displayZone.trim() ||

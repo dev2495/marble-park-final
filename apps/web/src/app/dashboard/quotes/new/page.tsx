@@ -15,6 +15,7 @@ import { describeApolloError } from '@/lib/apollo-errors';
 import { PhysicalQrScanner } from '@/components/physical-qr-scanner';
 import { ScanProductSelector } from '@/components/scan-product-selector';
 import { allocateQuoteDiscount, retailLadder, type DiscountMode } from '@/lib/quote-pricing';
+import { tilePriceBasis, tilePriceUom, tilePricingCoverage, tilePricingQuantity, tileStockUnitGeometry } from '@/lib/tile-rate';
 
 const GET_QUOTE_SETUP = gql`
   query GetQuoteSetup {
@@ -91,7 +92,7 @@ function isTileLine(line: any) {
 }
 
 function pricingBasis(line: any): TileRateBasis {
-  if (isTileLine(line)) return 'AREA';
+  if (isTileLine(line)) return tilePriceBasis(line.pricingUom || line.priceUom);
   const explicit = String(line.rateBasis || '').toUpperCase();
   if (explicit === 'AREA' || explicit === 'PIECE' || explicit === 'BOX') return explicit;
   const uom = String(line.pricingUom || line.salesUom || line.unit || '').toUpperCase();
@@ -99,7 +100,7 @@ function pricingBasis(line: any): TileRateBasis {
 }
 
 function mrpUom(line: any) {
-  if (isTileLine(line)) return 'SQFT';
+  if (isTileLine(line)) return tilePriceUom(line.pricingUom || line.priceUom);
   const basis = pricingBasis(line);
   if (basis === 'AREA') return String(line.pricingUom || line.salesUom || 'SQFT').toUpperCase();
   if (basis === 'PIECE') return 'PC';
@@ -121,13 +122,17 @@ function packsForPieces(requestedPieces: number, piecesPerPack: number) {
 }
 
 function TileQuantityEditor({ line, onChange }: { line: any; onChange: (patch: any) => void }) {
-  const coverage = Number(line.coveragePerPack || 0);
+  const unit = tilePriceUom(line.pricingUom);
+  const coverage = tilePricingCoverage(line.coveragePerPack, unit);
   return <div className="mx-auto w-56 space-y-2.5">
-    <div className="flex h-8 items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-black uppercase tracking-wider text-emerald-800"><span>Area pricing</span><span>₹ / SQFT</span></div>
-    {coverage > 0 ? <>
+    <div className="flex h-8 items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-black uppercase tracking-wider text-emerald-800"><span>{unit === 'PC' ? 'Piece pricing' : 'Area pricing'}</span><span>₹ / {unit}</span></div>
+    {unit === 'PC' ? <>
+      <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested pieces for ${line.name}`} type="number" min={1} step={1} value={line.requestedPieces || 0} onChange={(event) => onChange({ requestedPieces: Number(event.target.value || 0) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">PC</div></div>
+      <p className="text-[11px] text-[#52525b]">{line.qty} {line.inventoryUom} · {Number(line.qty || 0) * Number(line.piecesPerPack || 1)} pieces billed</p>
+    </> : coverage > 0 ? <>
       <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested area for ${line.name}`} type="number" min={0} value={line.requestedArea || 0} onChange={(event) => onChange({ requestedArea: Number(event.target.value || 0) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">{line.pricingUom}</div></div>
       <div className="flex items-center justify-between gap-2 text-xs text-[#52525b]"><label>Waste <input aria-label={`Wastage for ${line.name}`} type="number" min={0} max={100} value={line.wastagePercent || 0} onChange={(event) => onChange({ wastagePercent: Number(event.target.value || 0) })} className="ml-1 h-7 w-12 rounded border border-[#e4e4e7] text-center"/>%</label><span className="font-semibold text-[#18181b]">{line.qty} {line.inventoryUom}</span></div>
-      <p className="text-[11px] text-[#52525b]">Covers {(Number(line.qty || 0) * coverage).toFixed(2)} {line.pricingUom}</p>
+      <p className="text-[11px] text-[#52525b]">Covers {(Number(line.qty || 0) * coverage).toFixed(unit === 'SQM' ? 3 : 2)} {unit}</p>
     </> : <p role="alert" className="rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] font-bold text-amber-800">Add coverage per box in Tile Variant Registry before quoting.</p>}
   </div>;
 }
@@ -212,16 +217,19 @@ export default function QuoteBuilderPage() {
     }
     if (!allowedInQuote(product, effectiveQuoteType)) return false;
     const isTile = String(product.category || '').toLowerCase() === 'tiles';
-    const pricingUom = isTile ? 'SQFT' : product.priceUom || product.salesUom || product.unit || 'PC';
-    const coveragePerPack = Number(product.coveragePerPack || 0);
+    const pricingUom = isTile ? tilePriceUom(product.priceUom) : product.priceUom || product.salesUom || product.unit || 'PC';
+    const geometry = isTile ? tileStockUnitGeometry(product) : { piecesPerUnit: Number(product.piecesPerPack || 1), coveragePerUnitSqFt: Number(product.coveragePerPack || 0) };
+    const coveragePerPack = geometry.coveragePerUnitSqFt;
     const inventoryUom = product.purchaseUom || product.unit || 'PC';
-    const rateBasis: TileRateBasis = isTile ? 'AREA' : ['SQFT', 'SQM', 'M2'].includes(String(pricingUom).toUpperCase()) ? 'AREA' : String(pricingUom).toUpperCase() === 'PC' && String(inventoryUom).toUpperCase() !== 'PC' ? 'PIECE' : 'BOX';
-    const wastagePercent = isTile ? 10 : 0;
-    const requestedArea = isTile && coveragePerPack > 0 ? coveragePerPack : 0;
-    const qty = rateBasis === 'AREA' ? packsForArea(requestedArea, wastagePercent, coveragePerPack) : 1;
+    const rateBasis: TileRateBasis = isTile ? tilePriceBasis(pricingUom) : ['SQFT', 'SQM', 'M2'].includes(String(pricingUom).toUpperCase()) ? 'AREA' : String(pricingUom).toUpperCase() === 'PC' && String(inventoryUom).toUpperCase() !== 'PC' ? 'PIECE' : 'BOX';
+    const wastagePercent = isTile && rateBasis === 'AREA' ? 10 : 0;
+    const pricingCoveragePerPack = isTile ? tilePricingCoverage(coveragePerPack, pricingUom) : coveragePerPack;
+    const requestedArea = isTile && rateBasis === 'AREA' && pricingCoveragePerPack > 0 ? pricingCoveragePerPack : 0;
+    const requestedPieces = isTile && rateBasis === 'PIECE' ? geometry.piecesPerUnit : 0;
+    const qty = rateBasis === 'AREA' ? packsForArea(requestedArea, wastagePercent, pricingCoveragePerPack) : rateBasis === 'PIECE' && isTile ? packsForPieces(requestedPieces, geometry.piecesPerUnit) : 1;
     const defaultMrp = Number(product.defaultMrpInclusive || 0);
     const defaultNrp = Number(product.defaultNrpInclusive || 0);
-    setLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, { id: `${product.id}-${Date.now()}`, lineKey: `product:${product.id}:${Date.now()}`, pricingVersion: 'unified_retail_v1', area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces: isTile ? Number(product.piecesPerPack || 1) : 0, wastagePercent, coveragePerPack, piecesPerPack: Number(product.piecesPerPack || 1), inventoryUom, pricingUom, rateBasis, priceRateBasis: rateBasis, mrpInclusive: defaultMrp || '', mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive), nrpMode: defaultNrp > 0 ? 'FIXED_NRP' : 'PERCENT_OFF_MRP', nrpInput: defaultNrp > 0 ? defaultNrp : 0, specialMode: 'NONE', specialInput: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media }]);
+    setLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, { id: `${product.id}-${Date.now()}`, lineKey: `product:${product.id}:${Date.now()}`, pricingVersion: 'unified_retail_v1', area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces, wastagePercent, coveragePerPack, pricingCoveragePerPack, piecesPerPack: geometry.piecesPerUnit, inventoryUom, pricingUom, rateBasis, priceRateBasis: rateBasis, mrpInclusive: defaultMrp || '', mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive), nrpMode: defaultNrp > 0 ? 'FIXED_NRP' : 'PERCENT_OFF_MRP', nrpInput: defaultNrp > 0 ? defaultNrp : 0, specialMode: 'NONE', specialInput: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media }]);
     setSearchQuery('');
     setValidationError('');
     return true;
@@ -253,8 +261,10 @@ export default function QuoteBuilderPage() {
     if (line.id !== id) return line;
     const updated = { ...line, ...patch };
     if (areaPriced(updated) && ('requestedArea' in patch || 'wastagePercent' in patch || 'coveragePerPack' in patch)) {
-      updated.qty = packsForArea(Number(updated.requestedArea || 0), Number(updated.wastagePercent || 0), Number(updated.coveragePerPack || 0));
-    } else if (!isTileLine(updated) && pricingBasis(updated) === 'PIECE' && ('requestedPieces' in patch || 'piecesPerPack' in patch)) {
+      const coverage = isTileLine(updated) ? tilePricingCoverage(updated.coveragePerPack, updated.pricingUom) : Number(updated.coveragePerPack || 0);
+      updated.pricingCoveragePerPack = coverage;
+      updated.qty = packsForArea(Number(updated.requestedArea || 0), Number(updated.wastagePercent || 0), coverage);
+    } else if (pricingBasis(updated) === 'PIECE' && ('requestedPieces' in patch || 'piecesPerPack' in patch)) {
       updated.qty = packsForPieces(Number(updated.requestedPieces || 0), Number(updated.piecesPerPack || 1));
     }
     return updated;
@@ -262,7 +272,7 @@ export default function QuoteBuilderPage() {
   const removeLine = (id: string) => setLines((current) => current.filter((line) => line.id !== id));
   const rawCommercialRows = lines.map((line) => {
     const quantity = Number(line.qty || 0);
-    const pricingQuantity = areaPriced(line) ? quantity * Number(line.coveragePerPack || 0) : pricingBasis(line) === 'PIECE' ? quantity * Number(line.piecesPerPack || 1) : quantity;
+    const pricingQuantity = isTileLine(line) ? tilePricingQuantity(line) : areaPriced(line) ? quantity * Number(line.coveragePerPack || 0) : pricingBasis(line) === 'PIECE' ? quantity * Number(line.piecesPerPack || 1) : quantity;
     const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
     const ladder = retailLadder(line, pricingQuantity, taxRate);
     return { id: line.id, line, pricingQuantity, taxRate, ...ladder };
@@ -293,7 +303,7 @@ export default function QuoteBuilderPage() {
   const missingMrpCount = lines.filter((line) => lineCommercial(line).mrpMissing).length;
   const invalidMrpCount = lines.filter((line) => !lineCommercial(line).mrpMissing && !lineCommercial(line).mrpValid).length;
   const missingNrpCount = lines.filter((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0).length;
-  const missingTileCoverageCount = lines.filter((line) => isTileLine(line) && Number(line.coveragePerPack || 0) <= 0).length;
+  const missingTileCoverageCount = lines.filter((line) => isTileLine(line) && pricingBasis(line) === 'AREA' && Number(line.coveragePerPack || 0) <= 0).length;
   const floorBreachCount = lines.filter((line) => Number(line.floorPriceInclusive || 0) > 0 && Number(lineCommercial(line).finalUnitPayable || 0) + 0.005 < Number(line.floorPriceInclusive)).length;
   const invalidDiscountLine = lines.find((line) => {
     const rate = lineCommercial(line);
@@ -350,9 +360,9 @@ export default function QuoteBuilderPage() {
       setValidationError(`Quantity must be greater than 0 (line: ${invalidLine.name || invalidLine.sku || 'unnamed'}).`);
       return;
     }
-    const missingCoverageLine = lines.find((line) => isTileLine(line) && Number(line.coveragePerPack || 0) <= 0);
+    const missingCoverageLine = lines.find((line) => isTileLine(line) && pricingBasis(line) === 'AREA' && Number(line.coveragePerPack || 0) <= 0);
     if (missingCoverageLine) {
-      setValidationError(`${missingCoverageLine.sku || missingCoverageLine.name} needs coverage per box in Tile Variant Registry before it can be quoted per sq ft.`);
+      setValidationError(`${missingCoverageLine.sku || missingCoverageLine.name} needs coverage per box in Tile Variant Registry before it can be quoted by area.`);
       focusLine(missingCoverageLine);
       return;
     }
@@ -388,7 +398,7 @@ export default function QuoteBuilderPage() {
             lines: JSON.stringify(lines.map((line) => {
               const commercial = lineCommercial(line);
               const { id: _clientId, ...persisted } = line;
-              return { ...persisted, pricingVersion: 'unified_retail_v1', taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), priceRateBasis: pricingBasis(line), pricingUom: isTileLine(line) ? 'SQFT' : line.pricingUom, mrpInclusive: commercial.mrpInclusive, mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: line.floorPriceInclusive ?? null, nrpMode: commercial.nrpMode, nrpInput: commercial.nrpInput, nrpInclusive: commercial.nrpInclusive, nrpExclusive: commercial.nrpExclusive, specialMode: commercial.specialMode, specialInput: commercial.specialInput, specialRateInclusive: commercial.specialRateInclusive, specialRateExclusive: commercial.specialRateExclusive, pricingQuantity: commercial.pricingQuantity, quoteDiscountMode: quoteDiscountType, quoteDiscountValue: Number(quoteDiscountValue || 0), quoteDiscountAllocatedInclusive: commercial.quoteDiscountAllocatedInclusive, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, grossLineTotal: commercial.total, total: commercial.total };
+              return { ...persisted, pricingVersion: 'unified_retail_v1', taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), priceRateBasis: pricingBasis(line), pricingUom: line.pricingUom, mrpInclusive: commercial.mrpInclusive, mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: line.floorPriceInclusive ?? null, nrpMode: commercial.nrpMode, nrpInput: commercial.nrpInput, nrpInclusive: commercial.nrpInclusive, nrpExclusive: commercial.nrpExclusive, specialMode: commercial.specialMode, specialInput: commercial.specialInput, specialRateInclusive: commercial.specialRateInclusive, specialRateExclusive: commercial.specialRateExclusive, pricingQuantity: commercial.pricingQuantity, quoteDiscountMode: quoteDiscountType, quoteDiscountValue: Number(quoteDiscountValue || 0), quoteDiscountAllocatedInclusive: commercial.quoteDiscountAllocatedInclusive, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, grossLineTotal: commercial.total, total: commercial.total };
             })),
           },
         },
@@ -442,7 +452,7 @@ export default function QuoteBuilderPage() {
         <div className="flex-1 overflow-y-auto p-5 custom-scrollbar lg:p-6">
           <div className="mb-5 grid gap-3 rounded-2xl border border-[#e7d8cf] bg-[linear-gradient(105deg,#fff8f4,#ffffff_52%,#eefaf5)] p-3 sm:grid-cols-2">
             {([
-              { value: 'tile' as QuoteType, icon: Layers3, label: 'Tile & Chemical quote', detail: 'Tiles by box / pieces / SQFT · Chemicals by KG' },
+              { value: 'tile' as QuoteType, icon: Layers3, label: 'Tile & Chemical quote', detail: 'Tile rates per PC, SQM or SQFT · fulfil in boxes/pieces · Chemicals by KG' },
               { value: 'cp_sanitary' as QuoteType, icon: Bath, label: 'CP & Sanitary quote', detail: 'Faucets, sanitaryware and all non-tile product families' },
             ]).map((option) => { const Icon = option.icon; const active = quoteType === option.value; return <button key={option.value} type="button" onClick={() => { if (lines.length && !active) { setValidationError('Remove the current lines before changing quote type. This keeps catalogue families from mixing.'); return; } quoteTypeLocked.current = true; setQuoteType(option.value); setValidationError(''); }} className={`flex items-center gap-3 rounded-xl border p-4 text-left transition ${active ? 'border-[#9f342d] bg-[#241f1e] text-white shadow-lg' : 'border-white bg-white/85 text-[#18181b] hover:border-[#d8b8aa]'}`}><span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${active ? 'bg-white/12' : 'bg-[#f7eee9] text-[#9f342d]'}`}><Icon className="h-5 w-5" /></span><span><b className="block text-sm">{option.label}</b><small className={`mt-1 block ${active ? 'text-white/65' : 'text-[#71717a]'}`}>{option.detail}</small></span>{active ? <CheckCircle className="ml-auto h-5 w-5 text-emerald-300" /> : null}</button>; })}
           </div>
@@ -553,7 +563,7 @@ export default function QuoteBuilderPage() {
                         <ProductImageFrame src={productImage(product.media)} alt={product.name} className="h-20 w-24 shrink-0 rounded-2xl" imageClassName="p-1.5" />
                         <div className="min-w-0"><p className="truncate text-sm font-black">{product.internalCode || product.sku} · {product.name}</p><p className="text-xs font-medium uppercase tracking-wider text-[#52525b]">{product.category} · {product.sku}{masterBrandCode(brands, product.brand) ? ` · ${masterBrandCode(brands, product.brand)}` : ''}</p>{Number(product.coveragePerPack || 0) > 0 ? <p className="mt-1 text-xs text-[#52525b]">{product.coveragePerPack} {product.salesUom || 'area'} / {product.purchaseUom || product.unit || 'pack'} · {product.piecesPerPack || 1} pcs</p> : String(product.category || '').toLowerCase() === 'chemicals' ? <p className="mt-1 text-xs font-bold text-emerald-700">Governed in KG · allowed only in Tile & Chemical quotes</p> : null}</div>
                       </div>
-                      <span className="shrink-0 text-right text-xs font-black text-[#059669]">{Number(product.defaultMrpInclusive || 0) > 0 ? <>MRP<br/>{money(product.defaultMrpInclusive)} / {String(product.category || '').toLowerCase() === 'tiles' ? 'SQFT' : product.priceUom || product.salesUom || product.unit}</> : 'MRP setup needed'}</span>
+                      <span className="shrink-0 text-right text-xs font-black text-[#059669]">{Number(product.defaultMrpInclusive || 0) > 0 ? <>MRP<br/>{money(product.defaultMrpInclusive)} / {product.priceUom || product.salesUom || product.unit}</> : 'MRP setup needed'}</span>
                     </button>
                   ))}
                 </motion.div>
@@ -590,7 +600,7 @@ export default function QuoteBuilderPage() {
               </article>;})}
             </div>
             {lines.length === 0 && <div className="grid h-56 place-items-center text-center"><div><Plus className="mx-auto mb-3 h-8 w-8 text-[#2563eb]" /><p className="font-semibold text-[#18181b]">Search products to start a quote.</p><p className="mt-1 text-sm font-semibold text-[#52525b]">Catalogue images and price details will appear here.</p></div></div>}
-            {lines.length > 0 && <p className="border-t border-[#e4e4e7] px-4 py-3 text-xs font-semibold text-[#52525b]">MRP is read-only from Product Master. {quoteType === 'tile' ? 'Tiles price per SQFT while boxes/pieces remain fulfilment; Chemicals price and fulfil in KG.' : 'CP & Sanitary lines use their governed Product Master price and fulfilment UOM.'} Below-floor pricing is preserved but requires owner approval.</p>}
+            {lines.length > 0 && <p className="border-t border-[#e4e4e7] px-4 py-3 text-xs font-semibold text-[#52525b]">MRP is read-only from Product Master. {quoteType === 'tile' ? 'Each tile uses its saved PC, SQM or SQFT rate while boxes/pieces remain fulfilment; Chemicals price and fulfil in KG.' : 'CP & Sanitary lines use their governed Product Master price and fulfilment UOM.'} Below-floor pricing is preserved but requires owner approval.</p>}
           </div>
         </div>
       </section>

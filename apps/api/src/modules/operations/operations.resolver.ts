@@ -90,6 +90,7 @@ class InternalLabelJobInput {
   @Field({ nullable: true }) lotId?: string;
   @Field({ nullable: true }) displaySampleId?: string;
   @Field({ nullable: true }) template?: string;
+  @Field({ nullable: true }) priceUom?: string;
   @Field({ nullable: true }) newJob?: boolean;
   @Field() quantity!: number;
 }

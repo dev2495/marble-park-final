@@ -4,6 +4,7 @@ import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
 import { StoredImageService } from '../assets/stored-image.service';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
+import { tilePricingChoice } from '../common/tile-pricing-unit';
 
 export interface CreateProductInput {
   sku: string;
@@ -125,9 +126,10 @@ export class ProductsService {
     const status = String(data.status || 'active').trim().toLowerCase();
     const tileDefaults = category.toLowerCase() === 'tiles';
     const chemicalDefaults = category.toLowerCase() === 'chemicals';
+    const tilePricing = tileDefaults ? tilePricingChoice(data.priceRateBasis, data.priceUom) : null;
     const defaults = this.validateSellingDefaults({
       ...data,
-      ...(tileDefaults ? { priceRateBasis: 'AREA', priceUom: 'SQFT' } : {}),
+      ...(tilePricing || {}),
       ...(chemicalDefaults ? { priceRateBasis: 'BOX', priceUom: 'KG' } : {}),
     }, chemicalDefaults ? 'KG' : data.salesUom || data.unit, true);
     if (!sku) throw new BadRequestException('SKU is required');
@@ -158,6 +160,9 @@ export class ProductsService {
       : [data.baseUom || (tileDefaults ? 'PC' : data.unit) || 'PC', data.purchaseUom || data.unit || (tileDefaults ? 'BOX' : 'PC'), data.salesUom || data.unit || (tileDefaults ? 'BOX' : 'PC')])
       .map((value) => String(value).trim().toUpperCase());
     const coveragePerPack = this.numberAtLeastZero(data.coveragePerPack || 0, 'Coverage per pack');
+    if (tilePricing?.priceRateBasis === 'AREA' && coveragePerPack <= 0) {
+      throw new BadRequestException('Area-priced tile needs positive governed SQFT coverage per pack');
+    }
     const validUoms = await this.prisma.unitOfMeasure.count({ where: { code: { in: Array.from(new Set(uoms)) }, status: 'active' } });
     if (validUoms !== new Set(uoms).size) throw new BadRequestException('Base, purchase and sales UOM must use active UOM masters');
     const normalizedMedia = await this.normalizeMedia(data.media);
@@ -282,18 +287,33 @@ export class ProductsService {
       throw new BadRequestException('Product status must be active, inactive, or archived');
     }
     const finalCategory = String(data.category === undefined ? current.category : data.category).trim().toLowerCase();
+    const isTile = finalCategory === 'tiles';
     const isChemical = finalCategory === 'chemicals';
-    if (['defaultMrpInclusive', 'defaultNrpInclusive', 'floorPriceInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom'].some((key) => (data as any)[key] !== undefined)) {
+    const pricingTouched = ['defaultMrpInclusive', 'defaultNrpInclusive', 'floorPriceInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom']
+      .some((key) => (data as any)[key] !== undefined);
+    const tilePricing = isTile && pricingTouched
+      ? tilePricingChoice(data.priceRateBasis, data.priceUom, current.priceRateBasis, current.priceUom)
+      : null;
+    const rateUnitChanged = Boolean(tilePricing && (data.priceRateBasis !== undefined || data.priceUom !== undefined) && (
+      tilePricing.priceRateBasis !== current.priceRateBasis || tilePricing.priceUom !== current.priceUom
+    ));
+    if (rateUnitChanged && (
+      data.defaultMrpInclusive === undefined
+      || (current.defaultNrpInclusive != null && data.defaultNrpInclusive === undefined)
+      || (current.floorPriceInclusive != null && data.floorPriceInclusive === undefined)
+    )) {
+      throw new BadRequestException('Changing a tile price unit requires an explicit MRP, NRP, and floor price where set');
+    }
+    if (pricingTouched) {
       if (data.defaultMrpInclusive === null && current.defaultMrpInclusive != null) {
         throw new BadRequestException('MRP cannot be cleared after it is verified. Enter a replacement MRP or archive the SKU.');
       }
-      const isTile = finalCategory === 'tiles';
       const defaults = this.validateSellingDefaults({
         defaultMrpInclusive: data.defaultMrpInclusive === undefined ? current.defaultMrpInclusive : data.defaultMrpInclusive,
         defaultNrpInclusive: data.defaultNrpInclusive === undefined ? current.defaultNrpInclusive : data.defaultNrpInclusive,
         floorPriceInclusive: data.floorPriceInclusive === undefined ? current.floorPriceInclusive : data.floorPriceInclusive,
-        priceRateBasis: isTile ? 'AREA' : isChemical ? 'BOX' : data.priceRateBasis === undefined ? current.priceRateBasis : data.priceRateBasis,
-        priceUom: isTile ? 'SQFT' : isChemical ? 'KG' : data.priceUom === undefined ? current.priceUom : data.priceUom,
+        priceRateBasis: tilePricing ? tilePricing.priceRateBasis : isChemical ? 'BOX' : data.priceRateBasis === undefined ? current.priceRateBasis : data.priceRateBasis,
+        priceUom: tilePricing ? tilePricing.priceUom : isChemical ? 'KG' : data.priceUom === undefined ? current.priceUom : data.priceUom,
         mrpSource: data.mrpSource === undefined ? current.mrpSource : data.mrpSource,
         pricingEffectiveFrom: data.pricingEffectiveFrom === undefined ? current.pricingEffectiveFrom : data.pricingEffectiveFrom,
       }, data.salesUom || current.salesUom);
@@ -309,9 +329,10 @@ export class ProductsService {
       ? currentMrp
       : update.defaultMrpInclusive == null ? null : Number(update.defaultMrpInclusive);
     const mrpChanged = nextMrp !== null && (currentMrp === null || Math.abs(nextMrp - currentMrp) > 0.0001);
+    const priceRevision = mrpChanged || rateUnitChanged;
     const mrpChangeReason = String(data.mrpChangeReason || '').trim();
-    if (mrpChanged && currentMrp !== null && mrpChangeReason.length < 3) {
-      throw new BadRequestException('Enter a short reason for changing an existing MRP. It will be kept in the SKU price history.');
+    if (priceRevision && currentMrp !== null && mrpChangeReason.length < 3) {
+      throw new BadRequestException('Enter a short reason for changing an existing MRP or price unit. It will be kept in the SKU price history.');
     }
     if (data.media !== undefined) update.media = await this.normalizeMedia(data.media);
     if (update.category) update.categoryId = (await this.ensureCategory(update.category))?.id || null;
@@ -330,6 +351,11 @@ export class ProductsService {
     }
     if (data.piecesPerPack !== undefined) update.piecesPerPack = Math.max(1, Math.trunc(Number(data.piecesPerPack || 1)));
     if (data.coveragePerPack !== undefined) update.coveragePerPack = this.numberAtLeastZero(data.coveragePerPack, 'Coverage per pack');
+    if (isTile && (pricingTouched || data.coveragePerPack !== undefined)
+      && (tilePricing?.priceRateBasis || current.priceRateBasis) === 'AREA'
+      && Number(update.coveragePerPack === undefined ? current.coveragePerPack : update.coveragePerPack) <= 0) {
+      throw new BadRequestException('Area-priced tile needs positive governed SQFT coverage per pack');
+    }
     if (data.hsnCode !== undefined) update.hsnCode = String(data.hsnCode || '').trim() || null;
     if (data.allowLoose !== undefined) update.allowLoose = Boolean(data.allowLoose);
     if (isChemical) {
@@ -380,7 +406,7 @@ export class ProductsService {
           },
         });
       }
-      if (mrpChanged && product.defaultMrpInclusive != null) {
+      if (priceRevision && product.defaultMrpInclusive != null) {
         await tx.productMrpHistory.create({
           data: {
             id: ulid(),
@@ -393,7 +419,12 @@ export class ProductsService {
             reason: mrpChangeReason || 'Initial MRP verification',
             changedById: actorUserId || 'system',
             effectiveFrom: product.pricingEffectiveFrom,
-            metadata: { changeKind: currentMrp === null ? 'initial_verification' : 'revision', sku: product.sku },
+            metadata: {
+              changeKind: currentMrp === null ? 'initial_verification' : rateUnitChanged ? 'rate_unit_revision' : 'revision',
+              sku: product.sku,
+              previousPriceRateBasis: current.priceRateBasis,
+              previousPriceUom: current.priceUom,
+            },
           },
         });
       }
@@ -405,7 +436,7 @@ export class ProductsService {
           entityType: 'Product',
           entityId: id,
           summary: `Updated product ${product.internalCode || product.sku} (${product.sku})`,
-          metadata: { before: this.auditProduct(current), after: this.auditProduct(product), supplierAlias: supplierAlias || null, mrpChanged, mrpChangeReason: mrpChanged ? (mrpChangeReason || 'Initial MRP verification') : null },
+          metadata: { before: this.auditProduct(current), after: this.auditProduct(product), supplierAlias: supplierAlias || null, mrpChanged, rateUnitChanged, mrpChangeReason: priceRevision ? (mrpChangeReason || 'Initial MRP verification') : null },
         },
       });
       return product;
@@ -745,6 +776,7 @@ export class ProductsService {
     const finish = finishMaster.name;
     const piecesPerPack = Math.max(1, Math.trunc(Number(input.piecesPerPack || size.pcsPerBox || 1)));
     const coveragePerPack = Number(size.areaPerPieceSqFt || 0) > 0 ? Number(size.areaPerPieceSqFt) * piecesPerPack : Number(size.areaPerBoxSqFt || 0);
+    const tilePricing = tilePricingChoice(input.priceRateBasis, input.priceUom, existing?.priceRateBasis, existing?.priceUom);
     const generatedSku = [design.designCode, size.code || size.name, finish].map((value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')).filter(Boolean).join('-').slice(0, 80);
     const sku = this.normalizeSku(input.sku || generatedSku);
     const internalCode = this.normalizeInternalCode(input.internalCode || sku);
@@ -763,8 +795,7 @@ export class ProductsService {
         defaultMrpInclusive: input.defaultMrpInclusive,
         defaultNrpInclusive: input.defaultNrpInclusive,
         floorPriceInclusive: input.floorPriceInclusive,
-        priceRateBasis: 'AREA',
-        priceUom: 'SQFT',
+        ...tilePricing,
         mrpSource: input.mrpSource,
         pricingEffectiveFrom: input.pricingEffectiveFrom,
         status: input.status || 'active',
@@ -788,11 +819,10 @@ export class ProductsService {
       coveragePerPack,
       allowLoose: input.allowLoose === undefined ? existing.allowLoose : Boolean(input.allowLoose),
       hsnCode: input.hsnCode === undefined ? existing.hsnCode || undefined : input.hsnCode,
-      defaultMrpInclusive: input.defaultMrpInclusive === undefined ? existing.defaultMrpInclusive : input.defaultMrpInclusive,
-      defaultNrpInclusive: input.defaultNrpInclusive === undefined ? existing.defaultNrpInclusive : input.defaultNrpInclusive,
-      floorPriceInclusive: input.floorPriceInclusive === undefined ? existing.floorPriceInclusive : input.floorPriceInclusive,
-      priceRateBasis: 'AREA',
-      priceUom: 'SQFT',
+      defaultMrpInclusive: input.defaultMrpInclusive,
+      defaultNrpInclusive: input.defaultNrpInclusive,
+      floorPriceInclusive: input.floorPriceInclusive,
+      ...tilePricing,
       mrpSource: input.mrpSource === undefined ? existing.mrpSource : input.mrpSource,
       mrpChangeReason: input.mrpChangeReason,
       pricingEffectiveFrom: input.pricingEffectiveFrom === undefined ? existing.pricingEffectiveFrom : input.pricingEffectiveFrom,

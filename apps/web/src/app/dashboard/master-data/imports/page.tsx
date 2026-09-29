@@ -113,6 +113,7 @@ const requiredReviewFields = new Set([
   "Brand",
   "Finish",
   "Tax code",
+  "Tile rate unit",
 ]);
 
 async function blobToBase64(blob: Blob) {
@@ -367,6 +368,14 @@ export default function ImportCenterPage() {
       rows.map((row, rowIndex) => {
         if (rowIndex !== index) return row;
         const next = { ...row, [field]: value };
+        if (field === "tileRateUnit" || (field === "category" && String(value).trim().toLowerCase() === "tiles")) {
+          const unit = field === "tileRateUnit"
+            ? value
+            : (["PC", "SQM", "SQFT"].includes(next.priceUom) ? next.priceUom : "SQFT");
+          delete next.tileRateUnit;
+          next.priceUom = unit;
+          next.priceRateBasis = unit === "PC" ? "PIECE" : "AREA";
+        }
         setDirtyReviewRows((current) => ({
           ...current,
           [rowIdentity(next)]: next,
@@ -1081,12 +1090,20 @@ export default function ImportCenterPage() {
                                 }
                               />
                             </Field>
-                            <Field label="Price basis">
-                              <SelectField value={row.priceRateBasis} options={["BOX", "PIECE", "AREA"]} onChange={(value) => updateRow(index, "priceRateBasis", value)} placeholder="Select basis" />
-                            </Field>
-                            <Field label="Price UOM">
-                              <SelectField value={row.priceUom} options={options.uoms || []} onChange={(value) => updateRow(index, "priceUom", value)} placeholder="Select UOM" />
-                            </Field>
+                            {String(row.category).trim().toLowerCase() === "tiles" ? (
+                              <Field label="Tile rate unit">
+                                <SelectField value={row.priceUom} options={["PC", "SQM", "SQFT"]} onChange={(value) => updateRow(index, "tileRateUnit", value)} placeholder="Choose rate unit" />
+                              </Field>
+                            ) : (
+                              <>
+                                <Field label="Price basis">
+                                  <SelectField value={row.priceRateBasis} options={["BOX", "PIECE", "AREA"]} onChange={(value) => updateRow(index, "priceRateBasis", value)} placeholder="Select basis" />
+                                </Field>
+                                <Field label="Price UOM">
+                                  <SelectField value={row.priceUom} options={options.uoms || []} onChange={(value) => updateRow(index, "priceUom", value)} placeholder="Select UOM" />
+                                </Field>
+                              </>
+                            )}
                             <Field label="MRP source">
                               <input className={inputClass} value={row.mrpSource} onChange={(event) => updateRow(index, "mrpSource", event.target.value)} placeholder="Vendor price list / contract" />
                             </Field>

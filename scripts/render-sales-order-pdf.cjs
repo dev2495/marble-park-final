@@ -59,8 +59,15 @@ const styles = StyleSheet.create({
   footer: { position: 'absolute', bottom: 18, left: 28, right: 28, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 7, flexDirection: 'row', justifyContent: 'space-between', color: colors.tan, fontSize: 7.2 },
 });
 
-function money(value) {
-  return `INR ${Math.round(Number(value || 0)).toLocaleString('en-IN')}`;
+function money(value, exact = false) {
+  const number = Number(value || 0);
+  return `INR ${exact
+    ? number.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : Math.round(number).toLocaleString('en-IN')}`;
+}
+
+function quantityText(value) {
+  return String(Number(Number(value || 0).toFixed(3)));
 }
 
 function fmtDate(value) {
@@ -146,6 +153,26 @@ function rateOf(line) {
   const discount = Number(line.discountPercent || line.discount || 0);
   const special = Number(line.specialRate || line.specialPrice || 0);
   return special > 0 ? special : price * (1 - discount / 100);
+}
+
+// Current orders store the priced quote line: its payable total is already
+// computed for the billed quantity (PC, SQFT or SQM for tiles). Only legacy
+// lines without that total fall back to stock quantity x rate.
+function linePricing(line) {
+  const stockQty = qtyOf(line);
+  const gross = Number(line.grossLineTotal ?? line.lineTotal);
+  if (line.grossLineTotal != null && Number.isFinite(gross) && gross >= 0) {
+    const basis = String(line.priceRateBasis || line.rateBasis || 'BOX').toUpperCase();
+    const unit = String(line.pricingUom || line.priceUom || (basis === 'PIECE' ? 'PC' : basis === 'AREA' ? 'SQFT' : line.unit || 'BOX')).toUpperCase().replace('M2', 'SQM');
+    const saved = Number(line.pricingQuantity);
+    const coverage = Number(line.pricingCoveragePerPack) || Number(line.coveragePerPack || 0) * (unit === 'SQM' ? 0.09290304 : 1);
+    const billed = Number.isFinite(saved) && saved > 0 ? saved
+      : basis === 'PIECE' ? stockQty * Number(line.piecesPerPack || line.pcsPerBox || 1)
+        : basis === 'AREA' ? stockQty * coverage : stockQty;
+    return { modern: true, billed, unit, mrp: line.mrpInclusive ?? line.mrp, rate: billed > 0 ? gross / billed : 0, amount: gross };
+  }
+  const rate = rateOf(line);
+  return { modern: false, billed: stockQty, unit: String(line.unit || 'PC').toUpperCase(), mrp: line.mrp, rate, amount: stockQty * rate };
 }
 
 function groupByArea(lines) {
@@ -249,7 +276,9 @@ function buildDocument(payload, requestUrl) {
   const dispatchedMap = aggregateChallanQty(challans);
   const lines = normalizeLines(order.lines);
   const groups = groupByArea(lines);
-  const subtotal = lines.reduce((sum, line) => sum + qtyOf(line) * rateOf(line), 0);
+  const priced = lines.map(linePricing);
+  const exact = priced.some((line) => line.modern);
+  const subtotal = priced.reduce((sum, line) => sum + line.amount, 0);
   const advance = Number(order.advanceAmount || 0);
   const balance = Math.max(0, Number(order.totalAmount || subtotal) - advance);
   const companyName = settings?.companyName || 'Marble Park';
@@ -259,6 +288,7 @@ function buildDocument(payload, requestUrl) {
     const product = productMap.get(line.productId);
     const key = line.productId || line.sku || line.name;
     const qty = qtyOf(line);
+    const pricing = linePricing(line);
     const dispatched = dispatchedMap.get(key) || 0;
     const remaining = Math.max(0, qty - dispatched);
     const reservation = line.productId ? reservationMap.get(line.productId) : null;
@@ -270,10 +300,13 @@ function buildDocument(payload, requestUrl) {
         e(Text, { style: { ...styles.td, fontWeight: 900 } }, line.name || product?.name || 'Item'),
         e(Text, { style: styles.sku }, line.sku || product?.sku || ''),
         e(Text, { style: styles.meta }, [line.finish || product?.finish, line.dimensions || product?.dimensions, line.unit || product?.unit].filter(Boolean).join(' | ')),
+        pricing.modern && pricing.unit !== String(line.unit || '').toUpperCase() ? e(Text, { style: styles.meta }, `Billed: ${quantityText(pricing.billed)} ${pricing.unit}`) : null,
       ),
       e(Text, { style: [styles.td, styles.qtyCol] }, String(qty)),
-      e(Text, { style: [styles.td, styles.moneyCol] }, `${line.mrp === null || line.mrp === undefined ? '-' : money(line.mrp)}\n${money(rateOf(line))}`),
-      e(Text, { style: [styles.td, styles.moneyCol] }, money(qty * rateOf(line))),
+      e(Text, { style: [styles.td, styles.moneyCol] }, pricing.modern
+        ? `${pricing.mrp == null ? '-' : money(pricing.mrp, true)}\n${money(pricing.rate, true)}\n/${pricing.unit}`
+        : `${pricing.mrp == null ? '-' : money(pricing.mrp)}\n${money(pricing.rate)}`),
+      e(Text, { style: [styles.td, styles.moneyCol] }, money(pricing.amount, pricing.modern)),
       e(Text, { style: [styles.td, styles.statusCol, ready ? styles.statusReady : styles.statusBackorder] }, ready ? 'Reserved' : 'Pending'),
       e(Text, { style: [styles.td, styles.qtyCol] }, String(dispatched)),
       e(Text, { style: [styles.td, styles.qtyCol] }, String(remaining)),
@@ -337,10 +370,10 @@ function buildDocument(payload, requestUrl) {
           e(Text, { style: styles.small }, order.notes || quote?.notes || 'No special notes.'),
         ),
         e(View, { style: styles.totals },
-          e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal))),
-          e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Order total'), e(Text, { style: styles.totalValue }, money(order.totalAmount || subtotal))),
-          e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Advance'), e(Text, { style: styles.totalValue }, money(advance))),
-          e(View, { style: styles.grand }, e(View, { style: styles.totalRow }, e(Text, { style: styles.grandText }, 'Balance'), e(Text, { style: styles.grandText }, money(balance)))),
+          e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal, exact))),
+          e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Order total'), e(Text, { style: styles.totalValue }, money(order.totalAmount || subtotal, exact))),
+          e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Advance'), e(Text, { style: styles.totalValue }, money(advance, exact))),
+          e(View, { style: styles.grand }, e(View, { style: styles.totalRow }, e(Text, { style: styles.grandText }, 'Balance'), e(Text, { style: styles.grandText }, money(balance, exact)))),
         ),
       ),
       e(View, { style: styles.footer },

@@ -270,13 +270,13 @@ function rateFor(line) {
   const qty = Number(line.qty || line.quantity || 0);
   const basis = String(line.priceRateBasis || line.rateBasis || 'BOX').toUpperCase().replace('PACK', 'BOX');
   const isTile = String(line.category || '').toLowerCase() === 'tiles';
-  if (isTile && basis !== 'AREA') {
-    throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'tile'} uses legacy non-area pricing. Open the quote and save a revision so Product Master MRP is applied per SQFT.`);
+  const pricingUom = String(line.pricingUom || (basis === 'PIECE' ? 'PC' : isTile ? 'SQFT' : line.unit || line.uom || 'BOX')).toUpperCase().replace('M2', 'SQM');
+  if (isTile && !((basis === 'AREA' && ['SQFT', 'SQM'].includes(pricingUom)) || (basis === 'PIECE' && pricingUom === 'PC'))) {
+    throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'tile'} has an invalid tile rate basis and unit. Open the quote and save a governed revision.`);
   }
   const pricingQuantity = Number(line.pricingQuantity || (basis === 'AREA'
-    ? qty * Number(line.coveragePerPack || 0)
+    ? qty * Number(line.coveragePerPack || 0) * (isTile && pricingUom === 'SQM' ? 0.09290304 : 1)
     : basis === 'PIECE' ? qty * Number(line.piecesPerPack || line.pcsPerBox || 1) : qty));
-  const pricingUom = isTile ? 'SQFT' : String(line.pricingUom || (basis === 'PIECE' ? 'PC' : line.unit || line.uom || 'BOX')).toUpperCase();
   if (String(line.pricingVersion || '') !== PRICING_VERSION) throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'line'} uses unverified legacy pricing. Open the quote and confirm MRP and NRP.`);
   const priced = priceQuoteLines([{ ...line, pricingQuantity, priceRateBasis: basis, lineRateBasis: basis }], {
     mode: line.quoteDiscountMode || 'PERCENT', value: line.quoteDiscountValue || 0,
@@ -286,7 +286,7 @@ function rateFor(line) {
   const taxAmount = Number(priced.taxAmount || 0);
   const amount = Number(priced.grossLineTotal || 0);
   const mrp = Number(priced.mrpInclusive);
-  const mrpUom = isTile ? 'SQFT' : basis === 'AREA' ? String(line.pricingUom || 'SQFT').toUpperCase() : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
+  const mrpUom = isTile ? pricingUom : basis === 'AREA' ? pricingUom : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
   const grossMrp = Number(priced.mrpValueInclusive || 0);
   const finalUnitPayable = pricingQuantity > 0 ? amount / pricingQuantity : 0;
   return { qty, basis, pricingQuantity, pricingUom, unitRate: priced.specialRateExclusive, lineSubtotal: priced.specialValueInclusive, grossBeforeQuoteDiscount: priced.specialValueInclusive, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, nrp: priced.nrpInclusive, netSellingPrice: priced.specialRateInclusive, finalUnitPayable, mrpUom, grossMrp };
@@ -695,9 +695,9 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
       e(Text, { style: [styles.th, styles.tileImageCol] }, 'Image'),
       e(Text, { style: [styles.th, styles.tileDescCol] }, 'Tile / Chemical'),
       e(Text, { style: [styles.th, styles.tileFulfilCol] }, 'Box / Pc / Kg'),
-      e(Text, { style: [styles.th, styles.tileCoverageCol] }, 'Total SQFT'),
-      e(Text, { style: [styles.th, styles.tileMrpCol] }, 'MRP RATE\nSQFT / KG'),
-      e(Text, { style: [styles.th, styles.tileSellingCol] }, 'SELLING RATE\nSQFT / KG'),
+      e(Text, { style: [styles.th, styles.tileCoverageCol] }, 'Tile area'),
+      e(Text, { style: [styles.th, styles.tileMrpCol] }, 'MRP RATE\nPER UNIT'),
+      e(Text, { style: [styles.th, styles.tileSellingCol] }, 'SELLING RATE\nPER UNIT'),
       e(Text, { style: [styles.th, styles.tileAmountCol] }, 'Amount'),
     ),
     ...group.rows.map((line, index) => {
@@ -708,7 +708,7 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
       const piecesPerPack = Number(line.piecesPerPack || line.pcsPerBox || 0);
       const inventoryUom = String(line.inventoryUom || line.unit || line.uom || (isTile ? 'BOX' : 'KG')).toUpperCase();
       const fulfilment = isTile
-        ? `${rate.qty} ${inventoryUom}${piecesPerPack > 0 ? `\n${rate.qty * piecesPerPack} PC` : ''}`
+        ? `${rate.qty} ${inventoryUom}${inventoryUom !== 'PC' && piecesPerPack > 0 ? `\n${rate.qty * piecesPerPack} PC` : ''}`
         : `${rate.qty} KG`;
       const size = String(line.tileSize || line.size || line.dimensions || '').trim();
       return e(View, { key: `${line.sku || line.tileCode || index}`, style: [styles.tableRow, compact ? styles.tableRowCompact : null], wrap: false },
@@ -722,7 +722,13 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
           identityCodes ? e(Text, { style: styles.meta }, identityCodes) : null,
         ),
         e(Text, { style: [styles.td, styles.tileFulfilCol] }, fulfilment),
-        e(Text, { style: [styles.td, styles.tileCoverageCol] }, isTile ? `${rate.pricingQuantity.toFixed(2)}\nSQFT` : '—'),
+        e(Text, { style: [styles.td, styles.tileCoverageCol] }, isTile
+          ? rate.basis === 'AREA'
+            ? `${rate.pricingQuantity.toFixed(6).replace(/\.?0+$/, '')}\n${rate.pricingUom}`
+            : Number(line.coveragePerPack || 0) > 0
+              ? `${(rate.qty * Number(line.coveragePerPack)).toFixed(2)}\nSQFT`
+              : '—'
+          : '—'),
         e(Text, { style: [styles.td, styles.tileMrpCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`),
         e(Text, { style: [styles.td, styles.tileSellingCol] }, `${money(rate.finalUnitPayable)}\nper ${rate.pricingUom}`),
         e(Text, { style: [styles.td, styles.tileAmountCol] }, money(rate.amount)),

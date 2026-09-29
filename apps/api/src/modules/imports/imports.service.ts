@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHmac } from 'crypto';
 import { StoredImageService } from '../assets/stored-image.service';
+import { SQM_PER_SQFT, tilePricingChoice } from '../common/tile-pricing-unit';
 
 type ImportMode = 'preview' | 'apply';
 
@@ -190,7 +191,7 @@ export class ImportsService {
     const instructionRows = [
       ['1', 'Use the Product Master tab', 'Enter one new saleable design/SKU per row. Do not rename the sheet or headers.'],
       ['2', 'Read the column labels', 'A red header with * is required. Every SKU needs a positive MRP and governed price basis/UOM/source/effective date. NRP and floor price are optional.'],
-      ['3', 'Choose governed values', 'Dropdowns come from live master data at download time. Category, brand, finish and tax are required. Tile rows also require Tile Design Code and must use AREA / SQFT pricing.'],
+      ['3', 'Choose governed values', 'Dropdowns come from live master data at download time. Category, brand, finish and tax are required. Tile rows also require Tile Design Code. Set price as PIECE / PC, AREA / SQM, or AREA / SQFT. Coverage Per Pack is always SQFT per stock pack.'],
       ['4', 'Add a product image', 'Optional: paste a public HTTPS image URL or use Excel Insert > Pictures > Place over cells. Keep one JPG/PNG/WebP picture inside the Product Image cell on that row. Do not use Place in Cell.'],
       ['5', 'Preview before creation', 'Upload the workbook in Excel Import Center. Nothing is written until every row passes and you explicitly confirm.'],
       ['6', 'Existing SKUs are protected', 'Bulk import creates new SKUs only. Edit existing products individually in Product Master; the SKU code itself remains locked.'],
@@ -742,7 +743,13 @@ export class ImportsService {
     if (row.hasFloorPriceInclusive && row.floorPriceInclusive > row.defaultMrpInclusive) errors.push('Floor price cannot exceed Default MRP');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !['BOX', 'PIECE', 'AREA'].includes(row.priceRateBasis)) errors.push('Price Basis must be BOX, PIECE, or AREA when defaults are supplied');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !row.priceUom) errors.push('Price UOM is required when defaults are supplied');
-    if (this.key(row.category) === 'tiles' && (row.priceRateBasis !== 'AREA' || row.priceUom !== 'SQFT')) errors.push('Tile MRP must use AREA basis and SQFT UOM');
+    if (this.key(row.category) === 'tiles') {
+      try { tilePricingChoice(row.priceRateBasis, row.priceUom); }
+      catch (error) { errors.push(error instanceof Error ? error.message : 'Tile price unit is invalid'); }
+      if (row.priceRateBasis === 'AREA' && row.coveragePerPack <= 0) {
+        errors.push('Area-priced tile needs positive SQFT coverage per pack');
+      }
+    }
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !row.mrpSource) errors.push('MRP Source is required when price defaults are supplied');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && (!row.pricingEffectiveFrom || !Number.isFinite(new Date(row.pricingEffectiveFrom).getTime()))) errors.push('Pricing Effective From must be a valid date when defaults are supplied');
     if (!Number.isInteger(row.piecesPerPack) || row.piecesPerPack <= 0) errors.push('Pieces per pack must be a positive whole number');
@@ -836,6 +843,8 @@ export class ImportsService {
     const salesUomValue = pick('Sales UOM', 'Rate UOM', 'Pricing UOM', 'Price Unit');
     const baseUomValue = pick('Base UOM', 'Base Unit');
     const piecesPerPackValue = pick('Pieces Per Pack', 'Pieces/Box', 'PCS/BOX', 'Pcs Per Box', 'Pack Quantity');
+    const coverageSqFtValue = pick('Coverage Per Pack', 'Coverage/Box', 'SQFT/BOX', 'Box Coverage');
+    const coverageSqMValue = pick('SQM/BOX');
     const taxClassValue = pick('Tax Code', 'Tax Class', 'GST', 'GST Rate');
     const allowLooseValue = pick('Allow Loose', 'Loose Sale', 'Allow Piece Sale');
     const defaultUom = this.key(category) === 'tiles' ? 'BOX' : 'PC';
@@ -866,7 +875,9 @@ export class ImportsService {
       purchaseUom,
       salesUom,
       piecesPerPack: this.wholeNumber(piecesPerPackValue, 1),
-      coveragePerPack: this.number(pick('Coverage Per Pack', 'Coverage/Box', 'SQFT/BOX', 'SQM/BOX', 'Box Coverage'), 0),
+      coveragePerPack: coverageSqFtValue !== undefined
+        ? this.number(coverageSqFtValue, 0)
+        : coverageSqMValue !== undefined ? this.number(coverageSqMValue, 0) / SQM_PER_SQFT : 0,
       hsnCode: this.cleanText(pick('HSN', 'HSN Code', 'HSN/SAC')),
       taxClass: this.normalizeTaxClass(taxClassValue),
       defaultMrpInclusive: this.money(defaultMrpInclusive),
@@ -896,7 +907,7 @@ export class ImportsService {
       hasPurchaseUom: purchaseUomValue !== undefined,
       hasSalesUom: salesUomValue !== undefined,
       hasPiecesPerPack: piecesPerPackValue !== undefined,
-      hasCoveragePerPack: pick('Coverage Per Pack', 'Coverage/Box', 'SQFT/BOX', 'SQM/BOX', 'Box Coverage') !== undefined,
+      hasCoveragePerPack: coverageSqFtValue !== undefined || coverageSqMValue !== undefined,
       hasTaxClass: taxClassValue !== undefined,
       hasAllowLoose: allowLooseValue !== undefined,
     };

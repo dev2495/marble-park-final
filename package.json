@@ -36,6 +36,8 @@
     "smoke:lifecycle-direct-order": "node scripts/e2e-lifecycle-direct-order.mjs",
     "smoke:release-contract": "node scripts/e2e-release-contract-smoke.mjs",
     "smoke:tile-area": "node scripts/e2e-tile-area-pricing-smoke.mjs",
+    "smoke:tile-rate-units": "tsx scripts/verify-tile-rate-units.ts",
+    "smoke:tile-rate-graphql": "node scripts/e2e-tile-rate-units-smoke.mjs",
     "smoke:tile-variant-quote": "node scripts/e2e-tile-variant-quote-smoke.mjs",
     "smoke:branded": "node scripts/e2e-branded-quotation-smoke.mjs",
     "smoke:import-scale": "node scripts/e2e-product-import-scale-smoke.mjs",

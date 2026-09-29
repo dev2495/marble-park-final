@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 import { retailLadder } from '@/lib/quote-pricing';
+import { tilePriceBasis, tilePriceUom, tilePricingQuantity, tileStockUnitGeometry } from '@/lib/tile-rate';
 
 const SETUP = gql`query DirectOrderSetup { customers { id name mobile city siteAddress } salesAssignees }`;
 const SEARCH_PRODUCTS = gql`query DirectOrderProducts($query: String!) { globalSearch(query: $query) { products } }`;
@@ -15,13 +16,14 @@ const CREATE = gql`mutation CreateDirectSalesOrder($input: CreateDirectSalesOrde
 
 const money = (value: number) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const basisFor = (product: any) => {
+  if (String(product.category || '').toLowerCase() === 'tiles') return tilePriceBasis(product.priceUom);
   const sales = String(product.salesUom || product.unit || 'PC').toUpperCase();
   const inventory = String(product.purchaseUom || product.unit || 'PC').toUpperCase();
   if (['SQFT', 'SQM', 'M2'].includes(sales)) return 'AREA';
   if (sales === 'PC' && inventory !== 'PC') return 'PIECE';
   return 'BOX';
 };
-const pricingQuantity = (line: any) => line.rateBasis === 'AREA'
+const pricingQuantity = (line: any) => String(line.category || '').toLowerCase() === 'tiles' ? tilePricingQuantity(line) : line.rateBasis === 'AREA'
   ? Number(line.qty || 0) * Number(line.coveragePerPack || 0)
   : line.rateBasis === 'PIECE' ? Number(line.qty || 0) * Number(line.piecesPerPack || 1) : Number(line.qty || 0);
 const totalsFor = (line: any) => {
@@ -53,6 +55,8 @@ export default function DirectSalesOrderPage() {
   const salesUsers = data?.salesAssignees || [];
 
   const add = (product: any) => {
+    const isTile = String(product.category || '').toLowerCase() === 'tiles';
+    const geometry = isTile ? tileStockUnitGeometry(product) : { piecesPerUnit: Number(product.piecesPerPack || 1), coveragePerUnitSqFt: Number(product.coveragePerPack || 0) };
     const rateBasis = basisFor(product);
     const sourceBasis = String(product.priceRateBasis || '').toUpperCase();
     const matchesBasis = sourceBasis === rateBasis;
@@ -60,8 +64,8 @@ export default function DirectSalesOrderPage() {
       id: crypto.randomUUID(), lineKey: `direct:${product.id}:${Date.now()}`, productId: product.id,
       sku: product.sku, name: product.name, category: product.category, brand: product.brand, finish: product.finish,
       qty: 1, unit: product.purchaseUom || product.unit || 'PC', inventoryUom: product.purchaseUom || product.unit || 'PC',
-      pricingUom: product.salesUom || product.unit || 'PC', rateBasis, coveragePerPack: Number(product.coveragePerPack || 0),
-      piecesPerPack: Number(product.piecesPerPack || 1), pricingVersion: 'unified_retail_v1',
+      pricingUom: isTile ? tilePriceUom(product.priceUom) : product.priceUom || product.salesUom || product.unit || 'PC', rateBasis, coveragePerPack: geometry.coveragePerUnitSqFt,
+      piecesPerPack: geometry.piecesPerUnit, pricingVersion: 'unified_retail_v1',
       priceRateBasis: rateBasis, mrpInclusive: matchesBasis && Number(product.defaultMrpInclusive || 0) > 0 ? Number(product.defaultMrpInclusive) : '',
       nrpMode: matchesBasis && Number(product.defaultNrpInclusive || 0) > 0 ? 'FIXED_NRP' : 'PERCENT_OFF_MRP',
       nrpInput: matchesBasis && Number(product.defaultNrpInclusive || 0) > 0 ? Number(product.defaultNrpInclusive) : 0,
@@ -99,13 +103,13 @@ export default function DirectSalesOrderPage() {
         <div className="mp-panel space-y-4 p-5"><h2 className="text-xl font-semibold">Payment and promise</h2><div className="grid grid-cols-2 gap-2">{['cash','credit'].map((mode)=><button key={mode} onClick={()=>{setPaymentMode(mode);setPaymentTerms(mode==='credit'?'Net 30':'Cash on order');}} className={`h-10 rounded-xl text-xs font-black uppercase ${paymentMode===mode?'bg-[var(--ink)] text-white':'bg-[var(--muted)]'}`}>{mode}</button>)}</div>{paymentMode==='cash'?<label className="block text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Advance received<Input className="mt-2" type="number" min={0} max={total} value={advanceAmount} onChange={(event)=>setAdvanceAmount(event.target.value)}/></label>:null}<label className="block text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Payment terms<Input className="mt-2" value={paymentTerms} onChange={(event)=>setPaymentTerms(event.target.value)}/></label><label className="block text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Promised date<Input className="mt-2" type="date" value={promisedDate} onChange={(event)=>setPromisedDate(event.target.value)}/></label><label className="block text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Notes<textarea value={notes} onChange={(event)=>setNotes(event.target.value)} className="mt-2 min-h-20 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 text-sm"/></label></div>
       </div>
       <div className="space-y-5"><div className="mp-panel p-5"><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-5)]"/><Input value={query} onChange={(event)=>setQuery(event.target.value)} placeholder="Search Product Master SKU, internal code or name" className="pl-10"/></div>{query.length>=2?<div className="mt-3 max-h-64 divide-y divide-[var(--line)] overflow-y-auto rounded-xl border border-[var(--line)]">{searching?<p className="p-4 text-sm">Searching…</p>:(searchData?.globalSearch?.products || []).map((product:any)=><button key={product.id} onClick={()=>add(product)} className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-[var(--muted)]"><span><b className="block text-sm">{product.internalCode || product.sku} · {product.name}</b><span className="text-xs text-[var(--ink-4)]">{product.brand} · {product.category}</span></span><PackagePlus className="h-5 w-5 text-[var(--brand-700)]"/></button>)}</div>:null}</div>
-        <div className="space-y-3">{lines.map((line)=>{const calc=totalsFor(line);return <article key={line.id} className="mp-panel p-4"><div className="flex justify-between gap-3"><div><p className="font-black">{line.sku} · {line.name}</p><p className="mt-1 text-xs font-semibold text-[var(--ink-4)]">{line.brand} · billed by {line.rateBasis.toLowerCase()}</p></div><button title="Remove line" onClick={()=>setLines((rows)=>rows.filter((row)=>row.id!==line.id))} className="h-9 w-9 rounded-lg text-red-700 hover:bg-red-50"><Trash2 className="mx-auto h-4 w-4"/></button></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="space-y-3">{lines.map((line)=>{const calc=totalsFor(line);return <article key={line.id} className="mp-panel p-4"><div className="flex justify-between gap-3"><div><p className="font-black">{line.sku} · {line.name}</p><p className="mt-1 text-xs font-semibold text-[var(--ink-4)]">{line.brand} · billed per {line.pricingUom}</p></div><button title="Remove line" onClick={()=>setLines((rows)=>rows.filter((row)=>row.id!==line.id))} className="h-9 w-9 rounded-lg text-red-700 hover:bg-red-50"><Trash2 className="mx-auto h-4 w-4"/></button></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Qty<Input className="mt-1" type="number" min={1} value={line.qty} onChange={(e)=>update(line.id,{qty:Number(e.target.value)})}/></label>
-          <label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Basis<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] px-2 text-sm" value={line.rateBasis} onChange={(e)=>update(line.id,{rateBasis:e.target.value,priceRateBasis:e.target.value,mrpInclusive:'',nrpMode:'PERCENT_OFF_MRP',nrpInput:0,specialMode:'NONE',specialInput:0,mrpSource:'MANUAL'})}><option value="BOX">Box</option><option value="PIECE">Piece</option>{Number(line.coveragePerPack)>0?<option value="AREA">Area</option>:null}</select></label>
-          <label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">MRP incl GST<Input className="mt-1" type="number" min={0.01} value={line.mrpInclusive} onChange={(e)=>update(line.id,{mrpInclusive:e.target.value,mrpSource:'MANUAL'})}/></label>
+          <label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Basis<select disabled={String(line.category || '').toLowerCase() === 'tiles'} className="mt-1 h-10 w-full rounded-md border border-[var(--line)] px-2 text-sm disabled:bg-[var(--muted)]" value={line.rateBasis} onChange={(e)=>update(line.id,{rateBasis:e.target.value,priceRateBasis:e.target.value,mrpInclusive:'',nrpMode:'PERCENT_OFF_MRP',nrpInput:0,specialMode:'NONE',specialInput:0,mrpSource:'MANUAL'})}><option value="BOX">Box</option><option value="PIECE">Piece</option>{Number(line.coveragePerPack)>0?<option value="AREA">Area</option>:null}</select></label>
+          <label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">MRP incl GST / {line.pricingUom}<Input readOnly={String(line.category || '').toLowerCase() === 'tiles'} className="mt-1" type="number" min={0.01} value={line.mrpInclusive} onChange={(e)=>update(line.id,{mrpInclusive:e.target.value,mrpSource:'MANUAL'})}/></label>
           <label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Base pricing → NRP<div className="mt-1 grid grid-cols-[1fr_6rem] gap-1"><Input type="number" min={0} max={line.nrpMode==='PERCENT_OFF_MRP'?100:undefined} value={line.nrpInput} onChange={(e)=>update(line.id,{nrpInput:e.target.value})}/><select className="h-10 rounded-md border border-[var(--line)] px-1 text-[10px] font-bold" value={line.nrpMode} onChange={(e)=>update(line.id,{nrpMode:e.target.value,nrpInput:0})}><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><span className="mt-1 block text-[10px] text-[var(--brand-700)]">NRP {money(calc.nrpInclusive)}</span></label>
           <label className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Optional special<div className="mt-1 grid grid-cols-[1fr_7rem] gap-1"><Input disabled={line.specialMode==='NONE'} type="number" min={0} max={line.specialMode==='PERCENT_OFF_NRP'?100:undefined} value={line.specialInput} onChange={(e)=>update(line.id,{specialInput:e.target.value})}/><select className="h-10 rounded-md border border-[var(--line)] px-1 text-[10px] font-bold" value={line.specialMode} onChange={(e)=>update(line.id,{specialMode:e.target.value,specialInput:0})}><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><span className="mt-1 block text-[10px] text-blue-700">Special {money(calc.specialRateInclusive)}</span></label>
-          <div className="rounded-lg bg-[var(--muted)] p-2 text-right"><p className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Payable</p><p className="mt-2 font-black text-emerald-700">{money(calc.total)}</p><p className={`text-[10px] font-bold ${calc.finalUnitPayable>Number(line.mrpInclusive||0)?'text-red-700':'text-[var(--ink-4)]'}`}>{money(calc.finalUnitPayable)} / {line.rateBasis.toLowerCase()}</p></div>
+          <div className="rounded-lg bg-[var(--muted)] p-2 text-right"><p className="text-[10px] font-bold uppercase text-[var(--ink-4)]">Payable</p><p className="mt-2 font-black text-emerald-700">{money(calc.total)}</p><p className={`text-[10px] font-bold ${calc.finalUnitPayable>Number(line.mrpInclusive||0)?'text-red-700':'text-[var(--ink-4)]'}`}>{money(calc.finalUnitPayable)} / {line.pricingUom}</p></div>
         </div></article>})}</div>
         {validation?<p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-800">{validation}</p>:null}<Button className="w-full" size="lg" disabled={state.loading || !lines.length || !customerId || !ownerId} onClick={submit}><IndianRupee className="mr-2 h-5 w-5"/>{state.loading?'Creating order…':'Create direct sales order'}</Button>
       </div>

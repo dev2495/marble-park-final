@@ -5,6 +5,7 @@ import {
   priceQuoteLines as priceCanonicalQuoteLines,
   priceUnit,
 } from '@marble-park/pricing-contract';
+import { tileCoveragePerPack } from './tile-pricing-unit';
 
 export const DEFAULT_TAX_RATE = 18;
 export const RETAIL_LADDER_VERSION = PRICING_VERSION;
@@ -53,7 +54,11 @@ function commercialQuantity(line: any) {
   if (basis === 'AREA' && (!Number.isFinite(coveragePerPack) || coveragePerPack <= 0)) {
     throw new BadRequestException(`${line?.sku || line?.name || 'Area-priced item'} needs positive governed coverage per box`);
   }
-  return basis === 'PIECE' ? inventoryQuantity * piecesPerPack : basis === 'AREA' ? inventoryQuantity * coveragePerPack : inventoryQuantity;
+  const tile = String(line?.category || '').trim().toLowerCase() === 'tiles';
+  const pricedCoverage = basis === 'AREA' && tile
+    ? tileCoveragePerPack(coveragePerPack, String(line?.pricingUom || line?.priceUom || 'SQFT'))
+    : coveragePerPack;
+  return basis === 'PIECE' ? inventoryQuantity * piecesPerPack : basis === 'AREA' ? inventoryQuantity * pricedCoverage : inventoryQuantity;
 }
 
 function canonicalLine(line: any) {

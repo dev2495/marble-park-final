@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { ulid } from 'ulid';
 import { compactTileSize } from '@marble-park/pricing-contract/tile-size';
 import { brandedLabelQrDataUrl } from '../common/branded-label-qr';
+import { convertTileRate, tilePricingChoice } from '../common/tile-pricing-unit';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { PrismaService } from '../prisma/prisma.service';
@@ -636,6 +637,7 @@ export class OperationsService {
         if (packCount > 0) await this.createInternalLabelJobTx(tx, {
           sourceType: 'inventory_lot', sourceId: lot.id, productId: line.productId, lotId: lot.id,
           quantity: packCount, template: line.metadata?.labelTemplate || 'stock_pack', actorUserId,
+          allowPendingPrice: true,
         });
       }
       const posted = await tx.openingStockSession.update({
@@ -1310,12 +1312,13 @@ export class OperationsService {
       }
       if (!sourceType || !sourceId || !productId) throw new BadRequestException('Select a Product Master SKU, inventory lot, or display sample');
       const job = await this.createInternalLabelJobTx(tx, {
-        sourceType, sourceId, productId, lotId, displaySampleId, quantity, template, actorUserId, newJob: Boolean(input.newJob),
+        sourceType, sourceId, productId, lotId, displaySampleId, quantity, template, actorUserId,
+        priceUom: input.priceUom, newJob: Boolean(input.newJob),
       });
       await tx.auditEvent.create({
         data: {
           id: ulid(), actorUserId, action: 'internal_label.create', entityType: 'InternalLabelJob', entityId: job.id,
-          summary: `Generated ${job.jobNumber}`, metadata: { sourceType, sourceId, quantity, template },
+          summary: `Generated ${job.jobNumber}`, metadata: { sourceType, sourceId, quantity, template, priceSnapshot: job.metadata?.priceSnapshot || null },
         },
       });
       return job;
@@ -1336,6 +1339,7 @@ export class OperationsService {
       include: {
         instances: {
           include: {
+            labelJob: true,
             product: { include: { brandMaster: true, tileDesignMaster: true, tileSizeMaster: true } },
             lot: { include: { balances: { include: { location: true } } } },
             displaySample: true,
@@ -1369,10 +1373,7 @@ export class OperationsService {
       })
       : [];
     const sourceReceiptById = new Map(sourceReceipts.map((receipt: any) => [receipt.id, receipt]));
-    const missingMrp = printable.find((instance: any) => !Number.isFinite(Number(instance.product?.defaultMrpInclusive)) || Number(instance.product?.defaultMrpInclusive) <= 0);
-    if (missingMrp) {
-      throw new BadRequestException(`${missingMrp.product?.sku || 'This SKU'} needs a verified Product Master MRP before its physical label can be printed. Complete it in MRP Readiness.`);
-    }
+    const prices = new Map(printable.map((instance: any) => [instance.id, this.labelPriceForInstance(instance)]));
     const qrByValue = new Map<string, Promise<string>>();
     const qrDataUrlFor = (value: string) => {
       const cached = qrByValue.get(value);
@@ -1383,6 +1384,7 @@ export class OperationsService {
     };
     const labels = await Promise.all(printable.flatMap((instance: any) => Array.from({ length: Math.max(1, copies) }, (_, copyIndex) => ({ instance, copyIndex }))).map(async ({ instance, copyIndex }: any) => {
       const tile = String(instance.product?.category || '').trim().toLowerCase() === 'tiles';
+      const price = prices.get(instance.id) as { mrpInclusive: number; priceRateBasis: string; priceUom: string };
       const designBrand = tile
         ? governedBrandByName.get(String(instance.product?.tileDesignMaster?.brand || '').trim().toUpperCase())
         : null;
@@ -1408,9 +1410,9 @@ export class OperationsService {
         governedBrandName: governedBrand?.name || null,
         brand: instance.product?.brand || null,
         category: instance.product?.category || null,
-        mrpInclusive: instance.product?.defaultMrpInclusive == null ? null : Number(instance.product.defaultMrpInclusive),
-        priceRateBasis: String(instance.product?.category || '').toLowerCase() === 'tiles' ? 'AREA' : instance.product?.priceRateBasis || null,
-        priceUom: String(instance.product?.category || '').toLowerCase() === 'tiles' ? 'SQFT' : instance.product?.priceUom || instance.product?.salesUom || instance.product?.unit || null,
+        mrpInclusive: price.mrpInclusive,
+        priceRateBasis: price.priceRateBasis,
+        priceUom: price.priceUom,
         finish: instance.product?.finish || null,
         dimensions: instance.product?.dimensions || null,
         lotNumber: instance.lot?.lotNumber || null,
@@ -1483,6 +1485,21 @@ export class OperationsService {
 
       if (!selected.length) throw new BadRequestException('Select at least one active label');
       if (selected.length * copies > 1000) throw new BadRequestException('A print run can contain at most 1,000 physical sticker pages. Reduce labels or copies.');
+      // Opening-stock labels can be created while pricing is pending. Capture
+      // their first printable rate once, before the first print run is prepared.
+      for (const job of jobs) {
+        if (!Object.prototype.hasOwnProperty.call(job.metadata || {}, 'priceSnapshot') || job.metadata?.priceSnapshot) continue;
+        const productId = selected.find((row: any) => row.labelJobId === job.id)?.productId;
+        const product = productId ? await tx.product.findUnique({ where: { id: productId } }) : null;
+        if (!product) throw new NotFoundException('Product Master SKU for this label was not found');
+        const priceSnapshot = this.labelPriceSnapshotForProduct(product);
+        await tx.internalLabelJob.update({ where: { id: job.id }, data: { metadata: { ...job.metadata, priceSnapshot }, updatedAt: new Date() } });
+        job.metadata = { ...job.metadata, priceSnapshot };
+        await tx.auditEvent.create({ data: {
+          id: ulid(), actorUserId, action: 'internal_label.rate_snapshot', entityType: 'InternalLabelJob', entityId: job.id,
+          summary: `Captured first printable rate for ${job.jobNumber}`, metadata: { priceSnapshot },
+        } });
+      }
       const subjectTypes = Array.isArray(template.subjectTypes) ? template.subjectTypes.map(String) : [];
       const unsupported = jobs.find((job: any) => subjectTypes.length && !subjectTypes.includes(job.sourceType));
       if (unsupported) throw new BadRequestException(`This label template does not support ${String(unsupported.sourceType).replaceAll('_', ' ')} labels`);
@@ -1509,7 +1526,7 @@ export class OperationsService {
         metadata: { labelJobId: anchorJob.id, labelJobIds: jobIds, jobCount: jobIds.length, bulk: jobIds.length > 1, labelCount: selected.length, physicalPages: selected.length * copies, copies, templateCode: template.code, templateVersion: template.version, orientation, labelSize: adjustableThermal ? labelSize : null, reason: reason || null },
       } });
       return run;
-    });
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
   }
 
   async internalLabelPrintRun(id: string) {
@@ -1888,6 +1905,71 @@ export class OperationsService {
     });
   }
 
+  private labelPriceSnapshotForProduct(product: any, requestedPriceUom?: string) {
+    const tile = String(product?.category || '').trim().toLowerCase() === 'tiles';
+    const sourceMrpInclusive = Number(product?.defaultMrpInclusive);
+    if (!Number.isFinite(sourceMrpInclusive) || sourceMrpInclusive <= 0) {
+      throw new BadRequestException(`${product?.sku || 'This SKU'} needs a verified Product Master MRP before a physical label can be created. Complete it in MRP Readiness.`);
+    }
+    const rawSourcePriceUom = String(product?.priceUom || (tile ? (product?.priceRateBasis === 'PIECE' ? 'PC' : 'SQFT') : product?.salesUom || product?.unit || 'PC')).trim().toUpperCase();
+    const sourcePriceUom = tile && rawSourcePriceUom === 'M2' ? 'SQM' : rawSourcePriceUom;
+    if (tile) tilePricingChoice(product?.priceRateBasis, sourcePriceUom);
+    const priceUom = String(requestedPriceUom || sourcePriceUom).trim().toUpperCase();
+    if (tile && !['PC', 'SQM', 'SQFT'].includes(priceUom)) {
+      throw new BadRequestException('Choose PC, SQM, or SQFT for a tile label rate');
+    }
+    if (!tile && priceUom !== sourcePriceUom) {
+      throw new BadRequestException(`This product is priced per ${sourcePriceUom}; label rate changes are available for tiles only`);
+    }
+    let mrpInclusive = sourceMrpInclusive;
+    if (tile) {
+      try {
+        mrpInclusive = convertTileRate(sourceMrpInclusive, sourcePriceUom, priceUom, Number(product.coveragePerPack), Number(product.piecesPerPack));
+      } catch (error) {
+        throw new BadRequestException(error instanceof Error ? error.message : 'This tile needs verified coverage before its label rate can be converted');
+      }
+    }
+    if (!Number.isFinite(mrpInclusive) || mrpInclusive <= 0) {
+      throw new BadRequestException('The selected label rate is not a positive amount. Check the tile rate and coverage.');
+    }
+    return {
+      mrpInclusive,
+      priceUom,
+      priceRateBasis: tile ? (priceUom === 'PC' ? 'PIECE' : 'AREA') : product.priceRateBasis || (priceUom === 'PC' ? 'PIECE' : 'AREA'),
+      sourceMrpInclusive,
+      sourcePriceUom,
+      productId: product.id,
+      productUpdatedAt: product.updatedAt?.toISOString?.() || product.updatedAt || null,
+      coveragePerPackSqFt: tile ? Number(product.coveragePerPack) : null,
+      piecesPerPack: tile ? Number(product.piecesPerPack) : null,
+    };
+  }
+
+  private labelPriceForInstance(instance: any) {
+    const snapshot = instance.metadata?.priceSnapshot || instance.labelJob?.metadata?.priceSnapshot;
+    if (snapshot) {
+      const mrpInclusive = Number(snapshot.mrpInclusive);
+      const priceUom = String(snapshot.priceUom || '').trim().toUpperCase();
+      if (!Number.isFinite(mrpInclusive) || mrpInclusive <= 0 || !priceUom) {
+        throw new BadRequestException(`${instance.labelCode || 'This label'} has an invalid saved rate. Void it and create a new label job.`);
+      }
+      return { mrpInclusive, priceUom, priceRateBasis: String(snapshot.priceRateBasis || (priceUom === 'PC' ? 'PIECE' : 'AREA')) };
+    }
+    // Older labels have no immutable price record. Preserve their live Product Master behaviour.
+    const product = instance.product;
+    const mrpInclusive = Number(product?.defaultMrpInclusive);
+    if (!Number.isFinite(mrpInclusive) || mrpInclusive <= 0) {
+      throw new BadRequestException(`${product?.sku || 'This SKU'} needs a verified Product Master MRP before its physical label can be printed. Complete it in MRP Readiness.`);
+    }
+    const tile = String(product?.category || '').trim().toLowerCase() === 'tiles';
+    const rawPriceUom = String(product?.priceUom || (tile ? (product?.priceRateBasis === 'PIECE' ? 'PC' : 'SQFT') : product?.salesUom || product?.unit || 'PC')).trim().toUpperCase();
+    const priceUom = tile && rawPriceUom === 'M2' ? 'SQM' : rawPriceUom;
+    if (tile && priceUom !== 'SQFT') {
+      throw new BadRequestException(`${instance.labelCode || 'This tile label'} predates saved label rates. Create a new PC or SQM label job so its printed amount and unit are governed together.`);
+    }
+    return { mrpInclusive, priceUom, priceRateBasis: String(product?.priceRateBasis || (priceUom === 'PC' ? 'PIECE' : 'AREA')) };
+  }
+
   private async createInternalLabelJobTx(tx: any, input: {
     sourceType: string;
     sourceId: string;
@@ -1897,15 +1979,26 @@ export class OperationsService {
     quantity: number;
     template: string;
     actorUserId: string;
+    priceUom?: string;
+    allowPendingPrice?: boolean;
     newJob?: boolean;
   }) {
     const quantity = this.whole(input.quantity, 'Label quantity');
+    const product = await tx.product.findUnique({ where: { id: input.productId } });
+    if (!product) throw new NotFoundException('Product Master SKU not found');
+    // Opening stock may create label identities before an owner completes MRP.
+    // Keep stock posting independent; printing still requires a verified positive rate.
+    const priceSnapshot = input.allowPendingPrice && !(Number(product.defaultMrpInclusive) > 0)
+      ? null
+      : this.labelPriceSnapshotForProduct(product, input.priceUom);
     if (!input.newJob) {
       const existing = await tx.internalLabelJob.findFirst({
         where: { sourceType: input.sourceType, sourceId: input.sourceId, template: input.template },
         include: { instances: { orderBy: { unitNumber: 'asc' } } },
       });
-      if (existing) return existing;
+      const saved = existing?.metadata?.priceSnapshot;
+      if (existing && !saved && !priceSnapshot) return existing;
+      if (existing && saved && priceSnapshot && saved.priceUom === priceSnapshot.priceUom && saved.mrpInclusive === priceSnapshot.mrpInclusive && saved.sourcePriceUom === priceSnapshot.sourcePriceUom && saved.sourceMrpInclusive === priceSnapshot.sourceMrpInclusive) return existing;
     }
     const requestedAt = new Date();
     const jobNumber = await nextDocumentNumber(tx, 'internal_label', 'LB', requestedAt, {
@@ -1918,7 +2011,7 @@ export class OperationsService {
         id: ulid(), jobNumber, sourceType: input.sourceType, sourceId: input.sourceId,
         template: input.template, templateVersion: 1, quantity, status: 'ready', requestedBy: input.actorUserId,
         completedBy: input.actorUserId, completedAt: requestedAt,
-        metadata: { encoding: 'internal_url', nonGs1: true }, updatedAt: requestedAt,
+        metadata: { encoding: 'internal_url', nonGs1: true, priceSnapshot }, updatedAt: requestedAt,
       },
     });
     for (let unitNumber = 1; unitNumber <= quantity; unitNumber += 1) {
@@ -1927,7 +2020,7 @@ export class OperationsService {
           id: ulid(), labelCode: `${jobNumber}-${String(unitNumber).padStart(4, '0')}`,
           labelJobId: job.id, productId: input.productId || null, lotId: input.lotId || null,
           displaySampleId: input.displaySampleId || null, unitNumber, status: 'active',
-          metadata: { sourceType: input.sourceType, sourceId: input.sourceId }, updatedAt: requestedAt,
+          metadata: { sourceType: input.sourceType, sourceId: input.sourceId, priceSnapshot }, updatedAt: requestedAt,
         },
       });
     }
