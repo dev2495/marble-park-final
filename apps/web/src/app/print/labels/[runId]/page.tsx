@@ -196,7 +196,7 @@ function fitStickerText() {
     node.style.fontSize = `${size}px`;
     const exceeds = () => {
       const box = node.getBoundingClientRect();
-      const maxHeight = node.parentElement?.classList.contains('mp-v4-product') ? Math.min(height, parseFloat(getComputedStyle(node).lineHeight) * 2) : height;
+      const maxHeight = node.parentElement?.classList.contains('mp-v4-product') ? Math.min(height, parseFloat(getComputedStyle(node).lineHeight) * Number(node.dataset.lines || 2)) : height;
       // scrollWidth/clientWidth are rounded to whole pixels, while mm-based row
       // geometry is fractional. Compare against the element's own visible box
       // so Safari cannot reject an otherwise fitting label at a rounding edge.
@@ -215,7 +215,12 @@ function fitStickerText() {
       const caption = row.querySelector<HTMLElement>('span');
       if (!text || !caption) continue;
       const style = getComputedStyle(row);
-      if (!fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - parseFloat(style.rowGap), minimum)) {
+      const fits = () => fit(text, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), row.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption.offsetHeight - parseFloat(style.rowGap), minimum);
+      // A long product name may use a third line (the row has the height) rather than blocking the print.
+      if (!fits() && row.classList.contains('mp-v4-product') && !text.dataset.lines) {
+        text.dataset.lines = '3'; text.style.setProperty('-webkit-line-clamp', '3'); text.style.maxHeight = '3.18em';
+      }
+      if (!fits()) {
         invalid ||= `${labelCode}: ${caption.textContent?.trim().toLowerCase() || 'text'} does not fit on this sticker. Use the checked PDF layout or shorten its printable master value.`;
       }
     }
@@ -223,7 +228,11 @@ function fitStickerText() {
     const sizeText = sizeRow?.querySelector<HTMLElement>('strong');
     if (sizeRow && sizeText) {
       const style = getComputedStyle(sizeRow);
-      if (!fit(sizeText, sizeRow.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), sizeRow.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom), minimum)) {
+      const fits = () => fit(sizeText, sizeRow.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), sizeRow.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom), minimum);
+      // A size such as "1200 x 2400 mm" stays exact without its unit; drop the unit before refusing to print.
+      const unitless = sizeText.textContent?.replace(/\s+(mm|cm|in|inch|inches|ft)$/i, '') || '';
+      if (!fits() && unitless !== sizeText.textContent) sizeText.textContent = unitless;
+      if (!fits()) {
         invalid ||= `${labelCode}: tile size does not fit on this sticker. Use the checked PDF layout or shorten its printable master value.`;
       }
     }
@@ -447,7 +456,7 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     .mp-v4-brand strong { font: 800 11pt/1 Arial, sans-serif; }
     .mp-v4-product strong { display: -webkit-box; min-height: 0; max-height: 2.12em; overflow: hidden; font-weight: 900; line-height: 1.06; letter-spacing: -.2pt; overflow-wrap: anywhere; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .mp-v4-identity { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; }
-    .mp-v4-identity.has-tile-size { grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr); }
+    .mp-v4-identity.has-tile-size { grid-template-columns: fit-content(42%) minmax(0, 1fr); }
     .mp-v4-size { display: flex; align-items: center; justify-content: flex-end; min-width: 0; min-height: 0; padding: .6mm 1.5mm .6mm 0; }
     .mp-v4-tile-size { font: 800 10pt/1.1 Arial, sans-serif; white-space: nowrap; letter-spacing: 0; }
     .mp-v4-finish strong { font: 800 10pt/1.05 Arial, sans-serif; overflow-wrap: anywhere; }
@@ -468,8 +477,7 @@ export default function LabelPrintPage({ params }: { params: Promise<{ runId: st
     .mp-v4-label-page.is-compact .mp-v4-brand, .mp-v4-label-page.is-compact .mp-v4-product, .mp-v4-label-page.is-compact .mp-v4-finish { gap: .25mm; padding: .35mm .8mm; }
     .mp-v4-label-page.is-compact .mp-v4-copy span { font-size: 3.4pt; letter-spacing: .35pt; }
     .mp-v4-label-page.is-compact .mp-v4-brand strong { font-size: 7pt; }
-    .mp-v4-label-page.is-compact .mp-v4-identity.has-tile-size { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); }
-    .mp-v4-label-page.is-compact .mp-v4-size { padding: .35mm .8mm .35mm 0; }
+        .mp-v4-label-page.is-compact .mp-v4-size { padding: .35mm .8mm .35mm 0; }
     .mp-v4-label-page.is-compact .mp-v4-tile-size { font-size: 6pt; }
     .mp-v4-label-page.is-compact .mp-v4-finish strong { font-size: 6.7pt; }
     .mp-v4-label-page.is-compact .mp-v4-rate { gap: .65mm; padding: .65mm .8mm; }
