@@ -1655,6 +1655,8 @@ export default function TileWorkspacePage() {
                     type="number"
                     min="1"
                     value={variant.piecesPerPack}
+                    placeholder="Enter pcs"
+                    data-needs-value
                     onChange={(e) =>
                       setVariant({ ...variant, piecesPerPack: e.target.value })
                     }
@@ -1692,33 +1694,36 @@ export default function TileWorkspacePage() {
                 </label>
                 <p className="self-end rounded-md bg-white p-2 text-[11px] text-[var(--ink-3)]">Changing the unit does not change the numbers below. Review MRP, NRP and floor as ₹ per {variant.priceUom} before saving.</p>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  MRP ₹ incl. GST / {variant.priceUom} *
+                  MRP ₹ before GST / {variant.priceUom} *
                   <Input
                     className="mt-1"
                     type="number"
                     min="0.01"
                     step="0.01"
                     value={variant.defaultMrpInclusive}
+                    placeholder="Enter MRP ₹"
+                    data-needs-value
                     onChange={(e) =>
                       setVariant({ ...variant, defaultMrpInclusive: e.target.value })
                     }
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Default NRP ₹ incl. GST / {variant.priceUom}
+                  Default NRP ₹ before GST / {variant.priceUom}
                   <Input
                     className="mt-1"
                     type="number"
                     min="0.01"
                     step="0.01"
                     value={variant.defaultNrpInclusive}
+                    placeholder="NRP ₹ (optional)"
                     onChange={(e) =>
                       setVariant({ ...variant, defaultNrpInclusive: e.target.value })
                     }
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Floor price ₹ incl. GST / {variant.priceUom}
+                  Floor price ₹ before GST / {variant.priceUom}
                   <Input className="mt-1" type="number" min="0.01" step="0.01" value={variant.floorPriceInclusive} onChange={(e) => setVariant({ ...variant, floorPriceInclusive: e.target.value })} placeholder="Optional · owner approval below floor" />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">MRP source<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.mrpSource} onChange={(e) => setVariant({ ...variant, mrpSource: e.target.value })}><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
@@ -1934,6 +1939,8 @@ export default function TileWorkspacePage() {
                         type="number"
                         min="1"
                         value={display.issuedQuantity}
+                        placeholder="Enter qty"
+                        data-needs-value
                         onChange={(e) =>
                           setDisplay({
                             ...display,

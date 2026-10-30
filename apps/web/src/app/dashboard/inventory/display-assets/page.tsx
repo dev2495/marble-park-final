@@ -734,6 +734,8 @@ export default function DisplayAssetsPage() {
                     max={Math.max(1, available(selectedLot))}
                     required
                     value={form.issuedQuantity}
+                    placeholder="Enter qty"
+                    data-needs-value
                     onChange={(e) =>
                       setForm({ ...form, issuedQuantity: e.target.value })
                     }

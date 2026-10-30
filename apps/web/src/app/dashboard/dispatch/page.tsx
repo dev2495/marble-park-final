@@ -562,7 +562,8 @@ export default function DispatchPage() {
                                 type="number"
                                 min={0}
                                 max={line.pickedQuantity}
-                                value={packQty[line.id] ?? line.pickedQuantity}
+                                value={(packQty[line.id] ?? line.pickedQuantity) || ''}
+                                placeholder="0"
                                 onChange={(event) =>
                                   setPackQty({
                                     ...packQty,

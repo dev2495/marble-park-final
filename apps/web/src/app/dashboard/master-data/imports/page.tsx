@@ -1033,6 +1033,7 @@ export default function ImportCenterPage() {
                                 type="number"
                                 min={1}
                                 value={row.piecesPerPack}
+                                placeholder="Pieces (optional)"
                                 onChange={(event) =>
                                   updateRow(
                                     index,
@@ -1049,6 +1050,7 @@ export default function ImportCenterPage() {
                                 min={0}
                                 step="0.001"
                                 value={row.coveragePerPack}
+                                placeholder="Coverage (optional)"
                                 onChange={(event) =>
                                   updateRow(
                                     index,
@@ -1065,6 +1067,7 @@ export default function ImportCenterPage() {
                                 min={0.01}
                                 step="0.01"
                                 value={row.defaultMrpInclusive}
+                                placeholder="MRP ₹ (optional)"
                                 onChange={(event) =>
                                   updateRow(
                                     index,
@@ -1081,6 +1084,7 @@ export default function ImportCenterPage() {
                                 min={0.01}
                                 step="0.01"
                                 value={row.defaultNrpInclusive}
+                                placeholder="NRP ₹ (optional)"
                                 onChange={(event) =>
                                   updateRow(
                                     index,

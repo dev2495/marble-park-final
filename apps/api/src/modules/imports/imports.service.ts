@@ -856,6 +856,13 @@ export class ImportsService {
     const designCode = pick('Tile Design Code', 'Design Code', 'Tile Family Code');
     const designName = pick('Tile Design Name', 'Design Name', 'Tile Family Name');
     const description = this.cleanText(pick('Long Description', 'Description', 'PRODUCT DESCRIPTION'));
+    // An MRP without a basis can never be quoted. For CP/sanitary families the
+    // basis follows the SKU's own selling unit; tiles/chemicals keep their rules.
+    const sellingUom = String(salesUom || purchaseUom || 'PC').trim().toUpperCase();
+    const deriveMrpBasis = defaultMrpInclusive !== undefined
+      && !String(priceRateBasis ?? '').trim()
+      && !['tiles', 'chemicals'].includes(String(category || '').trim().toLowerCase());
+    const deriveMrpUom = deriveMrpBasis && !String(priceUom ?? '').trim();
     return {
       sku,
       internalCode: this.normalizeInternalCode(internalCode || sku),
@@ -883,8 +890,10 @@ export class ImportsService {
       defaultMrpInclusive: this.money(defaultMrpInclusive),
       defaultNrpInclusive: this.money(defaultNrpInclusive),
       floorPriceInclusive: this.money(floorPriceInclusive),
-      priceRateBasis: String(priceRateBasis || '').trim().toUpperCase(),
-      priceUom: String(priceUom || '').trim().toUpperCase(),
+      priceRateBasis: deriveMrpBasis
+        ? (['SQFT', 'SQM', 'M2'].includes(sellingUom) ? 'AREA' : sellingUom === 'PC' ? 'PIECE' : 'BOX')
+        : String(priceRateBasis || '').trim().toUpperCase(),
+      priceUom: deriveMrpUom ? sellingUom : String(priceUom || '').trim().toUpperCase(),
       mrpSource: this.cleanText(mrpSource),
       pricingEffectiveFrom: this.cleanText(pricingEffectiveFrom),
       hasBrand: Boolean(brand),
@@ -894,8 +903,8 @@ export class ImportsService {
       hasDefaultMrpInclusive: defaultMrpInclusive !== undefined,
       hasDefaultNrpInclusive: defaultNrpInclusive !== undefined,
       hasFloorPriceInclusive: floorPriceInclusive !== undefined,
-      hasPriceRateBasis: priceRateBasis !== undefined,
-      hasPriceUom: priceUom !== undefined,
+      hasPriceRateBasis: priceRateBasis !== undefined || deriveMrpBasis,
+      hasPriceUom: priceUom !== undefined || deriveMrpUom,
       hasMrpSource: mrpSource !== undefined,
       hasPricingEffectiveFrom: pricingEffectiveFrom !== undefined,
       hasDescription: Boolean(description),

@@ -291,6 +291,19 @@
 }
 
 @layer components {
+  /* ── Fields waiting for a value: empty + placeholder visible + enabled ── */
+  input[data-needs-value]:placeholder-shown:not(:disabled):not([readonly]),
+  textarea[data-needs-value]:placeholder-shown:not(:disabled):not([readonly]) {
+    border-color: #f59e0b;
+    background-color: #fffbeb;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+  }
+  :root.dark input[data-needs-value]:placeholder-shown:not(:disabled):not([readonly]),
+  :root.dark textarea[data-needs-value]:placeholder-shown:not(:disabled):not([readonly]) {
+    border-color: #d97706;
+    background-color: rgba(245, 158, 11, 0.12);
+  }
+
   /* ── Cards ── */
   .mp-card {
     background:

@@ -14,7 +14,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { describeApolloError } from '@/lib/apollo-errors';
 import { PhysicalQrScanner } from '@/components/physical-qr-scanner';
 import { ScanProductSelector } from '@/components/scan-product-selector';
-import { allocateQuoteDiscount, retailLadder, type DiscountMode } from '@/lib/quote-pricing';
+import { draftNumber, priceQuoteDraft, retailLadder, type DiscountMode } from '@/lib/quote-pricing';
 import { tilePriceBasis, tilePriceUom, tilePricingCoverage, tilePricingQuantity, tileStockUnitGeometry } from '@/lib/tile-rate';
 
 const GET_QUOTE_SETUP = gql`
@@ -111,9 +111,24 @@ function areaPriced(line: any) {
   return pricingBasis(line) === 'AREA' && Number(line.coveragePerPack || 0) > 0;
 }
 
-function packsForArea(requestedArea: number, wastagePercent: number, coveragePerPack: number) {
+// Wastage is not counted: boxes cover exactly the requested area.
+function packsForArea(requestedArea: number, coveragePerPack: number) {
   if (requestedArea <= 0 || coveragePerPack <= 0) return 1;
-  return Math.max(1, Math.ceil((requestedArea * (1 + Math.max(0, wastagePercent) / 100)) / coveragePerPack));
+  return Math.max(1, Math.ceil(requestedArea / coveragePerPack - 1e-9));
+}
+
+function emptyWhenZero(value: unknown) {
+  return value === '' || value == null || Number(value) === 0 ? '' : value as any;
+}
+
+// Product Master owns the MRP basis. Older imports may lack it, so fall back
+// to the master's own selling unit exactly like the server does.
+function masterRateBasis(product: any): TileRateBasis {
+  const explicit = String(product?.priceRateBasis || '').trim().toUpperCase();
+  if (explicit === 'AREA' || explicit === 'PIECE' || explicit === 'BOX') return explicit;
+  if (explicit === 'PACK') return 'BOX';
+  const uom = String(product?.priceUom || product?.salesUom || product?.purchaseUom || product?.unit || 'PC').trim().toUpperCase();
+  return ['SQFT', 'SQM', 'M2'].includes(uom) ? 'AREA' : uom === 'PC' ? 'PIECE' : 'BOX';
 }
 
 function packsForPieces(requestedPieces: number, piecesPerPack: number) {
@@ -127,11 +142,11 @@ function TileQuantityEditor({ line, onChange }: { line: any; onChange: (patch: a
   return <div className="mx-auto w-56 space-y-2.5">
     <div className="flex h-8 items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-black uppercase tracking-wider text-emerald-800"><span>{unit === 'PC' ? 'Piece pricing' : 'Area pricing'}</span><span>₹ / {unit}</span></div>
     {unit === 'PC' ? <>
-      <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested pieces for ${line.name}`} type="number" min={1} step={1} value={line.requestedPieces || 0} onChange={(event) => onChange({ requestedPieces: Number(event.target.value || 0) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">PC</div></div>
+      <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested pieces for ${line.name}`} type="number" min={1} step={1} data-needs-value placeholder="Enter pieces" value={emptyWhenZero(line.requestedPieces)} onChange={(event) => onChange({ requestedPieces: event.target.value === '' ? '' : Number(event.target.value) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">PC</div></div>
       <p className="text-[11px] text-[#52525b]">{line.qty} {line.inventoryUom} · {Number(line.qty || 0) * Number(line.piecesPerPack || 1)} pieces billed</p>
     </> : coverage > 0 ? <>
-      <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested area for ${line.name}`} type="number" min={0} value={line.requestedArea || 0} onChange={(event) => onChange({ requestedArea: Number(event.target.value || 0) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">{line.pricingUom}</div></div>
-      <div className="flex items-center justify-between gap-2 text-xs text-[#52525b]"><label>Waste <input aria-label={`Wastage for ${line.name}`} type="number" min={0} max={100} value={line.wastagePercent || 0} onChange={(event) => onChange({ wastagePercent: Number(event.target.value || 0) })} className="ml-1 h-7 w-12 rounded border border-[#e4e4e7] text-center"/>%</label><span className="font-semibold text-[#18181b]">{line.qty} {line.inventoryUom}</span></div>
+      <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested area for ${line.name}`} type="number" min={0} data-needs-value placeholder={`Enter ${line.pricingUom}`} value={emptyWhenZero(line.requestedArea)} onChange={(event) => onChange({ requestedArea: event.target.value === '' ? '' : Number(event.target.value) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">{line.pricingUom}</div></div>
+      <div className="flex items-center justify-end gap-2 text-xs text-[#52525b]"><span className="font-semibold text-[#18181b]">{line.qty} {line.inventoryUom}</span></div>
       <p className="text-[11px] text-[#52525b]">Covers {(Number(line.qty || 0) * coverage).toFixed(unit === 'SQM' ? 3 : 2)} {unit}</p>
     </> : <p role="alert" className="rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] font-bold text-amber-800">Add coverage per box in Tile Variant Registry before quoting.</p>}
   </div>;
@@ -171,7 +186,7 @@ export default function QuoteBuilderPage() {
   const [taxMode, setTaxMode] = useState<'gst' | 'non_gst'>('gst');
   const [defaultArea, setDefaultArea] = useState('General Selection');
   const [quoteDiscountType, setQuoteDiscountType] = useState<DiscountMode>('PERCENT');
-  const [quoteDiscountValue, setQuoteDiscountValue] = useState('0');
+  const [quoteDiscountValue, setQuoteDiscountValue] = useState('');
   const [validUntil, setValidUntil] = useState(() => new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10));
   const { data: customerData, error: customerError } = useQuery(GET_QUOTE_SETUP);
   const { data: searchData, loading: searching, error: searchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: searchQuery }, skip: searchQuery.length < 2 });
@@ -217,19 +232,20 @@ export default function QuoteBuilderPage() {
     }
     if (!allowedInQuote(product, effectiveQuoteType)) return false;
     const isTile = String(product.category || '').toLowerCase() === 'tiles';
-    const pricingUom = isTile ? tilePriceUom(product.priceUom) : product.priceUom || product.salesUom || product.unit || 'PC';
+    const nonTileBasis = isTile ? null : masterRateBasis(product);
+    const pricingUom = isTile ? tilePriceUom(product.priceUom) : product.priceUom || (nonTileBasis === 'PIECE' ? 'PC' : product.salesUom || product.unit) || 'PC';
     const geometry = isTile ? tileStockUnitGeometry(product) : { piecesPerUnit: Number(product.piecesPerPack || 1), coveragePerUnitSqFt: Number(product.coveragePerPack || 0) };
     const coveragePerPack = geometry.coveragePerUnitSqFt;
     const inventoryUom = product.purchaseUom || product.unit || 'PC';
-    const rateBasis: TileRateBasis = isTile ? tilePriceBasis(pricingUom) : ['SQFT', 'SQM', 'M2'].includes(String(pricingUom).toUpperCase()) ? 'AREA' : String(pricingUom).toUpperCase() === 'PC' && String(inventoryUom).toUpperCase() !== 'PC' ? 'PIECE' : 'BOX';
-    const wastagePercent = isTile && rateBasis === 'AREA' ? 10 : 0;
+    const rateBasis: TileRateBasis = isTile ? tilePriceBasis(pricingUom) : nonTileBasis!;
+    const wastagePercent = 0;
     const pricingCoveragePerPack = isTile ? tilePricingCoverage(coveragePerPack, pricingUom) : coveragePerPack;
     const requestedArea = isTile && rateBasis === 'AREA' && pricingCoveragePerPack > 0 ? pricingCoveragePerPack : 0;
     const requestedPieces = isTile && rateBasis === 'PIECE' ? geometry.piecesPerUnit : 0;
-    const qty = rateBasis === 'AREA' ? packsForArea(requestedArea, wastagePercent, pricingCoveragePerPack) : rateBasis === 'PIECE' && isTile ? packsForPieces(requestedPieces, geometry.piecesPerUnit) : 1;
+    const qty = rateBasis === 'AREA' ? packsForArea(requestedArea, pricingCoveragePerPack) : rateBasis === 'PIECE' && isTile ? packsForPieces(requestedPieces, geometry.piecesPerUnit) : 1;
     const defaultMrp = Number(product.defaultMrpInclusive || 0);
     const defaultNrp = Number(product.defaultNrpInclusive || 0);
-    setLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, { id: `${product.id}-${Date.now()}`, lineKey: `product:${product.id}:${Date.now()}`, pricingVersion: 'unified_retail_v1', area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces, wastagePercent, coveragePerPack, pricingCoveragePerPack, piecesPerPack: geometry.piecesPerUnit, inventoryUom, pricingUom, rateBasis, priceRateBasis: rateBasis, mrpInclusive: defaultMrp || '', mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive), nrpMode: defaultNrp > 0 ? 'FIXED_NRP' : 'PERCENT_OFF_MRP', nrpInput: defaultNrp > 0 ? defaultNrp : 0, specialMode: 'NONE', specialInput: 0, taxRate: 18, unit: inventoryUom, category: product.category, brand: product.brand, media: product.media }]);
+    setLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, { id: `${product.id}-${Date.now()}`, lineKey: `product:${product.id}:${Date.now()}`, pricingVersion: 'unified_retail_v1', area: defaultArea || 'General Selection', productId: product.id, name: product.name, sku: product.sku, internalCode: product.internalCode || '', tileCode: isTile ? (product.internalCode || product.sku) : undefined, tileSize: product.dimensions || '', qty, requestedArea, requestedPieces, wastagePercent, coveragePerPack, pricingCoveragePerPack, piecesPerPack: geometry.piecesPerUnit, inventoryUom, pricingUom, rateBasis, priceRateBasis: rateBasis, mrpInclusive: defaultMrp || '', mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive), nrpMode: defaultNrp > 0 ? 'FIXED_NRP' : 'PERCENT_OFF_MRP', nrpInput: defaultNrp > 0 ? defaultNrp : '', specialMode: 'NONE', specialInput: '', taxRate: 18, taxTreatment: 'EXCLUSIVE', unit: inventoryUom, category: product.category, brand: product.brand, media: product.media }]);
     setSearchQuery('');
     setValidationError('');
     return true;
@@ -260,31 +276,35 @@ export default function QuoteBuilderPage() {
   const updateLine = (id: string, patch: any) => setLines((current) => current.map((line) => {
     if (line.id !== id) return line;
     const updated = { ...line, ...patch };
-    if (areaPriced(updated) && ('requestedArea' in patch || 'wastagePercent' in patch || 'coveragePerPack' in patch)) {
+    if (areaPriced(updated) && ('requestedArea' in patch || 'coveragePerPack' in patch)) {
       const coverage = isTileLine(updated) ? tilePricingCoverage(updated.coveragePerPack, updated.pricingUom) : Number(updated.coveragePerPack || 0);
       updated.pricingCoveragePerPack = coverage;
-      updated.qty = packsForArea(Number(updated.requestedArea || 0), Number(updated.wastagePercent || 0), coverage);
+      updated.wastagePercent = 0;
+      updated.qty = packsForArea(draftNumber(updated.requestedArea), coverage);
     } else if (pricingBasis(updated) === 'PIECE' && ('requestedPieces' in patch || 'piecesPerPack' in patch)) {
-      updated.qty = packsForPieces(Number(updated.requestedPieces || 0), Number(updated.piecesPerPack || 1));
+      updated.qty = packsForPieces(draftNumber(updated.requestedPieces), Number(updated.piecesPerPack || 1));
     }
     return updated;
   }));
   const removeLine = (id: string) => setLines((current) => current.filter((line) => line.id !== id));
   const rawCommercialRows = lines.map((line) => {
-    const quantity = Number(line.qty || 0);
+    const quantity = draftNumber(line.qty);
     const pricingQuantity = isTileLine(line) ? tilePricingQuantity(line) : areaPriced(line) ? quantity * Number(line.coveragePerPack || 0) : pricingBasis(line) === 'PIECE' ? quantity * Number(line.piecesPerPack || 1) : quantity;
-    const taxRate = taxMode === 'non_gst' ? 0 : Math.max(0, Number(line.taxRate ?? 18));
+    const taxRate = taxMode === 'non_gst' ? 0 : draftNumber(line.taxRate ?? 18);
     const ladder = retailLadder(line, pricingQuantity, taxRate);
     return { id: line.id, line, pricingQuantity, taxRate, ...ladder };
   });
-  const allocatedCommercialRows = allocateQuoteDiscount(rawCommercialRows, quoteDiscountType, Number(quoteDiscountValue || 0)).map((row) => {
-    const taxableValue = row.grossAfterQuoteDiscount / (1 + row.taxRate / 100);
-    const taxAmount = row.grossAfterQuoteDiscount - taxableValue;
-    const finalUnitPayable = row.pricingQuantity > 0 ? row.grossAfterQuoteDiscount / row.pricingQuantity : 0;
+  const draftPricing = priceQuoteDraft(rawCommercialRows, quoteDiscountType, quoteDiscountValue);
+  const quoteDiscountError = draftPricing.discountError;
+  const allocatedCommercialRows = draftPricing.rows.map((row) => {
+    const taxableValue = Number(row.taxableValue || 0);
+    const taxAmount = Number(row.taxAmount || 0);
+    // Rate after every discount, before GST is added: the MRP ceiling and floor use it.
+    const finalUnitPayable = row.pricingQuantity > 0 ? Number(row.grossAfterQuoteDiscount || 0) / row.pricingQuantity : 0;
     const mrpMissing = !Number.isFinite(row.mrpInclusive) || Number(row.mrpInclusive) <= 0;
     const mrpValid = !mrpMissing && finalUnitPayable <= Number(row.mrpInclusive) + 0.005;
     const grossMrp = row.safeMrp > 0 ? row.pricingQuantity * row.safeMrp : 0;
-    return { ...row, offeredBeforeQuoteDiscount: row.grossBeforeQuoteDiscount, taxableValue, taxAmount, total: row.grossAfterQuoteDiscount, mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(row.line), grossMrp };
+    return { ...row, offeredBeforeQuoteDiscount: row.grossBeforeQuoteDiscount, taxableValue, taxAmount, total: Number(row.grossLineTotal || 0), mrpMissing, mrpValid, finalUnitPayable, mrpUom: mrpUom(row.line), grossMrp };
   });
   const commercialById = new Map(allocatedCommercialRows.map((row) => [row.id, row]));
   const lineCommercial = (line: any) => commercialById.get(line.id) as any;
@@ -296,7 +316,8 @@ export default function QuoteBuilderPage() {
   const grossMrp = lines.reduce((sum, line) => sum + lineCommercial(line).grossMrp, 0);
   const nrpValue = lines.reduce((sum, line) => sum + lineCommercial(line).nrpValueInclusive, 0);
   const specialValue = lines.reduce((sum, line) => sum + lineCommercial(line).specialValueInclusive, 0);
-  const totalItems = lines.reduce((sum, line) => sum + Number(line.qty || 0), 0);
+  const totalItems = lines.reduce((sum, line) => sum + draftNumber(line.qty), 0);
+  const missingQtyCount = lines.filter((line) => draftNumber(line.qty) <= 0).length;
   const totalTileCoverage = lines.filter(isTileLine).reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.coveragePerPack || 0), 0);
   const totalChemicalKg = lines.filter((line) => String(line.category || '').toLowerCase() === 'chemicals').reduce((sum, line) => sum + Number(line.qty || 0), 0);
   const visibleSearchProducts = (searchData?.globalSearch?.products || []).filter((product: any) => allowedInQuote(product, quoteType));
@@ -312,8 +333,8 @@ export default function QuoteBuilderPage() {
       || (line.nrpMode === 'FIXED_NRP' && Number(line.nrpInput || 0) > Number(rate.safeMrp || 0))
       || (line.specialMode === 'FIXED_SPECIAL_RATE' && Number(line.specialInput || 0) > Number(rate.nrp || 0));
   });
-  const invalidQuoteDiscount = Number(quoteDiscountValue || 0) < 0 || (quoteDiscountType === 'PERCENT' ? Number(quoteDiscountValue || 0) > 100 : Number(quoteDiscountValue || 0) > lineNetValue);
-  const pricingReady = lines.length > 0 && missingMrpCount === 0 && missingNrpCount === 0 && invalidMrpCount === 0 && missingTileCoverageCount === 0 && !invalidDiscountLine && !invalidQuoteDiscount;
+  const invalidQuoteDiscount = Boolean(quoteDiscountError) || Number(quoteDiscountValue || 0) < 0 || (quoteDiscountType === 'PERCENT' ? Number(quoteDiscountValue || 0) > 100 : Number(quoteDiscountValue || 0) > lineNetValue);
+  const pricingReady = lines.length > 0 && missingQtyCount === 0 && missingMrpCount === 0 && missingNrpCount === 0 && invalidMrpCount === 0 && missingTileCoverageCount === 0 && !invalidDiscountLine && !invalidQuoteDiscount;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -394,11 +415,11 @@ export default function QuoteBuilderPage() {
             displayMode,
             discountPercent: quoteDiscountType === 'PERCENT' ? Number(quoteDiscountValue || 0) : 0,
             saveAsDraft,
-            quoteMeta: JSON.stringify({ remarks: '', quoteType, taxMode, pricingVersion: 'unified_retail_v1', quoteDiscount: { mode: quoteDiscountType, value: Number(quoteDiscountValue || 0) }, pricingReadiness: { missingMrpCount, missingNrpCount, invalidMrpCount, missingTileCoverageCount, floorBreachCount } }),
+            quoteMeta: JSON.stringify({ remarks: '', quoteType, taxMode, taxTreatment: 'EXCLUSIVE', pricingVersion: 'unified_retail_v1', quoteDiscount: { mode: quoteDiscountType, value: Number(quoteDiscountValue || 0) }, pricingReadiness: { missingMrpCount, missingNrpCount, invalidMrpCount, missingTileCoverageCount, floorBreachCount } }),
             lines: JSON.stringify(lines.map((line) => {
               const commercial = lineCommercial(line);
               const { id: _clientId, ...persisted } = line;
-              return { ...persisted, pricingVersion: 'unified_retail_v1', taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), priceRateBasis: pricingBasis(line), pricingUom: line.pricingUom, mrpInclusive: commercial.mrpInclusive, mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: line.floorPriceInclusive ?? null, nrpMode: commercial.nrpMode, nrpInput: commercial.nrpInput, nrpInclusive: commercial.nrpInclusive, nrpExclusive: commercial.nrpExclusive, specialMode: commercial.specialMode, specialInput: commercial.specialInput, specialRateInclusive: commercial.specialRateInclusive, specialRateExclusive: commercial.specialRateExclusive, pricingQuantity: commercial.pricingQuantity, quoteDiscountMode: quoteDiscountType, quoteDiscountValue: Number(quoteDiscountValue || 0), quoteDiscountAllocatedInclusive: commercial.quoteDiscountAllocatedInclusive, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, grossLineTotal: commercial.total, total: commercial.total };
+              return { ...persisted, taxTreatment: 'EXCLUSIVE', wastagePercent: 0, qty: draftNumber(persisted.qty), requestedArea: draftNumber(persisted.requestedArea), requestedPieces: draftNumber(persisted.requestedPieces), pricingVersion: 'unified_retail_v1', taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18), priceRateBasis: pricingBasis(line), pricingUom: line.pricingUom, mrpInclusive: commercial.mrpInclusive, mrpSource: 'PRODUCT_MASTER', floorPriceInclusive: line.floorPriceInclusive ?? null, nrpMode: commercial.nrpMode, nrpInput: commercial.nrpInput, nrpInclusive: commercial.nrpInclusive, nrpExclusive: commercial.nrpExclusive, specialMode: commercial.specialMode, specialInput: commercial.specialInput, specialRateInclusive: commercial.specialRateInclusive, specialRateExclusive: commercial.specialRateExclusive, pricingQuantity: commercial.pricingQuantity, quoteDiscountMode: quoteDiscountType, quoteDiscountValue: Number(quoteDiscountValue || 0), quoteDiscountAllocatedInclusive: commercial.quoteDiscountAllocatedInclusive, taxableValue: commercial.taxableValue, taxAmount: commercial.taxAmount, grossLineTotal: commercial.total, total: commercial.total };
             })),
           },
         },
@@ -414,7 +435,7 @@ export default function QuoteBuilderPage() {
       setSelectedArchitectId('');
       setProjectTitle('');
       setQuoteDiscountType('PERCENT');
-      setQuoteDiscountValue('0');
+      setQuoteDiscountValue('');
     } catch (err) {
       const diagnostic = describeApolloError(err, 'CreateQuote');
       setValidationError(diagnostic.remediation || diagnostic.message);
@@ -477,9 +498,9 @@ export default function QuoteBuilderPage() {
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Additional quote discount</span>
               <div className="grid grid-cols-[7rem_1fr] gap-2">
                 <select aria-label="Quote discount mode" value={quoteDiscountType} onChange={(event) => setQuoteDiscountType(event.target.value as DiscountMode)} className="h-11 rounded-md border border-[#d4d4d8] bg-white px-3 text-sm font-semibold"><option value="PERCENT">Percent %</option><option value="FIXED_AMOUNT">Amount ₹</option></select>
-                <Input aria-label="Quote discount value" type="number" min={0} max={quoteDiscountType === 'PERCENT' ? 100 : undefined} step="0.01" value={quoteDiscountValue} onChange={(event) => setQuoteDiscountValue(event.target.value)} className="h-11" />
+                <Input aria-label="Quote discount value" type="number" min={0} max={quoteDiscountType === 'PERCENT' ? 100 : undefined} step="0.01" placeholder={quoteDiscountType === 'PERCENT' ? 'Optional %' : 'Optional ₹'} value={quoteDiscountValue} onChange={(event) => setQuoteDiscountValue(event.target.value)} className={`h-11 ${invalidQuoteDiscount ? 'border-red-400 bg-red-50' : ''}`} />
               </div>
-              <p className="text-[10px] font-semibold text-[#71717a]">Applied after every line&apos;s NRP and special discount.</p>
+              {invalidQuoteDiscount ? <p role="alert" className="text-[10px] font-bold text-red-700">{quoteDiscountType === 'PERCENT' ? 'Enter a discount from 0 to 100%.' : 'Discount cannot be more than the quote value before GST.'}</p> : <p className="text-[10px] font-semibold text-[#71717a]">Applied after every line&apos;s NRP and special discount{taxMode === 'gst' ? ', before GST is added.' : '.'}</p>}
             </div>
             <div className="space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Tax treatment</span>
@@ -537,15 +558,17 @@ export default function QuoteBuilderPage() {
             {AREA_SUGGESTIONS.map((area) => <option key={area} value={area} />)}
           </datalist>
 
-          <section aria-label="Pricing readiness" className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+          <section aria-label="Pricing readiness" className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-5 2xl:grid-cols-10">
             {[
               [quoteType === 'tile' ? Layers3 : FileText, quoteType === 'tile' ? 'Lines / coverage' : 'Lines / units', quoteType === 'tile' ? `${lines.length} · ${totalTileCoverage.toFixed(2)} SQFT${totalChemicalKg ? ` · ${totalChemicalKg} KG` : ''}` : `${lines.length} / ${totalItems}`, null],
               [BadgeIndianRupee, 'Gross MRP', pricedDisplay(grossMrp, missingMrpCount > 0), missingMrpCount ? () => focusLine(lines.find((line) => lineCommercial(line).mrpMissing)) : null],
               [BadgeIndianRupee, 'NRP value', pricedDisplay(nrpValue, missingMrpCount > 0), missingNrpCount ? () => focusLine(lines.find((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0)) : null],
               [BadgeIndianRupee, 'Special value', pricedDisplay(specialValue, missingMrpCount > 0), null],
               [Percent, 'Quote discount', pricedDisplay(quoteDiscountAmount, missingMrpCount > 0), null],
-              [BadgeIndianRupee, 'GST', pricedDisplay(tax, missingMrpCount > 0), null],
-              [AlertTriangle, 'Pricing exceptions', `${missingMrpCount + missingNrpCount + invalidMrpCount + missingTileCoverageCount + floorBreachCount + (invalidDiscountLine ? 1 : 0)}`, () => focusLine(lines.find((line) => { const rate = lineCommercial(line); return rate.mrpMissing || !rate.mrpValid || Number(rate.nrpInclusive || 0) <= 0 || rate.pricingError || (isTileLine(line) && Number(line.coveragePerPack || 0) <= 0) || (Number(line.floorPriceInclusive || 0) > 0 && rate.finalUnitPayable < Number(line.floorPriceInclusive)); }))],
+              [BadgeIndianRupee, taxMode === 'gst' ? 'Taxable value' : 'Value', pricedDisplay(subtotal, missingMrpCount > 0), null],
+              [BadgeIndianRupee, taxMode === 'gst' ? 'GST added' : 'GST', pricedDisplay(tax, missingMrpCount > 0), null],
+              [BadgeIndianRupee, taxMode === 'gst' ? 'Total incl. GST' : 'Total', pricedDisplay(total, missingMrpCount > 0), null],
+              [AlertTriangle, 'Pricing exceptions', `${missingQtyCount + missingMrpCount + missingNrpCount + invalidMrpCount + missingTileCoverageCount + floorBreachCount + (invalidDiscountLine ? 1 : 0) + (invalidQuoteDiscount ? 1 : 0)}`, () => focusLine(lines.find((line) => { const rate = lineCommercial(line); return rate.mrpMissing || !rate.mrpValid || Number(rate.nrpInclusive || 0) <= 0 || rate.pricingError || (isTileLine(line) && Number(line.coveragePerPack || 0) <= 0) || (Number(line.floorPriceInclusive || 0) > 0 && rate.finalUnitPayable < Number(line.floorPriceInclusive)); }))],
               [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : lines.length ? 'Draft only' : 'No lines', null],
             ].map(([Icon, label, value, action]: any) => <button key={label} type="button" onClick={action || undefined} className={`min-w-0 rounded-lg border p-3 text-left transition ${action ? 'border-amber-200 bg-amber-50 hover:border-amber-400' : 'border-[#e4e4e7] bg-white'} ${label === 'Readiness' && pricingReady ? 'border-emerald-200 bg-emerald-50' : ''}`}><Icon className="h-4 w-4 text-[#a52b23]"/><p className="mt-2 truncate text-base font-black text-[#18181b]">{value}</p><p className="mt-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#71717a]">{label}</p></button>)}
           </section>
@@ -587,26 +610,27 @@ export default function QuoteBuilderPage() {
                   <button type="button" title="Remove line" onClick={() => removeLine(line.id)} className="shrink-0 rounded-lg p-2 text-[#71717a] hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4"/></button>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.15fr_0.72fr_1.35fr_1.35fr_0.58fr_0.85fr]">
-                  <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Quantity / fulfilment</p>{isTileLine(line) ? <TileQuantityEditor line={line} onChange={(patch) => updateLine(line.id, patch)}/> : <div className="flex h-10 items-center gap-2"><input type="number" value={line.qty} min={1} onChange={(event)=>updateQty(line.id,Number(event.target.value)||0)} className="h-10 w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-right text-sm font-semibold"/><span className="text-xs font-bold text-[#52525b]">{line.unit}</span></div>}</div>
-                  <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">MRP / {commercial.mrpUom}</p><input data-pricing-error={commercial.mrpMissing || !commercial.mrpValid ? 'true' : undefined} aria-label={`MRP per ${commercial.mrpUom} for ${line.name}`} readOnly tabIndex={-1} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-md border px-3 text-right text-sm font-black ${commercial.mrpMissing || !commercial.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`}/><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'Required before pricing' : 'Tax-inclusive · Product Master'}</p></div>
-                  <div className="rounded-md border border-[#f1d5d1] bg-[#fff8f7] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8f2f28]">Base pricing → NRP</p><div className="grid grid-cols-[minmax(5.5rem,1fr)_minmax(9.5rem,1.35fr)] gap-2"><input data-pricing-error={Number(commercial.nrpInclusive || 0) <= 0 ? 'true' : undefined} aria-label={`NRP input for ${line.name}`} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing} value={line.nrpInput ?? 0} onChange={(event)=>updateLine(line.id,{nrpInput:event.target.value})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-base font-black disabled:bg-[#f4f4f5]"/><select aria-label={`NRP mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(line.id,{nrpMode:event.target.value,nrpInput:0})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-xs font-black disabled:bg-[#f4f4f5]"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#8f2f28]">{commercial.mrpMissing ? 'Waiting for MRP' : `NRP ${money(commercial.nrpInclusive)}`}</p></div>
-                  <div className="rounded-md border border-[#d9e6fb] bg-[#f5f8ff] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#1d4ed8]">Optional special pricing</p><div className="grid grid-cols-[minmax(5.5rem,1fr)_minmax(9.5rem,1.35fr)] gap-2"><input aria-label={`Special pricing input for ${line.name}`} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} value={line.specialInput ?? 0} onChange={(event)=>updateLine(line.id,{specialInput:event.target.value})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-base font-black disabled:bg-[#f4f4f5]"/><select aria-label={`Special pricing mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(line.id,{specialMode:event.target.value,specialInput:0})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-xs font-black disabled:bg-[#f4f4f5]"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#1d4ed8]">{commercial.mrpMissing ? 'Waiting for MRP' : `Special rate ${money(commercial.specialRateInclusive)}`}</p></div>
-                  <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">GST</p>{taxMode==='gst'?<><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate??18} onChange={(event)=>updateLine(line.id,{taxRate:event.target.value})} className="h-10 w-full rounded-md border border-[#e4e4e7] px-3 text-right text-sm font-black"/><p className="mt-1 text-right text-[10px] font-semibold text-[#71717a]">{money(commercial.taxAmount)}</p></>:<span className="inline-flex rounded bg-[#f4f4f5] px-2 py-2 text-xs font-semibold text-[#52525b]">Without GST</span>}</div>
-                  <div className={`rounded-md p-3 text-right ${commercial.mrpMissing ? 'border border-amber-200 bg-amber-50' : 'bg-[#f8fafc]'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Final payable</p><p className={`mt-2 font-black ${commercial.mrpMissing ? 'text-sm text-amber-900' : 'text-xl text-[#059669]'}`}>{commercial.mrpMissing ? 'MRP setup needed' : money(commercial.total)}</p><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'No false ₹0 total shown' : `${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}`}</p></div>
+                  <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Quantity / fulfilment</p>{isTileLine(line) ? <TileQuantityEditor line={line} onChange={(patch) => updateLine(line.id, patch)}/> : <div className="flex h-10 items-center gap-2"><input aria-label={`Quantity for ${line.name}`} type="number" data-needs-value placeholder="Enter qty" value={emptyWhenZero(line.qty)} min={1} onChange={(event)=>updateQty(line.id,event.target.value === '' ? '' as any : Number(event.target.value))} className="h-10 w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-right text-sm font-semibold"/><span className="text-xs font-bold text-[#52525b]">{line.unit}</span></div>}</div>
+                  <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">MRP / {commercial.mrpUom}</p><input data-pricing-error={commercial.mrpMissing || !commercial.mrpValid ? 'true' : undefined} aria-label={`MRP per ${commercial.mrpUom} for ${line.name}`} readOnly tabIndex={-1} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-md border px-3 text-right text-sm font-black ${commercial.mrpMissing || !commercial.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`}/><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'Required before pricing' : line.taxTreatment === 'EXCLUSIVE' ? 'Before GST · Product Master' : 'Tax-inclusive · Product Master'}</p></div>
+                  <div className="rounded-md border border-[#f1d5d1] bg-[#fff8f7] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8f2f28]">Base pricing → NRP</p><div className="grid grid-cols-[minmax(5.5rem,1fr)_minmax(9.5rem,1.35fr)] gap-2"><input data-pricing-error={Number(commercial.nrpInclusive || 0) <= 0 ? 'true' : undefined} aria-label={`NRP input for ${line.name}`} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing} {...(line.nrpMode === 'FIXED_NRP' ? { 'data-needs-value': true } : {})} placeholder={line.nrpMode === 'FIXED_NRP' ? 'Enter NRP ₹' : '% off (optional)'} value={emptyWhenZero(line.nrpInput)} onChange={(event)=>updateLine(line.id,{nrpInput:event.target.value})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-base font-black disabled:bg-[#f4f4f5]"/><select aria-label={`NRP mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(line.id,{nrpMode:event.target.value,nrpInput:''})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-xs font-black disabled:bg-[#f4f4f5]"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#8f2f28]">{commercial.mrpMissing ? 'Waiting for MRP' : `NRP ${money(commercial.nrpInclusive)}`}</p></div>
+                  <div className="rounded-md border border-[#d9e6fb] bg-[#f5f8ff] p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#1d4ed8]">Optional special pricing</p><div className="grid grid-cols-[minmax(5.5rem,1fr)_minmax(9.5rem,1.35fr)] gap-2"><input aria-label={`Special pricing input for ${line.name}`} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} {...((line.specialMode || 'NONE') !== 'NONE' ? { 'data-needs-value': true } : {})} placeholder={(line.specialMode || 'NONE') === 'NONE' ? '—' : line.specialMode === 'PERCENT_OFF_NRP' ? 'Enter %' : 'Enter rate ₹'} value={emptyWhenZero(line.specialInput)} onChange={(event)=>updateLine(line.id,{specialInput:event.target.value})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-base font-black disabled:bg-[#f4f4f5]"/><select aria-label={`Special pricing mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(line.id,{specialMode:event.target.value,specialInput:''})} className="h-11 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-xs font-black disabled:bg-[#f4f4f5]"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#1d4ed8]">{commercial.mrpMissing ? 'Waiting for MRP' : `Special rate ${money(commercial.specialRateInclusive)}`}</p></div>
+                  <div><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">GST</p>{taxMode==='gst'?<><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate??18} onChange={(event)=>updateLine(line.id,{taxRate:event.target.value})} className="h-10 w-full rounded-md border border-[#e4e4e7] px-3 text-right text-sm font-black"/><p className="mt-1 text-right text-[10px] font-semibold text-[#71717a]">{line.taxTreatment === 'EXCLUSIVE' ? '+ ' : ''}{money(commercial.taxAmount)}</p></>:<span className="inline-flex rounded bg-[#f4f4f5] px-2 py-2 text-xs font-semibold text-[#52525b]">Without GST</span>}</div>
+                  <div className={`rounded-md p-3 text-right ${commercial.mrpMissing ? 'border border-amber-200 bg-amber-50' : 'bg-[#f8fafc]'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">{taxMode === 'gst' ? 'Final payable incl. GST' : 'Final payable'}</p><p className={`mt-2 font-black ${commercial.mrpMissing ? 'text-sm text-amber-900' : 'text-xl text-[#059669]'}`}>{commercial.mrpMissing ? 'MRP setup needed' : money(commercial.total)}</p><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'No false ₹0 total shown' : line.taxTreatment === 'EXCLUSIVE' ? `${money(commercial.taxableValue)} + GST · ${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}` : `${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}`}</p></div>
                 </div>
+                {draftNumber(line.qty) <= 0 ? <p role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">Enter a quantity to price this line.</p> : null}
                 {commercial.mrpMissing ? <p role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900"><span>This SKU has no governed MRP, so discounts and totals are intentionally paused.</span><Link href={`/dashboard/master-data/pricing-readiness?tab=missing&search=${encodeURIComponent(line.sku || '')}`} className="rounded-md bg-amber-900 px-3 py-1.5 text-white">Add MRP</Link></p> : null}
-                {!commercial.mrpMissing && !commercial.mrpValid ? <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs font-bold text-red-800">Final payable {money(commercial.finalUnitPayable)} per {commercial.mrpUom} exceeds MRP. Reduce the negotiated rate or verify MRP.</p> : null}
+                {!commercial.mrpMissing && !commercial.mrpValid ? <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs font-bold text-red-800">Rate after discounts {money(commercial.finalUnitPayable)} per {commercial.mrpUom} exceeds MRP. Reduce the negotiated rate or verify MRP.</p> : null}
                 {Number(line.floorPriceInclusive || 0) > 0 && commercial.finalUnitPayable + 0.005 < Number(line.floorPriceInclusive) ? <p role="status" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">Below floor: {money(commercial.finalUnitPayable)} / {commercial.mrpUom} is below the owner-approved floor {money(line.floorPriceInclusive)}. Saving will route this quote for approval.</p> : null}
               </article>;})}
             </div>
             {lines.length === 0 && <div className="grid h-56 place-items-center text-center"><div><Plus className="mx-auto mb-3 h-8 w-8 text-[#2563eb]" /><p className="font-semibold text-[#18181b]">Search products to start a quote.</p><p className="mt-1 text-sm font-semibold text-[#52525b]">Catalogue images and price details will appear here.</p></div></div>}
-            {lines.length > 0 && <p className="border-t border-[#e4e4e7] px-4 py-3 text-xs font-semibold text-[#52525b]">MRP is read-only from Product Master. {quoteType === 'tile' ? 'Each tile uses its saved PC, SQM or SQFT rate while boxes/pieces remain fulfilment; Chemicals price and fulfil in KG.' : 'CP & Sanitary lines use their governed Product Master price and fulfilment UOM.'} Below-floor pricing is preserved but requires owner approval.</p>}
+            {lines.length > 0 && <p className="border-t border-[#e4e4e7] px-4 py-3 text-xs font-semibold text-[#52525b]">MRP is read-only from Product Master. {taxMode === 'gst' ? 'GST is added on top after MRP → NRP → special → quote discount. ' : ''}{quoteType === 'tile' ? 'Each tile uses its saved PC, SQM or SQFT rate while boxes/pieces remain fulfilment; Chemicals price and fulfil in KG.' : 'CP & Sanitary lines use their governed Product Master price and fulfilment UOM.'} Below-floor pricing is preserved but requires owner approval.</p>}
           </div>
         </div>
       </section>
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#e4e4e7] bg-white/95 p-3 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur xl:hidden">
-        <div className="mx-auto grid max-w-xl grid-cols-[1fr_auto_1fr] items-center gap-2"><Button disabled={saving || !selectedCustomerId || !selectedOwnerId || !lines.length} variant="outline" onClick={() => handleSave(true)}><Save className="mr-2 h-4 w-4"/>Draft</Button><button type="button" onClick={() => { const line = lines.find((row) => { const rate = lineCommercial(row); return rate.mrpMissing || !rate.mrpValid; }); focusLine(line); }} className={`grid h-10 min-w-14 place-items-center rounded-md px-2 text-xs font-black ${pricingReady ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{pricingReady ? 'Ready' : `${missingMrpCount + invalidMrpCount} errors`}</button><Button disabled={saving || !selectedCustomerId || !selectedOwnerId || !lines.length || !pricingReady} onClick={() => handleSave(false)}><ShieldCheck className="mr-2 h-4 w-4"/>Validate</Button></div>
+        <div className="mx-auto grid max-w-xl grid-cols-[1fr_auto_1fr] items-center gap-2"><Button disabled={saving || !selectedCustomerId || !selectedOwnerId || !lines.length} variant="outline" onClick={() => handleSave(true)}><Save className="mr-2 h-4 w-4"/>Draft</Button><button type="button" onClick={() => { const line = lines.find((row) => { const rate = lineCommercial(row); return draftNumber(row.qty) <= 0 || rate.mrpMissing || !rate.mrpValid || Number(rate.nrpInclusive || 0) <= 0; }); focusLine(line); }} className={`grid h-10 min-w-14 place-items-center rounded-md px-2 text-xs font-black ${pricingReady ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{pricingReady ? 'Ready' : `${missingQtyCount + missingMrpCount + missingNrpCount + invalidMrpCount + (invalidDiscountLine ? 1 : 0) + (invalidQuoteDiscount ? 1 : 0)} to fix`}</button><Button disabled={saving || !selectedCustomerId || !selectedOwnerId || !lines.length || !pricingReady} onClick={() => handleSave(false)}><ShieldCheck className="mr-2 h-4 w-4"/>Validate</Button></div>
       </div>
     </div>
   );

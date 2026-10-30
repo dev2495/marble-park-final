@@ -561,7 +561,8 @@ export default function StockAlertPolicyPage() {
                       <input
                         type="number"
                         min={0}
-                        value={draft.warning}
+                        value={draft.warning === '0' ? '' : draft.warning}
+                        placeholder="0 = off"
                         onChange={(e) => setDrafts((prev) => ({ ...prev, [row.id]: { ...draft, warning: e.target.value } }))}
                         className="h-9 w-[88px] rounded-lg border border-[var(--line)] bg-white px-2 text-right text-sm"
                       />
@@ -570,7 +571,8 @@ export default function StockAlertPolicyPage() {
                       <input
                         type="number"
                         min={0}
-                        value={draft.critical}
+                        value={draft.critical === '0' ? '' : draft.critical}
+                        placeholder="0 = off"
                         onChange={(e) => setDrafts((prev) => ({ ...prev, [row.id]: { ...draft, critical: e.target.value } }))}
                         className="h-9 w-[88px] rounded-lg border border-[var(--line)] bg-white px-2 text-right text-sm"
                       />

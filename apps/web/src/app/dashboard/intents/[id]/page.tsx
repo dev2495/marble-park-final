@@ -115,6 +115,52 @@ type Row = {
   wastagePercent?: number;
 };
 
+const AREA_SUGGESTIONS = [
+  "General Selection",
+  "Master Bedroom Bathroom",
+  "1st Floor Guest Bathroom",
+  "2nd Floor Powder Bathroom",
+  "Steam Shower Bathroom",
+  "Terrace Powder",
+  "Balcony",
+  "Living Room",
+  "Kitchen",
+  "Powder Room",
+  "Drying Yard",
+];
+
+function emptyWhenZero(value: unknown) {
+  return value === "" || value == null || Number(value) === 0 ? "" : (value as any);
+}
+
+// Rows are grouped by area, so committing on every keystroke would move the
+// row (and drop focus) after one letter. Edit locally, commit on blur/Enter.
+function AreaInput({ value, disabled, onCommit }: { value: string; disabled: boolean; onCommit: (area: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const next = draft.trim() || "General Selection";
+    setDraft(next);
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <Input
+      list="intent-area-list"
+      value={draft}
+      placeholder="Type or pick an area"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+      }}
+      disabled={disabled}
+    />
+  );
+}
+
 function money(n: number) {
   return `₹${Math.round(Number(n || 0)).toLocaleString("en-IN")}`;
 }
@@ -209,7 +255,8 @@ export default function IntentDetailPage() {
         coveragePerPack: Number(r.coveragePerPack || 0),
         piecesPerPack: Number(r.piecesPerPack || r.pcsPerBox || 1),
         requestedArea: Number(r.requestedArea || 0),
-        wastagePercent: Number(r.wastagePercent || 0),
+        // Wastage is no longer counted on intents.
+        wastagePercent: 0,
       }),
     );
     setRows(incoming);
@@ -327,17 +374,12 @@ export default function IntentDetailPage() {
       prev.map((row, i) => {
         if (i !== idx) return row;
         const updated = { ...row, ...patch };
-        if (
-          isAreaPriced(updated) &&
-          ("requestedArea" in patch || "wastagePercent" in patch)
-        ) {
-          const required =
-            Number(updated.requestedArea || 0) *
-            (1 + Number(updated.wastagePercent || 0) / 100);
-          updated.qty = Math.max(
-            1,
-            Math.ceil(required / Number(updated.coveragePerPack || 1)),
-          );
+        if (isAreaPriced(updated) && "requestedArea" in patch) {
+          const required = Number(updated.requestedArea || 0);
+          updated.wastagePercent = 0;
+          updated.qty = required > 0
+            ? Math.max(1, Math.ceil(required / Number(updated.coveragePerPack || 1) - 1e-9))
+            : 0;
         }
         return updated;
       }),
@@ -372,16 +414,16 @@ export default function IntentDetailPage() {
         quoteImage: "",
         inventoryUom: product.purchaseUom || product.unit || "PC",
         pricingUom: product.salesUom || product.unit || "PC",
-        rateBasis: ["SQFT", "SQM", "M2"].includes(
-          String(product.salesUom || "").toUpperCase(),
-        )
-          ? "AREA"
-          : "PACK",
+        // Product Master owns the price basis; derive it only when missing.
+        rateBasis: ["AREA", "PIECE", "BOX"].includes(String(product.priceRateBasis || "").toUpperCase())
+          ? String(product.priceRateBasis).toUpperCase()
+          : ["SQFT", "SQM", "M2"].includes(String(product.priceUom || product.salesUom || "").toUpperCase())
+            ? "AREA"
+            : String(product.priceUom || product.salesUom || product.unit || "PC").toUpperCase() === "PC" ? "PIECE" : "BOX",
         coveragePerPack: Number(product.coveragePerPack || 0),
         piecesPerPack: Number(product.piecesPerPack || 1),
         requestedArea: Number(product.coveragePerPack || 0),
-        wastagePercent:
-          String(product.category || "").toLowerCase() === "tiles" ? 10 : 0,
+        wastagePercent: 0,
       }];
     });
     setDirty(true);
@@ -626,6 +668,9 @@ export default function IntentDetailPage() {
           </p>
         ) : null}
 
+        <datalist id="intent-area-list">
+          {AREA_SUGGESTIONS.map((area) => <option key={area} value={area} />)}
+        </datalist>
         <div className="mt-4 space-y-4">
           {grouped.map(([area, areaRows]) => (
             <div key={area}>
@@ -684,7 +729,9 @@ export default function IntentDetailPage() {
                               <Input
                                 type="number"
                                 min="0"
-                                value={row.requestedArea || 0}
+                                data-needs-value
+                                placeholder={`Enter ${row.pricingUom || "area"}`}
+                                value={emptyWhenZero(row.requestedArea)}
                                 onChange={(e) =>
                                   updateRow(flatIdx, {
                                     requestedArea: Number(e.target.value || 0),
@@ -692,33 +739,17 @@ export default function IntentDetailPage() {
                                 }
                                 disabled={!editable}
                               />
-                              <div className="flex items-center gap-1 text-[10px] text-[var(--ink-4)]">
-                                <span>Waste</span>
-                                <input
-                                  className="h-6 w-10 rounded border border-[var(--line)] text-center"
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  value={row.wastagePercent || 0}
-                                  onChange={(e) =>
-                                    updateRow(flatIdx, {
-                                      wastagePercent: Number(
-                                        e.target.value || 0,
-                                      ),
-                                    })
-                                  }
-                                  disabled={!editable}
-                                />
-                                <span>
-                                  % · {row.qty} {row.inventoryUom}
-                                </span>
+                              <div className="text-[10px] text-[var(--ink-4)]">
+                                {row.qty || 0} {row.inventoryUom}
                               </div>
                             </div>
                           ) : (
                             <Input
                               type="number"
                               min="1"
-                              value={row.qty}
+                              data-needs-value
+                              placeholder="Enter qty"
+                              value={emptyWhenZero(row.qty)}
                               onChange={(e) =>
                                 updateRow(flatIdx, {
                                   qty: Number(e.target.value || 0),
@@ -748,7 +779,8 @@ export default function IntentDetailPage() {
                           <Input
                             type="number"
                             min="0"
-                            value={row.price}
+                            placeholder="Rate ₹ (optional)"
+                            value={emptyWhenZero(row.price)}
                             onChange={(e) =>
                               updateRow(flatIdx, {
                                 price: Number(e.target.value || 0),
@@ -761,11 +793,9 @@ export default function IntentDetailPage() {
                           <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Area
                           </label>
-                          <Input
+                          <AreaInput
                             value={row.area || "General Selection"}
-                            onChange={(e) =>
-                              updateRow(flatIdx, { area: e.target.value })
-                            }
+                            onCommit={(area) => updateRow(flatIdx, { area })}
                             disabled={!editable}
                           />
                         </div>

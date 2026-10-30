@@ -2347,6 +2347,8 @@ function LineEditor({ rows, setRows, mode, canViewCost }: any) {
                         boxes: e.target.value,
                       })
                     }
+                    placeholder="Enter boxes"
+                    data-needs-value={!row.boxes && !row.loosePieces ? true : undefined}
                   />
                 </Field>
                 <Field label="Loose pieces">
@@ -2360,6 +2362,8 @@ function LineEditor({ rows, setRows, mode, canViewCost }: any) {
                         loosePieces: e.target.value,
                       })
                     }
+                    placeholder="Enter pcs"
+                    data-needs-value={!row.boxes && !row.loosePieces ? true : undefined}
                   />
                 </Field>
               </>
@@ -2374,6 +2378,8 @@ function LineEditor({ rows, setRows, mode, canViewCost }: any) {
                       quantity: e.target.value,
                     })
                   }
+                  placeholder="Enter qty"
+                  data-needs-value
                 />
               </Field>
             )}
@@ -2390,7 +2396,8 @@ function LineEditor({ rows, setRows, mode, canViewCost }: any) {
                         enteredUnitCost: e.target.value,
                       })
                     }
-                    placeholder={mode === "manual" ? "Required" : "Can be added at inward"}
+                    placeholder={mode === "manual" ? "Enter rate ₹" : "Can be added at inward"}
+                    data-needs-value={mode === "manual" ? true : undefined}
                   />
                 </Field>
                 <Field label="Rate UOM">
@@ -2422,6 +2429,7 @@ function LineEditor({ rows, setRows, mode, canViewCost }: any) {
                         damagedQuantity: e.target.value,
                       })
                     }
+                    placeholder="0"
                   />
                 </Field>
                 <Field label="Batch / shade">
@@ -2549,6 +2557,7 @@ function PoCommercial({
                 max="100"
                 value={form.discount}
                 onChange={(e) => setForm({ ...form, discount: e.target.value })}
+                placeholder="0–100 %"
               />
             </Field>
             <Field label="GST %">
@@ -2558,6 +2567,7 @@ function PoCommercial({
                 max="100"
                 value={form.tax}
                 onChange={(e) => setForm({ ...form, tax: e.target.value })}
+                placeholder="0–100 %"
               />
             </Field>
             <Field label="Notes">
@@ -2653,6 +2663,7 @@ function ReceiveLine({ line, value, onChange, canEnterRate }: any) {
                 min="0"
                 value={value.boxes || ""}
                 onChange={(e) => onChange({ boxes: e.target.value })}
+                placeholder="Boxes"
               />
             </Field>
             <Field label="Loose pieces">
@@ -2662,6 +2673,7 @@ function ReceiveLine({ line, value, onChange, canEnterRate }: any) {
                 disabled={line.product?.allowLoose === false}
                 value={value.loosePieces || ""}
                 onChange={(e) => onChange({ loosePieces: e.target.value })}
+                placeholder="Pcs"
               />
             </Field>
           </>
@@ -2673,6 +2685,7 @@ function ReceiveLine({ line, value, onChange, canEnterRate }: any) {
               max={remaining}
               value={value.receivedQuantity || ""}
               onChange={(e) => onChange({ receivedQuantity: e.target.value })}
+              placeholder="Qty received"
             />
           </Field>
         )}
@@ -2682,6 +2695,7 @@ function ReceiveLine({ line, value, onChange, canEnterRate }: any) {
             min="0"
             value={value.damagedQuantity || ""}
             onChange={(e) => onChange({ damagedQuantity: e.target.value })}
+            placeholder="0"
           />
         </Field>
         <Field label="Batch">

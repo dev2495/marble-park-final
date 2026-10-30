@@ -249,7 +249,11 @@ export class QuotesService {
 
     const saveAsDraft = Boolean((data as any).saveAsDraft);
     const rawQuoteMeta = this.parseQuoteMeta(data.quoteMeta);
-    const assertedLines = await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote', true));
+    // New quotes add GST on top of MRP -> NRP -> special -> quote discount.
+    const assertedLines = this.withTaxTreatment(
+      await this.persistQuoteLineImages(await this.assertQuoteLines(data.lines, 'creating a quote', true, saveAsDraft)),
+      'EXCLUSIVE',
+    );
     const quoteType = this.normalizeQuoteType(data.quoteType || rawQuoteMeta.quoteType, assertedLines);
     this.assertQuoteTypeEligibility(quoteType, assertedLines, 'creating a quote');
     const brandSnapshot = await this.governedQuoteBrandMetadata(quoteType);
@@ -262,6 +266,7 @@ export class QuotesService {
       {
         ...rawQuoteMeta,
         pricingVersion: rawQuoteMeta.pricingVersion || RETAIL_LADDER_VERSION,
+        taxTreatment: 'EXCLUSIVE',
         quoteDiscount: { mode: pricing.quoteDiscountMode, value: pricing.quoteDiscountValue, allocatedInclusive: pricing.totals.quoteDiscountInclusive },
         architectName: consultingArchitect?.name || undefined,
         quoteType,
@@ -426,7 +431,7 @@ export class QuotesService {
     delete updateData.saveAsDraft;
     if (data.discountPercent !== undefined || data.lines !== undefined || data.quoteType !== undefined) {
       const assertedLines = await this.persistQuoteLineImages(data.lines !== undefined
-        ? await this.assertQuoteLines(data.lines, 'updating a quote', true)
+        ? this.withTaxTreatment(await this.assertQuoteLines(data.lines, 'updating a quote', true, saveAsDraft), this.quoteTaxTreatment(current))
         : await this.assertQuoteLines(current.lines, 'updating a quote'));
       const nextMeta = this.parseQuoteMeta(data.quoteMeta ?? current.quoteMeta);
       const quoteType = this.normalizeQuoteType(data.quoteType || current.quoteType || nextMeta.quoteType, assertedLines);
@@ -448,6 +453,7 @@ export class QuotesService {
       updateData.quoteMeta = this.normalizeQuoteMeta({
         ...nextMeta,
         pricingVersion: nextMeta.pricingVersion || RETAIL_LADDER_VERSION,
+        taxTreatment: this.quoteTaxTreatment(current),
         quoteDiscount: { mode: pricing.quoteDiscountMode, value: pricing.quoteDiscountValue, allocatedInclusive: pricing.totals.quoteDiscountInclusive },
         quoteType,
         ...brandSnapshot,
@@ -1552,7 +1558,7 @@ export class QuotesService {
           dispatchedQuantity: line.dispatchedQuantity,
           deliveredQuantity: line.deliveredQuantity,
           remainingQuantity: Math.max(0, Number(line.orderedQuantity || 0) - Number(line.dispatchedQuantity || 0)),
-          mrpInclusive: line.mrpInclusive === null || line.mrpInclusive === undefined ? null : Number(line.mrpInclusive),
+          mrpInclusive: Number(line.mrpInclusive) > 0 ? Number(line.mrpInclusive) : null,
           nrpInclusive: line.nrpInclusive === null || line.nrpInclusive === undefined ? null : Number(line.nrpInclusive),
           specialRateInclusive: line.specialRateInclusive === null || line.specialRateInclusive === undefined ? null : Number(line.specialRateInclusive),
           mrpRateBasis: line.mrpRateBasis || null,
@@ -1702,7 +1708,7 @@ export class QuotesService {
           remaining: Math.max(0, quantity - ordered - cancelled - closed),
           status: line.status,
           unit: line.unit,
-          mrpInclusive: line.mrpInclusive === null || line.mrpInclusive === undefined ? null : Number(line.mrpInclusive),
+          mrpInclusive: Number(line.mrpInclusive) > 0 ? Number(line.mrpInclusive) : null,
           nrpInclusive: line.nrpInclusive === null || line.nrpInclusive === undefined ? null : Number(line.nrpInclusive),
           specialRateInclusive: line.specialRateInclusive === null || line.specialRateInclusive === undefined ? null : Number(line.specialRateInclusive),
           mrpRateBasis: line.mrpRateBasis || null,
@@ -2069,7 +2075,7 @@ export class QuotesService {
     };
   }
 
-  private async assertQuoteLines(linesInput: any, action: string, useProductPricing = false) {
+  private async assertQuoteLines(linesInput: any, action: string, useProductPricing = false, allowMissingMrp = false) {
     const lines = this.normalizeLines(linesInput);
     if (!lines.length) {
       throw new BadRequestException(`At least one Product Master SKU or tile row is required before ${action}`);
@@ -2125,20 +2131,21 @@ export class QuotesService {
           && String(product.priceUom || 'SQFT').toUpperCase() === pricingUom;
         const fallbackMrp = useProductPricing || masterUnitMatches ? defaultMrp : null;
         const fallbackNrp = useProductPricing || masterUnitMatches ? defaultNrp : null;
-        if (useProductPricing && (!Number.isFinite(defaultMrp) || Number(defaultMrp) <= 0)) {
-          throw new BadRequestException(`${product.sku} needs a verified Product Master MRP per ${pricingUom} before ${action}`);
+        const tileMrpMissing = useProductPricing && (!Number.isFinite(defaultMrp) || Number(defaultMrp) <= 0);
+        if (tileMrpMissing && !allowMissingMrp) {
+          throw new BadRequestException(`${product.sku} needs a verified Product Master MRP per ${pricingUom} before ${action}. Add it in Product Master → MRP Readiness.`);
         }
         return this.normalizeTileLine({
           ...line, productId: product.id, sku: product.sku, name: product.name, brand: product.brand,
           tileSize: line.tileSize || product.dimensions, dimensions: product.dimensions,
           media: line.media || product.media || {},
           inventoryUom, pricingUom, rateBasis, sourceSalesUom: productSalesUom,
-          mrpInclusive: useProductPricing ? defaultMrp : line.mrpInclusive ?? line.mrp ?? fallbackMrp,
+          mrpInclusive: tileMrpMissing ? 0 : useProductPricing ? defaultMrp : line.mrpInclusive ?? line.mrp ?? fallbackMrp,
           floorPriceInclusive: useProductPricing ? (product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive)) : line.floorPriceInclusive,
-          nrpMode: line.nrpMode || (fallbackNrp != null ? 'FIXED_NRP' : 'PERCENT_OFF_MRP'),
-          nrpInput: line.nrpInput ?? (fallbackNrp != null ? fallbackNrp : 0),
-          specialMode: line.specialMode || 'NONE',
-          specialInput: line.specialInput ?? 0,
+          nrpMode: tileMrpMissing ? 'PERCENT_OFF_MRP' : line.nrpMode || (fallbackNrp != null ? 'FIXED_NRP' : 'PERCENT_OFF_MRP'),
+          nrpInput: tileMrpMissing ? 0 : line.nrpInput ?? (fallbackNrp != null ? fallbackNrp : 0),
+          specialMode: tileMrpMissing ? 'NONE' : line.specialMode || 'NONE',
+          specialInput: tileMrpMissing ? 0 : line.specialInput ?? 0,
           mrpSource: useProductPricing ? 'PRODUCT_MASTER' : line.mrpSource || (fallbackMrp != null ? product.mrpSource || 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
           piecesPerPack: useProductPricing ? stockPiecesPerUnit : line.piecesPerPack ?? stockPiecesPerUnit,
           coveragePerPack: useProductPricing ? stockCoverageSqFt : line.coveragePerPack ?? stockCoverageSqFt,
@@ -2150,13 +2157,17 @@ export class QuotesService {
       }
       const productBasis = String(product.priceRateBasis || '').toUpperCase() === 'PACK' ? 'BOX' : String(product.priceRateBasis || '').toUpperCase();
       const isChemical = String(product.category || '').trim().toLowerCase() === 'chemicals';
-      const requestedBasis = String(isChemical ? 'BOX' : line.priceRateBasis || line.mrpRateBasis || line.rateBasis || productBasis || this.basisForQuoteUom(product.salesUom || product.unit)).toUpperCase();
+      // Product Master owns the MRP basis. Older imports saved an MRP without a
+      // basis, so derive it from the master's own units instead of blocking.
+      const masterBasis = productBasis || this.basisForQuoteUom(product.priceUom || product.salesUom || product.purchaseUom || product.unit);
+      const requestedBasis = String(isChemical ? 'BOX' : useProductPricing ? masterBasis : line.priceRateBasis || line.mrpRateBasis || line.rateBasis || masterBasis).toUpperCase();
       const rateBasis = requestedBasis === 'PACK' ? 'BOX' : requestedBasis;
-      const basisMatches = productBasis === rateBasis;
+      const basisMatches = masterBasis === rateBasis;
       const defaultMrp = basisMatches && product.defaultMrpInclusive != null ? Number(product.defaultMrpInclusive) : null;
       const defaultNrp = basisMatches && product.defaultNrpInclusive != null ? Number(product.defaultNrpInclusive) : null;
-      if (useProductPricing && (!basisMatches || !Number.isFinite(defaultMrp) || Number(defaultMrp) <= 0)) {
-        throw new BadRequestException(`${product.sku} needs a verified Product Master MRP in its ${rateBasis} basis before ${action}`);
+      const mrpMissing = useProductPricing && (!basisMatches || !Number.isFinite(defaultMrp) || Number(defaultMrp) <= 0);
+      if (mrpMissing && !allowMissingMrp) {
+        throw new BadRequestException(`${product.sku} needs a verified Product Master MRP per ${rateBasis === 'PIECE' ? 'PC' : rateBasis === 'AREA' ? 'area unit' : 'BOX'} before ${action}. Add it in Product Master → MRP Readiness.`);
       }
       const media = line.media || product.media || {};
       return {
@@ -2169,20 +2180,20 @@ export class QuotesService {
         finish: product.finish,
         dimensions: product.dimensions,
         unit: isChemical ? 'KG' : product.unit,
-        inventoryUom: isChemical ? 'KG' : String(line.inventoryUom || product.purchaseUom || product.unit || 'PC').trim().toUpperCase(),
-        pricingUom: isChemical ? 'KG' : String(line.pricingUom || product.priceUom || product.salesUom || product.unit || 'PC').trim().toUpperCase(),
+        inventoryUom: isChemical ? 'KG' : String((useProductPricing ? null : line.inventoryUom) || product.purchaseUom || product.unit || 'PC').trim().toUpperCase(),
+        pricingUom: isChemical ? 'KG' : String((useProductPricing ? null : line.pricingUom) || product.priceUom || (rateBasis === 'PIECE' ? 'PC' : product.salesUom || product.unit) || 'PC').trim().toUpperCase(),
         qty,
         quantity: qty,
         pricingVersion: RETAIL_LADDER_VERSION,
         rateBasis,
         priceRateBasis: rateBasis,
         mrpRateBasis: rateBasis,
-        mrpInclusive: useProductPricing ? defaultMrp : line.mrpInclusive ?? line.mrp ?? defaultMrp,
+        mrpInclusive: mrpMissing ? 0 : useProductPricing ? defaultMrp : line.mrpInclusive ?? line.mrp ?? defaultMrp,
         floorPriceInclusive: useProductPricing ? (product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive)) : line.floorPriceInclusive,
-        nrpMode: line.nrpMode || (defaultNrp != null ? 'FIXED_NRP' : 'PERCENT_OFF_MRP'),
-        nrpInput: line.nrpInput ?? (defaultNrp != null ? defaultNrp : 0),
-        specialMode: line.specialMode || 'NONE',
-        specialInput: line.specialInput ?? 0,
+        nrpMode: mrpMissing ? 'PERCENT_OFF_MRP' : line.nrpMode || (defaultNrp != null ? 'FIXED_NRP' : 'PERCENT_OFF_MRP'),
+        nrpInput: mrpMissing ? 0 : line.nrpInput ?? (defaultNrp != null ? defaultNrp : 0),
+        specialMode: mrpMissing ? 'NONE' : line.specialMode || 'NONE',
+        specialInput: mrpMissing ? 0 : line.specialInput ?? 0,
         mrpSource: useProductPricing ? 'PRODUCT_MASTER' : line.mrpSource || product.mrpSource || (defaultMrp != null ? 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
         taxRate: Number(line.taxRate ?? 18),
         media,
@@ -2348,6 +2359,17 @@ export class QuotesService {
   private parseQuoteMeta(meta: any) {
     if (typeof meta !== 'string') return meta && typeof meta === 'object' ? meta : {};
     try { return JSON.parse(meta || '{}'); } catch { return {}; }
+  }
+
+  // A quote keeps the GST treatment it was created with; only quotes created
+  // after GST-on-top was introduced are EXCLUSIVE.
+  private quoteTaxTreatment(quote: any): 'INCLUSIVE' | 'EXCLUSIVE' {
+    if (String(this.parseQuoteMeta(quote?.quoteMeta)?.taxTreatment || '').toUpperCase() === 'EXCLUSIVE') return 'EXCLUSIVE';
+    return this.normalizeLines(quote?.lines).some((line: any) => String(line?.taxTreatment || '').toUpperCase() === 'EXCLUSIVE') ? 'EXCLUSIVE' : 'INCLUSIVE';
+  }
+
+  private withTaxTreatment(lines: any[], taxTreatment: 'INCLUSIVE' | 'EXCLUSIVE') {
+    return lines.map((line) => ({ ...line, taxTreatment }));
   }
 
   private quoteDiscountInput(meta: any, fallback: number) {

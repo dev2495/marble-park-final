@@ -443,7 +443,7 @@ export default function SettingsPage() {
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             <Field label="Support phone"><Input value={form.supportPhone || ''} onChange={(e) => setForm({ ...form, supportPhone: e.target.value })} placeholder="Customer support number" /></Field>
             <Field label="Support email"><Input type="email" value={form.supportEmail || ''} onChange={(e) => setForm({ ...form, supportEmail: e.target.value })} placeholder="support@marblepark.in" /></Field>
-            <Field label="Approval discount threshold" helper="Discount above this percentage asks owner/admin review before customer confirmation."><Input type="number" min={0} max={100} value={form.approvalDiscountThreshold ?? ''} onChange={(e) => setForm({ ...form, approvalDiscountThreshold: e.target.value })} /></Field>
+            <Field label="Approval discount threshold" helper="Discount above this percentage asks owner/admin review before customer confirmation."><Input type="number" min={0} max={100} value={form.approvalDiscountThreshold ?? ''} onChange={(e) => setForm({ ...form, approvalDiscountThreshold: e.target.value })} placeholder="0–100 %" /></Field>
           </div>
         </div>
 
@@ -510,7 +510,7 @@ export default function SettingsPage() {
                 <option value="inactive">Inactive</option>
               </select>
             </label>
-            <Field label="Sort order"><Input type="number" min={0} value={plantForm.sortOrder ?? 0} onChange={(event) => setPlantForm({ ...plantForm, sortOrder: event.target.value })} /></Field>
+            <Field label="Sort order"><Input type="number" min={0} value={plantForm.sortOrder === 0 || plantForm.sortOrder == null ? '' : plantForm.sortOrder} onChange={(event) => setPlantForm({ ...plantForm, sortOrder: event.target.value })} placeholder="0" /></Field>
             <label className="flex min-h-10 items-center gap-3 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--ink)] shadow-sm-soft">
               <input type="checkbox" checked={Boolean(plantForm.defaultStockScope)} onChange={(event) => setPlantForm({ ...plantForm, defaultStockScope: event.target.checked })} className="h-4 w-4 rounded border-[var(--line)]" />
               Default for GRN, stock count and dispatch

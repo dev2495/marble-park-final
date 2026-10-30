@@ -288,8 +288,11 @@ function rateFor(line) {
   const mrp = Number(priced.mrpInclusive);
   const mrpUom = isTile ? pricingUom : basis === 'AREA' ? pricingUom : basis === 'PIECE' ? 'PC' : String(line.inventoryUom || line.unit || line.uom || 'BOX').toUpperCase();
   const grossMrp = Number(priced.mrpValueInclusive || 0);
-  const finalUnitPayable = pricingQuantity > 0 ? amount / pricingQuantity : 0;
-  return { qty, basis, pricingQuantity, pricingUom, unitRate: priced.specialRateExclusive, lineSubtotal: priced.specialValueInclusive, grossBeforeQuoteDiscount: priced.specialValueInclusive, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, nrp: priced.nrpInclusive, netSellingPrice: priced.specialRateInclusive, finalUnitPayable, mrpUom, grossMrp };
+  const gstOnTop = String(priced.taxTreatment || '').toUpperCase() === 'EXCLUSIVE';
+  const finalUnitPayable = pricingQuantity > 0 ? (gstOnTop ? taxableValue : amount) / pricingQuantity : 0;
+  // GST-on-top quotes list pre-GST line values; GST is added once in the totals.
+  const displayAmount = gstOnTop ? Number(priced.specialValueInclusive || 0) : amount;
+  return { gstOnTop, displayAmount, qty, basis, pricingQuantity, pricingUom, unitRate: priced.specialRateExclusive, lineSubtotal: priced.specialValueInclusive, grossBeforeQuoteDiscount: priced.specialValueInclusive, quoteDiscountAmount, taxableValue, taxAmount, amount, mrp, nrp: priced.nrpInclusive, netSellingPrice: priced.specialRateInclusive, finalUnitPayable, mrpUom, grossMrp };
 }
 
 function quoteTypeFor(quote) {
@@ -678,7 +681,7 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.finalRateCol] }, `${money(rate.finalUnitPayable)}\nper ${rate.pricingUom}`) : null,
-        showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.amount)) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.displayAmount)) : null,
       );
     }),
   );
@@ -731,7 +734,7 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
           : '—'),
         e(Text, { style: [styles.td, styles.tileMrpCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`),
         e(Text, { style: [styles.td, styles.tileSellingCol] }, `${money(rate.finalUnitPayable)}\nper ${rate.pricingUom}`),
-        e(Text, { style: [styles.td, styles.tileAmountCol] }, money(rate.amount)),
+        e(Text, { style: [styles.td, styles.tileAmountCol] }, money(rate.displayAmount)),
       );
     }),
   );
@@ -756,6 +759,7 @@ function PricedDocumentBody(payload, requestUrl) {
   const taxable = pricedLines.reduce((sum, rate) => sum + rate.taxableValue, 0);
   const tax = taxMode === 'non_gst' ? 0 : pricedLines.reduce((sum, rate) => sum + rate.taxAmount, 0);
   const total = pricedLines.reduce((sum, rate) => sum + rate.amount, 0);
+  const gstOnTop = pricedLines.some((rate) => rate.gstOnTop);
   const DEFAULT_TERMS = 'Prices are valid until the quote validity date. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
   const rawTermsSource = quoteMeta.terms || settings.defaultTerms || DEFAULT_TERMS;
   const rawTerms = String(rawTermsSource)
@@ -820,8 +824,8 @@ function PricedDocumentBody(payload, requestUrl) {
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Line net value'), e(Text, { style: styles.totalValue }, money(lineNetValue))),
         discountAmount > 0 ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, `Additional quote discount ${String(quoteDiscount.mode || quoteDiscount.type || 'PERCENT').toUpperCase() === 'FIXED_AMOUNT' ? money(quoteDiscount.value || 0) : `${Number(quoteDiscount.value ?? quote.discountPercent ?? 0)}%`}`), e(Text, { style: styles.totalValue }, money(discountAmount))) : null,
         e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Taxable value'), e(Text, { style: styles.totalValue }, money(taxable))),
-        taxMode === 'gst' ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'GST'), e(Text, { style: styles.totalValue }, money(tax))) : null,
-        e(View, { style: [styles.totalRow, styles.grand] }, e(Text, { style: styles.grandText }, 'Total'), e(Text, { style: styles.grandText }, money(total))),
+        taxMode === 'gst' ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, gstOnTop ? 'Add: GST' : 'GST (included)'), e(Text, { style: styles.totalValue }, money(tax))) : null,
+        e(View, { style: [styles.totalRow, styles.grand] }, e(Text, { style: styles.grandText }, gstOnTop && taxMode === 'gst' ? 'Total incl. GST' : 'Total'), e(Text, { style: styles.grandText }, money(total))),
       ),
     ),
     e(View, { style: [styles.bottomGrid, compact ? styles.bottomGridCompact : null], wrap: false },

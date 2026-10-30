@@ -4,6 +4,9 @@ const PRICING_VERSION = 'unified_retail_v1';
 const NRP_MODES = Object.freeze({ PERCENT_OFF_MRP: 'PERCENT_OFF_MRP', FIXED_NRP: 'FIXED_NRP' });
 const SPECIAL_MODES = Object.freeze({ NONE: 'NONE', PERCENT_OFF_NRP: 'PERCENT_OFF_NRP', FIXED_SPECIAL_RATE: 'FIXED_SPECIAL_RATE' });
 const QUOTE_DISCOUNT_MODES = Object.freeze({ PERCENT: 'PERCENT', FIXED_AMOUNT: 'FIXED_AMOUNT' });
+// INCLUSIVE: every ladder value already contains GST (legacy documents).
+// EXCLUSIVE: MRP -> NRP -> special -> quote discount are pre-GST; GST is added on top.
+const TAX_TREATMENTS = Object.freeze({ INCLUSIVE: 'INCLUSIVE', EXCLUSIVE: 'EXCLUSIVE' });
 
 class PricingContractError extends Error {
   constructor(code, field, message, remediation) {
@@ -16,7 +19,10 @@ class PricingContractError extends Error {
 }
 
 function decimalParts(value, scale) {
-  const raw = String(value ?? '').trim();
+  // Floats such as 1e-7 or 0.1 + 0.2 must not fail the decimal pattern.
+  const raw = typeof value === 'number' && Number.isFinite(value) && Math.abs(value) < 1e21
+    ? value.toFixed(scale + 2)
+    : String(value ?? '').trim();
   if (!raw || !/^-?\d+(?:\.\d+)?$/.test(raw)) return null;
   const negative = raw.startsWith('-');
   const clean = negative ? raw.slice(1) : raw;
@@ -57,6 +63,19 @@ function toMoney(paise) {
   return Number(paise) / 100;
 }
 
+function normalizeTaxTreatment(value) {
+  return String(value || '').trim().toUpperCase() === TAX_TREATMENTS.EXCLUSIVE ? TAX_TREATMENTS.EXCLUSIVE : TAX_TREATMENTS.INCLUSIVE;
+}
+
+function taxSplit(amountPaise, taxMicros, taxTreatment) {
+  if (taxTreatment === TAX_TREATMENTS.EXCLUSIVE) {
+    const tax = roundDivide(amountPaise * taxMicros, 100000000n);
+    return { taxable: amountPaise, tax, gross: amountPaise + tax };
+  }
+  const taxable = roundDivide(amountPaise * 100000000n, 100000000n + taxMicros);
+  return { taxable, tax: amountPaise - taxable, gross: amountPaise };
+}
+
 function normalizeBasis(value) {
   const basis = String(value || '').trim().toUpperCase();
   const normalized = basis === 'PACK' ? 'BOX' : basis === 'PC' ? 'PIECE' : basis;
@@ -94,10 +113,11 @@ function priceUnit(input, options = {}) {
   if (specialRate > nrp && !options.allowSpecialAboveNrp) throw new PricingContractError('SPECIAL_ABOVE_NRP', 'specialInput', 'Special selling price cannot exceed NRP.', 'Reduce the special rate or use an authorized override with a reason.');
 
   const taxMicros = percentMicros(input.taxRate ?? 18, 'taxRate');
-  const taxable = roundDivide(specialRate * 100000000n, 100000000n + taxMicros);
-  const tax = specialRate - taxable;
+  const taxTreatment = normalizeTaxTreatment(input.taxTreatment);
+  const { taxable, tax, gross } = taxSplit(specialRate, taxMicros, taxTreatment);
   return {
     pricingVersion: PRICING_VERSION,
+    taxTreatment,
     priceRateBasis,
     nrpMode,
     specialMode,
@@ -109,10 +129,11 @@ function priceUnit(input, options = {}) {
     mrpInclusive: toMoney(mrp),
     nrpInput: Number(input.nrpInput ?? 0),
     nrpInclusive: toMoney(nrp),
-    nrpExclusive: toMoney(roundDivide(nrp * 100000000n, 100000000n + taxMicros)),
+    nrpExclusive: toMoney(taxSplit(nrp, taxMicros, taxTreatment).taxable),
     specialInput: Number(input.specialInput ?? 0),
     specialRateInclusive: toMoney(specialRate),
     specialRateExclusive: toMoney(taxable),
+    specialRateWithTax: toMoney(gross),
     taxRate: Number(taxMicros) / 1000000,
   };
 }
@@ -145,14 +166,15 @@ function priceQuoteLines(lines, quoteDiscount = {}, options = {}) {
       : base === 0n ? 0n : roundDivide(totalDiscount * row.beforeDiscount, base);
     if (allocation > row.beforeDiscount) throw new PricingContractError('QUOTE_DISCOUNT_EXCEEDED', `lines[${row.index}].quoteDiscountAllocatedInclusive`, 'Allocated quote discount cannot exceed the line value.', 'Review the source quote allocation and selected quantity.');
     allocated += allocation;
-    const gross = row.beforeDiscount - allocation;
+    const afterDiscount = row.beforeDiscount - allocation;
     const taxMicros = percentMicros(row.unit.taxRate, 'taxRate');
-    const taxable = roundDivide(gross * 100000000n, 100000000n + taxMicros);
-    const tax = gross - taxable;
-    if (gross > row.mrpValue) throw new PricingContractError('PAYABLE_ABOVE_MRP', `lines[${row.index}].grossLineTotal`, 'Final payable cannot exceed MRP.', 'Review NRP, special pricing and whole-quote discount.');
+    const { taxable, tax, gross } = taxSplit(afterDiscount, taxMicros, row.unit.taxTreatment);
+    // The MRP ceiling compares like with like: pre-GST value for EXCLUSIVE lines.
+    if (afterDiscount > row.mrpValue) throw new PricingContractError('PAYABLE_ABOVE_MRP', `lines[${row.index}].grossLineTotal`, 'Final payable cannot exceed MRP.', 'Review NRP, special pricing and whole-quote discount.');
     return {
       ...row.line,
       pricingVersion: PRICING_VERSION,
+      taxTreatment: row.unit.taxTreatment,
       priceRateBasis: row.unit.priceRateBasis,
       mrpRateBasis: row.unit.priceRateBasis,
       mrpInclusive: row.unit.mrpInclusive,
@@ -164,6 +186,7 @@ function priceQuoteLines(lines, quoteDiscount = {}, options = {}) {
       specialInput: row.unit.specialInput,
       specialRateInclusive: row.unit.specialRateInclusive,
       specialRateExclusive: row.unit.specialRateExclusive,
+      specialRateWithTax: row.unit.specialRateWithTax,
       quoteDiscountMode: mode,
       quoteDiscountValue: Number(quoteDiscount.value ?? 0),
       quoteDiscountAllocatedInclusive: toMoney(allocation),
@@ -176,7 +199,7 @@ function priceQuoteLines(lines, quoteDiscount = {}, options = {}) {
       specialValueInclusive: toMoney(row.beforeDiscount),
       baseDiscountFromMrpInclusive: toMoney(row.mrpValue - row.nrpValue),
       specialDiscountFromNrpInclusive: toMoney(row.nrpValue - row.beforeDiscount),
-      totalSavingFromMrpInclusive: toMoney(row.mrpValue - gross),
+      totalSavingFromMrpInclusive: toMoney(row.mrpValue - afterDiscount),
     };
   });
   const totals = pricedLines.reduce((sum, line) => ({
@@ -192,4 +215,4 @@ function priceQuoteLines(lines, quoteDiscount = {}, options = {}) {
   return { lines: pricedLines, totals, quoteDiscountMode: mode, quoteDiscountValue: Number(quoteDiscount.value ?? 0) };
 }
 
-module.exports = { PRICING_VERSION, NRP_MODES, SPECIAL_MODES, QUOTE_DISCOUNT_MODES, PricingContractError, priceUnit, priceQuoteLines };
+module.exports = { PRICING_VERSION, NRP_MODES, SPECIAL_MODES, QUOTE_DISCOUNT_MODES, TAX_TREATMENTS, PricingContractError, priceUnit, priceQuoteLines };
