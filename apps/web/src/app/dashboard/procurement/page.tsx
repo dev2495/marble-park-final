@@ -995,9 +995,9 @@ export default function ProcurementSuitePage() {
         <section className="space-y-5">
           <div
             ref={poComposerRef}
-            className="mp-panel scroll-mt-24 overflow-hidden border-[#e7c8bf]"
+            className="mp-panel scroll-mt-24 overflow-visible border-[#e7c8bf]"
           >
-            <div className="bg-[linear-gradient(102deg,#fff7f3,#fffdf8)] p-5">
+            <div className="rounded-[inherit] bg-[linear-gradient(102deg,#fff7f3,#fffdf8)] p-5">
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="font-semibold">
@@ -1295,7 +1295,7 @@ export default function ProcurementSuitePage() {
                   : "Post selected quantities and clear"}
               </Button>
             </div>
-            <div className="mp-panel p-5">
+            <div className="mp-panel overflow-visible p-5">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]">
                   Without purchase order
