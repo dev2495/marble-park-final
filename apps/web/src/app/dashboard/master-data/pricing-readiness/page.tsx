@@ -117,7 +117,7 @@ function PricingRow({ row, onSaved }: { row:any; onSaved:() => Promise<any> }) {
   const [reason,setReason]=useState('');
   const [save,{loading}]=useMutation(COMPLETE);
   const mrpChanged = (row.defaultMrpInclusive != null && Math.abs(Number(form.mrp) - Number(row.defaultMrpInclusive)) > 0.0001) || (isTile && Boolean(row.priceUom) && form.uom !== row.priceUom);
-  const invalid = Number(form.mrp) <= 0 || (form.nrp !== '' && Number(form.nrp) > Number(form.mrp)) || (form.floor !== '' && Number(form.floor) > Number(form.nrp || form.mrp)) || (mrpChanged && reason.trim().length < 3);
+  const invalid = Number(form.mrp) <= 0 || (form.floor !== '' && form.nrp !== '' && Number(form.floor) > Number(form.nrp)) || (mrpChanged && reason.trim().length < 3);
   async function submit() {
     setMessage('');
     try {

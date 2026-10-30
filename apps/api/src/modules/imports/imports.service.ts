@@ -738,9 +738,7 @@ export class ImportsService {
     if (this.key(row.category) === 'tiles' && (!row.hasDesignName || !row.designName)) errors.push('Tile Design Name is required for Tiles and remains independent of the size/finish variant name');
     if (!row.hasDefaultMrpInclusive || !Number.isFinite(row.defaultMrpInclusive) || row.defaultMrpInclusive <= 0) errors.push('Default MRP incl GST is required and must be greater than zero for every new SKU');
     if (row.hasDefaultNrpInclusive && (!Number.isFinite(row.defaultNrpInclusive) || row.defaultNrpInclusive <= 0)) errors.push('Default NRP incl GST must be greater than zero');
-    if (row.hasDefaultMrpInclusive && row.defaultNrpInclusive > row.defaultMrpInclusive) errors.push('Default NRP cannot exceed Default MRP');
     if (row.hasFloorPriceInclusive && (!Number.isFinite(row.floorPriceInclusive) || row.floorPriceInclusive < 0)) errors.push('Floor price incl GST must be zero or greater');
-    if (row.hasFloorPriceInclusive && row.floorPriceInclusive > row.defaultMrpInclusive) errors.push('Floor price cannot exceed Default MRP');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !['BOX', 'PIECE', 'AREA'].includes(row.priceRateBasis)) errors.push('Price Basis must be BOX, PIECE, or AREA when defaults are supplied');
     if ((row.hasDefaultMrpInclusive || row.hasDefaultNrpInclusive) && !row.priceUom) errors.push('Price UOM is required when defaults are supplied');
     if (this.key(row.category) === 'tiles') {

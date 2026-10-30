@@ -1331,12 +1331,10 @@ export class ProductsService {
     const defaultNrpInclusive = parseOptional(data.defaultNrpInclusive, 'Default NRP');
     const floorPriceInclusive = parseOptional(data.floorPriceInclusive, 'Floor price');
     if (requireMrp && defaultMrpInclusive === null) throw new BadRequestException('MRP is required before a new SKU can be created');
-    if (defaultMrpInclusive !== null && defaultNrpInclusive !== null && defaultNrpInclusive > defaultMrpInclusive) {
-      throw new BadRequestException('Default Normal Retail Price (NRP) cannot exceed Default MRP');
-    }
-    const normalRate = defaultNrpInclusive ?? defaultMrpInclusive;
-    if (floorPriceInclusive !== null && normalRate !== null && floorPriceInclusive > normalRate) {
-      throw new BadRequestException('Floor price cannot exceed the normal retail price or MRP');
+    // MRP is an entered reference price, not a ceiling; the floor only has to
+    // sit at or below the normal retail price when one is set.
+    if (floorPriceInclusive !== null && defaultNrpInclusive !== null && floorPriceInclusive > defaultNrpInclusive) {
+      throw new BadRequestException('Floor price cannot exceed the normal retail price (NRP)');
     }
     const hasPrice = defaultMrpInclusive !== null || defaultNrpInclusive !== null;
     const priceRateBasis = hasPrice ? this.normalizeMrpBasis(data.priceRateBasis || this.basisForUom(data.priceUom || fallbackUom)) : null;

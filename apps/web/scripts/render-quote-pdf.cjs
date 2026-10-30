@@ -328,12 +328,8 @@ function assertQuoteCommercialReady(quote, taxMode) {
   assertQuoteTypeEligibility(quote);
   for (const line of lines) {
     const rate = rateFor(line);
-    const payable = rate.finalUnitPayable;
     if (rate.mrp === null || !Number.isFinite(rate.mrp) || rate.mrp <= 0) {
       throw new Error(`Quote PDF blocked: MRP is required for ${line.sku || line.name || 'every line'} per ${rate.mrpUom}`);
-    }
-    if (payable > rate.mrp + 0.005) {
-      throw new Error(`Quote PDF blocked: ${line.sku || line.name || 'Line'} payable ${payable.toFixed(2)} per ${rate.mrpUom} exceeds MRP ${rate.mrp.toFixed(2)}`);
     }
   }
   return { legacyPricing: false };

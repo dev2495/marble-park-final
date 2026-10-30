@@ -46,7 +46,10 @@ const allocation = priceQuoteLines([
 assert.equal(allocation.lines.reduce((sum, row) => sum + row.quoteDiscountAllocatedInclusive, 0), 100);
 assert.equal(allocation.totals.grandTotal, 1400);
 
-assert.throws(() => priceQuoteLines([{ lineKey: 'bad-nrp', sku: 'BAD', quantity: 1, mrpInclusive: 100, priceRateBasis: 'PIECE', rateBasis: 'PIECE', nrpMode: 'FIXED_NRP', nrpInput: 101, specialMode: 'NONE', taxRate: 18 }], {}, { requireMrp: true }), /cannot exceed MRP/i);
+// MRP is an entered reference price, not a ceiling: NRP above MRP is accepted.
+assert.equal(priceQuoteLines([{ lineKey: 'nrp-above-mrp', sku: 'ABOVE', quantity: 1, mrpInclusive: 100, priceRateBasis: 'PIECE', rateBasis: 'PIECE', nrpMode: 'FIXED_NRP', nrpInput: 101, specialMode: 'NONE', taxRate: 18 }], {}, { requireMrp: true }).lines[0].nrpInclusive, 101);
+// GST added on top (EXCLUSIVE): 101 taxable + 18% = 119.18.
+assert.equal(priceQuoteLines([{ lineKey: 'gst-on-top', sku: 'TOP', quantity: 1, mrpInclusive: 100, priceRateBasis: 'PIECE', rateBasis: 'PIECE', nrpMode: 'FIXED_NRP', nrpInput: 101, specialMode: 'NONE', taxRate: 18, taxTreatment: 'EXCLUSIVE' }], {}, { requireMrp: true }).lines[0].grossLineTotal, 119.18);
 assert.throws(() => priceQuoteLines([{ lineKey: 'bad-basis', sku: 'BASIS', quantity: 1, mrpInclusive: 100, priceRateBasis: 'PIECE', rateBasis: 'BOX', nrpMode: 'FIXED_NRP', nrpInput: 90, specialMode: 'NONE', taxRate: 18 }], {}, { requireMrp: true }), /not BOX/i);
 
 console.log('unified retail pricing contract smoke: PASS');

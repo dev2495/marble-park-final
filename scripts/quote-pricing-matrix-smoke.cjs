@@ -27,10 +27,8 @@ assert.throws(
   () => priceQuoteLines([line({ lineRateBasis: 'BOX' })]),
   (error) => error instanceof PricingContractError && error.code === 'PRICE_BASIS_STALE',
 );
-assert.throws(
-  () => priceQuoteLines([line({ nrpMode: 'FIXED_NRP', nrpInput: 1180.01 })]),
-  (error) => error instanceof PricingContractError && error.code === 'NRP_ABOVE_MRP',
-);
+// MRP is an entered reference price, not a ceiling: an NRP above it prices normally.
+assert.equal(priceQuoteLines([line({ nrpMode: 'FIXED_NRP', nrpInput: 1180.01 })]).lines[0].nrpInclusive, 1180.01);
 assert.throws(
   () => priceQuoteLines([line({ specialMode: 'FIXED_SPECIAL_RATE', specialInput: 1200 })]),
   (error) => error instanceof PricingContractError && error.code === 'SPECIAL_ABOVE_NRP',

@@ -82,9 +82,9 @@ export default function DirectSalesOrderPage() {
     if (!lines.length) return setValidation('Add at least one Product Master SKU.');
     const bad = lines.find((line) => {
       const totals = totalsFor(line);
-      return Number(line.qty || 0) <= 0 || Number(line.mrpInclusive || 0) <= 0 || Number(totals.nrpInclusive || 0) <= 0 || totals.finalUnitPayable > Number(line.mrpInclusive || 0) + 0.005 || Boolean(totals.pricingError);
+      return Number(line.qty || 0) <= 0 || Number(line.mrpInclusive || 0) <= 0 || Number(totals.nrpInclusive || 0) <= 0 || Boolean(totals.pricingError);
     });
-    if (bad) return setValidation(`${bad.sku}: quantity, tax-inclusive MRP and NRP are required, and final payable cannot exceed MRP.`);
+    if (bad) return setValidation(`${bad.sku}: quantity, MRP and NRP are required.`);
     const payload = lines.map(({ id, ...line }) => { const priced = totalsFor(line); return ({ ...line, pricingVersion: 'unified_retail_v1', mrpInclusive: Number(priced.mrpInclusive), nrpInclusive: Number(priced.nrpInclusive), nrpExclusive: Number(priced.nrpExclusive), specialRateInclusive: Number(priced.specialRateInclusive), specialRateExclusive: Number(priced.specialRateExclusive), pricingQuantity: priced.pricingQuantity, quoteDiscountMode: 'PERCENT', quoteDiscountValue: 0, quoteDiscountAllocatedInclusive: 0, taxableValue: priced.taxableValue, taxAmount: priced.taxAmount, grossLineTotal: priced.total, total: priced.total, mrpConfirmedAt: new Date().toISOString(), mrpConfirmedById: ownerId }); });
     await create({ variables: { input: { customerId, ownerId, paymentMode, advanceAmount: paymentMode === 'cash' ? Number(advanceAmount || 0) : 0, paymentTerms, promisedDate: promisedDate ? new Date(`${promisedDate}T18:00:00`).toISOString() : undefined, notes, idempotencyKey: crypto.randomUUID(), lines: JSON.stringify(payload) } } });
     setCustomerId(''); setLines([]); setAdvanceAmount(''); setNotes(''); setValidation('');

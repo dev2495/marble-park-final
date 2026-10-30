@@ -400,7 +400,8 @@ export default function IntentDetailPage() {
         category: product.category,
         brand: product.brand,
         finish: product.finish,
-        qty: 1,
+        // Area-priced rows start with no area and no boxes until the area is entered.
+        qty: ["SQFT", "SQM", "M2"].includes(String(product.salesUom || "").toUpperCase()) && Number(product.coveragePerPack || 0) > 0 ? 0 : 1,
         price: Number(product.defaultNrpInclusive || 0),
         unit: product.unit || "PC",
         area: "General Selection",
@@ -422,7 +423,7 @@ export default function IntentDetailPage() {
             : String(product.priceUom || product.salesUom || product.unit || "PC").toUpperCase() === "PC" ? "PIECE" : "BOX",
         coveragePerPack: Number(product.coveragePerPack || 0),
         piecesPerPack: Number(product.piecesPerPack || 1),
-        requestedArea: Number(product.coveragePerPack || 0),
+        requestedArea: 0,
         wastagePercent: 0,
       }];
     });

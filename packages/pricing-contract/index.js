@@ -100,7 +100,7 @@ function priceUnit(input, options = {}) {
     ? moneyPaise(input.nrpInput, 'nrpInput', !requireComplete)
     : mrp - applyPercent(mrp, input.nrpInput ?? 0, 'nrpInput');
   if (requireComplete && nrp <= 0n) throw new PricingContractError('NRP_REQUIRED', 'nrpInput', 'Normal Retail Price (NRP) must be greater than zero.', 'Enter a positive NRP or reduce the % off MRP.');
-  if (nrp > mrp) throw new PricingContractError('NRP_ABOVE_MRP', 'nrpInput', 'Normal Retail Price (NRP) cannot exceed MRP.', 'Reduce NRP to MRP or below.');
+  // MRP is an entered reference price, not a ceiling: NRP may be set above it.
 
   const specialMode = String(input.specialMode || SPECIAL_MODES.NONE).toUpperCase();
   if (!Object.values(SPECIAL_MODES).includes(specialMode)) throw new PricingContractError('SPECIAL_MODE_INVALID', 'specialMode', 'Select no special discount, % off NRP, or Set special rate.', 'Choose exactly one special pricing mode.');
@@ -169,8 +169,6 @@ function priceQuoteLines(lines, quoteDiscount = {}, options = {}) {
     const afterDiscount = row.beforeDiscount - allocation;
     const taxMicros = percentMicros(row.unit.taxRate, 'taxRate');
     const { taxable, tax, gross } = taxSplit(afterDiscount, taxMicros, row.unit.taxTreatment);
-    // The MRP ceiling compares like with like: pre-GST value for EXCLUSIVE lines.
-    if (afterDiscount > row.mrpValue) throw new PricingContractError('PAYABLE_ABOVE_MRP', `lines[${row.index}].grossLineTotal`, 'Final payable cannot exceed MRP.', 'Review NRP, special pricing and whole-quote discount.');
     return {
       ...row.line,
       pricingVersion: PRICING_VERSION,
