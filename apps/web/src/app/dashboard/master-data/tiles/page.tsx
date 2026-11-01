@@ -28,6 +28,9 @@ import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { QueryErrorBanner } from "@/components/query-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { hasImage, isInheritedFromDesign, mediaUrls, thumbnailUrl, toMedia } from "@/lib/media";
+import { uploadCompressedImage } from "@/lib/image-upload";
+import { TileImageStudio } from "./image-studio";
 
 const WORKSPACE = gql`
   query TileWorkspace(
@@ -94,6 +97,11 @@ const LOTS = gql`
 const SAVE_DESIGN = gql`
   mutation SaveTileDesign($input: TileDesignInput!) {
     saveTileDesign(input: $input)
+  }
+`;
+const SET_VARIANT_MEDIA = gql`
+  mutation SetTileVariantMedia($productId: ID!, $media: JSON) {
+    setTileVariantMedia(productId: $productId, media: $media)
   }
 `;
 const SAVE_VARIANT = gql`
@@ -181,6 +189,7 @@ const emptyDesign: any = {
   name: "",
   brand: "",
   images: [],
+  thumbs: {},
   status: "active",
 };
 const emptyVariant: any = {
@@ -223,20 +232,9 @@ const emptyDisplay: any = {
   labelProduct: null,
 };
 
+// Lists use the small rendition; forms and PDFs use the full image.
 function imageOf(value: any) {
-  return (
-    value?.media?.primaryUrl ||
-    value?.media?.images?.[0]?.url ||
-    value?.media?.images?.[0] ||
-    value?.imageUrl ||
-    ""
-  );
-}
-function toMedia(images: string[]) {
-  return {
-    primaryUrl: images[0] || null,
-    images: images.map((url) => ({ url })),
-  };
+  return thumbnailUrl(value?.media) || value?.imageUrl || "";
 }
 async function fileBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -301,7 +299,7 @@ function Pager({
 }
 
 export default function TileWorkspacePage() {
-  const [tab, setTab] = useState<"designs" | "variants" | "display">("designs");
+  const [tab, setTab] = useState<"designs" | "variants" | "images" | "display">("designs");
   const [designSearch, setDesignSearch] = useState("");
   const [designPage, setDesignPage] = useState(0);
   const [designStatus, setDesignStatus] = useState("all");
@@ -322,6 +320,9 @@ export default function TileWorkspacePage() {
   const [displayLabelRecovery, setDisplayLabelRecovery] = useState<{ displayId: string; displayCode: string } | null>(null);
   const [notice, setNotice] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [imageError, setImageError] = useState("");
+  const [variantImageBusy, setVariantImageBusy] = useState(false);
+  const [variantImageError, setVariantImageError] = useState("");
   const [transitionReason, setTransitionReason] = useState(
     "Scheduled showroom lifecycle update",
   );
@@ -399,6 +400,27 @@ export default function TileWorkspacePage() {
   const [transition, transitionState] = useMutation(TRANSITION_DISPLAY);
   const [createLabel, createLabelState] = useMutation(CREATE_LABEL);
   const [uploadAsset] = useMutation(UPLOAD_ASSET);
+  const [setVariantMediaMutation] = useMutation(SET_VARIANT_MEDIA);
+  // Own photo for one variant, or back to the design photo (files = null).
+  async function changeVariantPhoto(files: FileList | null) {
+    if (!variant.id) return;
+    setVariantImageBusy(true);
+    setVariantImageError("");
+    try {
+      let media: any = null;
+      if (files?.length) {
+        const uploaded = await uploadCompressedImage(uploadAsset as any, files[0], variant.internalCode || variant.sku || "variant");
+        media = toMedia([uploaded.url], uploaded.thumbnailUrl);
+      }
+      const response = await setVariantMediaMutation({ variables: { productId: variant.id, media } });
+      setVariant((current: any) => ({ ...current, media: response.data?.setTileVariantMedia?.media || {} }));
+      await refetch();
+    } catch (err: any) {
+      setVariantImageError(err?.graphQLErrors?.[0]?.message || err?.message || "Photo update failed");
+    } finally {
+      setVariantImageBusy(false);
+    }
+  }
   const [loadDesignTemplate, designTemplateState] = useLazyQuery(
     DESIGN_IMPORT_TEMPLATE,
     { fetchPolicy: "network-only" },
@@ -471,20 +493,19 @@ export default function TileWorkspacePage() {
   async function uploadImages(files: FileList | null) {
     if (!files?.length) return;
     setUploading(true);
+    setImageError("");
     try {
       const urls = [...design.images];
+      const thumbs = { ...(design.thumbs || {}) };
       for (const file of Array.from(files).slice(0, 8 - urls.length)) {
-        const response = await uploadAsset({
-          variables: {
-            filename: file.name,
-            contentBase64: await fileBase64(file),
-            scope: "tile-design-image",
-          },
-        });
-        const url = response.data?.uploadStoredAsset?.result?.publicUrl;
-        if (url) urls.push(url);
+        // Phone photos are resized/compressed in the browser before upload.
+        const uploaded = await uploadCompressedImage(uploadAsset as any, file, design.designCode || file.name);
+        urls.push(uploaded.url);
+        thumbs[uploaded.url] = uploaded.thumbnailUrl;
       }
-      setDesign({ ...design, images: urls });
+      setDesign({ ...design, images: urls, thumbs });
+    } catch (err: any) {
+      setImageError(err?.graphQLErrors?.[0]?.message || err?.message || "Image upload failed");
     } finally {
       setUploading(false);
     }
@@ -493,12 +514,8 @@ export default function TileWorkspacePage() {
     setDesign({
       ...emptyDesign,
       ...row,
-      images: [
-        imageOf(row),
-        ...(row.media?.images || []).map((x: any) => x?.url || x),
-      ]
-        .filter(Boolean)
-        .filter((x: string, i: number, a: string[]) => a.indexOf(x) === i),
+      images: mediaUrls(row.media),
+      thumbs: row.media?.thumbnailUrl && mediaUrls(row.media)[0] ? { [mediaUrls(row.media)[0]]: row.media.thumbnailUrl } : {},
       usage: Array.isArray(row.usage) ? row.usage : [],
     });
   }
@@ -843,13 +860,14 @@ export default function TileWorkspacePage() {
         </div>
       </header>
       <nav
-        className="grid max-w-2xl grid-cols-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-1"
+        className="grid max-w-3xl grid-cols-2 rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 sm:grid-cols-4"
         aria-label="Tile workspace sections"
       >
         {(
           [
             ["designs", "Design registry", Layers3],
             ["variants", "Variant registry", Boxes],
+            ["images", "Images", ImagePlus],
             ["display", "Display assets + labels ↗", Store],
           ] as any[]
         ).map(([id, label, Icon]) => (
@@ -1257,6 +1275,7 @@ export default function TileWorkspacePage() {
         </section>
       ) : null}
 
+      {tab === "images" ? <TileImageStudio onChanged={() => void refetch()} /> : null}
       {tab === "designs" ? (
         <section className="grid gap-5 xl:grid-cols-[25rem_1fr]">
           <form
@@ -1270,7 +1289,7 @@ export default function TileWorkspacePage() {
                     designCode: design.designCode,
                     name: design.name,
                     brand: design.brand,
-                    media: toMedia(design.images),
+                    media: toMedia(design.images, design.thumbs?.[design.images[0]] || null),
                     status: design.status,
                   },
                 },
@@ -1354,6 +1373,10 @@ export default function TileWorkspacePage() {
                     {uploading ? "Uploading…" : "Add"}
                   </span>
                 </label>
+                <p className="mt-2 text-[11px] leading-4 text-[var(--ink-4)]">
+                  Shown on every size and finish of this design in search, quotes, PDFs and labels. The first photo is the main one. Photos are resized and compressed automatically.
+                </p>
+                {imageError ? <p role="alert" className="mt-2 rounded bg-red-50 p-2 text-xs font-semibold text-red-800">{imageError}</p> : null}
                 {design.images.length ? (
                   <div className="mt-3 grid grid-cols-4 gap-2">
                     {design.images.map((url: string, i: number) => (
@@ -1538,6 +1561,33 @@ export default function TileWorkspacePage() {
                 <RotateCcw className="h-4 w-4" />
               </Button>
             </div>
+            {variant.id ? (
+              <div className="mt-4 flex gap-3 rounded-md border border-[var(--line)] bg-[var(--bg-soft)]/50 p-3">
+                <div className="grid h-16 w-20 shrink-0 place-items-center overflow-hidden rounded border border-[var(--line)] bg-white">
+                  {thumbnailUrl(variant.media) ? <img src={thumbnailUrl(variant.media)} alt="" className="h-full w-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : <ImageOff className="h-5 w-5 text-[var(--ink-5)]" />}
+                </div>
+                <div className="min-w-0 flex-1 text-xs">
+                  <p className="font-semibold text-[var(--ink)]">
+                    {!hasImage(variant.media) ? "No photo yet" : isInheritedFromDesign(variant.media) ? "Using the design photo" : "Own photo for this variant"}
+                  </p>
+                  <p className="mt-0.5 text-[var(--ink-4)]">
+                    {!hasImage(variant.media) ? "Add a photo to the design (Images tab or design form), or upload one only for this variant." : isInheritedFromDesign(variant.media) ? "Updates automatically when the design photo changes." : "Kept even when the design photo changes."}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <label className={`inline-flex h-8 cursor-pointer items-center rounded-md border border-[var(--line)] bg-white px-2.5 font-semibold text-[var(--ink)] hover:bg-[var(--bg-soft)] ${variantImageBusy ? "pointer-events-none opacity-60" : ""}`}>
+                      <ImagePlus className="mr-1.5 h-3.5 w-3.5" />{variantImageBusy ? "Saving…" : hasImage(variant.media) && !isInheritedFromDesign(variant.media) ? "Replace own photo" : "Upload own photo"}
+                      <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(e) => { void changeVariantPhoto(e.target.files); e.target.value = ""; }} />
+                    </label>
+                    {hasImage(variant.media) && !isInheritedFromDesign(variant.media) ? (
+                      <button type="button" disabled={variantImageBusy} onClick={() => void changeVariantPhoto(null)} className="inline-flex h-8 items-center rounded-md px-2.5 font-semibold text-[var(--brand-700)] hover:bg-white disabled:opacity-60">
+                        Use design photo
+                      </button>
+                    ) : null}
+                  </div>
+                  {variantImageError ? <p role="alert" className="mt-2 rounded bg-red-50 p-2 font-semibold text-red-800">{variantImageError}</p> : null}
+                </div>
+              </div>
+            ) : null}
             <div className="mt-4 space-y-3">
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
                 Design
@@ -1769,8 +1819,11 @@ export default function TileWorkspacePage() {
               <button
                 key={row.id}
                 onClick={() => editVariant(row)}
-                className="grid w-full gap-3 border-b border-[var(--line)] p-4 text-left hover:bg-[var(--bg-soft)] md:grid-cols-[1.5fr_1fr_1fr_auto] md:items-center"
+                className="grid w-full gap-3 border-b border-[var(--line)] p-4 text-left hover:bg-[var(--bg-soft)] md:grid-cols-[3.5rem_1.5fr_1fr_1fr_auto] md:items-center"
               >
+                <div className="hidden h-12 w-14 place-items-center overflow-hidden rounded border border-[var(--line)] bg-[var(--bg-soft)] md:grid" title={!hasImage(row.media) ? "No photo" : isInheritedFromDesign(row.media) ? "Design photo" : "Own photo"}>
+                  {imageOf(row) ? <img src={imageOf(row)} alt="" className="h-full w-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : <ImageOff className="h-4 w-4 text-[var(--ink-5)]" />}
+                </div>
                 <div>
                   <p className="font-semibold">
                     {row.internalCode || row.sku} ·{" "}

@@ -6,6 +6,7 @@ import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { releaseReservedLotsTx, reserveAvailableLotsTx } from '../common/lot-allocation';
 import { commercialTotalsFromLines, priceQuoteLines, RETAIL_LADDER_VERSION } from '../common/pricing';
+import { ProductsService } from '../products/products.service';
 import { ulid } from 'ulid';
 import { randomBytes } from 'crypto';
 import { StoredImageService } from '../assets/stored-image.service';
@@ -2138,7 +2139,7 @@ export class QuotesService {
         return this.normalizeTileLine({
           ...line, productId: product.id, sku: product.sku, name: product.name, brand: product.brand,
           tileSize: line.tileSize || product.dimensions, dimensions: product.dimensions,
-          media: line.media || product.media || {},
+          media: ProductsService.mediaHasImage(line.media) ? line.media : product.media || {},
           inventoryUom, pricingUom, rateBasis, sourceSalesUom: productSalesUom,
           mrpInclusive: tileMrpMissing ? 0 : useProductPricing ? defaultMrp : line.mrpInclusive ?? line.mrp ?? fallbackMrp,
           floorPriceInclusive: useProductPricing ? (product.floorPriceInclusive == null ? null : Number(product.floorPriceInclusive)) : line.floorPriceInclusive,
@@ -2169,7 +2170,8 @@ export class QuotesService {
       if (mrpMissing && !allowMissingMrp) {
         throw new BadRequestException(`${product.sku} needs a verified Product Master MRP per ${rateBasis === 'PIECE' ? 'PC' : rateBasis === 'AREA' ? 'area unit' : 'BOX'} before ${action}. Add it in Product Master → MRP Readiness.`);
       }
-      const media = line.media || product.media || {};
+      // An empty line media object must not hide the product's (design) image.
+      const media = ProductsService.mediaHasImage(line.media) ? line.media : product.media || {};
       return {
         ...line,
         productId: product.id,

@@ -60,7 +60,7 @@ function productImage(media: any) {
     }
   }
   const gallery = Array.isArray(media.gallery) ? media.gallery : [];
-  return media.primaryUrl || media.primary || media.primaryImage || (typeof gallery[0] === 'string' ? gallery[0] : gallery[0]?.url) || '/catalogue-art/faucet.svg';
+  return media.thumbnailUrl || media.primaryUrl || media.primary || media.primaryImage || (typeof gallery[0] === 'string' ? gallery[0] : gallery[0]?.url) || '/catalogue-art/faucet.svg';
 }
 
 type TileRateBasis = 'AREA' | 'PIECE' | 'BOX';

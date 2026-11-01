@@ -428,6 +428,45 @@ export class ProductsResolver {
     return this.products.saveTileDesign(input, user.id);
   }
 
+  @Query(() => GraphQLJSON)
+  async tileImageMatchIndex(@Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.tileImageMatchIndex();
+  }
+
+  @Query(() => GraphQLJSON)
+  async tileImageQueue(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('search', { nullable: true }) search?: string,
+    @Args('filter', { nullable: true }) filter?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.tileImageQueue({ search, filter, skip, take });
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async setTileDesignMedia(
+    @Args('designId', { type: () => ID }) designId: string,
+    @Args('media', { type: () => GraphQLJSON }) media: any,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('mode', { nullable: true }) mode?: string,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.setTileDesignMedia(designId, media, mode, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async setTileVariantMedia(
+    @Args('productId', { type: () => ID }) productId: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('media', { type: () => GraphQLJSON, nullable: true }) media?: any,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    return this.products.setTileVariantMedia(productId, media ?? null, user.id);
+  }
+
   @Mutation(() => ProductOutput)
   async saveTileVariant(@Args('input') input: TileVariantInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'products.manage');

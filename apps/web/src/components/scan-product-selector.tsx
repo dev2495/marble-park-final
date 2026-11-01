@@ -9,7 +9,7 @@ import { compactTileSize } from '@marble-park/pricing-contract/tile-size';
 function imageOf(product: any) {
   const media = product?.media || {};
   const gallery = Array.isArray(media?.gallery) ? media.gallery : [];
-  return media.primaryUrl || media.imageUrl || media.primary || media.primaryImage
+  return media.thumbnailUrl || media.primaryUrl || media.imageUrl || media.primary || media.primaryImage
     || media.images?.[0]?.url || media.images?.[0]
     || (typeof gallery[0] === 'string' ? gallery[0] : gallery[0]?.url)
     || '/catalogue-art/faucet.svg';

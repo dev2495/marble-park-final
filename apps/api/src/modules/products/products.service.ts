@@ -724,6 +724,7 @@ export class ProductsService {
       const design = existing
         ? await tx.tileDesign.update({ where: { id: existing.id }, data })
         : await tx.tileDesign.create({ data: { id: ulid(), ...data } });
+      const syncedImages = await this.syncDesignMediaToVariants(tx, design);
       const syncedVariants = await tx.product.updateMany({
         where: {
           tileDesignId: design.id,
@@ -742,6 +743,7 @@ export class ProductsService {
           after: design,
           governedBrand: { id: brandMaster.id, name: brandMaster.name, code: brandMaster.code || null },
           syncedVariantCount: syncedVariants.count,
+          syncedVariantImageCount: syncedImages,
         },
       } });
       if (syncedVariants.count > 0) {
@@ -799,7 +801,7 @@ export class ProductsService {
         mrpSource: input.mrpSource,
         pricingEffectiveFrom: input.pricingEffectiveFrom,
         status: input.status || 'active',
-        description: design.description || '', media: design.media || {},
+        description: design.description || '', media: this.inheritedVariantMedia(design),
         tileDesignId: design.id, tileSizeId: size.id,
         baseUom: 'PC', purchaseUom: String(input.purchaseUom || size.uom || 'BOX').toUpperCase(), salesUom: String(input.salesUom || size.uom || 'BOX').toUpperCase(),
         piecesPerPack, coveragePerPack, allowLoose: input.allowLoose === undefined ? true : Boolean(input.allowLoose), hsnCode: input.hsnCode,
@@ -892,6 +894,161 @@ export class ProductsService {
       importedDesigns,
       missingImages: designs.filter((design: any) => !hasImage(design.media)).length,
       missingInternalCodes: products.filter((product) => !String(product.internalCode || '').trim()).length,
+    };
+  }
+
+  static mediaHasImage(media: any) {
+    if (!media || typeof media !== 'object') return false;
+    const entries = Array.isArray(media.gallery) ? media.gallery : Array.isArray(media.images) ? media.images : [];
+    return Boolean(media.primaryUrl || media.primaryImage || media.url || media.imageUrl || entries.some((entry: any) => (typeof entry === 'string' ? entry : entry?.url)));
+  }
+
+  private static thumbOf(media: any) {
+    if (!ProductsService.mediaHasImage(media)) return null;
+    const entries = Array.isArray(media.gallery) ? media.gallery : Array.isArray(media.images) ? media.images : [];
+    const first = entries[0];
+    return media.thumbnailUrl || media.primaryUrl || media.primaryImage || (typeof first === 'string' ? first : first?.url) || null;
+  }
+
+  /** Media a tile variant shows when it has no own image: its design's image, tagged. */
+  private inheritedVariantMedia(design: { id: string; media?: any }) {
+    return ProductsService.mediaHasImage(design?.media) ? { ...(design.media as any), inheritedFromDesignId: design.id } : {};
+  }
+
+  /** Variant has its own uploaded image (not inherited from the design). */
+  private static variantHasOwnImage(media: any) {
+    return ProductsService.mediaHasImage(media) && !media?.inheritedFromDesignId;
+  }
+
+  /**
+   * Re-points every variant of the design that inherits (or has no image) at the
+   * design's current image. Variants with their own image are never touched.
+   */
+  private async syncDesignMediaToVariants(tx: any, design: { id: string; media?: any }) {
+    const variants = await tx.product.findMany({ where: { tileDesignId: design.id, status: { not: 'archived' } }, select: { id: true, media: true } });
+    const next = this.inheritedVariantMedia(design);
+    let synced = 0;
+    for (const variant of variants) {
+      if (ProductsService.variantHasOwnImage(variant.media)) continue;
+      if (JSON.stringify(variant.media || {}) === JSON.stringify(next)) continue;
+      await tx.product.update({ where: { id: variant.id }, data: { media: next, updatedAt: new Date() } });
+      synced += 1;
+    }
+    return synced;
+  }
+
+  /** Replace or extend a design's images (bulk ZIP upload and missing-image queue). */
+  async setTileDesignMedia(designId: string, mediaInput: any, mode: string | undefined, actorUserId: string) {
+    const existing = await (this.prisma as any).tileDesign.findUnique({ where: { id: designId } });
+    if (!existing) throw new NotFoundException('Tile design not found');
+    if (existing.status === 'archived') throw new BadRequestException(`${existing.designCode} is archived. Restore it before adding images.`);
+    const incoming = await this.normalizeMedia(mediaInput || {});
+    if (!ProductsService.mediaHasImage(incoming)) throw new BadRequestException('Upload at least one image');
+    let media = incoming;
+    if (String(mode || 'replace').toLowerCase() === 'append' && ProductsService.mediaHasImage(existing.media)) {
+      const current = await this.normalizeMedia(existing.media);
+      const gallery = [...current.gallery];
+      for (const entry of incoming.gallery) if (!gallery.some((item: any) => item.url === entry.url)) gallery.push(entry);
+      if (gallery.length > 8) throw new BadRequestException(`${existing.designCode} already has ${current.gallery.length} images; a design can hold at most 8.`);
+      media = { ...current, gallery };
+    }
+    return this.prisma.$transaction(async (tx: any) => {
+      const design = await tx.tileDesign.update({ where: { id: existing.id }, data: { media, updatedAt: new Date() } });
+      const syncedVariants = await this.syncDesignMediaToVariants(tx, design);
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: 'tile_design.images', entityType: 'TileDesign', entityId: design.id,
+        summary: `Updated images for tile design ${design.designCode}`,
+        metadata: { mode: mode || 'replace', before: existing.media || {}, after: media, syncedVariantCount: syncedVariants },
+      } });
+      return { id: design.id, designCode: design.designCode, media: design.media, syncedVariants };
+    });
+  }
+
+  /** Give one tile variant its own image, or (media null) go back to the design image. */
+  async setTileVariantMedia(productId: string, mediaInput: any, actorUserId: string) {
+    const product = await this.prisma.product.findUnique({ where: { id: productId } }) as any;
+    if (!product || !product.tileDesignId) throw new NotFoundException('Tile variant not found');
+    const design = await (this.prisma as any).tileDesign.findUnique({ where: { id: product.tileDesignId } });
+    const useDesign = mediaInput === null || mediaInput === undefined || mediaInput === '' || mediaInput === 'null';
+    const media = useDesign ? this.inheritedVariantMedia(design) : await this.normalizeMedia(mediaInput);
+    if (!useDesign) {
+      delete (media as any).inheritedFromDesignId;
+      if (!ProductsService.mediaHasImage(media)) throw new BadRequestException('Upload an image, or choose to use the design image');
+    }
+    const updated = await this.prisma.product.update({ where: { id: product.id }, data: { media, updatedAt: new Date() } });
+    await this.prisma.auditEvent.create({ data: {
+      id: ulid(), actorUserId, action: useDesign ? 'tile_variant.image_inherit' : 'tile_variant.image_override', entityType: 'Product', entityId: product.id,
+      summary: useDesign ? `${product.sku} now uses its design image` : `${product.sku} uses its own image`,
+      metadata: { before: product.media || {}, after: media },
+    } });
+    return { id: updated.id, sku: updated.sku, media: updated.media, inherited: useDesign };
+  }
+
+  /** Every design code and variant SKU, used to match bulk ZIP file names. */
+  async tileImageMatchIndex() {
+    const [designs, variants] = await Promise.all([
+      (this.prisma as any).tileDesign.findMany({ where: { status: { not: 'archived' } }, select: { id: true, designCode: true, name: true, brand: true, status: true, media: true, _count: { select: { variants: true } } }, orderBy: { designCode: 'asc' } }),
+      this.prisma.product.findMany({ where: { tileDesignId: { not: null }, status: { not: 'archived' } } as any, select: { id: true, sku: true, internalCode: true, name: true, tileDesignId: true, media: true } as any }),
+    ]);
+    return {
+      designs: designs.map((design: any) => ({
+        id: design.id, designCode: design.designCode, name: design.name, brand: design.brand, status: design.status,
+        hasImage: ProductsService.mediaHasImage(design.media),
+        imageCount: (Array.isArray(design.media?.gallery) ? design.media.gallery : Array.isArray(design.media?.images) ? design.media.images : []).length,
+        variantCount: design._count?.variants || 0,
+      })),
+      variants: variants.map((variant: any) => ({
+        id: variant.id, sku: variant.sku, internalCode: variant.internalCode, name: variant.name, tileDesignId: variant.tileDesignId,
+        hasOwnImage: ProductsService.variantHasOwnImage(variant.media),
+      })),
+    };
+  }
+
+  /** Designs grouped by image status for the missing-image work queue. */
+  async tileImageQueue(args?: { search?: string; filter?: string; skip?: number; take?: number }) {
+    const skip = Math.max(0, Number(args?.skip || 0));
+    const take = Math.min(100, Math.max(1, Number(args?.take || 30)));
+    const search = String(args?.search || '').trim();
+    const filter = ['missing', 'has', 'all'].includes(String(args?.filter)) ? String(args?.filter) : 'missing';
+    const designs = await (this.prisma as any).tileDesign.findMany({
+      where: {
+        status: { not: 'archived' },
+        ...(search ? { OR: [
+          { designCode: { contains: search, mode: 'insensitive' } },
+          { name: { contains: search, mode: 'insensitive' } },
+          { brand: { contains: search, mode: 'insensitive' } },
+        ] } : {}),
+      },
+      select: { id: true, designCode: true, name: true, brand: true, status: true, media: true, updatedAt: true, _count: { select: { variants: true } } },
+      orderBy: { designCode: 'asc' },
+    });
+    const variantRows = await this.prisma.product.findMany({ where: { tileDesignId: { not: null }, status: { not: 'archived' } } as any, select: { tileDesignId: true, media: true } as any });
+    const overridesByDesign = new Map<string, number>();
+    for (const row of variantRows as any[]) {
+      if (ProductsService.variantHasOwnImage(row.media)) overridesByDesign.set(row.tileDesignId, (overridesByDesign.get(row.tileDesignId) || 0) + 1);
+    }
+    const withImage = designs.filter((design: any) => ProductsService.mediaHasImage(design.media));
+    const filtered = filter === 'missing' ? designs.filter((design: any) => !ProductsService.mediaHasImage(design.media)) : filter === 'has' ? withImage : designs;
+    const page = filtered.slice(skip, skip + take);
+    const allDesigns = search ? await (this.prisma as any).tileDesign.findMany({ where: { status: { not: 'archived' } }, select: { media: true } }) : designs;
+    const totalWithImage = allDesigns.filter((design: any) => ProductsService.mediaHasImage(design.media)).length;
+    return {
+      items: page.map((design: any) => ({
+        id: design.id, designCode: design.designCode, name: design.name, brand: design.brand, status: design.status, updatedAt: design.updatedAt,
+        hasImage: ProductsService.mediaHasImage(design.media),
+        thumbnailUrl: ProductsService.thumbOf(design.media),
+        imageCount: (Array.isArray(design.media?.gallery) ? design.media.gallery : Array.isArray(design.media?.images) ? design.media.images : []).length,
+        variantCount: design._count?.variants || 0,
+        variantOverrides: overridesByDesign.get(design.id) || 0,
+      })),
+      total: filtered.length, skip, take, hasNext: skip + page.length < filtered.length,
+      summary: {
+        designs: allDesigns.length,
+        withImage: totalWithImage,
+        missing: allDesigns.length - totalWithImage,
+        variants: variantRows.length,
+        variantOverrides: Array.from(overridesByDesign.values()).reduce((sum, value) => sum + value, 0),
+      },
     };
   }
 
@@ -1139,7 +1296,17 @@ export class ProductsService {
     const primaryInput = candidate.primaryUrl || candidate.primaryImage || galleryInput[0]?.url || null;
     const primaryIndex = primaryInput ? galleryInput.findIndex((entry: any) => entry.url === primaryInput) : -1;
     if (primaryInput && primaryIndex < 0) throw new BadRequestException('The primary product image must be part of the gallery');
-    return { gallery, primaryUrl: primaryIndex >= 0 ? gallery[primaryIndex].url : gallery[0]?.url || null };
+    const normalized: any = { gallery, primaryUrl: primaryIndex >= 0 ? gallery[primaryIndex].url : gallery[0]?.url || null };
+    // Optional small rendition used by lists and search; full image stays primary.
+    if (normalized.primaryUrl && this.isSafeMediaUrl(candidate.thumbnailUrl)) {
+      normalized.thumbnailUrl = await this.storedImages.persistRemoteImage(String(candidate.thumbnailUrl));
+    }
+    // Tile variants that show their design's image carry the design id so a
+    // later design image change flows to them; an own (override) image does not.
+    if (normalized.primaryUrl && typeof candidate.inheritedFromDesignId === 'string' && candidate.inheritedFromDesignId) {
+      normalized.inheritedFromDesignId = candidate.inheritedFromDesignId;
+    }
+    return normalized;
   }
 
   private isSafeMediaUrl(value: unknown) {

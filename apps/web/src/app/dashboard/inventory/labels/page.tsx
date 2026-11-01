@@ -46,7 +46,7 @@ const MAX_PHYSICAL_PAGES = 1000;
 
 function imageOf(value: any) {
   const media = value?.media || value?.product?.media || {};
-  return media.primaryUrl || media.images?.[0]?.url || media.images?.[0] || value?.imageUrl || '';
+  return media.primaryUrl || media.gallery?.[0]?.url || media.images?.[0]?.url || media.images?.[0] || value?.imageUrl || '';
 }
 function availableOf(lot: any) { return (lot?.balances || []).reduce((sum: number, row: any) => sum + Number(row.available || 0), 0); }
 function suggestedLabels(line: any) {

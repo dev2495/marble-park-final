@@ -9,9 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@marble-park/pricing-contract": "file:../../packages/pricing-contract",
     "@apollo/client": "^3.8.8",
     "@hookform/resolvers": "^3.3.4",
+    "@marble-park/pricing-contract": "file:../../packages/pricing-contract",
     "@radix-ui/react-accordion": "^1.1.2",
     "@radix-ui/react-alert-dialog": "^1.0.5",
     "@radix-ui/react-aspect-ratio": "^1.0.3",
@@ -43,6 +43,7 @@
     "date-fns": "^3.2.0",
     "framer-motion": "^12.38.0",
     "graphql": "^16.8.1",
+    "jszip": "3.10.1",
     "lucide-react": "^0.309.0",
     "next": "15.5.25",
     "react": "^18.2.0",
