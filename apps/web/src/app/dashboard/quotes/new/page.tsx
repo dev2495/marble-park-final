@@ -142,7 +142,7 @@ function TileQuantityEditor({ line, onChange }: { line: any; onChange: (patch: a
   const unit = tilePriceUom(line.pricingUom);
   const coverage = tilePricingCoverage(line.coveragePerPack, unit);
   return <div className="w-full max-w-sm space-y-2.5">
-    <div className="flex h-8 items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-black uppercase tracking-wider text-emerald-800"><span>{unit === 'PC' ? 'Piece pricing' : 'Area pricing'}</span><span>₹ / {unit}</span></div>
+    <div className="flex h-8 items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-2 text-xs font-black uppercase tracking-wider text-emerald-800"><span>{unit === 'PC' ? 'Piece pricing' : 'Area pricing'}</span><span>₹ / {unit}</span></div>
     {unit === 'PC' ? <>
       <div className="grid grid-cols-[1fr_4rem] gap-2"><input aria-label={`Requested pieces for ${line.name}`} type="number" min={1} step={1} data-needs-value placeholder="Enter pieces" value={emptyWhenZero(line.requestedPieces)} onChange={(event) => onChange({ requestedPieces: event.target.value === '' ? '' : Number(event.target.value) })} className="h-9 rounded-md border border-[#e4e4e7] bg-white px-2 text-right text-sm font-semibold"/><div className="grid h-9 place-items-center rounded-md bg-[#f4f4f5] text-xs font-semibold">PC</div></div>
       <p className="text-[11px] text-[#52525b]">{line.qty} {line.inventoryUom} · {Number(line.qty || 0) * Number(line.piecesPerPack || 1)} pieces billed</p>
@@ -189,6 +189,7 @@ export default function QuoteBuilderPage() {
   const [defaultArea, setDefaultArea] = useState('General Selection');
   const [quoteDiscountType, setQuoteDiscountType] = useState<DiscountMode>('PERCENT');
   const [quoteDiscountValue, setQuoteDiscountValue] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [validUntil, setValidUntil] = useState(() => new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10));
   const { data: customerData, error: customerError } = useQuery(GET_QUOTE_SETUP);
   const { data: searchData, loading: searching, error: searchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: searchQuery }, skip: searchQuery.length < 2 });
@@ -472,7 +473,7 @@ export default function QuoteBuilderPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 custom-scrollbar lg:p-6">
-          <div className="mb-5 grid gap-3 rounded-2xl border border-[#e7d8cf] bg-[linear-gradient(105deg,#fff8f4,#ffffff_52%,#eefaf5)] p-3 sm:grid-cols-2">
+          <div className="mb-5 grid gap-3 rounded-2xl border border-[var(--line)] bg-[var(--bg-soft)] p-3 sm:grid-cols-2">
             {([
               { value: 'tile' as QuoteType, icon: Layers3, label: 'Tile & Chemical quote', detail: 'Tile rates per PC, SQM or SQFT · fulfil in boxes/pieces · Chemicals by KG' },
               { value: 'cp_sanitary' as QuoteType, icon: Bath, label: 'CP & Sanitary quote', detail: 'Faucets, sanitaryware and all non-tile product families' },
@@ -487,51 +488,19 @@ export default function QuoteBuilderPage() {
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Responsible sales user</span>
               <SearchableSelect className="h-11" value={selectedOwnerId} onValueChange={setSelectedOwnerId} options={(customerData?.salesAssignees || []).map((user: any) => ({ value: user.id, label: user.name, description: String(user.role || '').replace('_', ' '), keywords: user.email }))} placeholder="Select sales user…" searchPlaceholder="Search user or role…" />
             </label>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Consulting architect</span>
-              <SearchableSelect className="h-11" value={selectedArchitectId} onValueChange={setSelectedArchitectId} options={[{ value: '', label: 'No architect' }, ...(customerData?.architects || []).map((architect: any) => ({ value: architect.id, label: architect.name, description: architect.firmName || undefined, keywords: `${architect.mobile || ''} ${architect.email || ''}` }))]} placeholder="Optional — select architect…" searchPlaceholder="Search architect or firm…" />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Valid until</span>
-              <Input type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} className="h-11" />
-            </label>
-            <div className="space-y-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Additional quote discount</span>
-              <div className="grid grid-cols-[7rem_1fr] gap-2">
-                <select aria-label="Quote discount mode" value={quoteDiscountType} onChange={(event) => setQuoteDiscountType(event.target.value as DiscountMode)} className="h-11 rounded-md border border-[#d4d4d8] bg-white px-3 text-sm font-semibold"><option value="PERCENT">Percent %</option><option value="FIXED_AMOUNT">Amount ₹</option></select>
-                <Input aria-label="Quote discount value" type="number" min={0} max={quoteDiscountType === 'PERCENT' ? 100 : undefined} step="0.01" placeholder={quoteDiscountType === 'PERCENT' ? 'Optional %' : 'Optional ₹'} value={quoteDiscountValue} onChange={(event) => setQuoteDiscountValue(event.target.value)} className={`h-11 ${invalidQuoteDiscount ? 'border-red-400 bg-red-50' : ''}`} />
-              </div>
-              {invalidQuoteDiscount ? <p role="alert" className="text-[10px] font-bold text-red-700">{quoteDiscountType === 'PERCENT' ? 'Enter a discount from 0 to 100%.' : 'Discount cannot be more than the quote value before GST.'}</p> : <p className="text-[10px] font-semibold text-[#71717a]">Applied after every line&apos;s NRP and special discount{taxMode === 'gst' ? ', before GST is added.' : '.'}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Tax treatment</span>
-              <div className="grid h-11 grid-cols-2 rounded-md border border-[#d4d4d8] bg-[#f4f4f5] p-1">
-                <button type="button" onClick={() => setTaxMode('gst')} className={`rounded text-xs font-semibold ${taxMode === 'gst' ? 'bg-white text-[#18181b] shadow-sm' : 'text-[#52525b]'}`}>GST quotation</button>
-                <button type="button" onClick={() => setTaxMode('non_gst')} className={`rounded text-xs font-semibold ${taxMode === 'non_gst' ? 'bg-white text-[#18181b] shadow-sm' : 'text-[#52525b]'}`}>Without GST</button>
-              </div>
-            </div>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Project / site</span>
-              <Input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="e.g. Patel Residence bathroom package" className="h-11" />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">PDF type</span>
-              <SelectMenu value={displayMode} onValueChange={(v) => setDisplayMode(v as any)}>
-                <SelectMenuTrigger className="h-11 text-sm" />
-                <SelectMenuContent>
-                  <SelectMenuItem value="priced">Show prices — quotation</SelectMenuItem>
-                  <SelectMenuItem value="selection">Hide prices — selection summary</SelectMenuItem>
-                </SelectMenuContent>
-              </SelectMenu>
-            </label>
-            <label className="block space-y-2 lg:col-span-2">
+          </div>
+          <datalist id="mp-area-list">
+            {AREA_SUGGESTIONS.map((area) => <option key={area} value={area} />)}
+          </datalist>
+
+            <label className="mt-6 block space-y-2">
               <span className="text-xs font-black uppercase tracking-widest text-[#52525b]">Default area for new lines</span>
               <input
                 list="mp-area-list"
                 value={defaultArea}
                 onChange={(event) => setDefaultArea(event.target.value)}
                 placeholder="e.g. Master Bedroom Bathroom"
-                className="h-[3.25rem] w-full rounded-2xl border border-[#e4e4e7]/18 bg-white px-4 text-sm font-bold text-[#18181b] outline-none focus:border-[#2563eb]/45 focus:ring-4 focus:ring-[#2563eb]/10"
+                className="h-11 w-full rounded-xl border border-[#e4e4e7] bg-white px-4 text-sm font-bold text-[#18181b] outline-none focus:border-[#2563eb]/45 focus:ring-4 focus:ring-[#2563eb]/10"
               />
               <div className="flex flex-wrap gap-2 pt-1">
                 {AREA_SUGGESTIONS.slice(0, 8).map((area) => (
@@ -544,40 +513,11 @@ export default function QuoteBuilderPage() {
                 ))}
               </div>
             </label>
-            <div className="flex flex-col gap-3 rounded-md border border-[#e4e4e7] bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:col-span-2">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded border border-[#e4e4e7] bg-white p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-[#71717a]" />}</div>
-                <div className="min-w-0"><p className="truncate text-sm font-semibold text-[#18181b]">{documentSettings.companyName || 'Marble Park'} · {quoteType === 'tile' ? 'Tile & Chemical' : 'CP & Sanitary'}</p><p className="text-xs text-[#71717a]">Customer identity and footer brands are governed globally; this quote will snapshot the policy when saved.</p></div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2 rounded-md bg-[#f4f4f5] px-3 py-2 text-xs font-semibold text-[#52525b]"><LockKeyhole className="h-3.5 w-3.5 text-[#9f342d]" />{footerBrandPolicy.ids.length} footer logo{footerBrandPolicy.ids.length === 1 ? '' : 's'} · read only</div>
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#e4e4e7] bg-[#fafafa] px-3 py-2 text-[10px] font-semibold text-[#52525b]" aria-label="Keyboard shortcuts">
-            <span className="mr-1 font-black uppercase tracking-wider text-[#18181b]">Shortcuts</span><kbd className="rounded border bg-white px-2 py-1">/ Search</kbd><kbd className="rounded border bg-white px-2 py-1">⌘/Ctrl S Draft</kbd><kbd className="rounded border bg-white px-2 py-1">⌘/Ctrl ↵ Validate</kbd><kbd className="rounded border bg-white px-2 py-1">Esc Close</kbd><span>Tab moves through fields in pricing order.</span>
-          </div>
-          <datalist id="mp-area-list">
-            {AREA_SUGGESTIONS.map((area) => <option key={area} value={area} />)}
-          </datalist>
-
-          <section aria-label="Pricing readiness" className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-5 2xl:grid-cols-10">
-            {[
-              [quoteType === 'tile' ? Layers3 : FileText, quoteType === 'tile' ? 'Lines / coverage' : 'Lines / units', quoteType === 'tile' ? `${lines.length} · ${totalTileCoverage.toFixed(2)} SQFT${totalChemicalKg ? ` · ${totalChemicalKg} KG` : ''}` : `${lines.length} / ${totalItems}`, null],
-              [BadgeIndianRupee, 'Gross MRP', pricedDisplay(grossMrp, missingMrpCount > 0), missingMrpCount ? () => focusLine(lines.find((line) => lineCommercial(line).mrpMissing)) : null],
-              [BadgeIndianRupee, 'NRP value', pricedDisplay(nrpValue, missingMrpCount > 0), missingNrpCount ? () => focusLine(lines.find((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0)) : null],
-              [BadgeIndianRupee, 'Special value', pricedDisplay(specialValue, missingMrpCount > 0), null],
-              [Percent, 'Quote discount', pricedDisplay(quoteDiscountAmount, missingMrpCount > 0), null],
-              [BadgeIndianRupee, taxMode === 'gst' ? 'Taxable value' : 'Value', pricedDisplay(subtotal, missingMrpCount > 0), null],
-              [BadgeIndianRupee, taxMode === 'gst' ? 'GST added' : 'GST', pricedDisplay(tax, missingMrpCount > 0), null],
-              [BadgeIndianRupee, taxMode === 'gst' ? 'Total incl. GST' : 'Total', pricedDisplay(total, missingMrpCount > 0), null],
-              [AlertTriangle, 'Pricing exceptions', `${missingQtyCount + missingMrpCount + missingNrpCount + invalidMrpCount + missingTileCoverageCount + floorBreachCount + (invalidDiscountLine ? 1 : 0) + (invalidQuoteDiscount ? 1 : 0)}`, () => focusLine(lines.find((line) => { const rate = lineCommercial(line); return rate.mrpMissing || !rate.mrpValid || Number(rate.nrpInclusive || 0) <= 0 || rate.pricingError || (isTileLine(line) && Number(line.coveragePerPack || 0) <= 0) || (Number(line.floorPriceInclusive || 0) > 0 && rate.finalUnitPayable < Number(line.floorPriceInclusive)); }))],
-              [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : lines.length ? 'Draft only' : 'No lines', null],
-            ].map(([Icon, label, value, action]: any) => <button key={label} type="button" onClick={action || undefined} className={`min-w-0 rounded-lg border p-3 text-left transition ${action ? 'border-amber-200 bg-amber-50 hover:border-amber-400' : 'border-[#e4e4e7] bg-white'} ${label === 'Readiness' && pricingReady ? 'border-emerald-200 bg-emerald-50' : ''}`}><Icon className="h-4 w-4 text-[#a52b23]"/><p className="mt-2 truncate text-base font-black text-[#18181b]">{value}</p><p className="mt-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#71717a]">{label}</p></button>)}
-          </section>
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <div className="relative min-w-0 flex-1">
             <Search className="absolute left-4 top-7 h-5 w-5 -translate-y-1/2 text-[#52525b]" />
-            <Input ref={searchInputRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={quoteType === 'tile' ? 'Search Tile or Chemical code, brand or name…' : 'Search CP / sanitary code, brand or name…'} className="h-14 pl-12 text-base" />
+            <Input ref={searchInputRef} aria-label="Search products to add to this quote" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={quoteType === 'tile' ? 'Search Tile or Chemical code, brand or name…' : 'Search CP / sanitary code, brand or name…'} className="h-14 pl-12 text-base" />
             <AnimatePresence>
               {searchQuery.length >= 2 && visibleSearchProducts.length > 0 && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute left-0 right-0 top-full z-40 mt-3 max-h-96 overflow-y-auto rounded-r4 border border-[#e4e4e7]/12 bg-white p-2 shadow-2xl custom-scrollbar">
@@ -603,6 +543,21 @@ export default function QuoteBuilderPage() {
           {scanResult ? <div className="mt-3"><ScanProductSelector result={scanResult} busy={scanState.loading} existingProductIds={lines.map((line) => line.productId)} primaryLabel="Add selected to quote" onPrimary={addScannedProducts} onDismiss={() => setScanResult(null)}/></div> : null}
           {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-xl p-3 text-xs font-semibold ${scanMessage.startsWith('Scan blocked') ? 'bg-red-50 text-red-800' : 'bg-emerald-50 text-emerald-800'}`}>{scanMessage.startsWith('Scan blocked') ? <XCircle className="h-4 w-4"/> : <CheckCircle className="h-4 w-4"/>}{scanMessage}</div> : null}
 
+          <section aria-label="Pricing readiness" className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-5 2xl:grid-cols-10">
+            {[
+              [quoteType === 'tile' ? Layers3 : FileText, quoteType === 'tile' ? 'Lines / coverage' : 'Lines / units', quoteType === 'tile' ? `${lines.length} · ${totalTileCoverage.toFixed(2)} SQFT${totalChemicalKg ? ` · ${totalChemicalKg} KG` : ''}` : `${lines.length} / ${totalItems}`, null],
+              [BadgeIndianRupee, 'Gross MRP', pricedDisplay(grossMrp, missingMrpCount > 0), missingMrpCount ? () => focusLine(lines.find((line) => lineCommercial(line).mrpMissing)) : null],
+              [BadgeIndianRupee, 'NRP value', pricedDisplay(nrpValue, missingMrpCount > 0), missingNrpCount ? () => focusLine(lines.find((line) => Number(lineCommercial(line).nrpInclusive || 0) <= 0)) : null],
+              [BadgeIndianRupee, 'Special value', pricedDisplay(specialValue, missingMrpCount > 0), null],
+              [Percent, 'Quote discount', pricedDisplay(quoteDiscountAmount, missingMrpCount > 0), null],
+              [BadgeIndianRupee, taxMode === 'gst' ? 'Taxable value' : 'Value', pricedDisplay(subtotal, missingMrpCount > 0), null],
+              [BadgeIndianRupee, taxMode === 'gst' ? 'GST added' : 'GST', pricedDisplay(tax, missingMrpCount > 0), null],
+              [BadgeIndianRupee, taxMode === 'gst' ? 'Total incl. GST' : 'Total', pricedDisplay(total, missingMrpCount > 0), null],
+              [AlertTriangle, 'Pricing exceptions', `${missingQtyCount + missingMrpCount + missingNrpCount + invalidMrpCount + missingTileCoverageCount + floorBreachCount + (invalidDiscountLine ? 1 : 0) + (invalidQuoteDiscount ? 1 : 0)}`, () => focusLine(lines.find((line) => { const rate = lineCommercial(line); return rate.mrpMissing || !rate.mrpValid || Number(rate.nrpInclusive || 0) <= 0 || rate.pricingError || (isTileLine(line) && Number(line.coveragePerPack || 0) <= 0) || (Number(line.floorPriceInclusive || 0) > 0 && rate.finalUnitPayable < Number(line.floorPriceInclusive)); }))],
+              [ShieldCheck, 'Readiness', pricingReady ? 'Ready' : lines.length ? 'Draft only' : 'No lines', null],
+            ].map(([Icon, label, value, action]: any) => <button key={label} type="button" onClick={action || undefined} className={`min-w-0 rounded-lg border p-3 text-left transition ${action ? 'border-amber-200 bg-amber-50 hover:border-amber-400' : 'border-[#e4e4e7] bg-white'} ${label === 'Readiness' && pricingReady ? 'border-emerald-200 bg-emerald-50' : ''}`}><Icon className="h-4 w-4 text-[#a52b23]"/><p className="mt-2 truncate text-base font-black text-[#18181b]">{value}</p><p className="mt-1 text-xs font-bold uppercase tracking-[0.12em] text-[#71717a]">{label}</p></button>)}
+          </section>
+
           <div className="mt-6 overflow-hidden rounded-r4 border border-[#e4e4e7] bg-white/80">
             <div className="divide-y divide-[#e4e4e7]">
               {lines.map((line) => { const commercial = lineCommercial(line); return <article id={`quote-line-${line.id}`} key={line.id} className="scroll-mt-24 p-4 sm:p-5">
@@ -611,12 +566,12 @@ export default function QuoteBuilderPage() {
                   <button type="button" title="Remove line" onClick={() => removeLine(line.id)} className="shrink-0 rounded-lg p-2 text-[#71717a] hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4"/></button>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(15rem,1.3fr)_minmax(8rem,0.8fr)_minmax(6rem,0.55fr)_minmax(11rem,1fr)]">
-                  <div className="xl:order-1"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">Quantity / fulfilment</p>{isTileLine(line) ? <TileQuantityEditor line={line} onChange={(patch) => updateLine(line.id, patch)}/> : <div className="flex h-10 items-center gap-2"><input aria-label={`Quantity for ${line.name}`} type="number" data-needs-value placeholder="Enter qty" value={emptyWhenZero(line.qty)} min={1} onChange={(event)=>updateQty(line.id,event.target.value === '' ? '' as any : Number(event.target.value))} className="h-10 w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-right text-sm font-semibold"/><span className="text-xs font-bold text-[#52525b]">{line.unit}</span></div>}</div>
-                  <div className="xl:order-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">MRP / {commercial.mrpUom}</p><input data-pricing-error={commercial.mrpMissing || !commercial.mrpValid ? 'true' : undefined} aria-label={`MRP per ${commercial.mrpUom} for ${line.name}`} readOnly tabIndex={-1} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-md border px-3 text-right text-sm font-black ${commercial.mrpMissing || !commercial.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`}/><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'Required before pricing' : line.taxTreatment === 'EXCLUSIVE' ? 'Before GST · Product Master' : 'Tax-inclusive · Product Master'}</p></div>
-                  <div className="rounded-md border border-[#f1d5d1] bg-[#fff8f7] p-3 sm:col-span-2 xl:order-5"><p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-[#8f2f28]">Base pricing → NRP</p><div className="grid grid-cols-[minmax(8rem,1fr)_minmax(9rem,12rem)] gap-2"><input data-pricing-error={Number(commercial.nrpInclusive || 0) <= 0 ? 'true' : undefined} aria-label={`NRP input for ${line.name}`} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing} {...(line.nrpMode === 'FIXED_NRP' ? { 'data-needs-value': true } : {})} placeholder={line.nrpMode === 'FIXED_NRP' ? 'Enter NRP ₹' : '% off (optional)'} value={emptyWhenZero(line.nrpInput)} onChange={(event)=>updateLine(line.id,{nrpInput:event.target.value})} className="h-12 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-lg font-black disabled:bg-[#f4f4f5]"/><select aria-label={`NRP mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(line.id,{nrpMode:event.target.value,nrpInput:''})} className="h-12 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-sm font-black disabled:bg-[#f4f4f5]"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#8f2f28]">{commercial.mrpMissing ? 'Waiting for MRP' : `NRP ${money(commercial.nrpInclusive)}`}</p></div>
-                  <div className="rounded-md border border-[#d9e6fb] bg-[#f5f8ff] p-3 sm:col-span-2 xl:order-6"><p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-[#1d4ed8]">Optional special pricing</p><div className="grid grid-cols-[minmax(8rem,1fr)_minmax(9rem,12rem)] gap-2"><input aria-label={`Special pricing input for ${line.name}`} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} {...((line.specialMode || 'NONE') !== 'NONE' ? { 'data-needs-value': true } : {})} placeholder={(line.specialMode || 'NONE') === 'NONE' ? '—' : line.specialMode === 'PERCENT_OFF_NRP' ? 'Enter %' : 'Enter rate ₹'} value={emptyWhenZero(line.specialInput)} onChange={(event)=>updateLine(line.id,{specialInput:event.target.value})} className="h-12 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-lg font-black disabled:bg-[#f4f4f5]"/><select aria-label={`Special pricing mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(line.id,{specialMode:event.target.value,specialInput:''})} className="h-12 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-sm font-black disabled:bg-[#f4f4f5]"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><p className="mt-1 text-right text-[10px] font-black text-[#1d4ed8]">{commercial.mrpMissing ? 'Waiting for MRP' : `Special rate ${money(commercial.specialRateInclusive)}`}</p></div>
-                  <div className="xl:order-3"><p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#71717a]">GST</p>{taxMode==='gst'?<><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate??18} onChange={(event)=>updateLine(line.id,{taxRate:event.target.value})} className="h-10 w-full rounded-md border border-[#e4e4e7] px-3 text-right text-sm font-black"/><p className="mt-1 text-right text-[10px] font-semibold text-[#71717a]">{line.taxTreatment === 'EXCLUSIVE' ? '+ ' : ''}{money(commercial.taxAmount)}</p></>:<span className="inline-flex rounded bg-[#f4f4f5] px-2 py-2 text-xs font-semibold text-[#52525b]">Without GST</span>}</div>
-                  <div className={`rounded-md p-3 text-right xl:order-4 ${commercial.mrpMissing ? 'border border-amber-200 bg-amber-50' : 'bg-[#f8fafc]'}`}><p className="text-[10px] font-bold uppercase tracking-wider text-[#71717a]">{taxMode === 'gst' ? 'Final payable incl. GST' : 'Final payable'}</p><p className={`mt-2 font-black ${commercial.mrpMissing ? 'text-sm text-amber-900' : 'text-xl text-[#059669]'}`}>{commercial.mrpMissing ? 'MRP setup needed' : money(commercial.total)}</p><p className="mt-1 text-[10px] font-semibold text-[#71717a]">{commercial.mrpMissing ? 'No false ₹0 total shown' : line.taxTreatment === 'EXCLUSIVE' ? `${money(commercial.taxableValue)} + GST · ${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}` : `${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}`}</p></div>
+                  <div className="xl:order-1"><p className="mb-1 text-xs font-bold uppercase tracking-wider text-[#71717a]">Quantity / fulfilment</p>{isTileLine(line) ? <TileQuantityEditor line={line} onChange={(patch) => updateLine(line.id, patch)}/> : <div className="flex h-10 items-center gap-2"><input aria-label={`Quantity for ${line.name}`} type="number" data-needs-value placeholder="Enter qty" value={emptyWhenZero(line.qty)} min={1} onChange={(event)=>updateQty(line.id,event.target.value === '' ? '' as any : Number(event.target.value))} className="h-10 w-full rounded-md border border-[#d4d4d8] bg-white px-3 text-right text-sm font-semibold"/><span className="text-xs font-bold text-[#52525b]">{line.unit}</span></div>}</div>
+                  <div className="xl:order-2"><p className="mb-1 text-xs font-bold uppercase tracking-wider text-[#71717a]">MRP / {commercial.mrpUom}</p><input data-pricing-error={commercial.mrpMissing || !commercial.mrpValid ? 'true' : undefined} aria-label={`MRP per ${commercial.mrpUom} for ${line.name}`} readOnly tabIndex={-1} type="number" value={line.mrpInclusive ?? ''} className={`h-10 w-full cursor-not-allowed rounded-md border px-3 text-right text-sm font-black ${commercial.mrpMissing || !commercial.mrpValid ? 'border-red-300 bg-red-50' : 'border-emerald-300 bg-emerald-50'}`}/><p className="mt-1 text-xs font-semibold text-[#71717a]">{commercial.mrpMissing ? 'Required before pricing' : line.taxTreatment === 'EXCLUSIVE' ? 'Before GST · Product Master' : 'Tax-inclusive · Product Master'}</p></div>
+                  <div className="rounded-md border border-[#f1d5d1] bg-[#fff8f7] p-3 sm:col-span-2 xl:order-5"><p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-[#8f2f28]">Base pricing → NRP</p><div className="grid grid-cols-[minmax(8rem,1fr)_minmax(9rem,12rem)] gap-2"><input data-pricing-error={Number(commercial.nrpInclusive || 0) <= 0 ? 'true' : undefined} aria-label={`NRP input for ${line.name}`} type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing} {...(line.nrpMode === 'FIXED_NRP' ? { 'data-needs-value': true } : {})} placeholder={line.nrpMode === 'FIXED_NRP' ? 'Enter NRP ₹' : '% off (optional)'} value={emptyWhenZero(line.nrpInput)} onChange={(event)=>updateLine(line.id,{nrpInput:event.target.value})} className="h-12 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-lg font-black disabled:bg-[#f4f4f5]"/><select aria-label={`NRP mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.nrpMode || 'PERCENT_OFF_MRP'} onChange={(event)=>updateLine(line.id,{nrpMode:event.target.value,nrpInput:''})} className="h-12 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-sm font-black disabled:bg-[#f4f4f5]"><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select></div><p className="mt-1 text-right text-xs font-black text-[#8f2f28]">{commercial.mrpMissing ? 'Waiting for MRP' : `NRP ${money(commercial.nrpInclusive)}`}</p></div>
+                  <div className="rounded-md border border-[#d9e6fb] bg-[#f5f8ff] p-3 sm:col-span-2 xl:order-6"><p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-[#1d4ed8]">Optional special pricing</p><div className="grid grid-cols-[minmax(8rem,1fr)_minmax(9rem,12rem)] gap-2"><input aria-label={`Special pricing input for ${line.name}`} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} step="0.01" disabled={commercial.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} {...((line.specialMode || 'NONE') !== 'NONE' ? { 'data-needs-value': true } : {})} placeholder={(line.specialMode || 'NONE') === 'NONE' ? '—' : line.specialMode === 'PERCENT_OFF_NRP' ? 'Enter %' : 'Enter rate ₹'} value={emptyWhenZero(line.specialInput)} onChange={(event)=>updateLine(line.id,{specialInput:event.target.value})} className="h-12 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-3 text-right text-lg font-black disabled:bg-[#f4f4f5]"/><select aria-label={`Special pricing mode for ${line.name}`} disabled={commercial.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event)=>updateLine(line.id,{specialMode:event.target.value,specialInput:''})} className="h-12 min-w-0 rounded-md border border-[#e4e4e7] bg-white px-2 text-sm font-black disabled:bg-[#f4f4f5]"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select></div><p className="mt-1 text-right text-xs font-black text-[#1d4ed8]">{commercial.mrpMissing ? 'Waiting for MRP' : `Special rate ${money(commercial.specialRateInclusive)}`}</p></div>
+                  <div className="xl:order-3"><p className="mb-1 text-xs font-bold uppercase tracking-wider text-[#71717a]">GST</p>{taxMode==='gst'?<><input aria-label={`GST rate for ${line.name}`} type="number" min={0} max={100} value={line.taxRate??18} onChange={(event)=>updateLine(line.id,{taxRate:event.target.value})} className="h-10 w-full rounded-md border border-[#e4e4e7] px-3 text-right text-sm font-black"/><p className="mt-1 text-right text-xs font-semibold text-[#71717a]">{line.taxTreatment === 'EXCLUSIVE' ? '+ ' : ''}{money(commercial.taxAmount)}</p></>:<span className="inline-flex rounded bg-[#f4f4f5] px-2 py-2 text-xs font-semibold text-[#52525b]">Without GST</span>}</div>
+                  <div className={`rounded-md p-3 text-right xl:order-4 ${commercial.mrpMissing ? 'border border-amber-200 bg-amber-50' : 'bg-[#f8fafc]'}`}><p className="text-xs font-bold uppercase tracking-wider text-[#71717a]">{taxMode === 'gst' ? 'Final payable incl. GST' : 'Final payable'}</p><p className={`mt-2 font-black ${commercial.mrpMissing ? 'text-sm text-amber-900' : 'text-xl text-[#059669]'}`}>{commercial.mrpMissing ? 'MRP setup needed' : money(commercial.total)}</p><p className="mt-1 text-xs font-semibold text-[#71717a]">{commercial.mrpMissing ? 'No false ₹0 total shown' : line.taxTreatment === 'EXCLUSIVE' ? `${money(commercial.taxableValue)} + GST · ${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}` : `${money(commercial.finalUnitPayable)} / ${commercial.mrpUom}`}</p></div>
                 </div>
                 {draftNumber(line.qty) <= 0 ? <p role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">Enter a quantity to price this line.</p> : null}
                 {commercial.mrpMissing ? <p role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900"><span>This SKU has no governed MRP, so discounts and totals are intentionally paused.</span><Link href={`/dashboard/master-data/pricing-readiness?tab=missing&search=${encodeURIComponent(line.sku || '')}`} className="rounded-md bg-amber-900 px-3 py-1.5 text-white">Add MRP</Link></p> : null}
@@ -626,6 +581,73 @@ export default function QuoteBuilderPage() {
             {lines.length === 0 && <div className="grid h-56 place-items-center text-center"><div><Plus className="mx-auto mb-3 h-8 w-8 text-[#2563eb]" /><p className="font-semibold text-[#18181b]">Search products to start a quote.</p><p className="mt-1 text-sm font-semibold text-[#52525b]">Catalogue images and price details will appear here.</p></div></div>}
             {lines.length > 0 && <p className="border-t border-[#e4e4e7] px-4 py-3 text-xs font-semibold text-[#52525b]">MRP is read-only from Product Master. {taxMode === 'gst' ? 'GST is added on top after MRP → NRP → special → quote discount. ' : ''}{quoteType === 'tile' ? 'Each tile uses its saved PC, SQM or SQFT rate while boxes/pieces remain fulfilment; Chemicals price and fulfil in KG.' : 'CP & Sanitary lines use their governed Product Master price and fulfilment UOM.'} Below-floor pricing is preserved but requires owner approval.</p>}
           </div>
+          <details className="group mt-6 rounded-r4 border border-[var(--line)] bg-[var(--surface)]" open={settingsOpen || invalidQuoteDiscount} onToggle={(event) => setSettingsOpen((event.currentTarget as HTMLDetailsElement).open)}>
+            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-4">
+              <span>
+                <span className="block text-sm font-semibold text-[var(--ink)]">Quote settings</span>
+                <span className="mt-0.5 block text-xs text-[var(--ink-3)]">
+                  {[
+                    selectedArchitectId ? 'Architect linked' : 'No architect',
+                    validUntil ? `Valid until ${new Date(`${validUntil}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : 'No validity date',
+                    taxMode === 'gst' ? 'GST quotation' : 'Without GST',
+                    Number(quoteDiscountValue || 0) > 0 ? `Quote discount ${quoteDiscountType === 'PERCENT' ? `${quoteDiscountValue}%` : money(Number(quoteDiscountValue))}` : 'No quote discount',
+                    displayMode === 'priced' ? 'PDF shows prices' : 'PDF hides prices',
+                  ].join(' · ')}
+                </span>
+              </span>
+              <span className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-2)] group-open:hidden">Edit settings</span>
+              <span className="hidden rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--ink-2)] group-open:inline">Hide settings</span>
+            </summary>
+            <div className="grid gap-4 border-t border-[var(--line)] p-4 lg:grid-cols-2">
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Consulting architect</span>
+              <SearchableSelect className="h-11" value={selectedArchitectId} onValueChange={setSelectedArchitectId} options={[{ value: '', label: 'No architect' }, ...(customerData?.architects || []).map((architect: any) => ({ value: architect.id, label: architect.name, description: architect.firmName || undefined, keywords: `${architect.mobile || ''} ${architect.email || ''}` }))]} placeholder="Optional — select architect…" searchPlaceholder="Search architect or firm…" />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Valid until</span>
+              <Input type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} className="h-11" />
+            </label>
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Additional quote discount</span>
+              <div className="grid grid-cols-[7rem_1fr] gap-2">
+                <select aria-label="Quote discount mode" value={quoteDiscountType} onChange={(event) => setQuoteDiscountType(event.target.value as DiscountMode)} className="h-11 rounded-md border border-[#d4d4d8] bg-white px-3 text-sm font-semibold"><option value="PERCENT">Percent %</option><option value="FIXED_AMOUNT">Amount ₹</option></select>
+                <Input aria-label="Quote discount value" type="number" min={0} max={quoteDiscountType === 'PERCENT' ? 100 : undefined} step="0.01" placeholder={quoteDiscountType === 'PERCENT' ? 'Optional %' : 'Optional ₹'} value={quoteDiscountValue} onChange={(event) => setQuoteDiscountValue(event.target.value)} className={`h-11 ${invalidQuoteDiscount ? 'border-red-400 bg-red-50' : ''}`} />
+              </div>
+              {invalidQuoteDiscount ? <p role="alert" className="text-xs font-bold text-red-700">{quoteDiscountType === 'PERCENT' ? 'Enter a discount from 0 to 100%.' : 'Discount cannot be more than the quote value before GST.'}</p> : <p className="text-xs font-semibold text-[#71717a]">Applied after every line&apos;s NRP and special discount{taxMode === 'gst' ? ', before GST is added.' : '.'}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Tax treatment</span>
+              <div className="grid h-11 grid-cols-2 rounded-md border border-[#d4d4d8] bg-[#f4f4f5] p-1">
+                <button type="button" onClick={() => setTaxMode('gst')} className={`rounded text-xs font-semibold ${taxMode === 'gst' ? 'bg-white text-[#18181b] shadow-sm' : 'text-[#52525b]'}`}>GST quotation</button>
+                <button type="button" onClick={() => setTaxMode('non_gst')} className={`rounded text-xs font-semibold ${taxMode === 'non_gst' ? 'bg-white text-[#18181b] shadow-sm' : 'text-[#52525b]'}`}>Without GST</button>
+              </div>
+            </div>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Project / site</span>
+              <Input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="e.g. Patel Residence bathroom package" className="h-11" />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">PDF type</span>
+              <SelectMenu value={displayMode} onValueChange={(v) => setDisplayMode(v as any)}>
+                <SelectMenuTrigger className="h-11 text-sm" />
+                <SelectMenuContent>
+                  <SelectMenuItem value="priced">Show prices — quotation</SelectMenuItem>
+                  <SelectMenuItem value="selection">Hide prices — selection summary</SelectMenuItem>
+                </SelectMenuContent>
+              </SelectMenu>
+            </label>
+            <div className="flex flex-col gap-3 rounded-md border border-[#e4e4e7] bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:col-span-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded border border-[#e4e4e7] bg-white p-1">{documentSettings.logoUrl ? <img src={documentSettings.logoUrl} alt="Company logo" className="max-h-full max-w-full object-contain" /> : <Building2 className="h-4 w-4 text-[#71717a]" />}</div>
+                <div className="min-w-0"><p className="truncate text-sm font-semibold text-[#18181b]">{documentSettings.companyName || 'Marble Park'} · {quoteType === 'tile' ? 'Tile & Chemical' : 'CP & Sanitary'}</p><p className="text-xs text-[#71717a]">Customer identity and footer brands are governed globally; this quote will snapshot the policy when saved.</p></div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2 rounded-md bg-[#f4f4f5] px-3 py-2 text-xs font-semibold text-[#52525b]"><LockKeyhole className="h-3.5 w-3.5 text-[#9f342d]" />{footerBrandPolicy.ids.length} footer logo{footerBrandPolicy.ids.length === 1 ? '' : 's'} · read only</div>
+            </div>
+            </div>
+          <div className="mx-4 mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#e4e4e7] bg-[#fafafa] px-3 py-2 text-xs font-semibold text-[#52525b]" aria-label="Keyboard shortcuts">
+            <span className="mr-1 font-black uppercase tracking-wider text-[#18181b]">Shortcuts</span><kbd className="rounded border bg-white px-2 py-1">/ Search</kbd><kbd className="rounded border bg-white px-2 py-1">⌘/Ctrl S Draft</kbd><kbd className="rounded border bg-white px-2 py-1">⌘/Ctrl ↵ Validate</kbd><kbd className="rounded border bg-white px-2 py-1">Esc Close</kbd><span>Tab moves through fields in pricing order.</span>
+          </div>
+          </details>
         </div>
       </section>
 

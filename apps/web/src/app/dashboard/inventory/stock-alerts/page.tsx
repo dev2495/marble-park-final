@@ -389,7 +389,7 @@ export default function StockAlertPolicyPage() {
               }}
               className="rounded-2xl border border-[var(--line)] bg-[#fafafa] px-4 py-3 text-left transition hover:border-[var(--brand-300)]"
             >
-              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ink-5)]">{label}</span>
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--ink-5)]">{label}</span>
               <b className={cn('mt-1.5 block text-3xl font-bold tracking-[-0.03em]', tone)}>
                 {loading && !rows.length ? '…' : qty(Number(value || 0))}
               </b>
@@ -428,7 +428,7 @@ export default function StockAlertPolicyPage() {
               onClick={() => resetPage(() => setAlertState(chip.value))}
               className={cn(
                 'h-9 rounded-full border border-[var(--line)] bg-white px-3.5 text-xs font-extrabold uppercase tracking-[0.06em]',
-                alertState === chip.value && 'border-[var(--ink)] bg-[var(--ink)] text-white',
+                alertState === chip.value && 'border-[var(--ink)] bg-[var(--ink)] text-[var(--surface)]',
               )}
             >
               {chip.label}

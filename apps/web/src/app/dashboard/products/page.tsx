@@ -1,116 +1,312 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useQuery, gql } from '@apollo/client';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Bath, Boxes, ChevronLeft, ChevronRight, Grid3X3, Image as ImageIcon, PackageSearch, Search, ShieldCheck, Sparkles, Tag, Wrench, X } from 'lucide-react';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { ChevronLeft, ChevronRight, FileText, PackageSearch, Search, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { mediaUrls, thumbnailUrl } from '@/lib/media';
+
+const PRODUCT_FIELDS = `
+  id sku internalCode name category brand finish dimensions unit purchaseUom salesUom
+  piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive priceRateBasis priceUom
+  taxClass status media description
+`;
 
 const GET_PRODUCTS = gql`
   query Products($search: String, $category: String, $take: Int, $skip: Int) {
-    products(search: $search, category: $category, take: $take, skip: $skip) {
-      id
-      sku
-      internalCode
-      name
-      category
-      brand
-      finish
-      dimensions
-      unit
-      purchaseUom
-      salesUom
-      piecesPerPack
-      coveragePerPack
-      defaultMrpInclusive
-      defaultNrpInclusive
-      priceRateBasis
-      priceUom
-      taxClass
-      status
-      media
-      description
-    }
+    products(search: $search, category: $category, take: $take, skip: $skip) { ${PRODUCT_FIELDS} }
+  }
+`;
+const GET_CATEGORIES = gql`query ProductCategories { productCategories }`;
+const GET_PRODUCT_STATS = gql`query ProductStats { productStats }`;
+const GET_PRODUCT = gql`query CatalogueProduct($id: ID!) { product(id: $id) { ${PRODUCT_FIELDS} } }`;
+const GET_SIMILAR = gql`
+  query CatalogueSimilar($search: String, $category: String) {
+    products(search: $search, category: $category, take: 13, skip: 0) { ${PRODUCT_FIELDS} }
   }
 `;
 
-const GET_CATEGORIES = gql`
-  query ProductCategories {
-    productCategories
-  }
-`;
-
-const GET_PRODUCT_STATS = gql`
-  query ProductStats {
-    productStats
-  }
-`;
-const GET_PRODUCT = gql`query CatalogueProduct($id:ID!){product(id:$id){id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive priceRateBasis priceUom taxClass status media description}}`;
-
-
-const emptyPreview = {
-  id: 'empty-catalogue-preview',
-  sku: 'NO-SKU-YET',
-  name: 'Start with Product Master',
-  category: 'Clean Catalogue',
-  brand: 'No brand yet',
-  finish: 'No finish yet',
-  dimensions: 'Add first SKU',
-  unit: 'PC',
-  defaultMrpInclusive: 0,
-  defaultNrpInclusive: 0,
-  priceRateBasis: 'PIECE',
-  priceUom: 'PC',
-  taxClass: 'GST_18',
-  status: 'draft',
-  description: 'This workspace is clean. Add products manually or import a client catalogue to begin.',
-  media: {},
-};
-
-const categoryLooks: Record<string, { accent: string; wash: string; icon: any }> = {
-  Faucets: { accent: 'from-[#2563eb] via-[#60a5fa] to-[#f4f7fc]', wash: 'bg-[#eff6ff] text-[#1d4ed8]', icon: Bath },
-  'Faucets & Showers': { accent: 'from-[#2563eb] via-[#60a5fa] to-[#f4f7fc]', wash: 'bg-[#eff6ff] text-[#1d4ed8]', icon: Bath },
-  'Kitchen Sinks': { accent: 'from-zinc-500 to-slate-300', wash: 'bg-slate-100 text-slate-700', icon: Boxes },
-  Sanitaryware: { accent: 'from-stone-200 to-white', wash: 'bg-stone-100 text-stone-700', icon: ShieldCheck },
-  Tiles: { accent: 'from-amber-600 to-stone-200', wash: 'bg-amber-50 text-amber-800', icon: Grid3X3 },
-  Accessories: { accent: 'from-[#047857] to-[#98b7ad]', wash: 'bg-[#ecfdf5] text-[#059669]', icon: Wrench },
-  'Catalogue Products': { accent: 'from-[#0e1a3d] to-[#2563eb]', wash: 'bg-[#eff6ff] text-[#18181b]', icon: PackageSearch },
-};
+const PAGE_SIZE = 36;
 
 function currency(value?: number) {
   return `₹${Number(value || 0).toLocaleString('en-IN')}`;
 }
 
-function getLook(category?: string) {
-  return categoryLooks[category || ''] || { accent: 'from-emerald-500 to-teal-200', wash: 'bg-emerald-50 text-emerald-700', icon: PackageSearch };
+function sellingUnit(product: any) {
+  const basis = String(product?.priceRateBasis || '').toUpperCase();
+  const uom = String(product?.priceUom || product?.salesUom || product?.unit || 'PC').toUpperCase();
+  return basis === 'PIECE' ? 'PC' : uom;
 }
 
-function galleryFor(product: any) {
-  const media = product?.media || {};
-  const gallery = Array.isArray(media.gallery) ? media.gallery.map((entry: any) => typeof entry === 'string' ? entry : entry?.url) : [];
-  return Array.from(new Set([media.primaryUrl, media.primaryImage, media.primary, ...gallery].filter(Boolean)));
+// NRP is the selling default; when it is missing the MRP is still worth showing.
+function priceFor(product: any) {
+  const nrp = Number(product?.defaultNrpInclusive || 0);
+  const mrp = Number(product?.defaultMrpInclusive || 0);
+  const unit = sellingUnit(product);
+  if (nrp > 0) return { main: currency(nrp), caption: `NRP / ${unit}`, mrp: mrp > 0 && mrp !== nrp ? `MRP ${currency(mrp)}` : '' };
+  if (mrp > 0) return { main: currency(mrp), caption: `MRP / ${unit}`, mrp: '' };
+  return { main: 'Price on request', caption: 'MRP not set yet', mrp: '' };
+}
+
+function displayName(product: any) {
+  const name = String(product?.name || '').trim();
+  return name || `${product?.brand ? `${product.brand} ` : ''}${product?.internalCode || product?.sku || 'Product'}`;
+}
+
+function photosFor(product: any) {
+  return mediaUrls(product?.media);
+}
+
+// Tiles share a design name before " · "; other products are matched by brand.
+function similarSearchFor(product: any) {
+  if (!product) return '';
+  if (String(product.category || '').toLowerCase() === 'tiles') return String(product.name || '').split(' · ')[0].trim();
+  return String(product.brand || '').trim();
+}
+
+function specRows(product: any) {
+  const rows: Array<[string, string]> = [
+    ['Code', product.internalCode && product.internalCode !== product.sku ? `${product.internalCode} (SKU ${product.sku})` : product.sku],
+    ['Category', product.category],
+    ['Brand', product.brand],
+    ['Finish', product.finish],
+    ['Size', product.dimensions],
+    ['Sold per', sellingUnit(product)],
+    ['Stock unit', product.purchaseUom && product.purchaseUom !== sellingUnit(product) ? product.purchaseUom : ''],
+    ['Pieces per pack', Number(product.piecesPerPack || 0) > 1 ? String(product.piecesPerPack) : ''],
+    ['Coverage per pack', Number(product.coveragePerPack || 0) > 0 ? `${Number(product.coveragePerPack).toFixed(2)} sq ft` : ''],
+    ['GST', String(product.taxClass || '').replace('GST_', '') ? `${String(product.taxClass).replace('GST_', '')}%` : ''],
+  ];
+  return rows.filter(([, value]) => Boolean(value && String(value).trim()));
+}
+
+function ProductCard({ product, onOpen, index, reduceMotion }: { product: any; onOpen: (p: any, el: HTMLElement) => void; index: number; reduceMotion: boolean | null }) {
+  const price = priceFor(product);
+  const name = displayName(product);
+  const nameMissing = !String(product.name || '').trim();
+  return (
+    <motion.li
+      initial={reduceMotion ? false : { opacity: 0.35, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: reduceMotion ? 0 : Math.min(index, 12) * 0.03, ease: [0.2, 0.7, 0.2, 1] }}
+      className="min-w-0"
+    >
+      <button
+        type="button"
+        onClick={(event) => onOpen(product, event.currentTarget)}
+        aria-label={`${name}, ${product.brand || 'no brand'}, ${price.main}${price.main.startsWith('₹') ? ` ${price.caption}` : ''}`}
+        className="group flex h-full w-full flex-col overflow-hidden rounded-r4 border border-[var(--line)] bg-[var(--surface)] text-left shadow-sm-soft transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-1 hover:border-[var(--line-strong)] hover:shadow-lg motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+      >
+        <div className="relative">
+          <ProductImageFrame
+            src={thumbnailUrl(product.media) || undefined}
+            alt=""
+            className="aspect-[4/3] w-full"
+            imageClassName="p-2 transition-transform duration-500 group-hover:scale-[1.04] motion-reduce:group-hover:scale-100"
+            sizes="(max-width: 640px) 50vw, (max-width: 1280px) 33vw, 25vw"
+          />
+        </div>
+        <div className="flex flex-1 flex-col gap-1.5 p-4">
+          <p className="truncate text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">{product.brand || 'No brand'}{product.finish ? ` · ${product.finish}` : ''}</p>
+          <h3 className="line-clamp-2 font-display text-lg font-semibold leading-snug text-[var(--ink)]">{name}</h3>
+          {nameMissing ? <span className="w-fit rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-900">Name missing in Product Master</span> : null}
+          <p className="truncate font-mono text-xs text-[var(--ink-4)]">{product.internalCode || product.sku}{product.dimensions ? ` · ${product.dimensions}` : ''}</p>
+          <div className="mt-auto flex items-end justify-between gap-2 pt-2">
+            <div className="min-w-0">
+              <p className={`font-semibold tabular-nums ${price.main.startsWith('₹') ? 'text-lg text-[var(--ink)]' : 'text-sm text-[var(--ink-3)]'}`}>{price.main}</p>
+              <p className="text-xs text-[var(--ink-4)]">{price.caption}{price.mrp ? ` · ${price.mrp}` : ''}</p>
+            </div>
+          </div>
+        </div>
+      </button>
+    </motion.li>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <li className="overflow-hidden rounded-r4 border border-[var(--line)] bg-[var(--surface)]" aria-hidden="true">
+      <div className="aspect-[4/3] animate-pulse bg-[var(--bg-soft)] motion-reduce:animate-none" />
+      <div className="space-y-2 p-4">
+        <div className="h-3 w-1/3 animate-pulse rounded bg-[var(--bg-soft)] motion-reduce:animate-none" />
+        <div className="h-5 w-4/5 animate-pulse rounded bg-[var(--bg-soft)] motion-reduce:animate-none" />
+        <div className="h-3 w-1/2 animate-pulse rounded bg-[var(--bg-soft)] motion-reduce:animate-none" />
+      </div>
+    </li>
+  );
+}
+
+function ProductDialog({ product, onClose, onOpen }: { product: any; onClose: () => void; onOpen: (p: any) => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const [photo, setPhoto] = useState(0);
+  const photos = photosFor(product);
+  const price = priceFor(product);
+  const name = displayName(product);
+  const reduceMotion = useReducedMotion();
+  const similarSearch = similarSearchFor(product);
+  const { data: similarData, loading: similarLoading } = useQuery(GET_SIMILAR, {
+    variables: { search: similarSearch || undefined, category: product.category || undefined },
+    skip: !product?.id,
+  });
+  const similar = (similarData?.products || []).filter((item: any) => item.id !== product.id).slice(0, 12);
+  const isTile = String(product.category || '').toLowerCase() === 'tiles';
+
+  useEffect(() => { setPhoto(0); }, [product.id]);
+  useEffect(() => {
+    closeRef.current?.focus();
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
+  }, []);
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Escape') { event.stopPropagation(); onClose(); return; }
+    const typing = (event.target as HTMLElement)?.tagName === 'INPUT';
+    if (!typing && photos.length > 1 && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) {
+      event.preventDefault();
+      setPhoto((index) => (index + (event.key === 'ArrowRight' ? 1 : photos.length - 1)) % photos.length);
+    }
+    if (event.key === 'Tab' && dialogRef.current) {
+      const focusables = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])')).filter((el) => el.offsetParent !== null);
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  };
+
+  return createPortal(
+    <motion.div
+      className="fixed inset-0 z-[9999] grid place-items-center bg-black/60 p-3 backdrop-blur-sm sm:p-6"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="catalogue-product-title"
+        onKeyDown={onKeyDown}
+        initial={reduceMotion ? false : { opacity: 0.4, y: 20, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={reduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
+        transition={{ duration: 0.3, ease: [0.2, 0.7, 0.2, 1] }}
+        className="relative max-h-full w-full max-w-6xl overflow-y-auto rounded-r5 border border-[var(--line)] bg-[var(--surface)] shadow-2xl"
+      >
+        <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--surface)]/95 px-4 py-3 backdrop-blur">
+          <p className="min-w-0 truncate text-sm text-[var(--ink-3)]">{product.category}{product.brand ? ` › ${product.brand}` : ''}</p>
+          <button ref={closeRef} type="button" onClick={onClose} aria-label="Close product" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-[var(--line)] hover:bg-[var(--bg-soft)]">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+          <div className="min-w-0 space-y-3">
+            <div className="relative overflow-hidden rounded-r4 bg-[var(--bg-soft)]">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div key={photos[photo] || 'none'} initial={reduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+                  <ProductImageFrame src={photos[photo]} alt={photos.length ? `${name}, photo ${photo + 1} of ${photos.length}` : ''} eager className="aspect-square w-full" imageClassName="p-4" sizes="(max-width: 1024px) 100vw, 55vw" />
+                </motion.div>
+              </AnimatePresence>
+              {photos.length > 1 ? (
+                <>
+                  <button type="button" onClick={() => setPhoto((i) => (i + photos.length - 1) % photos.length)} aria-label="Previous photo" className="absolute left-3 top-1/2 z-30 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-[var(--surface)]/90 shadow"><ChevronLeft className="h-5 w-5" /></button>
+                  <button type="button" onClick={() => setPhoto((i) => (i + 1) % photos.length)} aria-label="Next photo" className="absolute right-3 top-1/2 z-30 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-[var(--surface)]/90 shadow"><ChevronRight className="h-5 w-5" /></button>
+                </>
+              ) : null}
+            </div>
+            {photos.length > 1 ? (
+              <div className="grid grid-cols-4 gap-2 sm:grid-cols-6" role="group" aria-label="Choose photo">
+                {photos.map((src, index) => (
+                  <button key={src} type="button" onClick={() => setPhoto(index)} aria-label={`Photo ${index + 1}`} aria-current={index === photo} className={`overflow-hidden rounded-xl border-2 ${index === photo ? 'border-[var(--ink)]' : 'border-transparent'}`}>
+                    <ProductImageFrame src={src} alt="" className="aspect-square w-full" imageClassName="p-1" sizes="96px" />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {!photos.length ? <p className="text-sm text-[var(--ink-4)]">No photo yet.{isTile ? ' Add one to the design in Tile Master → Images.' : ' Add one in Product Master.'}</p> : null}
+          </div>
+
+          <div className="min-w-0 space-y-5">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]">{product.brand || 'No brand'}</p>
+              <h2 id="catalogue-product-title" className="mt-1 font-display text-3xl font-semibold leading-tight text-[var(--ink)] sm:text-4xl">{name}</h2>
+              <p className="mt-2 font-mono text-sm text-[var(--ink-4)]">{product.internalCode || product.sku}</p>
+            </div>
+            <div className="rounded-r4 bg-[var(--bg-soft)] p-4">
+              <p className="text-3xl font-semibold tabular-nums text-[var(--ink)]">{price.main}</p>
+              <p className="mt-1 text-sm text-[var(--ink-3)]">{price.caption}{price.mrp ? ` · ${price.mrp}` : ''}{price.main.startsWith('₹') ? ' · GST added on the quotation' : ''}</p>
+            </div>
+            {product.description ? <p className="text-sm leading-6 text-[var(--ink-2)]">{product.description}</p> : null}
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm">
+              {specRows(product).map(([label, value]) => (
+                <div key={label} className="contents">
+                  <dt className="text-[var(--ink-4)]">{label}</dt>
+                  <dd className="break-words font-medium text-[var(--ink)]">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild size="lg"><Link href={`/dashboard/quotes/new?product=${encodeURIComponent(product.id)}`}><FileText className="mr-2 h-4 w-4" />Start a quote with this</Link></Button>
+              <Button asChild size="lg" variant="outline"><Link href={`/dashboard/master-data/${isTile ? 'tiles' : 'products'}`}>Open in {isTile ? 'Tile Master' : 'Product Master'}</Link></Button>
+            </div>
+          </div>
+        </div>
+
+        <section className="border-t border-[var(--line)] p-4 sm:p-6" aria-labelledby="catalogue-similar-title">
+          <h3 id="catalogue-similar-title" className="font-display text-2xl font-semibold text-[var(--ink)]">{isTile ? 'Other sizes and finishes' : `More from ${product.brand || product.category}`}</h3>
+          {similarLoading ? <p className="mt-3 text-sm text-[var(--ink-4)]">Finding similar products…</p> : null}
+          {!similarLoading && !similar.length ? <p className="mt-3 text-sm text-[var(--ink-4)]">No similar products found.</p> : null}
+          {similar.length ? (
+            <ul className="mt-4 grid snap-x snap-mandatory auto-cols-[minmax(11rem,13rem)] grid-flow-col gap-3 overflow-x-auto pb-2">
+              {similar.map((item: any) => {
+                const itemPrice = priceFor(item);
+                return (
+                  <li key={item.id} className="snap-start">
+                    <button type="button" onClick={() => onOpen(item)} aria-label={`${displayName(item)}, ${itemPrice.main}`} className="group block w-full overflow-hidden rounded-r3 border border-[var(--line)] bg-[var(--surface)] text-left hover:border-[var(--line-strong)]">
+                      <ProductImageFrame src={thumbnailUrl(item.media) || undefined} alt="" className="aspect-[4/3] w-full" imageClassName="p-1.5" sizes="208px" />
+                      <span className="block p-3">
+                        <span className="line-clamp-2 text-sm font-semibold text-[var(--ink)]">{displayName(item)}</span>
+                        <span className="mt-1 block truncate text-xs text-[var(--ink-4)]">{[item.finish, item.dimensions].filter(Boolean).join(' · ') || item.sku}</span>
+                        <span className="mt-1 block text-sm font-semibold tabular-nums text-[var(--ink)]">{itemPrice.main}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </section>
+      </motion.div>
+    </motion.div>,
+    document.body,
+  );
 }
 
 export default function ProductsPage() {
-  const pageSize = 36;
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openProduct, setOpenProduct] = useState<any>(null);
   const [requestedProductId, setRequestedProductId] = useState('');
-  const [galleryProduct, setGalleryProduct] = useState<any>(null);
-  const [galleryIndex, setGalleryIndex] = useState(0);
-  const [portalReady, setPortalReady] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const resultsRef = useRef<HTMLElement | null>(null);
+  const reduceMotion = useReducedMotion();
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
-  const catalogueResultsRef = useRef<HTMLElement | null>(null);
   const { data, previousData, loading, error, refetch } = useQuery(GET_PRODUCTS, {
-    variables: { search: debouncedSearch || undefined, category: category || undefined, take: pageSize + 1, skip: page * pageSize },
+    variables: { search: debouncedSearch || undefined, category: category || undefined, take: PAGE_SIZE + 1, skip: page * PAGE_SIZE },
     notifyOnNetworkStatusChange: true,
   });
   const { data: categoriesData, error: categoriesError } = useQuery(GET_CATEGORIES);
@@ -119,246 +315,117 @@ export default function ProductsPage() {
 
   const visibleData = data || previousData;
   const productPage = useMemo<any[]>(() => visibleData?.products || [], [visibleData?.products]);
-  const products = useMemo<any[]>(() => productPage.slice(0, pageSize), [productPage]);
-  const hasNextPage = productPage.length > pageSize;
+  const products = useMemo<any[]>(() => productPage.slice(0, PAGE_SIZE), [productPage]);
+  const hasNextPage = productPage.length > PAGE_SIZE;
   const stats = statsData?.productStats;
-  const categories = useMemo<any[]>(() => categoriesData?.productCategories || [], [categoriesData?.productCategories]);
-  const selected = useMemo(() => requestedData?.product || products.find((p: any) => p.id === selectedId) || products[0] || emptyPreview, [products, requestedData?.product, selectedId]);
-  useEffect(() => { setPortalReady(true); const id=new URLSearchParams(window.location.search).get('product')||''; setRequestedProductId(id); if(id)setSelectedId(id); }, []);
-  const look = getLook(selected?.category);
-  const SelectedIcon = look.icon;
-
-  const compositeError = error || categoriesError || statsError || requestedError;
+  const categories = useMemo<string[]>(() => categoriesData?.productCategories || [], [categoriesData?.productCategories]);
   const initialLoading = loading && !visibleData;
-  const changePage = (nextPage: number) => {
-    setPage(Math.max(0, nextPage));
-    requestAnimationFrame(() => catalogueResultsRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' }));
+  const compositeError = error || categoriesError || statsError || requestedError;
+
+  useEffect(() => {
+    setMounted(true);
+    setRequestedProductId(new URLSearchParams(window.location.search).get('product') || '');
+  }, []);
+  useEffect(() => { if (requestedData?.product) setOpenProduct(requestedData.product); }, [requestedData?.product]);
+
+  const open = useCallback((product: any, from?: HTMLElement) => {
+    if (from) openerRef.current = from;
+    setOpenProduct(product);
+  }, []);
+  const close = useCallback(() => {
+    setOpenProduct(null);
+    if (requestedProductId) {
+      setRequestedProductId('');
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    requestAnimationFrame(() => openerRef.current?.focus());
+  }, [requestedProductId]);
+
+  const changePage = (next: number) => {
+    setPage(Math.max(0, next));
+    requestAnimationFrame(() => resultsRef.current?.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' }));
   };
+  const selectCategory = (value: string) => { setCategory(value); setPage(0); };
+
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-5 pb-10">
       {compositeError ? <QueryErrorBanner error={compositeError} onRetry={() => refetch()} /> : null}
-      {portalReady && galleryProduct ? createPortal(
-        <AnimatePresence>
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[9999] grid place-items-center bg-[#120f0c]/88 p-4 backdrop-blur-xl" onClick={() => setGalleryProduct(null)}>
-            <motion.div initial={{ y: 24, scale: 0.96 }} animate={{ y: 0, scale: 1 }} exit={{ y: 24, scale: 0.96 }} className="mp-panel relative max-h-[92vh] w-full max-w-6xl overflow-hidden p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-              <button onClick={() => setGalleryProduct(null)} className="absolute right-5 top-5 z-10 grid h-11 w-11 place-items-center rounded-full bg-[var(--ink)] text-[var(--surface)] shadow-xl"><X className="h-5 w-5" /></button>
-              <div className="grid gap-4 lg:grid-cols-[1fr_13rem]">
-                <div className="overflow-hidden rounded-r4 bg-[var(--surface-2)]">
-                  <ProductImageFrame src={galleryFor(galleryProduct)[galleryIndex] || '/catalogue-art/faucet.svg'} alt={galleryProduct.name} className="h-[74vh] rounded-r4" imageClassName="p-4" />
-                </div>
-                <div className="space-y-3">
-                  <div className="rounded-r4 bg-[var(--ink)] p-4 text-[var(--surface)]">
-                    <p className="font-mono text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{galleryProduct.sku}</p>
-                    <h3 className="mt-2 text-xl font-black leading-tight">{galleryProduct.name}</h3>
-                    <p className="mt-2 text-xs font-bold text-[var(--ink-4)]">{Math.max(galleryFor(galleryProduct).length, 1)} image(s)</p>
-                  </div>
-                  <div className="grid max-h-[55vh] gap-2 overflow-y-auto custom-scrollbar">
-                    {(galleryFor(galleryProduct).length ? galleryFor(galleryProduct) : ['/catalogue-art/faucet.svg']).map((src: string, index: number) => (
-                      <button key={src} onClick={() => setGalleryIndex(index)} className={`overflow-hidden rounded-2xl border-2 bg-[var(--surface)] ${index === galleryIndex ? 'border-[var(--brand-600)]' : 'border-transparent'}`}>
-                        <ProductImageFrame src={src} alt={`${galleryProduct.name} ${index + 1}`} className="h-28 rounded-2xl" imageClassName="p-2" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        </AnimatePresence>,
-        document.body
-      ) : null}
-      <section className="mp-panel relative overflow-hidden rounded-r6 text-[var(--ink)]">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(124,58,237,0.12),transparent_32%),radial-gradient(circle_at_86%_6%,rgba(56,189,248,0.12),transparent_34%),linear-gradient(120deg,rgba(245,158,11,0.10),transparent_46%)]" />
-        <div className="relative grid gap-8 p-7 lg:grid-cols-[1.05fr_0.95fr] lg:p-10">
-          <div className="flex min-h-[390px] flex-col justify-between">
-            <div className="space-y-5">
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-[var(--brand-100)] bg-[var(--brand-50)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--brand-700)]">
-                <Sparkles size={12} /> Catalogue Studio
-              </div>
-              <div>
-                <h1 className="max-w-3xl font-display text-3xl font-bold leading-tight text-[var(--ink)] tracking-tight lg:text-5xl">
-                  Retail products that look ready to sell.
-                </h1>
-                <p className="mt-4 max-w-xl text-base leading-7 text-[var(--ink-3)]">
-                  Sanitaryware, faucets, sinks, tiles, catalog imports, stock status and quote-ready visuals in one controlled master.
-                </p>
-              </div>
-            </div>
 
-            <div className="grid grid-cols-3 gap-3 text-sm">
-              {[
-                ['Products', stats?.totalProducts || products.length],
-                ['Categories', stats?.totalCategories || categories.length],
-                ['Quote Image Ready', stats?.activeProducts || products.filter((p: any) => p.status === 'active').length],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-r4 border border-[var(--line)] bg-[var(--surface)]/78 p-3.5 shadow-sm-soft backdrop-blur">
-                  <div className="font-display text-2xl font-bold tabular-nums text-[var(--ink)]">{value}</div>
-                  <div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">{label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={selected?.id}
-              initial={{ opacity: 0, y: 24, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -18, scale: 0.98 }}
-              transition={{ duration: 0.32 }}
-              className="relative overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-5 text-[var(--ink)] shadow-2xl"
-            >
-              {galleryFor(selected).length ? (
-                <button
-                  type="button"
-                  className="mb-5 block w-full cursor-zoom-in text-left"
-                  onClick={() => { setGalleryProduct(selected); setGalleryIndex(0); }}
-                >
-                  <ProductImageFrame
-                    src={galleryFor(selected)[0]}
-                    alt={selected.name}
-                    eager
-                    label={selected.category}
-                    className="aspect-[4/3] rounded-r4"
-                    imageClassName="p-3 group-hover:scale-[1.02]"
-                  />
-                </button>
-              ) : (
-                <div className={`relative mb-5 flex aspect-[4/3] items-center justify-center overflow-hidden rounded-r4 bg-gradient-to-br ${look.accent}`}>
-                  <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.45)_0_1px,transparent_1px_18px)] opacity-30" />
-                  <div className="absolute bottom-5 left-5 rounded-2xl bg-black/20 px-3 py-2 text-xs font-black uppercase tracking-widest text-white backdrop-blur">
-                    {selected?.category}
-                  </div>
-                  <SelectedIcon className="h-28 w-28 text-white/85 drop-shadow-2xl" strokeWidth={1.3} />
-                </div>
-              )}
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="font-mono text-xs font-black uppercase tracking-wider text-[var(--ink-4)]">{selected?.sku}</div>
-                  <h2 className="mt-1 text-3xl font-black tracking-tight text-[var(--ink)]">{selected?.name}</h2>
-                  <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-[var(--ink-3)]">{selected?.description || `${selected?.brand} ${selected?.finish} catalogue product.`}</p>
-                </div>
-                <div className="text-right">
-                  <div className="text-3xl font-semibold text-[var(--ink)]">{Number(selected?.defaultNrpInclusive || 0) > 0 ? currency(selected.defaultNrpInclusive) : 'Price on quote'}</div>
-                  <div className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">Default NRP / {selected?.priceUom || selected?.unit}</div>
-                </div>
-              </div>
-              <div className="mt-5 grid grid-cols-3 gap-3">
-                {[
-                  ['Brand', selected?.brand],
-                  ['Finish', selected?.finish || 'Standard'],
-                  ['Size', selected?.dimensions || 'Variant'],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-2xl bg-[var(--bg-soft)] p-4">
-                    <div className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">{label}</div>
-                    <div className="mt-1 truncate text-sm font-black text-[var(--ink)]">{value}</div>
-                  </div>
-                ))}
-              </div>
-              {galleryFor(selected).length > 0 && (
-                <Button type="button" className="mt-5 w-full rounded-2xl" onClick={() => { setGalleryProduct(selected); setGalleryIndex(0); }}>
-                  Open full-size gallery
-                </Button>
-              )}
-            </motion.div>
-          </AnimatePresence>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">Catalogue</h1>
+          <p className="mt-1 text-sm text-[var(--ink-3)]">
+            {stats?.totalProducts != null ? `${Number(stats.totalProducts).toLocaleString('en-IN')} products` : 'Products'}
+            {categories.length ? ` in ${categories.length} categories` : ''}. Open any product for photos, specs and similar items.
+          </p>
         </div>
-      </section>
+        <Button asChild variant="outline" className="shrink-0"><Link href="/dashboard/master-data/products">Manage in Product Master</Link></Button>
+      </header>
 
-      <section className="mp-panel flex flex-col gap-4 rounded-r5 p-4 backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between">
-        <div className="relative min-w-0 flex-1 lg:max-w-xl">
-          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--ink-4)]" />
+      <section aria-label="Search and filters" className="sticky top-2 z-20 space-y-3 rounded-r4 border border-[var(--line)] bg-[var(--surface)]/95 p-3 shadow-sm-soft backdrop-blur">
+        <div className="relative">
+          <Search size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--ink-4)]" aria-hidden="true" />
+          <label htmlFor="catalogue-search" className="sr-only">Search the catalogue</label>
           <Input
-            placeholder="Search SKU, brand, faucet, sink, WC, tile..."
+            id="catalogue-search"
+            type="search"
+            placeholder="Search name, code, brand, finish, size…"
             value={search}
             onChange={(event) => { setSearch(event.target.value); setPage(0); }}
-            className="h-[3.25rem] rounded-2xl border-[var(--line)] bg-[var(--surface)] pl-11 text-sm font-bold shadow-sm"
+            className="h-11 pl-10 text-sm"
           />
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1 lg:pb-0">
-          <Button onClick={() => { setCategory(''); setPage(0); }} variant={!category ? 'default' : 'outline'} className="rounded-2xl font-black">
-            All
-          </Button>
-          {categories.map((item: string) => (
-            <Button key={item} onClick={() => { setCategory(item); setPage(0); }} variant={category === item ? 'default' : 'outline'} className="whitespace-nowrap rounded-2xl font-black">
-              {item}
-            </Button>
-          ))}
-        </div>
-      </section>
-
-      <section className="mp-panel rounded-r5 p-5">
-        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-3)]">Product master is separate</p>
-            <h2 className="mt-1 text-2xl font-semibold text-[var(--ink)]">Catalogue is for browsing and selling. SKU creation lives in Product Master.</h2>
-            <p className="mt-2 text-sm font-bold text-[var(--ink-3)]">This keeps sales browsing clean and master-data permissions controlled for admin/owner/inventory roles.</p>
-          </div>
-          <Button asChild className="rounded-2xl"><Link href="/dashboard/master-data/products">Open Product Master</Link></Button>
-        </div>
-      </section>
-
-      <section ref={catalogueResultsRef} className="scroll-mt-4" aria-busy={loading}>
-      {initialLoading ? (
-        <div className="mp-panel flex h-72 items-center justify-center rounded-r5">
-          <div className="text-center"><div className="mx-auto h-10 w-10 animate-spin rounded-full border-b-2 border-stone-900 motion-reduce:animate-none" /><p className="mt-3 text-xs font-bold text-[var(--ink-4)]">Loading catalogue…</p></div>
-        </div>
-      ) : products.length === 0 ? (
-        <div className="rounded-r5 border border-dashed border-[var(--line)] bg-[var(--surface)]/70 p-16 text-center text-[var(--ink-4)]">No products found.</div>
-      ) : (
-        <div className="relative"><section className={`grid grid-cols-1 gap-5 transition-opacity duration-150 motion-reduce:transition-none md:grid-cols-2 xl:grid-cols-3 ${loading ? 'opacity-60' : 'opacity-100'}`}>
-          {products.map((product: any) => {
-            const productLook = getLook(product.category);
-            const ProductIcon = productLook.icon;
-            return (
-              <article
-                key={product.id}
-                onClick={() => { setSelectedId(product.id); if (galleryFor(product).length > 0) { setGalleryProduct(product); setGalleryIndex(0); } }}
-                className="mp-card group overflow-hidden rounded-r5 text-left [contain-intrinsic-size:620px] [content-visibility:auto] transition-[transform,box-shadow] duration-150 motion-reduce:transition-none hover:-translate-y-0.5 hover:shadow-xl motion-reduce:hover:translate-y-0"
+        <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-0.5" role="toolbar" aria-label="Category">
+            {['', ...categories].map((item) => (
+              <button
+                key={item || 'all'}
+                type="button"
+                aria-pressed={category === item}
+                onClick={() => selectCategory(item)}
+                className={`h-9 shrink-0 rounded-full border px-4 text-sm font-semibold transition-colors ${category === item ? 'border-[var(--ink)] bg-[var(--ink)] text-[var(--surface)]' : 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink-3)] hover:border-[var(--line-strong)] hover:text-[var(--ink)]'}`}
               >
-                {galleryFor(product).length ? (
-                  <ProductImageFrame
-                    src={galleryFor(product)[0]}
-                    alt={product.name}
-                    label={product.category}
-                    className="h-60 rounded-none cursor-zoom-in"
-                    imageClassName="p-3 group-hover:scale-[1.05]"
-                  />
-                ) : (
-                  <div className={`relative flex h-60 items-center justify-center bg-gradient-to-br ${productLook.accent}`}>
-                    <div className="absolute left-4 top-4 rounded-full bg-[var(--surface)]/80 px-3 py-1 text-xs font-medium uppercase tracking-widest text-[var(--ink-2)] backdrop-blur">
-                      {product.category}
-                    </div>
-                    <ProductIcon className="h-24 w-24 text-white/85 drop-shadow-xl transition-transform group-hover:scale-110" strokeWidth={1.3} />
-                    <ImageIcon className="absolute bottom-4 right-4 h-5 w-5 text-white/70" />
-                  </div>
-                )}
-                <div className="space-y-4 p-5">
-                  <div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-mono text-[11px] font-black uppercase tracking-wider text-slate-400">{product.sku}</span>
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium uppercase tracking-wider ${productLook.wash}`}>{product.brand}</span>
-                    </div>
-                    <h3 className="mt-2 line-clamp-2 text-xl font-black leading-tight text-[var(--ink)]">{product.name}</h3>
-                    <p className="mt-1 text-sm font-semibold text-[var(--ink-3)]">{product.finish || 'Standard'} · {product.dimensions || product.unit}</p>
-                  </div>
-                  <div className="flex items-end justify-between border-t border-[var(--line-soft)] pt-4">
-                    <div>
-                      <div className="text-2xl font-semibold text-[var(--ink)]">{Number(product.defaultNrpInclusive || 0) > 0 ? currency(product.defaultNrpInclusive) : 'Price on quote'}</div>
-                      <div className="text-xs font-medium uppercase tracking-widest text-[var(--ink-4)]">MRP {Number(product.defaultMrpInclusive || 0) > 0 ? currency(product.defaultMrpInclusive) : 'not set'} · {product.priceRateBasis || 'basis pending'}</div>
-                    </div>
-                    <div className="rounded-2xl bg-[var(--ink)] p-3 text-[var(--surface)] transition-transform group-hover:rotate-3">
-                      <Tag size={18} />
-                    </div>
-                  </div>
-                  {galleryFor(product).length > 0 && <Button type="button" size="sm" variant="outline" className="w-full rounded-2xl" onClick={(event) => { event.stopPropagation(); setSelectedId(product.id); setGalleryProduct(product); setGalleryIndex(0); }}>Open full-size gallery</Button>}
-                </div>
-              </article>
-            );
-          })}
-        </section>{loading ? <div className="pointer-events-none sticky bottom-4 mx-auto mt-[-3.5rem] w-fit rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-bold text-[var(--surface)] shadow-xl">Updating catalogue…</div> : null}</div>
-      )}
-      {!initialLoading && (page > 0 || hasNextPage) ? <nav aria-label="Catalogue pages" className="mp-panel mt-5 flex items-center justify-between rounded-r4 p-3"><Button variant="outline" disabled={page === 0 || loading} onClick={() => changePage(page - 1)}><ChevronLeft className="mr-2 h-4 w-4" />Previous</Button><span aria-live="polite" className="text-sm font-semibold text-[var(--ink-4)]">Page {page + 1}{loading ? ' · Loading' : ''}</span><Button variant="outline" disabled={!hasNextPage || loading} onClick={() => changePage(page + 1)}>Next<ChevronRight className="ml-2 h-4 w-4" /></Button></nav> : null}
+                {item || 'All'}
+              </button>
+            ))}
+          </div>
+          <p className="hidden shrink-0 text-xs tabular-nums text-[var(--ink-4)] sm:block" aria-live="polite">
+            {initialLoading ? 'Loading…' : `${products.length}${hasNextPage ? '+' : ''} on this page`}
+          </p>
+        </div>
       </section>
+
+      <section ref={resultsRef} className="scroll-mt-24" aria-busy={loading} aria-label="Products">
+        {initialLoading ? (
+          <ul className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <SkeletonCard key={i} />)}</ul>
+        ) : products.length === 0 ? (
+          <div className="grid place-items-center rounded-r4 border border-dashed border-[var(--line)] bg-[var(--surface)] p-12 text-center">
+            <PackageSearch className="h-8 w-8 text-[var(--ink-4)]" aria-hidden="true" />
+            <p className="mt-3 font-semibold text-[var(--ink)]">No products match{debouncedSearch ? ` “${debouncedSearch}”` : ''}.</p>
+            <p className="mt-1 text-sm text-[var(--ink-3)]">Try a code, brand or finish, or clear the filters.</p>
+            {(search || category) ? <Button type="button" variant="outline" className="mt-4" onClick={() => { setSearch(''); setCategory(''); setPage(0); }}>Clear search and filters</Button> : null}
+          </div>
+        ) : (
+          <ul className={`grid grid-cols-2 gap-3 transition-opacity duration-150 motion-reduce:transition-none sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 ${loading ? 'opacity-60' : 'opacity-100'}`}>
+            {products.map((product: any, index: number) => (
+              <ProductCard key={product.id} product={product} index={index} onOpen={open} reduceMotion={reduceMotion} />
+            ))}
+          </ul>
+        )}
+        {!initialLoading && (page > 0 || hasNextPage) ? (
+          <nav aria-label="Catalogue pages" className="mt-5 flex items-center justify-between rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-3">
+            <Button variant="outline" disabled={page === 0 || loading} onClick={() => changePage(page - 1)}><ChevronLeft className="mr-1 h-4 w-4" />Previous</Button>
+            <span className="text-sm text-[var(--ink-3)]">Page {page + 1}</span>
+            <Button variant="outline" disabled={!hasNextPage || loading} onClick={() => changePage(page + 1)}>Next<ChevronRight className="ml-1 h-4 w-4" /></Button>
+          </nav>
+        ) : null}
+      </section>
+
+      {mounted ? (
+        <AnimatePresence>
+          {openProduct ? <ProductDialog key="catalogue-product" product={openProduct} onClose={close} onOpen={(p) => open(p)} /> : null}
+        </AnimatePresence>
+      ) : null}
     </div>
   );
 }

@@ -34,8 +34,8 @@ export default function CategoryMasterPage() {
             <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">Categories drive Product Master dropdowns, catalogue filters, lead intent rows and inventory reporting. Excel imports auto-create missing values, and admins can clean them here.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-5)]">Active</p><p className="mt-2 font-display text-3xl font-bold text-[var(--ink)]">{active}</p></div>
-            <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-5)]">Total</p><p className="mt-2 font-display text-3xl font-bold text-[var(--ink)]">{rows.length}</p></div>
+            <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4"><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-5)]">Active</p><p className="mt-2 font-display text-3xl font-bold text-[var(--ink)]">{active}</p></div>
+            <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4"><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-5)]">Total</p><p className="mt-2 font-display text-3xl font-bold text-[var(--ink)]">{rows.length}</p></div>
           </div>
         </div>
       </section>

@@ -47,7 +47,7 @@ export default function ResetPasswordPage() {
       <section className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.055] p-7 shadow-[0_30px_80px_-46px_rgba(0,0,0,0.9)] sm:p-9">
         <Link href="/" className="flex w-max items-center gap-3">
           <CompanyLogo className="h-11 w-11" imageClassName="p-0.5" />
-          <div><div className="text-lg font-bold">Marble Park</div><div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#d7aaa6]">Retail OS</div></div>
+          <div><div className="text-lg font-bold">Marble Park</div><div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#d7aaa6]">Retail OS</div></div>
         </Link>
         <div className="mt-8 flex items-start justify-between gap-4">
           <div><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Secure recovery</p><h1 className="mt-2 text-3xl font-black tracking-tight">Choose a new password</h1></div>

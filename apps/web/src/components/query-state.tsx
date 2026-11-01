@@ -35,7 +35,7 @@ export function QueryErrorBanner({ error, onRetry }: { error: ApolloError | Erro
         <p className="text-sm font-bold">{detail.title}</p>
         <p className="text-xs font-medium leading-relaxed text-red-800/90">{detail.message}</p>
         <p className="text-xs leading-relaxed text-red-700/80">{detail.hint}</p>
-        {detail.code || detail.path || detail.requestId ? <p className="pt-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-red-700/70">{[detail.code ? `Code ${detail.code}` : '', detail.path ? `Field ${detail.path}` : '', detail.requestId ? `Ref ${detail.requestId}` : ''].filter(Boolean).join(' · ')}</p> : null}
+        {detail.code || detail.path || detail.requestId ? <p className="pt-1 text-xs font-semibold uppercase tracking-[0.08em] text-red-700/70">{[detail.code ? `Code ${detail.code}` : '', detail.path ? `Field ${detail.path}` : '', detail.requestId ? `Ref ${detail.requestId}` : ''].filter(Boolean).join(' · ')}</p> : null}
       </div>
       {onRetry ? (
         <button

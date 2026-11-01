@@ -84,8 +84,8 @@ export default function BrandMasterPage() {
         <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--ink-3)]">Maintain the exact name and customer-facing logo once. Quote editors can then choose which served brands appear in each PDF.</p>
       </div>
       <div className="flex gap-3">
-        <div className="min-w-32 border-l border-[var(--line)] pl-4"><p className="text-2xl font-bold text-[var(--ink)]">{rows.length}</p><p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">Total brands</p></div>
-        <div className="min-w-32 border-l border-[var(--line)] pl-4"><p className="text-2xl font-bold text-[var(--brand-700)]">{quoteReady}</p><p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">Quote ready</p></div>
+        <div className="min-w-32 border-l border-[var(--line)] pl-4"><p className="text-2xl font-bold text-[var(--ink)]">{rows.length}</p><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">Total brands</p></div>
+        <div className="min-w-32 border-l border-[var(--line)] pl-4"><p className="text-2xl font-bold text-[var(--brand-700)]">{quoteReady}</p><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">Quote ready</p></div>
       </div>
     </header>
 
@@ -105,8 +105,8 @@ export default function BrandMasterPage() {
             {form.logoUrl ? <img src={form.logoUrl} alt={`${form.name || 'Brand'} logo preview`} className="max-h-24 max-w-full object-contain" /> : <div className="text-center text-[var(--ink-4)]"><ImagePlus className="mx-auto h-6 w-6" /><p className="mt-2 text-xs font-semibold">No logo uploaded</p></div>}
           </div>
           <div className="flex items-center justify-between border-t border-[var(--line)] bg-[var(--surface)] px-3 py-2">
-            <span className="truncate pr-3 text-[10px] font-medium text-[var(--ink-4)]">JPG, PNG or WebP · 5 MB max</span>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-[var(--ink)] px-3 py-2 text-xs font-semibold text-white">
+            <span className="truncate pr-3 text-xs font-medium text-[var(--ink-4)]">JPG, PNG or WebP · 5 MB max</span>
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-[var(--ink)] px-3 py-2 text-xs font-semibold text-[var(--surface)]">
               {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}{uploading ? 'Uploading' : form.logoUrl ? 'Replace' : 'Upload'}
               <input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} className="hidden" onChange={(event) => uploadLogo(event.target.files?.[0])} />
             </label>
@@ -129,7 +129,7 @@ export default function BrandMasterPage() {
         <div className="mt-5 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {filtered.map((row) => <button key={row.id} onClick={() => selectRow(row)} className={cn('group flex min-h-28 items-center gap-4 rounded-md border bg-[var(--surface)] p-4 text-left transition hover:border-[var(--brand-400)] hover:shadow-md-soft', form.id === row.id ? 'border-[var(--brand-500)] ring-2 ring-[var(--ring)]' : 'border-[var(--line)]')}>
             <div className="grid h-16 w-24 shrink-0 place-items-center overflow-hidden rounded-md border border-[var(--line-soft)] bg-white p-2">{row.metadata?.logoUrl ? <img src={row.metadata.logoUrl} alt={row.name} className="max-h-12 max-w-full object-contain" /> : <span className="text-lg font-bold text-[var(--brand-700)]">{String(row.name || 'MP').slice(0, 2).toUpperCase()}</span>}</div>
-            <div className="min-w-0"><p className="truncate font-semibold text-[var(--ink)]">{row.name}</p><p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-5)]">{row.code || 'No code'} · {row.status}</p><span className={cn('mt-3 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold', row.metadata?.logoUrl && row.metadata?.quoteEnabled !== false ? 'bg-[var(--success-bg)] text-[var(--success)]' : 'bg-[var(--bg-soft)] text-[var(--ink-4)]')}>{row.metadata?.logoUrl && row.metadata?.quoteEnabled !== false ? <BadgeCheck className="h-3 w-3" /> : null}{row.metadata?.logoUrl ? row.metadata?.quoteEnabled === false ? 'Hidden from quotes' : 'Quote ready' : 'Logo required'}</span></div>
+            <div className="min-w-0"><p className="truncate font-semibold text-[var(--ink)]">{row.name}</p><p className="mt-1 text-xs font-semibold uppercase tracking-wider text-[var(--ink-5)]">{row.code || 'No code'} · {row.status}</p><span className={cn('mt-3 inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold', row.metadata?.logoUrl && row.metadata?.quoteEnabled !== false ? 'bg-[var(--success-bg)] text-[var(--success)]' : 'bg-[var(--bg-soft)] text-[var(--ink-4)]')}>{row.metadata?.logoUrl && row.metadata?.quoteEnabled !== false ? <BadgeCheck className="h-3 w-3" /> : null}{row.metadata?.logoUrl ? row.metadata?.quoteEnabled === false ? 'Hidden from quotes' : 'Quote ready' : 'Logo required'}</span></div>
           </button>)}
         </div>
         {!loading && !filtered.length ? <div className="mt-5 rounded-md border border-dashed border-[var(--line-strong)] py-16 text-center"><ImagePlus className="mx-auto h-6 w-6 text-[var(--ink-5)]" /><p className="mt-3 text-sm font-semibold text-[var(--ink-3)]">No brands match this search.</p></div> : null}

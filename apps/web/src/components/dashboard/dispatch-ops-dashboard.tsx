@@ -179,7 +179,7 @@ export function DispatchOpsDashboard({ effectiveRole, user }: { effectiveRole: s
                     <p className="truncate text-sm font-semibold text-[#18181b]">{j.customer?.name || 'Customer'}</p>
                     <p className="mt-0.5 truncate text-[11px] text-[#71717a]"><MapPin className="-mt-0.5 mr-1 inline h-3 w-3" />{j.siteAddress || 'No address'}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase mp-kpi-icon-${STATUS_TONE[j.status] || 'neutral'}`}>{STATUS_LABEL[j.status] || j.status}</span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold uppercase mp-kpi-icon-${STATUS_TONE[j.status] || 'neutral'}`}>{STATUS_LABEL[j.status] || j.status}</span>
                 </div>
                 <div className="mt-3 flex items-center justify-between text-[11px] text-[#52525b]">
                   <span><Calendar className="-mt-0.5 mr-1 inline h-3 w-3" />{j.dueDate ? new Date(j.dueDate).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'no time'}</span>
@@ -200,7 +200,7 @@ export function DispatchOpsDashboard({ effectiveRole, user }: { effectiveRole: s
                   <p className="truncate text-sm font-semibold text-[#18181b]">{j.customer?.name || 'Customer'}</p>
                   <p className="truncate text-[11px] text-[#71717a]">{j.siteAddress || '—'} · due {j.dueDate ? new Date(j.dueDate).toLocaleDateString('en-IN') : '—'}</p>
                 </div>
-                <span className="shrink-0 rounded-full bg-[#fecaca] px-2 py-0.5 text-[10px] font-semibold uppercase text-[#b91c1c]">Overdue</span>
+                <span className="shrink-0 rounded-full bg-[#fecaca] px-2 py-0.5 text-xs font-semibold uppercase text-[#b91c1c]">Overdue</span>
               </li>
             ))}
           </ul>

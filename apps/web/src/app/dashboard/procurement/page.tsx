@@ -620,7 +620,7 @@ export default function ProcurementSuitePage() {
         />
         <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[.2em] text-rose-100/80">
+            <p className="text-xs font-bold uppercase tracking-[.2em] text-rose-100/80">
               Procurement command workspace
             </p>
             <h1 className="mt-2 max-w-3xl font-display text-3xl font-bold leading-[1.08] text-white sm:text-4xl">
@@ -642,7 +642,7 @@ export default function ProcurementSuitePage() {
             ) : null}
             <Button
               onClick={beginNewPo}
-              className="border border-white/15 bg-white text-[#612421] hover:bg-rose-50"
+              className="border border-white/15 bg-rose-50 text-[#612421] hover:bg-rose-100"
             >
               <Plus className="mr-2 h-4 w-4" />
               New purchase order
@@ -678,13 +678,15 @@ export default function ProcurementSuitePage() {
           <button
             key={id}
             onClick={() => setTab(id)}
+            aria-current={tab === id ? "page" : undefined}
+            aria-label={count !== undefined ? `${label}, ${Number(count || 0).toLocaleString("en-IN")}` : label}
             className={`relative h-12 rounded-lg px-3 text-sm font-semibold transition-all duration-200 ${tab === id ? "bg-[#9f2d29] text-white shadow-[0_7px_18px_-10px_rgba(159,45,41,.9)]" : "text-[var(--ink-3)] hover:bg-rose-50 hover:text-[#8d2926]"}`}
           >
             <Icon className="mr-2 inline h-4 w-4" />
             {label}
             {count !== undefined ? (
               <span
-                className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${tab === id ? "bg-white/20 text-white" : "bg-[var(--bg-soft)] text-[var(--ink-4)]"}`}
+                className={`ml-2 rounded-full px-1.5 py-0.5 text-xs ${tab === id ? "bg-white/20 text-white" : "bg-[var(--bg-soft)] text-[var(--ink-4)]"}`}
               >
                 {Number(count || 0).toLocaleString("en-IN")}
               </span>
@@ -879,7 +881,7 @@ export default function ProcurementSuitePage() {
             ) : null}
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-left text-sm">
-                <thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-wider text-[var(--ink-4)]">
+                <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wider text-[var(--ink-4)]">
                   <tr>
                     <th className="p-3">Select</th>
                     <th>SKU / item</th>
@@ -965,7 +967,7 @@ export default function ProcurementSuitePage() {
                           />
                         </div>
                         {Number(row.product?.piecesPerPack || 1) > 1 ? (
-                          <small className="mt-1 block text-[10px] text-[var(--ink-4)]">
+                          <small className="mt-1 block text-xs text-[var(--ink-4)]">
                             {row.product.piecesPerPack} {row.product.baseUom || "PC"} per {row.product.purchaseUom || "BOX"}
                           </small>
                         ) : null}
@@ -1477,7 +1479,7 @@ export default function ProcurementSuitePage() {
                         Owner/admin only. The original and corrected values, actor and reason are retained. Item quantities and stock ledgers are deliberately immutable; use Inventory Control for a quantity correction.
                       </p>
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-800">No stock rewrite</span>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-800">No stock rewrite</span>
                   </div>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {!grn.purchaseOrderId ? (
@@ -1797,7 +1799,7 @@ function ProcurementOverview({ summary, loading, onTab }: any) {
     <section className="space-y-5 animate-in fade-in slide-in-from-bottom-1 duration-300">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#a2322e]">
+          <p className="text-xs font-bold uppercase tracking-[.18em] text-[#a2322e]">
             Live operating overview
           </p>
           <h2 className="mt-1 font-display text-2xl font-bold">
@@ -1923,7 +1925,7 @@ function ProcurementOverview({ summary, loading, onTab }: any) {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
-            <thead className="bg-[var(--bg-soft)] text-[10px] font-bold uppercase tracking-[.13em] text-[var(--ink-4)]">
+            <thead className="bg-[var(--bg-soft)] text-xs font-bold uppercase tracking-[.13em] text-[var(--ink-4)]">
               <tr>
                 <th className="px-5 py-3">Due</th>
                 <th>PO / supplier</th>
@@ -2506,7 +2508,7 @@ function receivedBaseQuantity(line: any, row: any) {
 }
 function Field({ label, children }: any) {
   return (
-    <label className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">
+    <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">
       {label}
       <div className="mt-1">{children}</div>
     </label>

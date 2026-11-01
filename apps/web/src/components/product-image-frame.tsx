@@ -63,7 +63,7 @@ export function ProductImageFrame({
         <div className="grid h-full w-full place-items-center bg-gradient-to-br from-[#eef2f7] to-[#dde5ef] px-5 text-center text-[#596779]">
           <div>
             <ImageIcon className="mx-auto h-9 w-9 opacity-70" strokeWidth={1.4} />
-            <span className="mt-2 block text-[10px] font-bold uppercase tracking-[0.12em]">Image unavailable</span>
+            <span className="mt-2 block text-xs font-bold uppercase tracking-[0.12em]">Image unavailable</span>
           </div>
         </div>
       )}

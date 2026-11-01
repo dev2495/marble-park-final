@@ -136,7 +136,7 @@ function rowIdentity(row: any) {
 function Stat({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm-soft">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ink-5)]">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ink-5)]">
         {label}
       </p>
       <p className="mt-2 font-display text-3xl font-bold tabular-nums text-[var(--ink)]">
@@ -160,7 +160,7 @@ function Field({
     : `${label} (optional)`;
   return (
     <label className={wide ? "space-y-1.5 md:col-span-2" : "space-y-1.5"}>
-      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--ink-5)]">
+      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ink-5)]">
         {displayLabel}
       </span>
       {children}
@@ -636,7 +636,7 @@ export default function ImportCenterPage() {
                 />
               )}
               <div>
-                <p className="text-[10px] font-semibold uppercase text-[var(--ink-5)]">
+                <p className="text-xs font-semibold uppercase text-[var(--ink-5)]">
                   Step {step}
                 </p>
                 <p className="text-sm font-semibold text-[var(--ink)]">
@@ -848,7 +848,7 @@ export default function ImportCenterPage() {
                               {row.name || "Missing product name"}
                             </p>
                             <span
-                              className={`rounded px-2 py-1 text-[10px] font-semibold uppercase ${source.errors?.length ? "bg-amber-100 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}
+                              className={`rounded px-2 py-1 text-xs font-semibold uppercase ${source.errors?.length ? "bg-amber-100 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}
                             >
                               {source.errors?.length
                                 ? `${source.errors.length} issue${source.errors.length === 1 ? "" : "s"}`

@@ -96,7 +96,7 @@ export default function PurchaseOrderCostReadinessPage() {
         </Button>
         <div className="mt-5 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[.2em] text-rose-100/80">Permanent delayed-cost queue</p>
+            <p className="text-xs font-bold uppercase tracking-[.2em] text-rose-100/80">Permanent delayed-cost queue</p>
             <h1 className="mt-2 font-display text-3xl font-bold sm:text-4xl">Complete supplier costs when they arrive.</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-rose-50/75">Stock may be inwarded before the supplier confirms a rate. Those GRN and lot rows remain cost-pending here—across days or weeks—until an owner records the verified rate.</p>
           </div>
@@ -122,7 +122,7 @@ export default function PurchaseOrderCostReadinessPage() {
               <button key={order.id} type="button" onClick={() => setSelectedId(order.id)} className={`w-full p-4 text-left transition ${selected?.id === order.id ? "bg-[#fff0eb]" : "hover:bg-[var(--bg-soft)]"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <span><b className="block">{order.poNumber}</b><small className="text-[var(--ink-4)]">{order.vendorName}</small></span>
-                  <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-800">{order.missingLineCount} line(s)</span>
+                  <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-800">{order.missingLineCount} line(s)</span>
                 </div>
                 <p className="mt-2 text-xs text-[var(--ink-4)]">{Number(order.receivedMissingLineCount || 0)} received · {Number(order.awaitingInwardMissingLineCount || 0)} awaiting inward · {Number(order.taxRate || 0) > 0 ? `GST ${Number(order.taxRate)}%` : "Without GST"}</p>
               </button>
@@ -139,7 +139,7 @@ export default function PurchaseOrderCostReadinessPage() {
           {selected ? (
             <>
               <div className="flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-4 sm:flex-row sm:items-start">
-                <div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#a3312d]">Selected purchase order</p><h2 className="mt-1 text-xl font-bold">{selected.poNumber} · {selected.vendorName}</h2><p className="mt-1 text-xs text-[var(--ink-4)]">Header discount {Number(selected.discountPercent || 0)}% · {Number(selected.taxRate || 0) > 0 ? `GST ${Number(selected.taxRate)}%` : "Without GST"} · existing total {money(selected.grandTotal)}</p></div>
+                <div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#a3312d]">Selected purchase order</p><h2 className="mt-1 text-xl font-bold">{selected.poNumber} · {selected.vendorName}</h2><p className="mt-1 text-xs text-[var(--ink-4)]">Header discount {Number(selected.discountPercent || 0)}% · {Number(selected.taxRate || 0) > 0 ? `GST ${Number(selected.taxRate)}%` : "Without GST"} · existing total {money(selected.grandTotal)}</p></div>
                 <CircleDollarSign className="h-7 w-7 text-[#a3312d]" />
               </div>
               <div className="mt-4 flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><Clock3 className="mt-0.5 h-5 w-5 shrink-0" /><p><b>Quantity is already safe.</b> Enter only the supplier rates available today. Received rows will update their GRN, lot and previously empty invoice cost snapshots through an audited, zero-quantity cost-finalization event.</p></div>
@@ -147,13 +147,13 @@ export default function PurchaseOrderCostReadinessPage() {
                 {(selected.missingLines || []).map((line: any) => {
                   const uoms = Array.from(new Set([line.product?.purchaseUom, line.product?.baseUom, line.rateUom, line.unit].filter(Boolean)));
                   return <div key={line.id} className="grid gap-3 rounded-xl border border-[var(--line)] bg-[var(--bg-soft)]/45 p-4 md:grid-cols-[1fr_150px_150px] md:items-end">
-                    <div><b className="text-sm">{line.product?.internalCode || line.sku} · {line.name}</b><p className="mt-1 text-xs text-[var(--ink-4)]">Ordered {line.orderedQuantity} {line.unit} · received {Number(line.receivedQuantity || 0)} · {Number(line.product?.piecesPerPack || 1)} {line.product?.baseUom || "PC"}/{line.product?.purchaseUom || line.rateUom || line.unit}</p><span className={`mt-2 inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${Number(line.receivedQuantity || 0) > 0 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>{Number(line.receivedQuantity || 0) > 0 ? "RECEIVED · COST PENDING" : "AWAITING INWARD · COST PENDING"}</span></div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">Supplier rate ₹<Input className="mt-1" type="number" min="0.0001" step="0.01" value={rates[line.id]?.enteredUnitCost || ""} onChange={(event) => setRates({ ...rates, [line.id]: { ...(rates[line.id] || { rateUom: String(uoms[0] || "PC") }), enteredUnitCost: event.target.value } })} placeholder="Enter rate ₹" data-needs-value /></label>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">Rate UOM<SearchableSelect className="mt-1" value={rates[line.id]?.rateUom || String(uoms[0] || "PC")} onValueChange={(value) => setRates({ ...rates, [line.id]: { ...(rates[line.id] || { enteredUnitCost: "" }), rateUom: value } })} options={uoms.map((uom: any) => ({ value: String(uom), label: String(uom), description: String(uom) === String(line.product?.purchaseUom) && Number(line.product?.piecesPerPack || 1) > 1 ? `${line.product.piecesPerPack} ${line.product.baseUom || "PC"} per ${uom}` : "Base stock unit" }))} placeholder="UOM" searchPlaceholder="Search UOM" /></label>
+                    <div><b className="text-sm">{line.product?.internalCode || line.sku} · {line.name}</b><p className="mt-1 text-xs text-[var(--ink-4)]">Ordered {line.orderedQuantity} {line.unit} · received {Number(line.receivedQuantity || 0)} · {Number(line.product?.piecesPerPack || 1)} {line.product?.baseUom || "PC"}/{line.product?.purchaseUom || line.rateUom || line.unit}</p><span className={`mt-2 inline-flex rounded-full px-2 py-1 text-xs font-bold ${Number(line.receivedQuantity || 0) > 0 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>{Number(line.receivedQuantity || 0) > 0 ? "RECEIVED · COST PENDING" : "AWAITING INWARD · COST PENDING"}</span></div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Supplier rate ₹<Input className="mt-1" type="number" min="0.0001" step="0.01" value={rates[line.id]?.enteredUnitCost || ""} onChange={(event) => setRates({ ...rates, [line.id]: { ...(rates[line.id] || { rateUom: String(uoms[0] || "PC") }), enteredUnitCost: event.target.value } })} placeholder="Enter rate ₹" data-needs-value /></label>
+                    <label className="text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Rate UOM<SearchableSelect className="mt-1" value={rates[line.id]?.rateUom || String(uoms[0] || "PC")} onValueChange={(value) => setRates({ ...rates, [line.id]: { ...(rates[line.id] || { enteredUnitCost: "" }), rateUom: value } })} options={uoms.map((uom: any) => ({ value: String(uom), label: String(uom), description: String(uom) === String(line.product?.purchaseUom) && Number(line.product?.piecesPerPack || 1) > 1 ? `${line.product.piecesPerPack} ${line.product.baseUom || "PC"} per ${uom}` : "Base stock unit" }))} placeholder="UOM" searchPlaceholder="Search UOM" /></label>
                   </div>;
                 })}
               </div>
-              <label className="mt-4 block text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">Audit reason<Input className="mt-1" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+              <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Audit reason<Input className="mt-1" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
               <Button className="mt-4 w-full" disabled={!ready || reason.trim().length < 3 || completeState.loading} onClick={submit}><ShieldCheck className="mr-2 h-4 w-4" />{completeState.loading ? "Saving verified cost snapshots…" : "Save selected verified costs"}</Button>
               <p className="mt-3 text-xs leading-5 text-[var(--ink-4)]">Supplier rate is entered before GST. The saved PO discount is applied automatically; the resulting pre-tax net base-unit cost completes any linked GRN and lot without changing stock quantities.</p>
             </>

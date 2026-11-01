@@ -501,7 +501,7 @@ export function TileImageStudio({ onChanged }: { onChanged?: () => void }) {
             <div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-4)]" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, name or brand" className="pl-9 sm:w-72" /></div>
             <div className="grid grid-cols-3 rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 text-xs font-semibold">
               {([["missing", "Missing"], ["has", "Has photo"], ["all", "All"]] as const).map(([value, label]) => (
-                <button key={value} type="button" onClick={() => { setFilter(value); setSkip(0); }} className={`rounded px-3 py-1.5 ${filter === value ? "bg-[var(--ink)] text-white" : "text-[var(--ink-3)] hover:bg-[var(--bg-soft)]"}`}>{label}</button>
+                <button key={value} type="button" onClick={() => { setFilter(value); setSkip(0); }} className={`rounded px-3 py-1.5 ${filter === value ? "bg-[var(--ink)] text-[var(--surface)]" : "text-[var(--ink-3)] hover:bg-[var(--bg-soft)]"}`}>{label}</button>
               ))}
             </div>
           </div>
@@ -517,13 +517,13 @@ export function TileImageStudio({ onChanged }: { onChanged?: () => void }) {
                 <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--ink)]">
                   <span className="font-mono">{row.designCode}</span>
                   <button type="button" title="Copy suggested file name" onClick={() => void navigator.clipboard?.writeText(suggestedFileName(row.designCode))} className="rounded p-1 text-[var(--ink-4)] hover:bg-[var(--bg-soft)]"><Copy className="h-3.5 w-3.5" /></button>
-                  {row.status !== "active" ? <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] uppercase text-zinc-600">{row.status}</span> : null}
+                  {row.status !== "active" ? <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs uppercase text-zinc-600">{row.status}</span> : null}
                 </p>
                 <p className="truncate text-xs text-[var(--ink-3)]">{row.name}{row.brand ? ` · ${row.brand}` : ""}</p>
                 <p className="mt-0.5 text-[11px] text-[var(--ink-4)]">{row.variantCount} variant{row.variantCount === 1 ? "" : "s"}{row.variantOverrides ? ` · ${row.variantOverrides} with own photo` : ""}{row.hasImage ? ` · ${row.imageCount} photo${row.imageCount === 1 ? "" : "s"}` : ""} · file name <span className="font-mono">{suggestedFileName(row.designCode)}</span></p>
               </div>
               <div className="flex shrink-0 gap-2">
-                <label className={`inline-flex h-9 cursor-pointer items-center rounded-md px-3 text-sm font-semibold ${row.hasImage ? "border border-[var(--line)] bg-white text-[var(--ink)] hover:bg-[var(--bg-soft)]" : "bg-[var(--ink)] text-white hover:opacity-90"} ${rowBusy === row.id ? "pointer-events-none opacity-60" : ""}`}>
+                <label className={`inline-flex h-9 cursor-pointer items-center rounded-md px-3 text-sm font-semibold ${row.hasImage ? "border border-[var(--line)] bg-white text-[var(--ink)] hover:bg-[var(--bg-soft)]" : "bg-[var(--ink)] text-[var(--surface)] hover:opacity-90"} ${rowBusy === row.id ? "pointer-events-none opacity-60" : ""}`}>
                   {rowBusy === row.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ImagePlus className="mr-1.5 h-4 w-4" />}
                   {row.hasImage ? "Add photos" : "Upload photo"}
                   <input type="file" accept="image/jpeg,image/png,image/webp" multiple className="sr-only" onChange={(event) => { void uploadForDesign(row, event.target.files, false); event.target.value = ""; }} />

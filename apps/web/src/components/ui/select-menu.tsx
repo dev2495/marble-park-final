@@ -95,7 +95,7 @@ const SelectMenuLabel = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Label>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Label>
 >(({ className, ...props }, ref) => (
-  <SelectPrimitive.Label ref={ref} className={cn('px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#71717a]', className)} {...props} />
+  <SelectPrimitive.Label ref={ref} className={cn('px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#71717a]', className)} {...props} />
 ));
 SelectMenuLabel.displayName = 'SelectMenuLabel';
 

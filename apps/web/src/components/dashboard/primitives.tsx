@@ -149,10 +149,10 @@ export function KpiTile({
         </p>
         {trend ? (
           <div className="mt-2 flex items-center gap-1.5">
-            <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${trend.delta >= 0 ? 'bg-[var(--success-bg)] text-[var(--success)]' : 'bg-[var(--danger-bg)] text-[var(--danger)]'}`}>
+            <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-semibold ${trend.delta >= 0 ? 'bg-[var(--success-bg)] text-[var(--success)]' : 'bg-[var(--danger-bg)] text-[var(--danger)]'}`}>
               {trend.delta >= 0 ? '▲' : '▼'} {Math.abs(trend.delta).toFixed(1)}%
             </span>
-            <span className="text-[10px] text-[var(--ink-4)]">{trend.label}</span>
+            <span className="text-xs text-[var(--ink-4)]">{trend.label}</span>
           </div>
         ) : null}
         {caption ? <p className="mt-2 truncate text-xs text-[var(--ink-3)]">{caption}</p> : null}

@@ -878,7 +878,7 @@ export default function TileWorkspacePage() {
                 ? window.location.assign("/dashboard/inventory/display-assets")
                 : setTab(id)
             }
-            className={`h-11 rounded px-3 text-sm font-semibold ${tab === id ? "bg-[var(--ink)] text-white" : "text-[var(--ink-3)] hover:bg-[var(--bg-soft)]"}`}
+            className={`h-11 rounded px-3 text-sm font-semibold ${tab === id ? "bg-[var(--ink)] text-[var(--surface)]" : "text-[var(--ink-3)] hover:bg-[var(--bg-soft)]"}`}
           >
             <Icon className="mr-2 inline h-4 w-4" />
             {label}
@@ -959,7 +959,7 @@ export default function TileWorkspacePage() {
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[46rem] text-left text-sm">
-              <thead className="bg-[#f7f3f1] text-[10px] font-bold uppercase tracking-[.12em] text-[var(--ink-4)]">
+              <thead className="bg-[#f7f3f1] text-xs font-bold uppercase tracking-[.12em] text-[var(--ink-4)]">
                 <tr>
                   <th className="px-5 py-3">Excel row</th>
                   <th className="px-5 py-3">Design identity</th>
@@ -1369,7 +1369,7 @@ export default function TileWorkspacePage() {
                     className="hidden"
                     onChange={(e) => uploadImages(e.target.files)}
                   />
-                  <span className="rounded bg-[var(--ink)] px-3 py-2 text-white">
+                  <span className="rounded bg-[var(--ink)] px-3 py-2 text-[var(--surface)]">
                     {uploading ? "Uploading…" : "Add"}
                   </span>
                 </label>
@@ -1475,15 +1475,15 @@ export default function TileWorkspacePage() {
                   </p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {importedFromExcel ? (
-                      <span className="rounded-full bg-sky-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-sky-700">
+                      <span className="rounded-full bg-sky-50 px-2 py-1 text-xs font-bold uppercase tracking-wide text-sky-700">
                         Excel import
                       </span>
                     ) : null}
-                    <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${variantCount ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+                    <span className={`rounded-full px-2 py-1 text-xs font-bold uppercase tracking-wide ${variantCount ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
                       {variantCount ? "Variant-ready" : "Needs first variant"}
                     </span>
                     {!activeDesign ? (
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold uppercase tracking-wide text-slate-700">
                         {row.status}
                       </span>
                     ) : null}
@@ -1623,7 +1623,7 @@ export default function TileWorkspacePage() {
                   loading={designPickerLoading}
                   onSearchChange={setDesignPickerSearch}
                 />
-                <span className="mt-1.5 block text-[10px] font-medium leading-4 text-[var(--ink-4)]">
+                <span className="mt-1.5 block text-xs font-medium leading-4 text-[var(--ink-4)]">
                   Searches all {Number(data?.tileDesignStats?.designs || 0).toLocaleString("en-IN")} active design families, including Excel imports.
                 </span>
               </label>
@@ -1732,7 +1732,7 @@ export default function TileWorkspacePage() {
                 Allow loose-piece inward and sale
               </label>
               <div className="rounded-xl bg-[#f8f4ef] p-4">
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#9f342d]">Governed tile selling policy</p>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-[#9f342d]">Governed tile selling policy</p>
                 <p className="mt-1 text-xs text-[var(--ink-4)]">Choose the tile selling unit, then enter MRP in that unit. NRP and floor use the same unit. Stock remains in boxes and pieces; actual cost comes from PO → GRN → inventory lot.</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">Tile rate unit *
@@ -1778,7 +1778,7 @@ export default function TileWorkspacePage() {
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">MRP source<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.mrpSource} onChange={(e) => setVariant({ ...variant, mrpSource: e.target.value })}><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">Effective from<Input className="mt-1" type="date" value={variant.pricingEffectiveFrom} onChange={(e) => setVariant({ ...variant, pricingEffectiveFrom: e.target.value })}/></label>
-                {variant.id && (variant.originalPriceUom !== variant.priceUom || (variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001)) ? <label className="block text-xs font-semibold text-[#9f342d] sm:col-span-2">Price change reason *<Input className="mt-1" value={variant.mrpChangeReason} onChange={(e) => setVariant({ ...variant, mrpChangeReason: e.target.value })} placeholder="Example: Brand list changed to per sq metre"/><span className="mt-1 block text-[10px] font-medium text-[var(--ink-4)]">The old and new MRP and rate unit, user and effective date will be added to this tile SKU history.</span></label> : null}
+                {variant.id && (variant.originalPriceUom !== variant.priceUom || (variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001)) ? <label className="block text-xs font-semibold text-[#9f342d] sm:col-span-2">Price change reason *<Input className="mt-1" value={variant.mrpChangeReason} onChange={(e) => setVariant({ ...variant, mrpChangeReason: e.target.value })} placeholder="Example: Brand list changed to per sq metre"/><span className="mt-1 block text-xs font-medium text-[var(--ink-4)]">The old and new MRP and rate unit, user and effective date will be added to this tile SKU history.</span></label> : null}
                 </div>
               </div>
               <label className="block text-xs font-semibold text-[var(--ink-4)]">
@@ -2218,7 +2218,7 @@ function RegisterHeader({
           <div className="flex items-center gap-2">
             <h2 className="font-semibold">{title}</h2>
             {typeof count === "number" ? (
-              <span className="rounded-full bg-[var(--bg-soft)] px-2 py-0.5 text-[10px] font-bold tabular-nums text-[var(--ink-3)]">
+              <span className="rounded-full bg-[var(--bg-soft)] px-2 py-0.5 text-xs font-bold tabular-nums text-[var(--ink-3)]">
                 {count.toLocaleString("en-IN")}
               </span>
             ) : null}

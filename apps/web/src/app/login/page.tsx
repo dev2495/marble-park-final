@@ -134,7 +134,7 @@ export default function LoginPage() {
               <CompanyLogo className="h-11 w-11" imageClassName="p-0.5" />
               <div>
                 <div className="text-lg font-bold text-white">Marble Park</div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#d7aaa6]">Retail OS</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#d7aaa6]">Retail OS</div>
               </div>
             </Link>
             <div className="mb-7 flex items-start justify-between gap-4">

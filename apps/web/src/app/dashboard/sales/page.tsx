@@ -94,9 +94,9 @@ export default function SalesDeskPage() {
                         <p className="mt-1 truncate text-xs font-bold text-[#52525b]">{lead.customer?.name || lead.source}</p>
                         <p className="mt-2 text-sm font-black text-[#059669]">{money(lead.expectedValue)}</p>
                         <div className="mt-3 flex flex-wrap gap-1">
-                          {stage !== 'contacted' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'contacted' } })} className="rounded-xl bg-[#eff6ff] px-2 py-1 text-[10px] font-black text-[#1d4ed8]">Contacted</button>}
-                          {stage !== 'proposal' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'proposal' } })} className="rounded-xl bg-[#ecfdf5] px-2 py-1 text-[10px] font-black text-[#059669]">Proposal</button>}
-                          {stage !== 'won' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'won' } })} className="rounded-xl bg-[#18181b] px-2 py-1 text-[10px] font-black text-white">Won</button>}
+                          {stage !== 'contacted' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'contacted' } })} className="rounded-xl bg-[#eff6ff] px-2 py-1 text-xs font-black text-[#1d4ed8]">Contacted</button>}
+                          {stage !== 'proposal' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'proposal' } })} className="rounded-xl bg-[#ecfdf5] px-2 py-1 text-xs font-black text-[#059669]">Proposal</button>}
+                          {stage !== 'won' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'won' } })} className="rounded-xl bg-[#18181b] px-2 py-1 text-xs font-black text-white">Won</button>}
                         </div>
                       </article>
                     ))}

@@ -86,7 +86,7 @@ export function StockControlWorkspace({
                   )}
                 >
                   <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-r2 text-[11px] tabular-nums', active ? 'bg-white/14 text-white' : 'border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-4)]')}><Icon className="h-4 w-4"/></span>
-                  <span className="min-w-0 text-left"><span className="block truncate">{item.label}</span><span className={cn('mt-0.5 block truncate text-[10px] font-semibold', active ? 'text-white/70' : 'text-[var(--ink-4)]')}>{item.caption}</span></span>
+                  <span className="min-w-0 text-left"><span className="block truncate">{item.label}</span><span className={cn('mt-0.5 block truncate text-xs font-semibold', active ? 'text-white/70' : 'text-[var(--ink-4)]')}>{item.caption}</span></span>
                   <span className="sr-only">Step {index + 1}: {item.short}</span>
                 </Link>
               );
@@ -98,7 +98,7 @@ export function StockControlWorkspace({
           <div className="grid divide-y divide-[var(--line)] sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-5">
             {metrics.slice(0, 5).map((metric) => (
               <div key={metric.label} className="group min-w-0 px-5 py-4 transition-colors hover:bg-[var(--bg-soft)]/70">
-                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ink-4)]">{metric.label}</p>
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--ink-4)]">{metric.label}</p>
                 <p className={cn('mt-1.5 text-2xl font-black tabular-nums', METRIC_TONE[metric.tone || 'neutral'])}>{metric.value}</p>
                 {metric.note ? <p className="mt-1 text-xs font-medium leading-5 text-[var(--ink-4)]">{metric.note}</p> : null}
               </div>
@@ -108,7 +108,7 @@ export function StockControlWorkspace({
       </section>
 
       <div className="flex flex-wrap items-center gap-2 rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-2 shadow-sm-soft">
-        <span className="px-2 text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ink-4)]">Continue to</span>
+        <span className="px-2 text-xs font-black uppercase tracking-[0.14em] text-[var(--ink-4)]">Continue to</span>
         <Link href="/dashboard/inventory/transfers" className="inline-flex min-h-10 items-center gap-2 rounded-md px-3 text-sm font-bold text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]"><ArrowRightLeft className="h-4 w-4" />Transfers</Link>
         <Link href="/dashboard/returns" className="inline-flex min-h-10 items-center gap-2 rounded-md px-3 text-sm font-bold text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]"><RotateCcw className="h-4 w-4" />Returns</Link>
         <Link href="/dashboard/inventory" className="inline-flex min-h-10 items-center gap-2 rounded-md px-3 text-sm font-bold text-[var(--ink-3)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]"><Boxes className="h-4 w-4" />Stock position</Link>

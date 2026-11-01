@@ -64,7 +64,7 @@ const DropdownMenuLabel = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Label
     ref={ref}
-    className={cn('px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]', className)}
+    className={cn('px-2.5 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]', className)}
     {...props}
   />
 ));
@@ -103,7 +103,7 @@ const DropdownMenuRadioItem = React.forwardRef<
 DropdownMenuRadioItem.displayName = DropdownMenuPrimitive.RadioItem.displayName;
 
 const DropdownMenuShortcut = ({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) => (
-  <span className={cn('ml-auto text-[10px] font-medium tracking-widest text-[var(--ink-5)]', className)} {...props} />
+  <span className={cn('ml-auto text-xs font-medium tracking-widest text-[var(--ink-5)]', className)} {...props} />
 );
 DropdownMenuShortcut.displayName = 'DropdownMenuShortcut';
 

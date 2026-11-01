@@ -193,7 +193,7 @@ function PermissionOverrides({
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block text-xs font-semibold text-[var(--ink)]">{label}</span>
-                      {grantedByRole ? <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600">Already included in role</span> : null}
+                      {grantedByRole ? <span className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Already included in role</span> : null}
                     </span>
                   </label>
                 );
@@ -305,11 +305,11 @@ export default function UsersPage() {
           </div>
           <div className="grid min-w-[16rem] grid-cols-2 gap-3">
             <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)]/78 p-4 shadow-sm-soft">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">Active</p>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">Active</p>
               <p className="mt-2 font-display text-4xl font-bold text-[var(--ink)]">{activeUsers}</p>
             </div>
             <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)]/78 p-4 shadow-sm-soft">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">Disabled</p>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">Disabled</p>
               <p className="mt-2 font-display text-4xl font-bold text-[var(--ink)]">{inactiveUsers}</p>
             </div>
           </div>
@@ -389,7 +389,7 @@ export default function UsersPage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <p className="truncate text-sm font-semibold text-[var(--ink)]">{user.name}</p>
-                            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', user.active ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-600')}>{user.active ? 'Active' : 'Disabled'}</span>
+                            <span className={cn('rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-wider', user.active ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-600')}>{user.active ? 'Active' : 'Disabled'}</span>
                           </div>
                           <p className="truncate text-xs font-medium text-[var(--ink-4)]">{user.email}</p>
                           <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-5)]">{roleLabel(user.role)} · {checkedCount(user.permissionOverrides)} extra rights · ₹{Math.round(perf.quoteValue || 0).toLocaleString('en-IN')} pipeline</p>

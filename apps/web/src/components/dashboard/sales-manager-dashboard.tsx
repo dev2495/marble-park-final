@@ -200,7 +200,7 @@ export function SalesManagerDashboard({ effectiveRole, user }: { effectiveRole: 
                       <p className="truncate text-[11px] text-[#71717a]">{l.customer?.name || 'Customer'} · {l.owner?.name || 'Unassigned'}</p>
                     </div>
                   </div>
-                  <span className="ml-2 inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fde68a] px-2 py-0.5 text-[10px] font-semibold uppercase text-[#b45309]">
+                  <span className="ml-2 inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fde68a] px-2 py-0.5 text-xs font-semibold uppercase text-[#b45309]">
                     <Hourglass className="h-2.5 w-2.5" /> stale
                   </span>
                 </li>

@@ -229,12 +229,12 @@ export default function LeadDetailPage() {
             </Link>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-5)]">Project</p>
-                <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest capitalize ${lead.stage === 'won' ? 'bg-emerald-100 text-emerald-800' : lead.stage === 'lost' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-800'}`}>
+                <p className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-5)]">Project</p>
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest capitalize ${lead.stage === 'won' ? 'bg-emerald-100 text-emerald-800' : lead.stage === 'lost' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-800'}`}>
                   {lead.stage}
                 </span>
                 {lead.reopenedAt ? (
-                  <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-violet-800">Reopened</span>
+                  <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-violet-800">Reopened</span>
                 ) : null}
               </div>
               <h1 className="mt-1 truncate text-xl font-bold tracking-tight text-[var(--ink)] sm:text-2xl">{lead.title}</h1>
@@ -286,10 +286,10 @@ export default function LeadDetailPage() {
                       <p className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">{intentTypeLabel(intent.intentType)}</p>
                       <p className="mt-0.5 text-sm font-bold text-[var(--ink)]">{Array.isArray(intent.rows) ? intent.rows.length : 0} rows · {money(quoteTotal(intent.rows))}</p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
                   </div>
                   {intent.lockedBy ? (
-                    <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-blue-800"><Lock className="h-3 w-3" /> Locked by staff</p>
+                    <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-blue-800"><Lock className="h-3 w-3" /> Locked by staff</p>
                   ) : null}
                 </Link>
               );
@@ -307,7 +307,7 @@ export default function LeadDetailPage() {
                       <p className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">{quote.quoteNumber} <span className="text-[var(--brand-700)]">v{quote.versionNumber || 1}</span></p>
                       <p className="mt-0.5 text-sm font-bold text-[var(--ink)]">{money(quoteTotal(quote.lines))}</p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
                   </div>
                 </Link>
               );
@@ -332,7 +332,7 @@ export default function LeadDetailPage() {
       <section className="rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm-soft">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--ink-3)]">Timeline</h2>
-          <p className="text-[10px] font-semibold text-[var(--ink-5)]">{entries.length} entries</p>
+          <p className="text-xs font-semibold text-[var(--ink-5)]">{entries.length} entries</p>
         </div>
 
         <div className="mt-4 relative">
@@ -407,7 +407,7 @@ function QuoteChainCard({ chain, onRevise, revising }: { chain: any; onRevise: (
           <Link href={`/dashboard/quotes/${head.id}`} className="font-bold text-[var(--ink)] hover:text-[var(--brand-700)]">
             {head.quoteNumber} <span className="text-[var(--brand-700)]">v{head.versionNumber || 1}</span>
           </Link>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${quoteStatusBadge(head.status).bg}`}>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${quoteStatusBadge(head.status).bg}`}>
             {quoteStatusBadge(head.status).label}
           </span>
         </div>
@@ -424,7 +424,7 @@ function QuoteChainCard({ chain, onRevise, revising }: { chain: any; onRevise: (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[var(--ink-3)] hover:text-[var(--ink)]"
+          className="mt-2 inline-flex items-center gap-1 text-xs font-bold uppercase tracking-widest text-[var(--ink-3)] hover:text-[var(--ink)]"
         >
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           Show {olderVersions.length} earlier version{olderVersions.length === 1 ? '' : 's'}
@@ -437,7 +437,7 @@ function QuoteChainCard({ chain, onRevise, revising }: { chain: any; onRevise: (
               <Link href={`/dashboard/quotes/${v.id}`} className="text-xs font-semibold text-[var(--ink-3)] line-through hover:no-underline hover:text-[var(--brand-700)]">
                 {v.quoteNumber} v{v.versionNumber || 1}
               </Link>
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-5)]">
+              <span className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-5)]">
                 superseded · {new Date(v.updatedAt).toLocaleDateString()}
               </span>
             </li>
@@ -496,7 +496,7 @@ function BasicCard({ at, title, body, link, muted }: { at: string; title: string
     <div className={`rounded-r4 border border-[var(--line)] bg-[var(--bg-soft)]/40 p-3 ${muted ? 'opacity-90' : ''}`}>
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-bold text-[var(--ink)] capitalize">{title.replace(/[_.]/g, ' ')}</p>
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-5)]">{at}</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-5)]">{at}</p>
       </div>
       {body ? <p className="mt-1 text-xs leading-5 text-[var(--ink-3)]">{body}</p> : null}
     </div>
@@ -532,27 +532,27 @@ function IntentTimelineCard({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">
+            <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
+            <span className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
               {intentTypeLabel(intent.intentType)}{revRef}
             </span>
           </div>
           <p className="mt-1 text-sm font-bold text-[var(--ink)]">{Array.isArray(intent.rows) ? intent.rows.length : 0} item rows · {money(quoteTotal(intent.rows))}</p>
           {intent.notes ? <p className="mt-1 text-xs leading-5 text-[var(--ink-3)] line-clamp-2">{intent.notes}</p> : null}
         </div>
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-5)]">{at}</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-5)]">{at}</p>
       </div>
 
       {isLocked ? (
         <div className="mt-3 flex items-center gap-2 rounded-r3 border border-blue-200 bg-blue-50 p-2 text-xs font-semibold text-blue-900">
           <Lock className="h-3.5 w-3.5" /> Office staff is building the quote{intent.locker ? `: ${intent.locker.name}` : ''}.
           {(isOwner || isManager) && !myLock ? (
-            <button type="button" onClick={() => onRequestChanges(intent.id, 'Need to adjust selection')} className="ml-auto inline-flex items-center gap-1 rounded-full bg-blue-700 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white hover:bg-blue-800">
+            <button type="button" onClick={() => onRequestChanges(intent.id, 'Need to adjust selection')} className="ml-auto inline-flex items-center gap-1 rounded-full bg-blue-700 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-blue-800">
               Request edit
             </button>
           ) : null}
           {(myLock || isManager) ? (
-            <button type="button" onClick={() => onRelease(intent.id, !myLock)} className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-800 ring-1 ring-blue-200 hover:bg-blue-50">
+            <button type="button" onClick={() => onRelease(intent.id, !myLock)} className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-blue-800 ring-1 ring-blue-200 hover:bg-blue-50">
               <Unlock className="h-3 w-3" /> Release
             </button>
           ) : null}
@@ -560,7 +560,7 @@ function IntentTimelineCard({
       ) : null}
 
       {isPending && (isOwner || isManager) ? (
-        <p className="mt-2 text-[10px] font-semibold uppercase tracking-widest text-amber-800">
+        <p className="mt-2 text-xs font-semibold uppercase tracking-widest text-amber-800">
           Submitted to office. Still editable until staff picks it up.
         </p>
       ) : null}
@@ -572,27 +572,27 @@ function IntentTimelineCard({
         {editable ? (
           <>
             {isDraft ? (
-              <button type="button" onClick={() => onSubmit(intent.id)} className="inline-flex items-center gap-1 rounded-full bg-[var(--brand-600)] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white hover:bg-[var(--brand-700)]">
+              <button type="button" onClick={() => onSubmit(intent.id)} className="inline-flex items-center gap-1 rounded-full bg-[var(--brand-600)] px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-[var(--brand-700)]">
                 <Send className="h-3 w-3" /> Submit to office
               </button>
             ) : null}
-            <button type="button" onClick={() => onCancel(intent.id)} className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-rose-700 hover:bg-rose-100">
+            <button type="button" onClick={() => onCancel(intent.id)} className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-rose-700 hover:bg-rose-100">
               Cancel
             </button>
           </>
         ) : null}
         {isOfficeOrManager && isPending ? (
-          <button type="button" onClick={() => onPickUp(intent.id)} className="inline-flex items-center gap-1 rounded-full bg-[var(--ink)] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white hover:opacity-90">
+          <button type="button" onClick={() => onPickUp(intent.id)} className="inline-flex items-center gap-1 rounded-full bg-[var(--ink)] px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-[var(--surface)] hover:opacity-90">
             <Hammer className="h-3 w-3" /> Pick up
           </button>
         ) : null}
         {isOfficeOrManager && (isLocked && (myLock || isManager)) ? (
-          <button type="button" onClick={() => onGenerate(intent.id)} disabled={generating} className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white hover:bg-emerald-700 disabled:opacity-50">
+          <button type="button" onClick={() => onGenerate(intent.id)} disabled={generating} className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-emerald-700 disabled:opacity-50">
             <Check className="h-3 w-3" /> {generating ? 'Generating…' : 'Build quote'}
           </button>
         ) : null}
         {intent.quoteId ? (
-          <Link href={`/dashboard/quotes/${intent.quoteId}`} className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-emerald-800 hover:bg-emerald-100">
+          <Link href={`/dashboard/quotes/${intent.quoteId}`} className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-emerald-800 hover:bg-emerald-100">
             <FileText className="h-3 w-3" /> View quote
           </Link>
         ) : null}
@@ -614,19 +614,19 @@ function QuoteTimelineCard({ entry, onRevise, revising, at }: any) {
             <Link href={`/dashboard/quotes/${quote.id}`} className="font-bold text-[var(--ink)] hover:text-[var(--brand-700)]">
               {quote.quoteNumber} <span className="text-emerald-700">v{quote.versionNumber || 1}</span>
             </Link>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
-            {quote.supersedesQuoteId ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-800">Replaces prior</span> : null}
+            <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
+            {quote.supersedesQuoteId ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-blue-800">Replaces prior</span> : null}
           </div>
           <p className="mt-1 text-sm font-bold text-[var(--ink)]">{money(quoteTotal(quote.lines))}</p>
           {quote.notes ? <p className="mt-1 text-xs leading-5 text-[var(--ink-3)] line-clamp-2">{quote.notes}</p> : null}
         </div>
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-5)]">{at}</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-5)]">{at}</p>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Link href={`/dashboard/quotes/${quote.id}`} className="text-xs font-bold text-[var(--brand-700)] hover:underline">Open quote →</Link>
         <Link href={`/api/pdf/quote/${quote.id}`} target="_blank" rel="noreferrer" className="text-xs font-bold text-[var(--ink-3)] hover:text-[var(--brand-700)]">PDF</Link>
         {isLive ? (
-          <button type="button" onClick={() => onRevise(quote.id)} disabled={revising} className="inline-flex items-center gap-1 rounded-full bg-violet-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white hover:bg-violet-700 disabled:opacity-50">
+          <button type="button" onClick={() => onRevise(quote.id)} disabled={revising} className="inline-flex items-center gap-1 rounded-full bg-violet-600 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-violet-700 disabled:opacity-50">
             <PenLine className="h-3 w-3" /> Revise
           </button>
         ) : null}

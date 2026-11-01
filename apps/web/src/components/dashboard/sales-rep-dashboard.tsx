@@ -204,7 +204,7 @@ export function SalesRepDashboard({ effectiveRole, user }: { effectiveRole: stri
                   <tr key={q.id} className="text-[#27272a]">
                     <td className="px-3 py-2.5"><Link href={`/dashboard/quotes/${q.id}`} className="font-semibold text-[#18181b] hover:underline">{q.quoteNumber}</Link></td>
                     <td className="px-3 py-2.5 text-[#52525b]">{q.customer?.name || '—'}</td>
-                    <td className="px-3 py-2.5"><span className="rounded-full bg-[#eff6ff] px-2 py-0.5 text-[10px] font-semibold uppercase text-[#1d4ed8]">{q.status}</span></td>
+                    <td className="px-3 py-2.5"><span className="rounded-full bg-[#eff6ff] px-2 py-0.5 text-xs font-semibold uppercase text-[#1d4ed8]">{q.status}</span></td>
                     <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-[#18181b]">{moneyShort(quoteTotal(q.lines))}</td>
                   </tr>
                 ))}

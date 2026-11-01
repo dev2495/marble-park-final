@@ -135,7 +135,7 @@ export default function CustomersPage() {
                         <li key={dup.id} className="flex flex-wrap items-center gap-2">
                           <span className="text-[#18181b]">{dup.name}</span>
                           <span className="text-amber-800/80">· {dup.city || 'no city'}</span>
-                          <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] uppercase tracking-wider">matched on {dup.matchedOn?.join(', ')}</span>
+                          <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs uppercase tracking-wider">matched on {dup.matchedOn?.join(', ')}</span>
                         </li>
                       ))}
                     </ul>

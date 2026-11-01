@@ -31,8 +31,8 @@
     --ink:          #18181b;
     --ink-2:        #27272a;
     --ink-3:        #52525b;
-    --ink-4:        #71717a;
-    --ink-5:        #a1a1aa;
+    --ink-4:        #5f5f67;          /* AA on bg, bg-soft and surface */
+    --ink-5:        #6a6a71;          /* faint text, still 4.6:1+ */
 
     --line:         #e4e6ec;          /* slightly bluer than pure zinc */
     --line-strong:  #d1d5dc;
@@ -111,8 +111,8 @@
     --ink:          #fafafa;
     --ink-2:        #e4e4e7;
     --ink-3:        #b3b5c0;          /* slightly cool muted body */
-    --ink-4:        #8a8d9c;
-    --ink-5:        #5a5d6e;
+    --ink-4:        #9a9daa;
+    --ink-5:        #8e909c;          /* faint text, still 4.6:1+ */
 
     --line:         #2a2d39;          /* subtle indigo-tinted border */
     --line-strong:  #3a3e4d;
@@ -502,6 +502,9 @@
 :root.dark [class*="text-[#1e40af]"] { color: #93c5fd !important; }
 :root.dark [class*="border-[#60a5fa]"] { border-color: rgba(96,165,250,0.55) !important; }
 
+:root.dark .bg-white:is([class*="text-[#922b27]"], [class*="text-[#7f2923]"], [class*="text-[#7d2923]"], [class*="text-[#612421]"]) { color: #f1aaa4 !important; }
+:root.dark .bg-white[class*="text-[#282321]"] { color: var(--ink) !important; }
+:root.dark .bg-white[class*="text-[#b91c1c]"] { color: #fca5a5 !important; }
 :root.dark [class*="bg-white/85"] { background-color: rgba(31,33,41,0.85) !important; }
 :root.dark [class*="bg-white/75"] { background-color: rgba(31,33,41,0.75) !important; }
 :root.dark [class*="bg-white/72"] { background-color: rgba(31,33,41,0.72) !important; }
@@ -594,4 +597,15 @@
   --ink-3: #5e514d;
   --ink-4: #776761;
   --line: #e8dcd7;
+}
+
+/* One visible keyboard focus ring everywhere (WCAG 2.4.7). Unlayered so it
+   wins over utility classes such as outline-none; mouse clicks stay clean
+   because :focus-visible only matches keyboard focus. */
+:where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"]), [role="button"], [role="tab"], [role="radio"]):focus-visible {
+  outline: 2px solid var(--brand-600, #9d2a24);
+  outline-offset: 2px;
+}
+:root.dark :where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"]), [role="button"], [role="tab"], [role="radio"]):focus-visible {
+  outline-color: #f1aaa4;
 }

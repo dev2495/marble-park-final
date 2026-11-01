@@ -190,11 +190,11 @@ export default function IntentDeskPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${sBadge.bg}`}>{sBadge.label}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${tBadge.bg}`}>{tBadge.label}</span>
-                    {intent.referencesQuoteId ? <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-violet-800">Revises prior quote</span> : null}
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${sBadge.bg}`}>{sBadge.label}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${tBadge.bg}`}>{tBadge.label}</span>
+                    {intent.referencesQuoteId ? <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-violet-800">Revises prior quote</span> : null}
                     {intent.lockedBy && intent.status === 'in_quote' ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-800">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-blue-800">
                         <Lock className="h-3 w-3" /> {intent.locker?.name || 'Locked'}
                       </span>
                     ) : null}
@@ -208,7 +208,7 @@ export default function IntentDeskPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-xl font-bold text-[var(--ink)]">{money(rowsTotal(rows))}</p>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">{rows.length} rows</p>
+                  <p className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">{rows.length} rows</p>
                 </div>
               </div>
 
@@ -217,15 +217,15 @@ export default function IntentDeskPage() {
               ) : null}
 
               <details className="mt-3 group">
-                <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-widest text-[var(--ink-3)] hover:text-[var(--ink)]">
+                <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest text-[var(--ink-3)] hover:text-[var(--ink)]">
                   Show {rows.length} row{rows.length === 1 ? '' : 's'}
                 </summary>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                   {rows.map((row: any, idx: number) => (
                     <div key={idx} className="rounded-r3 border border-[var(--line)] bg-[var(--bg-soft)]/40 p-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--brand-700)]">{row.area || 'General Selection'}</p>
+                      <p className="text-xs font-bold uppercase tracking-widest text-[var(--brand-700)]">{row.area || 'General Selection'}</p>
                       <p className="mt-1 truncate text-sm font-bold text-[var(--ink)]">{row.name || row.sku || 'Item'}</p>
-                      <p className="text-[10px] font-mono text-[var(--ink-4)]">{row.sku || ''} {row.brand ? `· ${row.brand}` : ''}</p>
+                      <p className="text-xs font-mono text-[var(--ink-4)]">{row.sku || ''} {row.brand ? `· ${row.brand}` : ''}</p>
                       <p className="mt-1 text-xs font-semibold text-[var(--ink-2)]">{row.qty || row.quantity || 0} {row.unit || row.uom || 'PC'} × {money(row.price || row.sellPrice || 0)}</p>
                     </div>
                   ))}
@@ -247,7 +247,7 @@ export default function IntentDeskPage() {
                   </Button>
                 ) : null}
                 {showRelease ? (
-                  <button type="button" onClick={() => release({ variables: { id: intent.id, force: !myLock } })} className="inline-flex h-8 items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2.5 text-[10px] font-bold uppercase tracking-widest text-blue-800 hover:bg-blue-100">
+                  <button type="button" onClick={() => release({ variables: { id: intent.id, force: !myLock } })} className="inline-flex h-8 items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2.5 text-xs font-bold uppercase tracking-widest text-blue-800 hover:bg-blue-100">
                     <Unlock className="h-3 w-3" /> Release
                   </button>
                 ) : null}
@@ -269,7 +269,7 @@ function KpiCard({ label, value, tone }: { label: string; value: number; tone: '
   }[tone];
   return (
     <div className="rounded-r3 border border-[var(--line)] bg-white/85 p-4">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">{label}</p>
+      <p className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">{label}</p>
       <p className={`text-2xl font-bold ${toneClass}`}>{value}</p>
     </div>
   );

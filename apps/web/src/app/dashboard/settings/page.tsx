@@ -120,7 +120,7 @@ function InfoCard({ icon: Icon, label, value, tone }: { icon: any; label: string
   return (
     <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)]/78 p-4 shadow-sm-soft">
       <div className={cn('grid h-10 w-10 place-items-center rounded-r3', tone)}><Icon className="h-5 w-5" /></div>
-      <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">{label}</p>
+      <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">{label}</p>
       <p className="mt-1 truncate text-sm font-semibold text-[var(--ink)]">{value || 'Not set'}</p>
     </div>
   );
@@ -166,7 +166,7 @@ function QuoteBrandPolicyCard({
             const active = selected.has(String(brand.id));
             return <button key={brand.id} type="button" aria-pressed={active} onClick={() => toggleBrand(String(brand.id))} className={cn('relative flex min-h-16 items-center gap-2 rounded-md border bg-white p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]', active ? 'border-[var(--brand-500)] bg-[var(--brand-50)]' : 'border-[var(--line)] hover:border-[var(--line-strong)]')}>
               <span className="grid h-10 w-12 shrink-0 place-items-center rounded border border-[var(--line-soft)] bg-white p-1">{brand.metadata?.logoUrl ? <img src={brand.metadata.logoUrl} alt="" className="max-h-full max-w-full object-contain" /> : <ImagePlus className="h-4 w-4 text-[var(--ink-5)]" />}</span>
-              <span className="min-w-0"><span className="block truncate text-xs font-semibold text-[var(--ink)]">{brand.name}</span><span className="mt-0.5 block text-[10px] text-[var(--ink-4)]">{brand.metadata?.logoUrl ? 'Artwork ready' : 'Logo required'}</span></span>
+              <span className="min-w-0"><span className="block truncate text-xs font-semibold text-[var(--ink)]">{brand.name}</span><span className="mt-0.5 block text-xs text-[var(--ink-4)]">{brand.metadata?.logoUrl ? 'Artwork ready' : 'Logo required'}</span></span>
               {active ? <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-700)] text-white"><Check className="h-2.5 w-2.5" /></span> : null}
             </button>;
           })}
@@ -346,7 +346,7 @@ export default function SettingsPage() {
             </p>
           </div>
           <div className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm-soft">
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">Workspace theme</p>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--ink-5)]">Workspace theme</p>
             <div className="mt-3"><ThemeToggle /></div>
           </div>
         </div>
@@ -554,8 +554,8 @@ export default function SettingsPage() {
                 </div>
                 {location.address ? <p className="mt-3 line-clamp-2 text-xs leading-5 text-[var(--ink-4)]">{location.address}</p> : null}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {location.defaultStockScope ? <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">Default stock scope</span> : null}
-                  <span className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ink-4)]">Sort {location.sortOrder || 0}</span>
+                  {location.defaultStockScope ? <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-white">Default stock scope</span> : null}
+                  <span className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Sort {location.sortOrder || 0}</span>
                 </div>
               </button>
             ))}

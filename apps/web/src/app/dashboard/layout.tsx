@@ -284,7 +284,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <CompanyLogo src={companyLogo} name={companyName} className="h-10 w-10" imageClassName="p-0.5" />
               <div className={cn('min-w-0 whitespace-nowrap', labelReveal)}>
                 <p className="text-base font-bold leading-tight text-[var(--ink)]">{companyName}</p>
-                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
               </div>
             </Link>
           </div>
@@ -294,7 +294,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div key={section.title} className="px-3 pb-4">
                 <p
                   className={cn(
-                    'px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)] whitespace-nowrap',
+                    'px-2 pb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)] whitespace-nowrap',
                     labelReveal,
                   )}
                   aria-hidden="true"
@@ -367,9 +367,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <Menu className="h-4 w-4" />
                 </button>
                 <div className="min-w-0">
-                <h1 className="truncate text-base font-semibold text-[var(--ink)] lg:text-lg">
+                {/* Page title in the bar; each page owns its single <h1>. */}
+                <p className="truncate text-base font-semibold text-[var(--ink)] lg:text-lg">
                   {pageTitles[pathname] || pageTitles[pathname.replace(/\/[^/]+$/, '')] || 'Workspace'}
-                </h1>
+                </p>
                 </div>
               </div>
               <Link href="/dashboard" className="lg:hidden"><CompanyLogo src={companyLogo} name={companyName} className="h-9 w-9" /></Link>
@@ -389,6 +390,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     onFocus={() => setShowResults(searchQuery.length > 1)}
                     onBlur={() => setTimeout(() => setShowResults(false), 180)}
                     placeholder="Search SKU, customer, lead, quote…"
+                    aria-label="Search products, customers, leads and quotes"
                     className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)]"
                   />
                   {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--brand-600)]" /> : null}
@@ -396,7 +398,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                 {showResults && deferredSearchQuery.length >= 2 ? (
                   <div className="animate-fade-in animate-slide-in absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)] lg:w-[26rem]">
-                    <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-4)]">Products</div>
+                    <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">Products</div>
                     <div className="max-h-80 overflow-y-auto custom-scrollbar">
                       {searchResults?.globalSearch?.products?.length ? (
                         searchResults.globalSearch.products.map((product: any) => (
@@ -444,7 +446,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   >
                     <Bell className="h-4 w-4" />
                     {unreadCount > 0 ? (
-                      <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#dc2626] px-1 text-[10px] font-semibold text-white">
+                      <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#dc2626] px-1 text-xs font-semibold text-white">
                         {unreadCount > 99 ? '99+' : unreadCount}
                       </span>
                     ) : null}
@@ -453,7 +455,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <DropdownMenuContent align="end" className="w-[min(22rem,calc(100vw-1rem))]">
                   <DropdownMenuLabel className="flex items-center justify-between">
                     <span>Work inbox</span>
-                    {unreadCount > 0 ? <span className="rounded-full bg-[var(--danger-bg)] px-1.5 text-[10px] font-semibold text-[var(--danger)]">{unreadCount} new</span> : null}
+                    {unreadCount > 0 ? <span className="rounded-full bg-[var(--danger-bg)] px-1.5 text-xs font-semibold text-[var(--danger)]">{unreadCount} new</span> : null}
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <div className="max-h-96 overflow-y-auto custom-scrollbar">
@@ -470,7 +472,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-semibold text-[var(--ink)]">{notification.title}</p>
                           <p className="mt-0.5 line-clamp-2 text-xs text-[var(--ink-3)]">{notification.message}</p>
-                          <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-[var(--ink-5)]">
+                          <p className="mt-1 text-xs font-medium uppercase tracking-wider text-[var(--ink-5)]">
                             {notification.category === 'action' ? notification.status === 'resolved' ? 'Completed' : 'Needs action' : 'Update'} · {new Date(notification.createdAt).toLocaleString()}
                           </p>
                         </div>
@@ -581,7 +583,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <CompanyLogo src={companyLogo} name={companyName} className="h-10 w-10" />
                   <div>
                     <p className="text-base font-bold text-[var(--ink)]">{companyName}</p>
-                    <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
+                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
                   </div>
                 </Link>
                 <button type="button" onClick={() => setMobileNavOpen(false)} className="grid h-9 w-9 place-items-center rounded-md border border-[var(--line)] bg-[var(--bg-soft)] text-[var(--ink)]" aria-label="Close navigation">
@@ -591,7 +593,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <nav className="flex-1 overflow-y-auto p-3 custom-scrollbar">
                 {visibleSections.map((section) => (
                   <div key={section.title} className="pb-4">
-                    <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">{section.title}</p>
+                    <p className="px-2 pb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">{section.title}</p>
                     <ul className="space-y-1">
                       {section.items.map((item) => {
                         const active = isNavActive(item.href);

@@ -481,15 +481,15 @@ export default function IntentDetailPage() {
             </Link>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--ink-5)]">
+                <p className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-5)]">
                   Intent
                 </p>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${badge.bg}`}
+                  className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}
                 >
                   {badge.label}
                 </span>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                <span className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                   {intent.intentType === "revision"
                     ? "Revision"
                     : intent.intentType === "followup"
@@ -629,7 +629,7 @@ export default function IntentDetailPage() {
                         <p className="truncate text-sm font-bold text-[var(--ink)]">
                           {p.internalCode || p.sku} · {p.name}
                         </p>
-                        <p className="truncate text-[10px] font-mono text-[var(--ink-3)]">
+                        <p className="truncate text-xs font-mono text-[var(--ink-3)]">
                           {p.sku} · {p.brand} · {p.category}
                         </p>
                       </div>
@@ -675,7 +675,7 @@ export default function IntentDetailPage() {
         <div className="mt-4 space-y-4">
           {grouped.map(([area, areaRows]) => (
             <div key={area}>
-              <p className="px-1 pb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--ink-4)]">
+              <p className="px-1 pb-2 text-xs font-bold uppercase tracking-widest text-[var(--ink-4)]">
                 {area}
               </p>
               <ul className="space-y-2">
@@ -694,7 +694,7 @@ export default function IntentDetailPage() {
                           <p className="truncate text-sm font-semibold text-[var(--ink)]">
                             {row.name || "Product Master item"}
                           </p>
-                          <p className="mt-1 text-[10px] font-mono text-[var(--ink-4)]">
+                          <p className="mt-1 text-xs font-mono text-[var(--ink-4)]">
                             {row.sku ||
                               (row.productId
                                 ? `id:${row.productId.slice(-6)}`
@@ -722,7 +722,7 @@ export default function IntentDetailPage() {
                           ) : null}
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                          <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Qty
                           </label>
                           {isAreaPriced(row) ? (
@@ -740,7 +740,7 @@ export default function IntentDetailPage() {
                                 }
                                 disabled={!editable}
                               />
-                              <div className="text-[10px] text-[var(--ink-4)]">
+                              <div className="text-xs text-[var(--ink-4)]">
                                 {row.qty || 0} {row.inventoryUom}
                               </div>
                             </div>
@@ -761,7 +761,7 @@ export default function IntentDetailPage() {
                           )}
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                          <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Unit
                           </label>
                           <Input
@@ -774,7 +774,7 @@ export default function IntentDetailPage() {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                          <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Price ₹
                           </label>
                           <Input
@@ -791,7 +791,7 @@ export default function IntentDetailPage() {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                          <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Area
                           </label>
                           <AreaInput
@@ -831,7 +831,7 @@ export default function IntentDetailPage() {
 
       {/* Notes */}
       <section className="rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm-soft">
-        <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--ink-5)]">
+        <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
           Notes for office
         </label>
         <textarea

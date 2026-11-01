@@ -1005,7 +1005,7 @@ function Metric({ value, label }: { value: number; label: string }) {
       <b className="text-2xl tabular-nums">
         {Number(value || 0).toLocaleString("en-IN")}
       </b>
-      <p className="mt-1 text-[10px] font-semibold uppercase text-white/55">
+      <p className="mt-1 text-xs font-semibold uppercase text-white/55">
         {label}
       </p>
     </div>

@@ -228,7 +228,7 @@ export default function ProfilePage() {
                 placeholder="One sentence about you (≤ 280 chars). Shown on the team page."
                 className="min-h-[5rem] w-full rounded-md border border-[#e4e4e7] bg-white px-3 py-2 text-sm text-[#18181b] placeholder:text-[#a1a1aa] focus:border-[#60a5fa] focus:outline-none focus:ring-2 focus:ring-[rgba(37,99,235,0.35)]"
               />
-              <p className="text-[10px] text-[#a1a1aa]">{profile.bio.length}/280</p>
+              <p className="text-xs text-[#a1a1aa]">{profile.bio.length}/280</p>
             </label>
             <div className="md:col-span-2 flex items-center justify-between gap-3">
               {saveError ? <QueryErrorBanner error={saveError} /> : null}
@@ -249,7 +249,7 @@ export default function ProfilePage() {
             <label className="block space-y-1.5">
               <span className="text-xs font-medium text-[#52525b]">New password</span>
               <Input value={pwd.newPassword} onChange={(e) => setPwd({ ...pwd, newPassword: e.target.value })} type="password" required minLength={12} />
-              <p className="text-[10px] text-[#a1a1aa]">At least 12 characters. Use a long, unique phrase with numbers and a symbol.</p>
+              <p className="text-xs text-[#a1a1aa]">At least 12 characters. Use a long, unique phrase with numbers and a symbol.</p>
             </label>
             <label className="block space-y-1.5">
               <span className="text-xs font-medium text-[#52525b]">Confirm new password</span>
