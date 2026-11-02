@@ -62,6 +62,15 @@ export const HELP_GUIDES: HelpGuide[] = [
     related: ['crm-quote', 'labels-lots', 'setup-master-data'],
   },
   {
+    id: 'customer-product-pages', title: 'Let customers view products on their own phone', duration: '5 min', href: '/dashboard/products', roles: ['Sales', 'Sales Manager', 'Owner'],
+    summary: 'Customers can see photos, sizes, specs and similar designs without a login. Printed shelf stickers stay exactly as they are: customers scan one showroom poster, then any existing sticker.',
+    flow: ['Print the showroom scan poster once', 'Customer scans the poster', 'Customer scans any shelf sticker', 'Product page with similar designs', 'Staff send hand-picked links on WhatsApp'],
+    examples: ['A customer likes a 1200 x 600 tile on the wall. They scan the poster at the entrance, tap Start scanning, point at the tile sticker and see the design in every active size and finish. Later the salesperson taps + on six products in the Catalogue and sends one link titled "Master bathroom options".'],
+    steps: ['Owner: in Settings -> Customer product pages, keep pages on and choose the price customers see: MRP only, Showroom price (NRP with MRP struck through) or No price.', 'Owner: open Print the showroom scan poster, print it on A4 and place it at the entrance and in each display area.', 'Customer: scan the poster with the phone camera, tap Start scanning, then point at the QR on any product sticker. The product page opens. Without a camera, type the code printed under the QR, for example LB/2026/1600-0001.', 'Staff, in front of a customer: open a product in the Catalogue and tap Customer QR and link. The customer scans the QR from your screen, or you copy the link or send it on WhatsApp.', 'Staff, to send a set: tap + on products in the Catalogue (up to 60), then Create customer link. Add a title and note, choose 7, 30 or 90 days, and send it on WhatsApp.', 'Catalogue -> Customer links shows every link, how many times it was opened and when, and lets you stop a link immediately.'],
+    checks: ['Customer pages never show cost, floor price, stock, lots, suppliers or internal ids.', 'Printed stickers are not changed or reprinted; staff scanning works exactly as before.', 'Links use random codes, so customers cannot guess other links.', 'Turning customer pages off in Settings pauses every link at once.', 'An expired or stopped link tells the customer to ask for a fresh one.', 'Prices shown are the Product Master values; GST and the final price are confirmed on the quotation.'],
+    related: ['showroom-scan-intent', 'labels-lots', 'tile-pricing'],
+  },
+  {
     id: 'partial-order', title: 'Convert a quote in partial sales orders', duration: '11 min', href: '/dashboard/quotes', roles: ['Sales', 'Owner', 'Office'],
     summary: 'Convert only confirmed quantities, keep the remainder open, and avoid creating duplicate quotes for the same customer decision.',
     video: '/help/videos/04-partial-order-and-procurement.mp4', image: '/help/images/pending-inward.png',

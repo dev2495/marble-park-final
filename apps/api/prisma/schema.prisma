@@ -50,6 +50,10 @@ model AppSetting {
   cpSanitaryQuoteBrandIds           Json     @default("[]")
   supportPhone                      String
   supportEmail                      String
+  /// Customer product pages (/p, /s, /scan) open without a login while this is on.
+  publicCatalogueEnabled            Boolean  @default(true)
+  /// What customer pages show as price: hidden, mrp, or nrp (NRP with MRP for reference).
+  publicPriceMode                   String   @default("mrp")
   updatedAt                         DateTime
 }
 
@@ -707,6 +711,8 @@ model Product {
   sourceRefs           Json
   description          String
   internalCode         String?                   @unique
+  /// Random, non-sequential id for the public customer page /p/<token>. Assigned on first use.
+  publicToken          String?                   @unique
   categoryId           String?
   brandId              String?
   finishId             String?
@@ -744,6 +750,7 @@ model Product {
   returnLines          ReturnLine[]
   periodSnapshots      InventoryPeriodSnapshot[]
   mrpHistory           ProductMrpHistory[]
+  publicStat           ProductPublicStat?
 
   @@index([brand])
   @@index([category])
@@ -762,6 +769,35 @@ model Product {
   @@index([status, defaultMrpInclusive])
   @@index([defaultNrpInclusive])
   @@index([priceRateBasis])
+}
+
+/// Customer-facing reach of one product: public page views and showroom sticker scans.
+model ProductPublicStat {
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId    String    @id
+  views        Int       @default(0)
+  qrScans      Int       @default(0)
+  lastViewedAt DateTime?
+  updatedAt    DateTime  @default(now())
+}
+
+/// A no-login link to a hand-picked set of products, sent to a customer by staff.
+model CatalogueShare {
+  id           String    @id
+  token        String    @unique
+  title        String
+  note         String    @default("")
+  productIds   Json      @default("[]")
+  createdBy    String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  viewCount    Int       @default(0)
+  lastViewedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime
+
+  @@index([createdBy, createdAt(sort: Desc)])
+  @@index([expiresAt])
 }
 
 /// Append-only MRP history for one permanent Product Master SKU.

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { ulid } from 'ulid';
 import { compactTileSize } from '@marble-park/pricing-contract/tile-size';
 import { brandedLabelQrDataUrl } from '../common/branded-label-qr';
+import { parseLabelCode } from '../common/label-code';
 import { tilePricingChoice } from '../common/tile-pricing-unit';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
@@ -1944,27 +1945,9 @@ export class OperationsService {
   }
 
   private extractInternalLabelCode(raw: string) {
-    const value = String(raw || '').trim();
-    if (!value) throw new BadRequestException('Label code is required');
-    const prefixed = value.match(/^MP-LABEL:([^\s]+)$/i);
-    if (prefixed) return prefixed[1].trim().toUpperCase();
-    try {
-      const parsed = JSON.parse(value);
-      const jsonCode = String(parsed?.labelCode || parsed?.code || '').trim();
-      if (jsonCode) return jsonCode.toUpperCase();
-    } catch {
-      // The rendered QR may be a plain label code rather than legacy JSON.
-    }
-    try {
-      const url = new URL(value);
-      const queryCode = url.searchParams.get('label') || url.searchParams.get('code');
-      const pathCode = url.pathname.match(/\/labels?\/([^/]+)$/i)?.[1];
-      const urlCode = String(queryCode || pathCode || '').trim();
-      if (urlCode) return decodeURIComponent(urlCode).toUpperCase();
-    } catch {
-      // The rendered QR may be a plain label code rather than a lookup URL.
-    }
-    return value.toUpperCase();
+    const code = parseLabelCode(raw);
+    if (!code) throw new BadRequestException('Label code is required');
+    return code;
   }
 
   private async applyLocationDeltaTx(

@@ -609,3 +609,19 @@
 :root.dark :where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"]), [role="button"], [role="tab"], [role="radio"]):focus-visible {
   outline-color: #f1aaa4;
 }
+
+/* Customer pages (/p, /s, /scan): gentle entrance and the scanner sweep line. */
+@keyframes public-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.public-rise { animation: public-rise 420ms var(--eo) both; }
+@keyframes scan-sweep {
+  0%, 100% { top: 8%; }
+  50% { top: 92%; }
+}
+.scan-sweep { animation: scan-sweep 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .public-rise { animation: none; }
+  .scan-sweep { animation: none; top: 50%; }
+}

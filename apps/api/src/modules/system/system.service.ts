@@ -87,6 +87,8 @@ export class SystemService {
     const legacyPolicy = policy(input.quoteBrandSelectionMode, input.quoteBrandIds, current.quoteBrandSelectionMode, current.quoteBrandIds, 'Quote');
     const tilePolicy = policy(input.tileQuoteBrandSelectionMode, input.tileQuoteBrandIds, current.tileQuoteBrandSelectionMode || legacyPolicy.mode, current.tileQuoteBrandIds || legacyPolicy.ids, 'Tile & Chemical quote');
     const cpSanitaryPolicy = policy(input.cpSanitaryQuoteBrandSelectionMode, input.cpSanitaryQuoteBrandIds, current.cpSanitaryQuoteBrandSelectionMode || legacyPolicy.mode, current.cpSanitaryQuoteBrandIds || legacyPolicy.ids, 'CP & Sanitary quote');
+    const publicPriceMode = input.publicPriceMode === undefined ? (current as any).publicPriceMode || 'mrp' : String(input.publicPriceMode || '').trim().toLowerCase();
+    if (!['hidden', 'mrp', 'nrp'].includes(publicPriceMode)) throw new BadRequestException('Customer page price must be hidden, mrp or nrp');
     const settings = await this.prisma.appSetting.update({
       where: { id: current.id },
       data: {
@@ -112,6 +114,8 @@ export class SystemService {
         cpSanitaryQuoteBrandIds: cpSanitaryPolicy.ids,
         supportPhone: input.supportPhone ?? current.supportPhone,
         supportEmail: input.supportEmail ?? current.supportEmail,
+        publicCatalogueEnabled: input.publicCatalogueEnabled ?? (current as any).publicCatalogueEnabled ?? true,
+        publicPriceMode,
         updatedAt: new Date(),
       },
     });

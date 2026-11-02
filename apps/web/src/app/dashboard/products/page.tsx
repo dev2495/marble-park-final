@@ -5,13 +5,14 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useQuery, gql } from '@apollo/client';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, FileText, PackageSearch, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, Link2, PackageSearch, Search, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { mediaUrls, thumbnailUrl } from '@/lib/media';
+import { CreateShareModal, CustomerLinkPanel, CustomerLinksModal, MAX_SHARE_PRODUCTS, PickToggle, ShareBar } from './customer-sharing';
 
 const PRODUCT_FIELDS = `
   id sku internalCode name category brand finish dimensions unit purchaseUom salesUom
@@ -87,7 +88,7 @@ function specRows(product: any) {
   return rows.filter(([, value]) => Boolean(value && String(value).trim()));
 }
 
-function ProductCard({ product, onOpen, index, reduceMotion }: { product: any; onOpen: (p: any, el: HTMLElement) => void; index: number; reduceMotion: boolean | null }) {
+function ProductCard({ product, onOpen, index, reduceMotion, picked, canPick, onTogglePick }: { product: any; onOpen: (p: any, el: HTMLElement) => void; index: number; reduceMotion: boolean | null; picked: boolean; canPick: boolean; onTogglePick: (p: any) => void }) {
   const price = priceFor(product);
   const name = displayName(product);
   const nameMissing = !String(product.name || '').trim();
@@ -96,13 +97,14 @@ function ProductCard({ product, onOpen, index, reduceMotion }: { product: any; o
       initial={reduceMotion ? false : { opacity: 0.35, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: reduceMotion ? 0 : Math.min(index, 12) * 0.03, ease: [0.2, 0.7, 0.2, 1] }}
-      className="min-w-0"
+      className="relative min-w-0"
     >
+      <PickToggle picked={picked} disabled={!canPick} onToggle={() => onTogglePick(product)} name={name} />
       <button
         type="button"
         onClick={(event) => onOpen(product, event.currentTarget)}
         aria-label={`${name}, ${product.brand || 'no brand'}, ${price.main}${price.main.startsWith('₹') ? ` ${price.caption}` : ''}`}
-        className="group flex h-full w-full flex-col overflow-hidden rounded-r4 border border-[var(--line)] bg-[var(--surface)] text-left shadow-sm-soft transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-1 hover:border-[var(--line-strong)] hover:shadow-lg motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+        className={`group flex h-full w-full flex-col overflow-hidden rounded-r4 border bg-[var(--surface)] text-left shadow-sm-soft transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-1 hover:shadow-lg motion-reduce:transition-none motion-reduce:hover:translate-y-0 ${picked ? 'border-[var(--ink)] ring-2 ring-[var(--ink)]' : 'border-[var(--line)] hover:border-[var(--line-strong)]'}`}
       >
         <div className="relative">
           <ProductImageFrame
@@ -143,7 +145,7 @@ function SkeletonCard() {
   );
 }
 
-function ProductDialog({ product, onClose, onOpen }: { product: any; onClose: () => void; onOpen: (p: any) => void }) {
+function ProductDialog({ product, onClose, onOpen, picked, canPick, onTogglePick }: { product: any; onClose: () => void; onOpen: (p: any) => void; picked: boolean; canPick: boolean; onTogglePick: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [photo, setPhoto] = useState(0);
@@ -261,6 +263,7 @@ function ProductDialog({ product, onClose, onOpen }: { product: any; onClose: ()
               <Button asChild size="lg"><Link href={`/dashboard/quotes/new?product=${encodeURIComponent(product.id)}`}><FileText className="mr-2 h-4 w-4" />Start a quote with this</Link></Button>
               <Button asChild size="lg" variant="outline"><Link href={`/dashboard/master-data/${isTile ? 'tiles' : 'products'}`}>Open in {isTile ? 'Tile Master' : 'Product Master'}</Link></Button>
             </div>
+            {product.status === 'active' ? <CustomerLinkPanel key={product.id} productId={product.id} productName={name} picked={picked} canPick={canPick} onTogglePick={onTogglePick} /> : null}
           </div>
         </div>
 
@@ -301,6 +304,9 @@ export default function ProductsPage() {
   const [openProduct, setOpenProduct] = useState<any>(null);
   const [requestedProductId, setRequestedProductId] = useState('');
   const [mounted, setMounted] = useState(false);
+  const [picked, setPicked] = useState<any[]>([]);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [linksOpen, setLinksOpen] = useState(false);
   const openerRef = useRef<HTMLElement | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const reduceMotion = useReducedMotion();
@@ -346,6 +352,13 @@ export default function ProductsPage() {
     requestAnimationFrame(() => resultsRef.current?.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' }));
   };
   const selectCategory = (value: string) => { setCategory(value); setPage(0); };
+  const pickedIds = useMemo(() => new Set(picked.map((item) => item.id)), [picked]);
+  const canPick = picked.length < MAX_SHARE_PRODUCTS;
+  const togglePick = useCallback((product: any) => {
+    setPicked((current) => current.some((item) => item.id === product.id)
+      ? current.filter((item) => item.id !== product.id)
+      : current.length < MAX_SHARE_PRODUCTS ? [...current, product] : current);
+  }, []);
 
   return (
     <div className="space-y-5 pb-10">
@@ -356,10 +369,13 @@ export default function ProductsPage() {
           <h1 className="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">Catalogue</h1>
           <p className="mt-1 text-sm text-[var(--ink-3)]">
             {stats?.totalProducts != null ? `${Number(stats.totalProducts).toLocaleString('en-IN')} products` : 'Products'}
-            {categories.length ? ` in ${categories.length} categories` : ''}. Open any product for photos, specs and similar items.
+            {categories.length ? ` in ${categories.length} categories` : ''}. Open any product for photos, specs and similar items, or tap + to send a set to a customer.
           </p>
         </div>
-        <Button asChild variant="outline" className="shrink-0"><Link href="/dashboard/master-data/products">Manage in Product Master</Link></Button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => setLinksOpen(true)}><Link2 className="mr-2 h-4 w-4" />Customer links</Button>
+          <Button asChild variant="outline"><Link href="/dashboard/master-data/products">Manage in Product Master</Link></Button>
+        </div>
       </header>
 
       <section aria-label="Search and filters" className="sticky top-2 z-20 space-y-3 rounded-r4 border border-[var(--line)] bg-[var(--surface)]/95 p-3 shadow-sm-soft backdrop-blur">
@@ -408,7 +424,7 @@ export default function ProductsPage() {
         ) : (
           <ul className={`grid grid-cols-2 gap-3 transition-opacity duration-150 motion-reduce:transition-none sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 ${loading ? 'opacity-60' : 'opacity-100'}`}>
             {products.map((product: any, index: number) => (
-              <ProductCard key={product.id} product={product} index={index} onOpen={open} reduceMotion={reduceMotion} />
+              <ProductCard key={product.id} product={product} index={index} onOpen={open} reduceMotion={reduceMotion} picked={pickedIds.has(product.id)} canPick={canPick} onTogglePick={togglePick} />
             ))}
           </ul>
         )}
@@ -421,11 +437,15 @@ export default function ProductsPage() {
         ) : null}
       </section>
 
+      <ShareBar products={picked} onRemove={(id) => setPicked((current) => current.filter((item) => item.id !== id))} onClear={() => setPicked([])} onCreate={() => setShareOpen(true)} />
+
       {mounted ? (
         <AnimatePresence>
-          {openProduct ? <ProductDialog key="catalogue-product" product={openProduct} onClose={close} onOpen={(p) => open(p)} /> : null}
+          {openProduct ? <ProductDialog key="catalogue-product" product={openProduct} onClose={close} onOpen={(p) => open(p)} picked={pickedIds.has(openProduct.id)} canPick={canPick} onTogglePick={() => togglePick(openProduct)} /> : null}
         </AnimatePresence>
       ) : null}
+      {shareOpen ? <CreateShareModal products={picked} onClose={() => setShareOpen(false)} onCreated={() => setPicked([])} /> : null}
+      {linksOpen ? <CustomerLinksModal onClose={() => setLinksOpen(false)} /> : null}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   Bath, Building2, Check, CheckCircle2, FileText, Globe2,
   ImagePlus, Landmark, LifeBuoy, Loader2, MapPin, Pencil, PlusCircle, Save, ShieldCheck, SlidersHorizontal,
   Upload, Warehouse, BellRing, Layers3, LockKeyhole,
+  QrCode,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,6 +68,8 @@ const defaults = {
   challanPrefix: 'CH',
   supportPhone: '0260-2424498 · 9427119271 · 7506133166 · 9712508070',
   supportEmail: '',
+  publicCatalogueEnabled: true,
+  publicPriceMode: 'mrp',
   approvalDiscountThreshold: 15,
   quoteBrandSelectionMode: 'all',
   quoteBrandIds: [],
@@ -230,6 +233,8 @@ export default function SettingsPage() {
           challanPrefix: form.challanPrefix || defaults.challanPrefix,
           supportPhone: form.supportPhone || '',
           supportEmail: form.supportEmail || '',
+          publicCatalogueEnabled: form.publicCatalogueEnabled !== false,
+          publicPriceMode: form.publicPriceMode || 'mrp',
           approvalDiscountThreshold: Number(form.approvalDiscountThreshold || defaults.approvalDiscountThreshold),
           quoteBrandSelectionMode: form.quoteBrandSelectionMode || 'all',
           quoteBrandIds: Array.isArray(form.quoteBrandIds) ? form.quoteBrandIds : [],
@@ -415,7 +420,7 @@ export default function SettingsPage() {
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <Field label="Company address" className="md:col-span-2"><textarea value={form.companyAddress || ''} onChange={(e) => setForm({ ...form, companyAddress: e.target.value })} className="min-h-20 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" placeholder="Near DCB Bank, Char Rasta, Vapi (Guj)-396191, India" /></Field>
-            <Field label="Canonical app URL" helper="Used for links in generated documents."><Input value={form.canonicalAppUrl || ''} onChange={(e) => setForm({ ...form, canonicalAppUrl: e.target.value })} /></Field>
+            <Field label="Canonical app URL" helper="Used for links in generated documents and customer product pages. Change it only when the site address changes."><Input value={form.canonicalAppUrl || ''} onChange={(e) => setForm({ ...form, canonicalAppUrl: e.target.value })} /></Field>
             <Field label="Quote prefix"><Input value={form.quotePrefix || ''} onChange={(e) => setForm({ ...form, quotePrefix: e.target.value.toUpperCase() })} /></Field>
             <Field label="Challan prefix"><Input value={form.challanPrefix || ''} onChange={(e) => setForm({ ...form, challanPrefix: e.target.value.toUpperCase() })} /></Field>
           </div>
@@ -429,6 +434,40 @@ export default function SettingsPage() {
             <Field label="Default terms"><textarea value={form.defaultTerms || ''} onChange={(e) => setForm({ ...form, defaultTerms: e.target.value })} className="min-h-32 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" placeholder="Freight, payment, return, cancellation and image-reference terms" /></Field>
             <Field label="Bank details"><textarea value={form.bankDetails || ''} onChange={(e) => setForm({ ...form, bankDetails: e.target.value })} className="min-h-32 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" placeholder="Bank, account number, IFSC and branch" /></Field>
             <Field label="Document footer" className="lg:col-span-2"><Input value={form.documentFooter || ''} onChange={(e) => setForm({ ...form, documentFooter: e.target.value })} placeholder="Thank you for choosing Marble Park." /></Field>
+          </div>
+        </div>
+
+        <div className="mp-panel p-5 lg:p-6 xl:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-r3 bg-sky-50 text-sky-800"><QrCode className="h-5 w-5" /></div>
+              <div>
+                <h2 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">Customer product pages</h2>
+                <p className="text-sm text-[var(--ink-4)]">No-login pages customers open from the showroom scan poster, staff share links and the catalogue QR. They never show cost, floor price or stock.</p>
+              </div>
+            </div>
+            <a href="/print/showroom-poster" target="_blank" rel="noreferrer" className="text-sm font-semibold text-[var(--brand-700)]">Print the showroom scan poster</a>
+          </div>
+          <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <label className="flex items-start gap-3 rounded-md border border-[var(--line)] p-4">
+              <input type="checkbox" className="mt-1 h-5 w-5 accent-[#9d2a24]" checked={form.publicCatalogueEnabled !== false} onChange={(e) => setForm({ ...form, publicCatalogueEnabled: e.target.checked })} />
+              <span><span className="block font-semibold text-[var(--ink)]">Customer pages are on</span><span className="block text-xs leading-5 text-[var(--ink-4)]">Turn off to pause every customer link at once. Customers then see a short “ask our team” message.</span></span>
+            </label>
+            <fieldset className="rounded-md border border-[var(--line)] p-4">
+              <legend className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Price shown to customers</legend>
+              <div className="mt-1 grid gap-2 sm:grid-cols-3">
+                {[
+                  ['mrp', 'MRP only', 'The Product Master MRP per selling unit.'],
+                  ['nrp', 'Showroom price', 'NRP, with MRP struck through when higher. Falls back to MRP.'],
+                  ['hidden', 'No price', 'Customers see “Price on request”.'],
+                ].map(([value, label, help]) => (
+                  <label key={value} className={cn('cursor-pointer rounded-md border p-3', (form.publicPriceMode || 'mrp') === value ? 'border-[var(--ink)] bg-[var(--bg-soft)]' : 'border-[var(--line)]')}>
+                    <span className="flex items-center gap-2 font-semibold text-[var(--ink)]"><input type="radio" name="public-price-mode" value={value} checked={(form.publicPriceMode || 'mrp') === value} onChange={() => setForm({ ...form, publicPriceMode: value })} className="accent-[#9d2a24]" />{label}</span>
+                    <span className="mt-1 block text-xs leading-5 text-[var(--ink-4)]">{help}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
           </div>
         </div>
 

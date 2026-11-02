@@ -34,6 +34,8 @@ class UpdateSettingsInput {
   @Field(() => GraphQLJSON, { nullable: true }) cpSanitaryQuoteBrandIds?: string[];
   @Field({ nullable: true }) supportPhone?: string;
   @Field({ nullable: true }) supportEmail?: string;
+  @Field({ nullable: true }) publicCatalogueEnabled?: boolean;
+  @Field({ nullable: true }) publicPriceMode?: string;
 }
 
 @InputType()
