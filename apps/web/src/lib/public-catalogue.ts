@@ -78,10 +78,13 @@ export function rupees(amount: number) {
   return `₹${Number(amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
-/** Managed uploads live on the API host; everything else is same-origin. */
+/**
+ * Customer pages use plain <img>, so image paths stay same-site: Caddy serves
+ * /catalogue-images/manual in production and next.config rewrites it locally.
+ * (NEXT_PUBLIC_CATALOGUE_IMAGE_ORIGIN is the internal API host for next/image.)
+ */
 export function publicImage(url: string) {
-  if (!url) return '';
-  return url.startsWith('/catalogue-images/manual/') ? `${process.env.NEXT_PUBLIC_CATALOGUE_IMAGE_ORIGIN || ''}${url}` : url;
+  return url || '';
 }
 
 export function firstPhone(phone: string) {

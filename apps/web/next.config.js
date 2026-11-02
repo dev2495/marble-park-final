@@ -27,6 +27,11 @@ const nextConfig = {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql',
     NEXT_PUBLIC_CATALOGUE_IMAGE_ORIGIN: managedImageOrigin.origin,
   },
+  // Managed uploads live on the API. Caddy routes them first in production;
+  // this rewrite lets same-site paths work where the web app runs alone.
+  async rewrites() {
+    return [{ source: '/catalogue-images/manual/:path*', destination: `${managedImageOrigin.origin}/catalogue-images/manual/:path*` }];
+  },
   async headers() {
     return [
       {
