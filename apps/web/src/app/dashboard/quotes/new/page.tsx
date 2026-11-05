@@ -17,9 +17,10 @@ import { ScanProductSelector } from '@/components/scan-product-selector';
 import { draftNumber, priceQuoteDraft, retailLadder, type DiscountMode } from '@/lib/quote-pricing';
 import { tilePriceBasis, tilePriceUom, tilePricingCoverage, tilePricingQuantity, tileStockUnitGeometry } from '@/lib/tile-rate';
 
+const GET_PRESET_CUSTOMER = gql`query QuotePresetCustomer($id: ID!) { customer(id: $id) { id name email mobile siteAddress city } }`;
 const GET_QUOTE_SETUP = gql`
   query GetQuoteSetup {
-    customers { id name email mobile siteAddress city }
+    customers(take: 101) { id name email mobile siteAddress city }
     architects(status: "active", take: 200)
     salesAssignees
     documentSettings { data }
@@ -192,6 +193,10 @@ export default function QuoteBuilderPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [validUntil, setValidUntil] = useState(() => new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10));
   const { data: customerData, error: customerError } = useQuery(GET_QUOTE_SETUP);
+  // A walk-in or deep link can name the customer; fetch it so it shows even beyond the first page of customers.
+  const [presetCustomerId, setPresetCustomerId] = useState('');
+  const { data: presetCustomerData } = useQuery(GET_PRESET_CUSTOMER, { variables: { id: presetCustomerId }, skip: !presetCustomerId });
+  const customerOptions = useMemo(() => { const rows = [...(customerData?.customers || [])]; const preset = presetCustomerData?.customer; if (preset && !rows.some((row: any) => row.id === preset.id)) rows.unshift(preset); return rows; }, [customerData?.customers, presetCustomerData?.customer]);
   const { data: searchData, loading: searching, error: searchError } = useQuery(SEARCH_PRODUCTS, { variables: { query: searchQuery }, skip: searchQuery.length < 2 });
   const [createQuote, { loading: saving, error: saveError }] = useMutation(CREATE_QUOTE);
   const [validationError, setValidationError] = useState<string>('');
@@ -217,7 +222,7 @@ export default function QuoteBuilderPage() {
     setSelectedOwnerId(match?.id || customerData.salesAssignees[0].id);
   }, [customerData?.salesAssignees, selectedOwnerId]);
 
-  useEffect(()=>{const params=new URLSearchParams(window.location.search);const requestedType=String(params.get('type')||'').toLowerCase();if(requestedType==='tile'||requestedType==='cp_sanitary'){setQuoteType(requestedType as QuoteType);quoteTypeLocked.current=true;}const ids=(params.get('products')||params.get('product')||'').split(',').map((id)=>id.trim()).filter(Boolean).slice(0,250);setPreloadProductIds([...new Set(ids)]);},[]);
+  useEffect(()=>{const params=new URLSearchParams(window.location.search);const requestedType=String(params.get('type')||'').toLowerCase();if(requestedType==='tile'||requestedType==='cp_sanitary'){setQuoteType(requestedType as QuoteType);quoteTypeLocked.current=true;}const presetCustomer=String(params.get('customer')||'').trim();if(presetCustomer){setPresetCustomerId(presetCustomer);setSelectedCustomerId(presetCustomer);}const ids=(params.get('products')||params.get('product')||'').split(',').map((id)=>id.trim()).filter(Boolean).slice(0,250);setPreloadProductIds([...new Set(ids)]);},[]);
 
   const addProduct = (product: any) => {
     const productQuoteType = quoteTypeForProduct(product);
@@ -482,7 +487,7 @@ export default function QuoteBuilderPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <label className="block space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Customer</span>
-              <SearchableSelect className="h-11" value={selectedCustomerId} onValueChange={setSelectedCustomerId} options={(customerData?.customers || []).map((customer: any) => ({ value: customer.id, label: customer.name, description: [customer.mobile, customer.city || customer.siteAddress].filter(Boolean).join(' · '), keywords: `${customer.email || ''} ${customer.mobile || ''} ${customer.siteAddress || ''}` }))} placeholder="Select customer…" searchPlaceholder="Search customer, mobile, email or site…" />
+              <SearchableSelect className="h-11" value={selectedCustomerId} onValueChange={setSelectedCustomerId} options={customerOptions.map((customer: any) => ({ value: customer.id, label: customer.name, description: [customer.mobile, customer.city || customer.siteAddress].filter(Boolean).join(' · '), keywords: `${customer.email || ''} ${customer.mobile || ''} ${customer.siteAddress || ''}` }))} placeholder="Select customer…" searchPlaceholder="Search customer, mobile, email or site…" />
             </label>
             <label className="block space-y-1.5">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#71717a]">Responsible sales user</span>

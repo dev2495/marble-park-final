@@ -100,6 +100,41 @@ model Customer {
   @@index([gstNo])
 }
 
+/// A customer who checked in from the showroom scan poster. Staff see it in
+/// Walk-ins and turn it into a customer and quote; it never edits Customer by itself.
+model ShowroomVisit {
+  id         String              @id
+  token      String              @unique
+  name       String
+  mobile     String
+  city       String              @default("")
+  note       String              @default("")
+  customerId String?
+  status     String              @default("open")
+  handledBy  String?
+  lastSeenAt DateTime            @default(now())
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime
+  scans      ShowroomVisitScan[]
+
+  @@index([createdAt(sort: Desc)])
+  @@index([mobile])
+  @@index([status, createdAt(sort: Desc)])
+}
+
+/// One product a walk-in scanned during their visit.
+model ShowroomVisitScan {
+  id        String        @id
+  visit     ShowroomVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  visitId   String
+  productId String
+  scanCount Int           @default(1)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime
+
+  @@unique([visitId, productId])
+}
+
 /// Consulting architect / firm master — selected per quote for PDF, filters and reports.
 model Architect {
   id             String   @id

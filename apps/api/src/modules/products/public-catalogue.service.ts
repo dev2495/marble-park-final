@@ -9,6 +9,9 @@ import { parseLabelCode } from '../common/label-code';
 const TOKEN_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const PRODUCT_TOKEN_LENGTH = 14;
 const SHARE_TOKEN_LENGTH = 24;
+export const VISIT_TOKEN_LENGTH = 24;
+// A check-in collects scans for one showroom visit, not for days afterwards.
+const VISIT_SCAN_WINDOW_MS = 12 * 60 * 60 * 1000;
 const PRICE_MODES = ['hidden', 'mrp', 'nrp'] as const;
 const MAX_SHARE_PRODUCTS = 60;
 const SIMILAR_LIMIT = 12;
@@ -22,7 +25,7 @@ export function publicToken(length: number) {
   return token;
 }
 
-function cleanToken(raw: unknown, length: number) {
+export function cleanToken(raw: unknown, length: number) {
   const token = String(raw || '').trim().toUpperCase();
   return token.length === length && [...token].every((char) => TOKEN_ALPHABET.includes(char)) ? token : '';
 }
@@ -214,7 +217,7 @@ export class PublicCatalogueService {
   }
 
   /** The showroom scan page: a printed sticker code in, the product's public token out. */
-  async publicLabelLookup(rawInput: string) {
+  async publicLabelLookup(rawInput: string, visitToken?: string) {
     const config = await this.settings();
     if (!config.enabled) return { enabled: false, found: false, message: 'Product pages are switched off right now. Please ask our showroom team.' };
     const raw = String(rawInput || '').trim().slice(0, 500);
@@ -224,7 +227,10 @@ export class PublicCatalogueService {
     if (linked) {
       const token = cleanToken(linked[1], PRODUCT_TOKEN_LENGTH);
       const product: any = token ? await this.prisma.product.findUnique({ where: { publicToken: token } as any, select: { id: true, status: true, publicToken: true } as any }) : null;
-      if (product?.status === 'active') return { enabled: true, found: true, token: product.publicToken };
+      if (product?.status === 'active') {
+        await this.recordVisitScan(visitToken, product.id);
+        return { enabled: true, found: true, token: product.publicToken };
+      }
     }
     const code = parseLabelCode(raw);
     const instance: any = code ? await this.prisma.internalLabelInstance.findUnique({
@@ -236,7 +242,23 @@ export class PublicCatalogueService {
     if (product.status !== 'active') return { enabled: true, found: false, message: 'This product is no longer in our range. Ask our team for similar designs.' };
     await this.ensureProductTokens([product]);
     await this.bumpStat(product.id, 'qrScans');
+    await this.recordVisitScan(visitToken, product.id);
     return { enabled: true, found: true, token: product.publicToken };
+  }
+
+  /** Adds the product to a checked-in walk-in's list. A missing or stale visit is ignored. */
+  private async recordVisitScan(visitTokenInput: string | undefined, productId: string) {
+    const token = cleanToken(visitTokenInput, VISIT_TOKEN_LENGTH);
+    if (!token) return;
+    const visit: any = await (this.prisma as any).showroomVisit.findUnique({ where: { token }, select: { id: true, createdAt: true } });
+    if (!visit || Date.now() - new Date(visit.createdAt).getTime() > VISIT_SCAN_WINDOW_MS) return;
+    const now = new Date();
+    await (this.prisma as any).showroomVisitScan.upsert({
+      where: { visitId_productId: { visitId: visit.id, productId } },
+      create: { id: ulid(), visitId: visit.id, productId, updatedAt: now },
+      update: { scanCount: { increment: 1 }, updatedAt: now },
+    }).catch(() => null);
+    await (this.prisma as any).showroomVisit.update({ where: { id: visit.id }, data: { lastSeenAt: now, updatedAt: now } }).catch(() => null);
   }
 
   async publicShare(tokenInput: string) {

@@ -10,6 +10,7 @@ import {
   Truck, UserCircle2, Users, UserCog, UserCheck, BadgeCheck, CreditCard, FileText, RotateCcw,
   Menu, X,
   ArrowLeftRight, QrCode, Scale, BarChart3, HelpCircle, BellRing, Store,
+  DoorOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -69,6 +70,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
   {
     title: 'Pipeline',
     items: [
+      { name: 'Walk-ins', href: '/dashboard/walk-ins', icon: DoorOpen, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
       { name: 'Leads', href: '/dashboard/leads', icon: PackageSearch, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
       { name: 'Intents', href: '/dashboard/intents', icon: ListChecks, roles: ['admin', 'owner', 'sales_manager', 'office_staff'], permission: 'quotes.manage' },
       { name: 'Quotes', href: '/dashboard/quotes', icon: FileSpreadsheet, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'], permission: 'quotes.manage' },
@@ -147,6 +149,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/quotes': 'Quote Register',
   '/dashboard/quotes/approvals': 'Approval Desk',
   '/dashboard/quotes/new': 'Quote Studio',
+  '/dashboard/walk-ins': 'Showroom Walk-ins',
   '/dashboard/leads': 'CRM Pipeline',
   '/dashboard/leads/new': 'New Lead',
   '/dashboard/customers': 'Customers',

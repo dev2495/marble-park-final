@@ -5,6 +5,7 @@ import { GraphqlRequestContext, requirePermission, requireRoles, requireSession 
 import { PrismaService } from '../prisma/prisma.service';
 import { assertNoCostInput, inventoryCostView } from '../common/cost-visibility';
 import { OperationsService } from './operations.service';
+import { OpeningStockWorkbookService } from './opening-stock-workbook.service';
 
 @InputType()
 class StockCountInput {
@@ -133,7 +134,7 @@ class StockAdjustmentDecisionInput {
 
 @Resolver()
 export class OperationsResolver {
-  constructor(private operations: OperationsService, private prisma: PrismaService) {}
+  constructor(private operations: OperationsService, private prisma: PrismaService, private openingWorkbook: OpeningStockWorkbookService) {}
 
   @Query(() => [GraphQLJSON])
   async documentJobs(
@@ -270,6 +271,18 @@ export class OperationsResolver {
   ) {
     const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
     return inventoryCostView(await this.operations.openingStockSessions({ status, take, recordId }), user);
+  }
+
+  @Query(() => GraphQLJSON)
+  async openingStockWorkbook(@Context() ctx: GraphqlRequestContext, @Args('category', { nullable: true }) category?: string) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.openingWorkbook.template(category || undefined);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async previewOpeningStockWorkbook(@Args('filename') filename: string, @Args('contentBase64') contentBase64: string, @Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.openingWorkbook.preview(filename, contentBase64);
   }
 
   @Mutation(() => GraphQLJSON)

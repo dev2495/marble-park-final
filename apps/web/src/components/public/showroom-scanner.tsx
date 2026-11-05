@@ -9,11 +9,11 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || '/graphql';
 
 type Status = { tone: 'idle' | 'busy' | 'error' | 'found'; text: string };
 
-async function lookup(code: string) {
+async function lookup(code: string, visitToken?: string) {
   const response = await fetch(API_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query: 'mutation PublicLabelLookup($code:String!){publicLabelLookup(code:$code)}', variables: { code } }),
+    body: JSON.stringify({ query: 'mutation PublicLabelLookup($code:String!,$visitToken:String){publicLabelLookup(code:$code,visitToken:$visitToken)}', variables: { code, visitToken: visitToken || null } }),
   });
   if (!response.ok) throw new Error('lookup failed');
   const body = await response.json();
@@ -28,7 +28,7 @@ function cameraProblem(error: unknown) {
   return 'The camera could not start. You can type the code printed under the QR instead.';
 }
 
-export function ShowroomScanner() {
+export function ShowroomScanner({ visitToken }: { visitToken?: string }) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
@@ -53,7 +53,7 @@ export function ShowroomScanner() {
     lockedRef.current = true;
     setStatus({ tone: 'busy', text: 'Finding this product…' });
     try {
-      const result = await lookup(code);
+      const result = await lookup(code, visitToken);
       if (result?.found && result.token) {
         try { navigator.vibrate?.(30); } catch { /* not supported */ }
         setStatus({ tone: 'found', text: 'Found it. Opening the product…' });

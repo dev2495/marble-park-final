@@ -17,12 +17,12 @@ const LOOKUP_WINDOW_MS = 60_000;
 const LOOKUP_LIMIT = 60;
 const lookupHits = new Map<string, { count: number; resetAt: number }>();
 
-function clientIp(ctx: GraphqlRequestContext) {
+export function clientIp(ctx: GraphqlRequestContext) {
   const req: any = ctx.req || {};
   return String(req.ip || req.socket?.remoteAddress || 'unknown');
 }
 
-function allowLookup(ip: string) {
+export function allowLookup(ip: string) {
   const now = Date.now();
   if (lookupHits.size > 5000) for (const [key, hit] of lookupHits) if (hit.resetAt <= now) lookupHits.delete(key);
   const hit = lookupHits.get(ip);
@@ -58,9 +58,13 @@ export class PublicCatalogueResolver {
   }
 
   @Mutation(() => GraphQLJSON)
-  publicLabelLookup(@Args('code') code: string, @Context() ctx: GraphqlRequestContext) {
+  publicLabelLookup(
+    @Args('code') code: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('visitToken', { nullable: true }) visitToken?: string,
+  ) {
     if (!allowLookup(clientIp(ctx))) return { enabled: true, found: false, message: 'Too many scans in a minute. Please wait a moment and try again.' };
-    return this.catalogue.publicLabelLookup(code);
+    return this.catalogue.publicLabelLookup(code, visitToken);
   }
 
   @Query(() => GraphQLJSON)

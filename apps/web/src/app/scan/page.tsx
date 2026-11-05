@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { RecentlyViewed } from '@/components/public/public-client';
 import { FALLBACK_SHOWROOM, PublicFooter, PublicHeader, PublicNotice } from '@/components/public/public-ui';
-import { ShowroomScanner } from '@/components/public/showroom-scanner';
+import { ShowroomCheckIn } from '@/components/public/showroom-check-in';
 import { getPublicShowroom } from '@/lib/public-catalogue';
 
 export const dynamic = 'force-dynamic';
@@ -24,7 +24,7 @@ export default async function ShowroomScanPage() {
           <h1 className="font-display text-3xl font-semibold leading-tight text-[var(--ink)] sm:text-4xl">Scan any product sticker</h1>
           <p className="mx-auto mt-3 max-w-md text-[var(--ink-3)]">Point your camera at the QR code on a shelf or display sticker to see photos, sizes and similar designs.</p>
         </section>
-        <ShowroomScanner />
+        <ShowroomCheckIn />
         <RecentlyViewed />
       </div>
       <PublicFooter showroom={showroom} />
