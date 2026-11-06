@@ -9,10 +9,11 @@ import { Input } from '@/components/ui/input';
 import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
 import { StockControlWorkspace } from '@/components/inventory/stock-control-workspace';
 import { cn } from '@/lib/utils';
+import { StockCountExcel } from './stock-count-excel';
 
 const DATA = gql`
   query StockCountPage($search: String, $locationId: String, $recordId: String) {
-    inventoryLots(search: $search, locationId: $locationId, status: "active", take: 200)
+    inventoryLots(search: $search, locationId: $locationId, status: "active", take: 500)
     stockLocations(status: "active")
     stockCountSessions(take: 80, recordId: $recordId)
     inventoryPeriodCloses(take: 12)
@@ -91,6 +92,8 @@ export default function StockCountPage() {
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {createError ? <QueryErrorBanner error={createError} /> : null}
       {approveError ? <QueryErrorBanner error={approveError} /> : null}
+
+      <StockCountExcel locationId={selectedLocation?.id || ''} locationName={selectedLocation?.name || ''} search={search} loadedLotIds={new Set(lots.map((row) => row.lotId))} onApply={(next) => { setCounts((current) => ({ ...current, ...next })); setLotFilter('entered'); setPage(0); }} />
 
       <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(22rem,0.75fr)]">
         <div className="mp-panel overflow-hidden">

@@ -8,6 +8,15 @@ import { OperationsService } from './operations.service';
 import { OpeningStockWorkbookService } from './opening-stock-workbook.service';
 
 @InputType()
+class CountSheetFilterInput {
+  @Field({ nullable: true }) search?: string;
+  @Field(() => [String], { nullable: true }) categories?: string[];
+  @Field(() => [String], { nullable: true }) brands?: string[];
+  @Field(() => [String], { nullable: true }) productIds?: string[];
+  @Field(() => [String], { nullable: true }) excludeIds?: string[];
+}
+
+@InputType()
 class StockCountInput {
   @Field({ nullable: true }) scope?: string;
   @Field({ nullable: true }) locationId?: string;
@@ -274,15 +283,44 @@ export class OperationsResolver {
   }
 
   @Query(() => GraphQLJSON)
-  async openingStockWorkbook(@Context() ctx: GraphqlRequestContext, @Args('category', { nullable: true }) category?: string) {
+  async countSheetOptions(@Context() ctx: GraphqlRequestContext) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.openingWorkbook.template(category || undefined);
+    return this.openingWorkbook.options();
+  }
+
+  @Query(() => GraphQLJSON)
+  async countSheetCandidates(
+    @Context() ctx: GraphqlRequestContext,
+    @Args('filter', { type: () => CountSheetFilterInput, nullable: true }) filter?: CountSheetFilterInput,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.openingWorkbook.candidates(filter || {}, skip || 0, take || 50);
+  }
+
+  @Query(() => GraphQLJSON)
+  async openingStockWorkbook(@Context() ctx: GraphqlRequestContext, @Args('filter', { type: () => CountSheetFilterInput, nullable: true }) filter?: CountSheetFilterInput) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.openingWorkbook.openingTemplate(filter || {});
   }
 
   @Mutation(() => GraphQLJSON)
   async previewOpeningStockWorkbook(@Args('filename') filename: string, @Args('contentBase64') contentBase64: string, @Context() ctx: GraphqlRequestContext) {
     await requirePermission(this.prisma, ctx, 'inventory.manage');
-    return this.openingWorkbook.preview(filename, contentBase64);
+    return this.openingWorkbook.openingPreview(filename, contentBase64);
+  }
+
+  @Query(() => GraphQLJSON)
+  async stockCountWorkbook(@Args('locationId') locationId: string, @Context() ctx: GraphqlRequestContext, @Args('search', { nullable: true }) search?: string) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.openingWorkbook.countTemplate(locationId, search);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async previewStockCountWorkbook(@Args('filename') filename: string, @Args('contentBase64') contentBase64: string, @Args('locationId') locationId: string, @Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.openingWorkbook.countPreview(filename, contentBase64, locationId);
   }
 
   @Mutation(() => GraphQLJSON)
