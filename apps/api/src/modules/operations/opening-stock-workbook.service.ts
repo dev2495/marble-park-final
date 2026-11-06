@@ -213,7 +213,7 @@ export class OpeningStockWorkbookService {
     if (!content.length || content.length > MAX_BYTES) throw new BadRequestException('The file is empty or larger than 8 MB');
     let grid: string[][] = [];
     if (isCsv) {
-      grid = this.parseCsv(content.toString('utf8').replace(/^﻿/, ''));
+      grid = this.parseCsv(content.toString('utf8').replace(/^\uFEFF/, ''));
     } else {
       if (content.subarray(0, 2).toString('ascii') !== 'PK') throw new BadRequestException('The upload is not a valid .xlsx file');
       const ExcelJS = require('exceljs');
