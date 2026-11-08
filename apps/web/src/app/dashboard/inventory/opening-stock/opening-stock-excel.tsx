@@ -94,6 +94,7 @@ export function OpeningStockExcel({ onAdd, existingProductIds, defaultLot }: { o
             {alreadyInBatch ? <li className="text-[var(--ink-3)]">{alreadyInBatch} already in the batch, skipped</li> : null}
             {result.errorCount ? <li className="text-rose-800">{result.errorCount} rows need fixing</li> : <li className="text-emerald-800">No errors</li>}
           </ul>
+          {result.alreadyPostedCount ? <p role="alert" className="mt-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-sm text-rose-900"><b>{result.alreadyPostedCount} of these items were already posted as opening stock</b> ({(result.alreadyPostedSessions || []).join(', ')}). Adding them again doubles their stock. Remove them from the batch unless this is extra stock.</p> : null}
           {result.truncated ? <p className="mt-2 text-sm text-amber-800">Only the first {result.maxLines} rows were taken. Submit this batch, then upload the rest.</p> : null}
           {result.errors?.length ? <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto text-sm text-rose-900">{result.errors.map((item: any) => <li key={`e-${item.row}-${item.message}`}>Row {item.row}: {item.message}</li>)}</ul> : null}
           {result.notes?.length ? <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto text-sm text-[var(--ink-3)]">{result.notes.map((item: any) => <li key={`n-${item.row}`}>Row {item.row}: {item.message}</li>)}</ul> : null}

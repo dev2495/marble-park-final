@@ -526,11 +526,77 @@ export class OperationsService {
     const where: any = {};
     if (args?.recordId) where.id = args.recordId;
     if (args?.status && args.status !== 'all') where.status = args.status;
-    return (this.prisma as any).openingStockSession.findMany({
+    const sessions = await (this.prisma as any).openingStockSession.findMany({
       where,
       include: { location: true, lines: { include: { product: true, lot: true }, orderBy: { createdAt: 'asc' } } },
       orderBy: { createdAt: 'desc' },
       take: this.limit(args?.take, 80),
+    });
+    // Waiting sessions must never hide behind older history, so they are always included.
+    if (!args?.recordId && (!args?.status || args.status === 'all')) {
+      const shown = new Set(sessions.map((session: any) => session.id));
+      const waiting = await (this.prisma as any).openingStockSession.findMany({
+        where: { status: { in: ['draft', 'submitted'] }, id: { notIn: Array.from(shown) } },
+        include: { location: true, lines: { include: { product: true, lot: true }, orderBy: { createdAt: 'asc' } } },
+        orderBy: { createdAt: 'desc' },
+      });
+      sessions.push(...waiting);
+    }
+    return this.withOpeningOverlap(sessions);
+  }
+
+  /**
+   * Flags waiting sessions whose products were already posted as opening stock,
+   * so an uploaded file is not posted twice.
+   */
+  private async withOpeningOverlap(sessions: any[]) {
+    const userIds = Array.from(new Set(sessions.flatMap((session) => [session.createdBy, session.approvedBy, session.metadata?.cancelledBy]).filter(Boolean)));
+    const users = userIds.length ? await this.prisma.user.findMany({ where: { id: { in: userIds as string[] } }, select: { id: true, name: true } }) : [];
+    const names = new Map(users.map((user) => [user.id, user.name]));
+    sessions = sessions.map((session) => ({ ...session, createdByName: names.get(session.createdBy) || '', approvedByName: names.get(session.approvedBy) || '', cancelledByName: names.get(session.metadata?.cancelledBy) || '' }));
+    const waiting = sessions.filter((session) => ['draft', 'submitted'].includes(session.status));
+    const productIds = Array.from(new Set(waiting.flatMap((session) => session.lines.map((line: any) => line.productId))));
+    if (!productIds.length) return sessions.map((session) => ({ ...session, overlap: null }));
+    const posted = await (this.prisma as any).openingStockLine.findMany({
+      where: { productId: { in: productIds }, openingStockSession: { status: 'posted' } },
+      select: { productId: true, quantity: true, openingStockSession: { select: { sessionNumber: true } } },
+    });
+    const postedByProduct = new Map<string, Array<{ sessionNumber: string; quantity: number }>>();
+    posted.forEach((row: any) => postedByProduct.set(row.productId, [...(postedByProduct.get(row.productId) || []), { sessionNumber: row.openingStockSession.sessionNumber, quantity: row.quantity }]));
+    return sessions.map((session) => {
+      if (!['draft', 'submitted'].includes(session.status)) return { ...session, overlap: null };
+      const overlapping = session.lines.filter((line: any) => postedByProduct.has(line.productId));
+      const sessionNumbers = Array.from(new Set(overlapping.flatMap((line: any) => postedByProduct.get(line.productId)!.map((row) => row.sessionNumber))));
+      return {
+        ...session,
+        overlap: overlapping.length ? {
+          lineCount: overlapping.length,
+          allLines: overlapping.length === session.lines.length,
+          sessionNumbers,
+          productIds: overlapping.map((line: any) => line.productId),
+        } : null,
+      };
+    });
+  }
+
+  async cancelOpeningStockSession(id: string, reasonInput: string, actorUserId: string) {
+    const reason = String(reasonInput || '').trim();
+    if (reason.length < 5) throw new BadRequestException('Say why this opening session is being cancelled');
+    return this.prisma.$transaction(async (tx: any) => {
+      const session = await tx.openingStockSession.findUnique({ where: { id } });
+      if (!session) throw new NotFoundException('Opening-stock session not found');
+      if (session.status === 'cancelled') return session;
+      if (!['draft', 'submitted'].includes(session.status)) throw new BadRequestException(`${session.sessionNumber} is already posted; correct stock with a stock count instead`);
+      const metadata = session.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata) ? session.metadata : {};
+      const updated = await tx.openingStockSession.update({
+        where: { id },
+        data: { status: 'cancelled', metadata: { ...metadata, cancelReason: reason, cancelledBy: actorUserId, cancelledAt: new Date().toISOString() }, updatedAt: new Date() },
+      });
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: 'opening_stock.cancel', entityType: 'OpeningStockSession', entityId: id,
+        summary: `Cancelled ${session.sessionNumber}`, metadata: { reason },
+      } });
+      return updated;
     });
   }
 

@@ -315,7 +315,18 @@ export class OpeningStockWorkbookService {
       seen.set(key, rowNumber);
       lines.push({ row: rowNumber, productId: product.id, sku: product.sku, internalCode: product.internalCode, name: product.name, stockUnit: product.baseUom, quantity, unitCost: cost, lotCode, missingName: !String(product.name || '').trim() });
     }
+    // Products already posted as opening stock would be added a second time.
+    const postedLines = lines.length ? await (this.prisma as any).openingStockLine.findMany({
+      where: { productId: { in: lines.map((line) => line.productId) }, openingStockSession: { status: 'posted' } },
+      select: { productId: true, openingStockSession: { select: { sessionNumber: true } } },
+    }) : [];
+    const postedIn = new Map<string, string>();
+    postedLines.forEach((row: any) => postedIn.set(row.productId, row.openingStockSession.sessionNumber));
+    lines.forEach((line) => { line.alreadyPostedIn = postedIn.get(line.productId) || null; });
+    const alreadyPosted = lines.filter((line) => line.alreadyPostedIn);
     return {
+      alreadyPostedCount: alreadyPosted.length,
+      alreadyPostedSessions: Array.from(new Set(alreadyPosted.map((line) => line.alreadyPostedIn))),
       lines: lines.slice(0, MAX_OPENING_LINES),
       errors: errors.slice(0, 200),
       notes: notes.slice(0, 50),

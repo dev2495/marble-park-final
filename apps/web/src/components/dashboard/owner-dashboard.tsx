@@ -135,7 +135,8 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
     { label: 'Order bookings · this month', value: Number(orderStats.totalValue || 0), caption: `${orderStats.totalOrders || 0} orders · avg ${moneyShort((orderStats.totalValue || 0) / Math.max(orderStats.totalOrders || 1, 1))}`, icon: IndianRupee, tone: 'success', href: '/dashboard/orders', numeric: true, format: moneyShort },
     { label: 'Pipeline value', value: Number(stats.totalQuoteValue || totalLeadsValue || 0), caption: `${stats.totalQuotes || 0} quotes · ${stats.quoteConversionRate || 0}% confirmed share`, icon: TrendingUp, tone: 'brand', href: '/dashboard/quotes', numeric: true, format: moneyShort },
-    { label: 'Stock at recorded cost', value: Number(stock.totalValue || 0), caption: `${Number(stock.totalQuantity || 0).toLocaleString('en-IN')} on hand · ${Number(stock.totalReserved || 0).toLocaleString('en-IN')} reserved`, icon: Boxes, tone: 'violet', href: '/dashboard/inventory/control', numeric: true, format: moneyShort },
+    { label: 'Stock at MRP', value: Number(stock.mrpValue || 0), caption: `before GST · ${Number(stock.totalQuantity || 0).toLocaleString('en-IN')} units on hand${Number(stock.mrpMissingUnits || 0) ? ` · ${Number(stock.mrpMissingUnits).toLocaleString('en-IN')} units have no MRP` : ''}`, icon: Boxes, tone: 'violet', href: '/dashboard/inventory', numeric: true, format: moneyShort },
+    { label: 'Stock at cost', value: Number(stock.totalValue || 0), caption: Number(stock.missingCostUnits || 0) ? `costed units only · ${Number(stock.missingCostUnits).toLocaleString('en-IN')} units in ${Number(stock.missingCostProducts || 0).toLocaleString('en-IN')} items have no cost yet` : `${Number(stock.costedUnits || 0).toLocaleString('en-IN')} units, all costed`, icon: IndianRupee, tone: Number(stock.missingCostUnits || 0) ? 'warning' : 'success', href: '/dashboard/inventory?stockState=missing_cost', numeric: true, format: moneyShort },
     { label: 'Dispatch backlog', value: stats.pendingDispatchJobs || 0, caption: `${stats.activeDispatchJobs || 0} active jobs · ${followups.length} follow-ups today`, icon: Truck, tone: (stats.pendingDispatchJobs || 0) > 5 ? 'warning' : 'neutral', href: '/dashboard/dispatch', numeric: true },
   ];
 
@@ -174,7 +175,7 @@ export function OwnerDashboard({ effectiveRole, user }: { effectiveRole: string;
         ].map((item) => <Link key={item.label} href={item.href} className="group rounded-r3 border border-white/12 bg-white/[0.075] p-3.5 backdrop-blur-sm transition-colors hover:bg-white/[0.13]"><span className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-white/55">{item.label}<ArrowUpRight className="h-3.5 w-3.5 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"/></span><span className={`mt-2 block text-2xl font-black tabular-nums ${item.tone}`}>{item.value}</span><span className="mt-0.5 block truncate text-xs font-semibold text-white/55">{item.note}</span></Link>)}</div></div>
       </section>
 
-      <MotionGrid className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <MotionGrid className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         {tiles.map((tile) => (
           <MotionItem key={tile.label}>
             <KpiTile {...tile} loading={loading} />

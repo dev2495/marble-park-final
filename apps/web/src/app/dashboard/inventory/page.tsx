@@ -57,6 +57,7 @@ const stockFilters = [
   ['low_stock', 'Low stock'],
   ['out_of_stock', 'Out of stock'],
   ['data_exception', 'Data exceptions'],
+  ['missing_cost', 'Missing cost'],
 ];
 
 function money(value: number) {
@@ -172,13 +173,17 @@ export default function InventoryPage() {
   };
 
   useEffect(() => {
+    // A link such as ?stockState=missing_cost (from the dashboard) wins over the saved view.
+    const linkedState = new URLSearchParams(window.location.search).get('stockState') || '';
     const saved = localStorage.getItem('mp.inventory.view');
-    if (!saved) return;
-    try {
-      const view = JSON.parse(saved);
-      setCategory(view.category || ''); setBrand(view.brand || ''); setStockState(view.stockState || '');
-      setLocationId(view.locationId || ''); setLotState(view.lotState || ''); setSort(view.sort || 'updated_desc');
-    } catch { localStorage.removeItem('mp.inventory.view'); }
+    if (saved) {
+      try {
+        const view = JSON.parse(saved);
+        setCategory(view.category || ''); setBrand(view.brand || ''); setStockState(view.stockState || '');
+        setLocationId(view.locationId || ''); setLotState(view.lotState || ''); setSort(view.sort || 'updated_desc');
+      } catch { localStorage.removeItem('mp.inventory.view'); }
+    }
+    if (stockFilters.some(([value]) => value && value === linkedState)) setStockState(linkedState);
   }, []);
 
   const exportCsv = () => {
@@ -188,14 +193,14 @@ export default function InventoryPage() {
   };
 
   const stats = [
-    [CircleDollarSign, 'Stock cost value', money(summary.onHandValue), 'on-hand cost basis', 'text-emerald-700', ''],
+    [CircleDollarSign, 'Stock at cost', canViewCost ? money(summary.onHandValue) : 'Owner only', Number(summary.missingCostUnits || 0) ? `${qty(summary.costedUnits)} costed units · ${qty(summary.missingCostUnits)} units in ${qty(summary.zeroCostOnHand)} items have no cost` : 'every on-hand unit is costed', Number(summary.missingCostUnits || 0) ? 'text-amber-700' : 'text-emerald-700', Number(summary.missingCostUnits || 0) ? 'missing_cost' : ''],
+    [PackageCheck, 'Stock at MRP', money(summary.mrpValue), Number(summary.mrpMissingUnits || 0) ? `before GST · ${qty(summary.mrpMissingUnits)} units in ${qty(summary.mrpMissingProducts)} items have no MRP` : 'before GST · all stocked items priced', 'text-indigo-700', ''],
     [Boxes, 'Available units', qty(summary.available), 'ready to reserve or sell', 'text-emerald-700', 'available'],
     [Warehouse, 'Reserved units', qty(summary.reserved), 'held for open orders', 'text-blue-700', 'reserved'],
     [PackagePlus, 'Inbound units', qty(summary.inbound), 'ordered and not received', 'text-cyan-700', ''],
     [PackageOpen, 'Out of stock', qty(summary.outOfStock), 'balances needing action', 'text-amber-700', 'out_of_stock'],
     [AlertTriangle, 'Low-stock SKUs', qty(summary.lowStock), 'at or below threshold', 'text-red-700', 'low_stock'],
-    [PackageCheck, 'Retail value', money(summary.retailValue), 'available list-rate basis', 'text-indigo-700', ''],
-    [AlertTriangle, 'Data exceptions', qty(Number(summary.zeroDefaultNrp || 0) + Number(summary.zeroCostOnHand || 0)), 'missing default NRP or lot cost', 'text-rose-700', 'data_exception'],
+    [AlertTriangle, 'Items missing cost', qty(summary.zeroCostOnHand), Number(summary.zeroCostOnHand || 0) ? 'tap to list them · record cost per lot' : 'nothing missing', Number(summary.zeroCostOnHand || 0) ? 'text-rose-700' : 'text-emerald-700', 'missing_cost'],
   ] as const;
 
   const compositeError = error || filterError || lowStockError || costCorrectionState.error;

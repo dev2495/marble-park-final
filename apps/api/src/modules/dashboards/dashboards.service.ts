@@ -210,6 +210,15 @@ export class DashboardsService {
       lowStock: 0,
       outOfStock: 0,
       totalValue: 0,
+      // Value of stock at Product Master MRP (before GST), and what could not be valued.
+      mrpValue: 0,
+      mrpMissingProducts: 0,
+      mrpMissingUnits: 0,
+      // Cost value covers only units whose lot carries a cost; the rest are listed as missing.
+      costedUnits: 0,
+      missingCostUnits: 0,
+      missingCostProducts: 0,
+      stockedProducts: 0,
     };
 
     for (const balance of balances) {
@@ -221,6 +230,16 @@ export class DashboardsService {
       if (Number(threshold) > 0 && stock.available <= Number(threshold)) summary.lowStock++;
       if (stock.available === 0) summary.outOfStock++;
       summary.totalValue += stock.onHandValue;
+      if (stock.onHand > 0) {
+        summary.stockedProducts++;
+        const mrp = Number(balance.product?.defaultMrpInclusive || 0);
+        if (mrp > 0) summary.mrpValue += stock.onHand * mrp;
+        else { summary.mrpMissingProducts++; summary.mrpMissingUnits += stock.onHand; }
+        const missing = Math.min(stock.onHand, stock.missingCostQuantity);
+        summary.missingCostUnits += missing;
+        summary.costedUnits += stock.onHand - missing;
+        if (missing > 0) summary.missingCostProducts++;
+      }
     }
 
     return { stats: summary, summary };

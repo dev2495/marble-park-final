@@ -340,6 +340,12 @@ export class OperationsResolver {
     return this.operations.approveOpeningStockSession(id, user.id, ownerOverrideReason);
   }
 
+  @Mutation(() => GraphQLJSON)
+  async cancelOpeningStockSession(@Args('id', { type: () => ID }) id: string, @Args('reason') reason: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requirePermission(this.prisma, ctx, 'inventory.manage');
+    return this.operations.cancelOpeningStockSession(id, reason, user.id);
+  }
+
   @Query(() => [GraphQLJSON])
   async stockTransfers(
     @Context() ctx: GraphqlRequestContext,
