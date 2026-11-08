@@ -27,6 +27,9 @@ export interface StockAlertPolicyRowInput {
   criticalStockThreshold?: number | null;
 }
 
+// SQL form of common/stock-status: never-stocked products get no threshold, so they are never low.
+const effectiveLowThreshold = (category: Prisma.Sql) => Prisma.sql`CASE WHEN COUNT(lot."id") = 0 THEN 0 WHEN MAX(policy."lowStockThreshold") <> 5 THEN MAX(policy."lowStockThreshold") WHEN lower(${category}) = 'tiles' THEN 10 WHEN lower(${category}) LIKE '%sanitary%' THEN 2 WHEN lower(${category}) LIKE '%faucet%' THEN 3 WHEN lower(${category}) LIKE '%shower%' OR lower(${category}) LIKE '%sink%' THEN 2 ELSE 5 END`;
+
 @Injectable()
 export class InventoryService {
   constructor(private prisma: PrismaService, private notifications: NotificationsService) {}
@@ -96,7 +99,9 @@ export class InventoryService {
             COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged",
             COALESCE(SUM(CASE WHEN lot."unitCost" <= 0 THEN lb."onHand" ELSE 0 END), 0)::double precision AS "missingCostQuantity",
             MAX(product."defaultNrpInclusive")::double precision AS "defaultNrpInclusive",
-            policy."lowStockThreshold", policy."criticalStockThreshold"
+            ${effectiveLowThreshold(Prisma.sql`MAX(product."category")`)} AS "lowStockThreshold",
+            CASE WHEN COUNT(lot."id") = 0 THEN NULL ELSE policy."criticalStockThreshold" END AS "criticalStockThreshold",
+            COUNT(lot."id") > 0 AS "everStocked"
           FROM "InventoryBalance" policy
           INNER JOIN "Product" product ON product."id" = policy."productId"
           LEFT JOIN "InventoryLot" lot ON lot."productId" = policy."productId" AND lot."status" = 'active'
@@ -106,7 +111,7 @@ export class InventoryService {
         )
         SELECT "id" FROM truth WHERE
           (${stockState || null}::text IS NULL OR
-            (${stockState} = 'out_of_stock' AND "available" = 0) OR
+            (${stockState} = 'out_of_stock' AND "available" = 0 AND "everStocked") OR
             (${stockState} = 'reserved' AND "reserved" > 0) OR
             (${stockState} = 'available' AND "available" > 0) OR
             (${stockState} = 'data_exception' AND ("missingCostQuantity" > 0 OR COALESCE("defaultNrpInclusive", 0) <= 0)) OR
@@ -212,7 +217,7 @@ export class InventoryService {
       SELECT 1 FROM "InventoryLot" lot INNER JOIN "InventoryLotBalance" lb ON lb."lotId" = lot."id"
       WHERE lot."productId" = p."id" AND lb."locationId" = ${args.locationId} AND lb."onHand" > 0
     )`);
-    if (args.stockState === 'out_of_stock') conditions.push(Prisma.sql`b."available" = 0`);
+    if (args.stockState === 'out_of_stock') conditions.push(Prisma.sql`b."available" = 0 AND b."everStocked"`);
     else if (args.stockState === 'reserved') conditions.push(Prisma.sql`b."reserved" > 0`);
     else if (args.stockState === 'available') conditions.push(Prisma.sql`b."available" > 0`);
     else if (args.stockState === 'low_stock') conditions.push(Prisma.sql`(
@@ -236,9 +241,10 @@ export class InventoryService {
             COALESCE(SUM(lb."damaged"), 0)::double precision AS "damaged",
             COALESCE(SUM(lb."onHand" * lot."unitCost"), 0)::double precision AS "onHandValue",
             COALESCE(SUM(CASE WHEN lot."unitCost" <= 0 THEN lb."onHand" ELSE 0 END), 0)::double precision AS "missingCostQuantity",
-            MAX(policy."lowStockThreshold") AS "lowStockThreshold",
-            MAX(policy."criticalStockThreshold") AS "criticalStockThreshold",
-            MAX(policy."reorderPoint") AS "reorderPoint"
+            ${effectiveLowThreshold(Prisma.sql`(SELECT pp."category" FROM "Product" pp WHERE pp."id" = policy."productId")`)} AS "lowStockThreshold",
+            CASE WHEN COUNT(lot."id") = 0 THEN NULL ELSE MAX(policy."criticalStockThreshold") END AS "criticalStockThreshold",
+            MAX(policy."reorderPoint") AS "reorderPoint",
+            COUNT(lot."id") > 0 AS "everStocked"
           FROM "InventoryBalance" policy
           LEFT JOIN "InventoryLot" lot ON lot."productId" = policy."productId" AND lot."status" = 'active'
           LEFT JOIN "InventoryLotBalance" lb ON lb."lotId" = lot."id"
@@ -260,7 +266,7 @@ export class InventoryService {
         COUNT(*) FILTER (WHERE COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0))::int AS "criticalStock",
         COUNT(*) FILTER (WHERE b."lowStockThreshold" > 0 AND b."available" <= b."lowStockThreshold"
           AND NOT (COALESCE(b."criticalStockThreshold", 0) > 0 AND b."available" <= COALESCE(b."criticalStockThreshold", 0)))::int AS "warningStock",
-        COUNT(*) FILTER (WHERE b."available" = 0)::int AS "outOfStock",
+        COUNT(*) FILTER (WHERE b."available" = 0 AND b."everStocked")::int AS "outOfStock",
         COALESCE(SUM(b."onHandValue"), 0)::double precision AS "onHandValue",
         COALESCE(SUM(b."available" * COALESCE(p."defaultNrpInclusive", 0)), 0)::double precision AS "retailValue",
         COUNT(*) FILTER (WHERE COALESCE(p."defaultNrpInclusive", 0) <= 0)::int AS "zeroDefaultNrp",

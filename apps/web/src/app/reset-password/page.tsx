@@ -43,7 +43,7 @@ export default function ResetPasswordPage() {
   };
 
   return (
-    <main className="grid min-h-screen place-items-center bg-[#111111] p-5 text-white">
+    <main className="auth-theme grid min-h-screen place-items-center bg-[#111111] p-5 text-white">
       <section className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.055] p-7 shadow-[0_30px_80px_-46px_rgba(0,0,0,0.9)] sm:p-9">
         <Link href="/" className="flex w-max items-center gap-3">
           <CompanyLogo className="h-11 w-11" imageClassName="p-0.5" />

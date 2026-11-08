@@ -1,5 +1,6 @@
 'use client';
 
+import { ThemeToggleButton } from '@/components/theme-toggle';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, gql } from '@apollo/client';
@@ -73,7 +74,8 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#111111] text-white">
+    <main className="auth-theme min-h-screen overflow-hidden bg-[#111111] text-white">
+      <div className="fixed right-4 top-4 z-50"><ThemeToggleButton /></div>
       <div className="relative grid min-h-screen lg:grid-cols-[1.08fr_0.92fr]">
         <section className="relative hidden min-h-screen flex-col justify-between overflow-hidden border-r border-white/10 bg-[#0d0d0d] p-10 lg:flex xl:p-14">
           <div className="absolute inset-0 bg-[linear-gradient(145deg,rgba(157,42,36,0.18),transparent_46%),linear-gradient(0deg,rgba(255,255,255,0.02),rgba(255,255,255,0.02))]" />

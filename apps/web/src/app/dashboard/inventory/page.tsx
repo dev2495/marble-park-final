@@ -184,6 +184,9 @@ export default function InventoryPage() {
       } catch { localStorage.removeItem('mp.inventory.view'); }
     }
     if (stockFilters.some(([value]) => value && value === linkedState)) setStockState(linkedState);
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('brand') !== null) setBrand(query.get('brand') || '');
+    if (query.get('category') !== null) setCategory(query.get('category') || '');
   }, []);
 
   const exportCsv = () => {

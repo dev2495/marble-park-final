@@ -16,6 +16,7 @@ import { DashboardsModule } from './modules/dashboards/dashboards.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { ImportsModule } from './modules/imports/imports.module';
 import { ProductsModule } from './modules/products/products.module';
+import { OwnerReportsModule } from './modules/owner-reports/owner-reports.module';
 import { SystemModule } from './modules/system/system.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
@@ -84,6 +85,7 @@ import { AssetsModule } from './modules/assets/assets.module';
     AuthModule,
     UsersModule,
     ProductsModule,
+    OwnerReportsModule,
     CustomersModule,
     LeadsModule,
     QuotesModule,

@@ -1,3 +1,4 @@
+import { stockStatus, stockThreshold } from '../common/stock-status';
 import { Injectable } from '@nestjs/common';
 import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 import { PrismaService } from '../prisma/prisma.service';
@@ -202,6 +203,7 @@ export class DashboardsService {
   async getInventoryDashboard(): Promise<any> {
     const balances = await this.prisma.inventoryBalance.findMany({ include: { product: true } } as any) as any[];
     const truth = await inventoryTruthByProduct(this.prisma, balances.map((row) => row.productId));
+    const stockedBefore = new Set((await this.prisma.inventoryLot.findMany({ distinct: ['productId'], select: { productId: true } } as any) as any[]).map((row) => row.productId));
 
     const summary = {
       totalQuantity: 0,
@@ -226,9 +228,9 @@ export class DashboardsService {
       summary.totalQuantity += stock.onHand;
       summary.totalAvailable += stock.available;
       summary.totalReserved += stock.reserved;
-      const threshold = balance.reorderPoint ?? balance.lowStockThreshold ?? 5;
-      if (Number(threshold) > 0 && stock.available <= Number(threshold)) summary.lowStock++;
-      if (stock.available === 0) summary.outOfStock++;
+      const status = stockStatus({ everStocked: stockedBefore.has(balance.productId), onHand: stock.onHand, available: stock.available, threshold: stockThreshold(balance.product?.category, balance.lowStockThreshold, balance.reorderPoint) });
+      if (status === 'Running low' || status === 'Ran out') summary.lowStock++;
+      if (status === 'Ran out') summary.outOfStock++;
       summary.totalValue += stock.onHandValue;
       if (stock.onHand > 0) {
         summary.stockedProducts++;
