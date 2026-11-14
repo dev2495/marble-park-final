@@ -203,6 +203,14 @@ function imageSrc(line, requestUrl) {
   return buildAbsoluteUrl(raw, requestUrl);
 }
 
+function imageCandidates(line) {
+  const media = safeJson(line.media, {});
+  const gallery = Array.isArray(media.gallery) ? media.gallery : Array.isArray(media.images) ? media.images : [];
+  const raw = [line.quoteImage, line.customImageUrl, media.primaryUrl, media.primary, media.primaryImage,
+    ...gallery.map((item) => (typeof item === 'string' ? item : item?.url)), media.thumbnailUrl];
+  return [...new Set(raw.map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
 function assetMime(url, contentType) {
   const normalized = String(contentType || '').split(';')[0].trim().toLowerCase();
   if (normalized.startsWith('image/')) return normalized;
@@ -210,6 +218,31 @@ function assetMime(url, contentType) {
   if (pathname.endsWith('.png')) return 'image/png';
   if (pathname.endsWith('.webp')) return 'image/webp';
   return 'image/jpeg';
+}
+
+function sniffImageMime(content, fallback) {
+  if (content.length >= 3 && content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff) return 'image/jpeg';
+  if (content.length >= 8 && content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (content.length >= 12 && content.subarray(0, 4).toString('ascii') === 'RIFF' && content.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  return fallback;
+}
+
+// react-pdf only draws JPEG and PNG. Uploaded photos are WebP, so convert
+// anything else to PNG here; otherwise the picture is silently left out.
+async function pdfReadyImage(content, declaredMime) {
+  const mime = sniffImageMime(content, declaredMime);
+  if (mime === 'image/jpeg' || mime === 'image/png') return { mime, content };
+  try {
+    const sharp = require('sharp');
+    const png = await sharp(content, { density: 200 })
+      .resize({ width: 900, height: 900, fit: 'inside', withoutEnlargement: true })
+      .png()
+      .toBuffer();
+    return { mime: 'image/png', content: png };
+  } catch (error) {
+    console.error(`[quote-pdf] image could not be converted from ${mime}: ${error?.message || error}`);
+    return null;
+  }
 }
 
 async function hydrateImages(payload, requestUrl, apiUrl) {
@@ -236,7 +269,9 @@ async function hydrateImages(payload, requestUrl, apiUrl) {
           if (!response.ok) continue;
           const content = Buffer.from(await response.arrayBuffer());
           if (!content.length) continue;
-          return `data:${assetMime(candidate, response.headers.get('content-type'))};base64,${content.toString('base64')}`;
+          const pdfImage = await pdfReadyImage(content, assetMime(candidate, response.headers.get('content-type')));
+          if (!pdfImage) continue;
+          return `data:${pdfImage.mime};base64,${pdfImage.content.toString('base64')}`;
         } catch {}
       }
       return null;
@@ -252,7 +287,16 @@ async function hydrateImages(payload, requestUrl, apiUrl) {
     metadata: { ...safeJson(brand.metadata, {}), logoUrl: await toDataUri(safeJson(brand.metadata, {}).logoUrl) },
   })));
   const quote = { ...payload.quote };
-  quote.lines = await Promise.all(asArray(quote.lines).map(async (line) => ({ ...line, _pdfImage: await toDataUri(imageSrc(line, requestUrl)) })));
+  // Try the quote's saved photo first, then every product photo, so a single
+  // missing or unreadable file never leaves the line without a picture.
+  const firstWorking = async (sources) => {
+    for (const source of sources) {
+      const uri = await toDataUri(source);
+      if (uri) return uri;
+    }
+    return null;
+  };
+  quote.lines = await Promise.all(asArray(quote.lines).map(async (line) => ({ ...line, _pdfImage: await firstWorking(imageCandidates(line)) })));
   const quoteMeta = safeJson(quote.quoteMeta, {});
   if (Array.isArray(quoteMeta.brandSelectionSnapshot)) {
     quoteMeta.brandSelectionSnapshot = await Promise.all(quoteMeta.brandSelectionSnapshot.map(async (brand) => ({
@@ -873,7 +917,7 @@ async function main() {
   process.stdout.write(buffer);
 }
 
-module.exports = { brandCodeFor, productCodeFor, identityCodesFor, buildDocument, groupByArea };
+module.exports = { brandCodeFor, productCodeFor, identityCodesFor, buildDocument, groupByArea, hydrateImages, pdfReadyImage };
 
 if (require.main === module) {
   main().catch((error) => {
