@@ -1,0 +1,262 @@
+[
+ {
+  "id": "door-01",
+  "role": "door",
+  "sku": "ROSSO-LAV-1200X2400-MM-LAPPATO-MATT",
+  "title": "Rosso Levanto",
+  "brand": "Nexion",
+  "meta": "1200 × 2400 mm · Lappato",
+  "file": "/media/door-01.webp",
+  "aspect": 0.3733
+ },
+ {
+  "id": "slab-01",
+  "role": "slab",
+  "sku": "BIANCAFABULASGLOSSY",
+  "title": "Bianca Fabulas",
+  "brand": "",
+  "meta": "Polished",
+  "file": "/media/slab-01.webp",
+  "aspect": 0.5
+ },
+ {
+  "id": "slab-02",
+  "role": "slab",
+  "sku": "MP-T-0529-1200X600-2PC-2-GHR",
+  "title": "Costco Nero",
+  "brand": "Minaxi",
+  "meta": "1200 × 600 mm · High-gloss",
+  "file": "/media/slab-02.webp",
+  "aspect": 0.499
+ },
+ {
+  "id": "slab-03",
+  "role": "slab",
+  "sku": "MP-D-1224-0359-1200X2400-MM-FULL-LAPPATO",
+  "title": "Quarzo Verde Aqua",
+  "brand": "Nexion",
+  "meta": "1200 × 2400 mm · Full Lappato",
+  "file": "/media/slab-03.webp",
+  "aspect": 0.4443
+ },
+ {
+  "id": "slab-04",
+  "role": "slab",
+  "sku": "MP-D-1224-0390-1200X2400-MM-FULL-LAPPATO",
+  "title": "Statuario Freddo",
+  "brand": "Nexion",
+  "meta": "1200 × 2400 mm · Full Lappato",
+  "file": "/media/slab-04.webp",
+  "aspect": 0.4404
+ },
+ {
+  "id": "slab-05",
+  "role": "slab",
+  "sku": "MP-D-1224-0348-1200X600-2PC-2-RIGATO",
+  "title": "Frappuccino",
+  "brand": "Nexion",
+  "meta": "1200 × 600 mm · Rigato",
+  "file": "/media/slab-05.webp",
+  "aspect": 0.4443
+ },
+ {
+  "id": "slab-06",
+  "role": "slab",
+  "sku": "MP-8X4-001-1200X2400-MM-GLOSSY",
+  "title": "Aristona Crema",
+  "brand": "Itaca",
+  "meta": "1200 × 2400 mm · Glossy",
+  "file": "/media/slab-06.webp",
+  "aspect": 0.5
+ },
+ {
+  "id": "slab-07",
+  "role": "slab",
+  "sku": "MP-D-1224-0441-1200X2400-MM-NATURALE",
+  "title": "Terraellno Ginepro",
+  "brand": "Nexion",
+  "meta": "1200 × 2400 mm · Naturale",
+  "file": "/media/slab-07.webp",
+  "aspect": 0.4443
+ },
+ {
+  "id": "slab-08",
+  "role": "slab",
+  "sku": "MP-D-0604-0370-1200X1800-MM-GLOSSY",
+  "title": "Classic Carrara",
+  "brand": "Simero",
+  "meta": "1200 × 1800 mm · Glossy",
+  "file": "/media/slab-08.webp",
+  "aspect": 0.6663
+ },
+ {
+  "id": "slab-09",
+  "role": "slab",
+  "sku": "MP-T-1608-GL-0167-800X1600-MM-GLOSSY",
+  "title": "Desert Stone Brown",
+  "brand": "Simero",
+  "meta": "800 × 1600 mm · Glossy",
+  "file": "/media/slab-09.webp",
+  "aspect": 0.6673
+ },
+ {
+  "id": "slab-10",
+  "role": "slab",
+  "sku": "MP-D-1224-0391-1200X2400-MM-LAPPATO-MATT",
+  "title": "Onice Aria Beige",
+  "brand": "Nexion",
+  "meta": "1200 × 2400 mm · Lappato Matt",
+  "file": "/media/slab-10.webp",
+  "aspect": 0.4443
+ },
+ {
+  "id": "slab-11",
+  "role": "slab",
+  "sku": "MP-T-0384-1200X600-MATT",
+  "title": "Sinai Red",
+  "brand": "Simero",
+  "meta": "1200 × 600 mm · Matt",
+  "file": "/media/slab-11.webp",
+  "aspect": 0.5005
+ },
+ {
+  "id": "slab-12",
+  "role": "slab",
+  "sku": "MP-D-0604-0387-1200X1800-MM-GLOSSY",
+  "title": "Nova Onyx Grey",
+  "brand": "Simero",
+  "meta": "1200 × 1800 mm · Glossy",
+  "file": "/media/slab-12.webp",
+  "aspect": 0.6673
+ },
+ {
+  "id": "slab-13",
+  "role": "slab",
+  "sku": "MP-T-1206-MIX-0109-1200X600-GLOSSY",
+  "title": "Saran Collin Crema",
+  "brand": "Simero",
+  "meta": "1200 × 600 mm · Glossy",
+  "file": "/media/slab-13.webp",
+  "aspect": 0.5005
+ },
+ {
+  "id": "slab-14",
+  "role": "slab",
+  "sku": "MP-T-0533-1200X600-2PC-2-GHR",
+  "title": "Costco Grigio",
+  "brand": "Minaxi",
+  "meta": "1200 × 600 mm · High-gloss",
+  "file": "/media/slab-14.webp",
+  "aspect": 0.499
+ },
+ {
+  "id": "floor-01",
+  "role": "floor",
+  "sku": "MP-T-0093-1200X1800-MM-MARBLE-TOUCH",
+  "title": "Alborn Beige",
+  "brand": "Itaca",
+  "meta": "1200 × 1800 mm · Marble Touch",
+  "file": "/media/floor-01.webp",
+  "aspect": 1.4993
+ },
+ {
+  "id": "sink-01",
+  "role": "sink",
+  "sku": "BIGBOWLMONTANACRATER",
+  "title": "Big Bowl",
+  "brand": "Carysil",
+  "meta": "Quartz · Montana Crater",
+  "file": "/media/sink-01.webp",
+  "aspect": 1.3264
+ },
+ {
+  "id": "sink-02",
+  "role": "sink",
+  "sku": "BIGBOWLCONCRETE",
+  "title": "Big Bowl",
+  "brand": "Carysil",
+  "meta": "Quartz · Concrete",
+  "file": "/media/sink-02.webp",
+  "aspect": 1.3264
+ },
+ {
+  "id": "sink-03",
+  "role": "sink",
+  "sku": "BIGBOWLESPRESSOBROWNMETALIC",
+  "title": "Big Bowl",
+  "brand": "Carysil",
+  "meta": "Quartz · Espresso Brown",
+  "file": "/media/sink-03.webp",
+  "aspect": 1.3264
+ },
+ {
+  "id": "sink-04",
+  "role": "sink",
+  "sku": "780CHAMPAGANEIVORY",
+  "title": "Walts 780",
+  "brand": "Carysil",
+  "meta": "Quartz · Champagne Ivory",
+  "file": "/media/sink-04.webp",
+  "aspect": 1.5284
+ },
+ {
+  "id": "sink-05",
+  "role": "sink",
+  "sku": "SALSACROMA",
+  "title": "Salsa",
+  "brand": "Carysil",
+  "meta": "Quartz · Croma",
+  "file": "/media/sink-05.webp",
+  "aspect": 1.1663
+ },
+ {
+  "id": "sink-06",
+  "role": "sink",
+  "sku": "610ESPRESSOBRWONMETALLIC",
+  "title": "Walts 610",
+  "brand": "Carysil",
+  "meta": "Quartz · Espresso Brown",
+  "file": "/media/sink-06.webp",
+  "aspect": 1.1991
+ },
+ {
+  "id": "sink-07",
+  "role": "sink",
+  "sku": "610CROMA",
+  "title": "Walts 610",
+  "brand": "Carysil",
+  "meta": "Quartz · Croma",
+  "file": "/media/sink-07.webp",
+  "aspect": 1.1991
+ },
+ {
+  "id": "sink-08",
+  "role": "sink",
+  "sku": "780SNOVAWHITE",
+  "title": "Walts 780",
+  "brand": "Carysil",
+  "meta": "Quartz · Snova White",
+  "file": "/media/sink-08.webp",
+  "aspect": 1.5284
+ },
+ {
+  "id": "feature-01",
+  "role": "feature",
+  "sku": "MP-D-1224-0413-800X1600-MM-FULL-LAPPATO",
+  "title": "Rosso Levanto",
+  "brand": "Nexion",
+  "meta": "800 × 1600 mm · Full Lappato",
+  "file": "/media/feature-01.webp",
+  "aspect": 0.4443
+ },
+ {
+  "id": "wall-01",
+  "role": "wall",
+  "sku": "MP-D-1224-0409-1200X2400-MM-FULL-LAPPATO",
+  "title": "Calacatta Nero",
+  "brand": "Nexion",
+  "meta": "1200 × 2400 mm · Full Lappato",
+  "file": "/media/wall-01.webp",
+  "aspect": 0.4443
+ }
+]

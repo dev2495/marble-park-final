@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Marble Park — Bath, tile and surface showroom, Vapi</title>
+  <meta name="description" content="Walk through Marble Park, Vapi: large-format tiles and slabs, faucets and showers, sanitaryware and kitchen sinks from Grohe, Hansgrohe, Jaquar, Hindware, Nexion and more." />
+  <meta name="theme-color" content="#0b0a09" />
+  <meta property="og:title" content="Marble Park — a showroom you can walk through" />
+  <meta property="og:description" content="Premium bath, tile and surface selections for considered spaces. Char Rasta, Vapi." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://www.marblepark.in/" />
+  <meta property="og:image" content="https://www.marblepark.in/og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="canonical" href="https://www.marblepark.in/" />
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"HomeGoodsStore","name":"Marble Park","url":"https://www.marblepark.in/","image":"https://www.marblepark.in/og.jpg","telephone":"+91-260-2424498","email":"sales@marblepark.in","address":{"@type":"PostalAddress","streetAddress":"Near DCB Bank, Char Rasta","addressLocality":"Vapi","addressRegion":"Gujarat","postalCode":"396191","addressCountry":"IN"}}</script>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body data-tone="dark" class="is-loading">
+  <a class="skip" href="#visit">Skip the walk-through</a>
+
+  <div id="loader" role="status" aria-live="polite">
+    <svg class="mark mark--draw" viewBox="-30 -10 1400 870" aria-hidden="true">
+      <path class="mark__ink" pathLength="1" d="M24 830V62l343 450" />
+      <path class="mark__red" pathLength="1" d="M210 830 715 180C790 85 890 22 990 22a325 325 0 1 1-72 640" />
+      <path class="mark__ink" pathLength="1" d="M818 265v565" />
+    </svg>
+    <p class="loader__text">Opening the showroom <span id="loader-pct">0</span>%</p>
+  </div>
+
+  <canvas id="stage" aria-hidden="true"></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="hud">
+    <a class="brand" href="#top" aria-label="Marble Park, back to the entrance">
+      <svg class="mark" viewBox="-30 -10 1400 870" aria-hidden="true">
+        <path class="mark__ink" d="M24 830V62l343 450" />
+        <path class="mark__red" d="M210 830 715 180C790 85 890 22 990 22a325 325 0 1 1-72 640" />
+        <path class="mark__ink" d="M818 265v565" />
+      </svg>
+      <span class="brand__name">Marble <b>Park</b></span>
+    </a>
+    <a class="pill" href="#visit">Visit the showroom</a>
+  </header>
+
+  <nav class="rail" aria-label="Rooms">
+    <button type="button" data-stop="arrival" aria-label="Go to: Arrival"><span>Arrival</span></button>
+    <button type="button" data-stop="stone" aria-label="Go to: Stone gallery"><span>Stone</span></button>
+    <button type="button" data-stop="rain" aria-label="Go to: Rain room"><span>Rain</span></button>
+    <button type="button" data-stop="basin" aria-label="Go to: Vanity"><span>Basin</span></button>
+    <button type="button" data-stop="form" aria-label="Go to: WC wall"><span>Form</span></button>
+    <button type="button" data-stop="kitchen" aria-label="Go to: Kitchen"><span>Kitchen</span></button>
+    <button type="button" data-stop="visit" aria-label="Go to: Visit"><span>Visit</span></button>
+  </nav>
+
+  <main id="top">
+    <div id="journey">
+      <section class="card card--hero" data-in="-1" data-out="0.045">
+        <p class="eyebrow">Vapi, Gujarat <i></i> Bath, tile &amp; surface</p>
+        <h1 class="display"><span>Marble</span> <span><em>Park</em></span></h1>
+        <p class="lede">Four thousand ways to finish a room.<br />Walk through them.</p>
+        <p class="cue"><span class="cue__line"></span>Scroll to enter</p>
+      </section>
+
+      <section class="card" data-in="0.094" data-out="0.14">
+        <p class="eyebrow">Room one <i></i> The stone gallery</p>
+        <h2 class="headline">Stone, stood up<br />to be <em>seen</em>.</h2>
+        <p class="lede">Slabs up to 1200 × 2400 mm from Nexion, Simero and Itaca, shown whole, the way they will meet your wall.</p>
+      </section>
+
+      <section class="card" data-in="0.333" data-out="0.383">
+        <p class="eyebrow">Room two <i></i> The rain room</p>
+        <h2 class="headline">Water, given<br />a <em>shape</em>.</h2>
+        <p class="lede">Five showers running: Grohe rain heads, Comlux hand showers, and an Aquant ceiling panel stepping through rain, waterfall and mist.</p>
+      </section>
+
+      <section class="card" data-in="0.466" data-out="0.512">
+        <p class="eyebrow">Room three <i></i> The vanity</p>
+        <h2 class="headline">Where the<br />morning <em>starts</em>.</h2>
+        <p class="lede">Comlux countertop basins in matt forest green, black, navy and cappuccino, on a floating counter of Statuario.</p>
+      </section>
+
+      <section class="card" data-in="0.597" data-out="0.642">
+        <p class="eyebrow">Room four <i></i> The form wall</p>
+        <h2 class="headline">Porcelain, drawn<br />in a single <em>line</em>.</h2>
+        <p class="lede">Comlux B-2351 and ROTO wall-hung WCs in four matt glazes, each under its own flush plate.</p>
+      </section>
+
+      <section class="card" data-in="0.752" data-out="0.8">
+        <p class="eyebrow">Room five <i></i> The kitchen</p>
+        <h2 class="headline">Where the day<br />actually <em>happens</em>.</h2>
+        <p class="lede">Carysil quartz sinks, from Snova White to Espresso Brown, set into the counter they were made for.</p>
+      </section>
+
+      <section class="card card--finale" data-in="0.955" data-out="2">
+        <p class="eyebrow">The last room is the real one</p>
+        <h2 class="headline">Now come and<br />touch the <em>stone</em>.</h2>
+        <p class="lede">A screen flattens everything. The showroom does not.</p>
+        <a class="pill pill--solid" href="#visit">Plan your visit</a>
+      </section>
+    </div>
+
+    <aside id="caption" aria-live="off">
+      <p class="caption__count"><span id="caption-index">01</span><i></i><span id="caption-total">14</span></p>
+      <p class="caption__title" id="caption-title"></p>
+      <p class="caption__meta" id="caption-meta"></p>
+    </aside>
+
+    <div id="after">
+      <section class="block houses" aria-labelledby="houses-title">
+        <p class="eyebrow reveal">On the floor</p>
+        <h2 class="headline reveal" id="houses-title">The houses<br />we <em>keep</em>.</h2>
+        <ul class="houses__list">
+          <li class="reveal"><b>Grohe</b><span>Faucets &amp; showers</span></li>
+          <li class="reveal"><b>Hansgrohe</b><span>Faucets &amp; showers</span></li>
+          <li class="reveal"><b>Jaquar</b><span>Bath, complete</span></li>
+          <li class="reveal"><b>Hindware</b><span>Sanitaryware</span></li>
+          <li class="reveal"><b>American Standard</b><span>Sanitaryware</span></li>
+          <li class="reveal"><b>Aquant</b><span>Faucets &amp; showers</span></li>
+          <li class="reveal"><b>Comlux</b><span>Basins &amp; WCs</span></li>
+          <li class="reveal"><b>Carysil</b><span>Kitchen sinks</span></li>
+          <li class="reveal"><b>Nexion</b><span>Large-format slabs</span></li>
+          <li class="reveal"><b>Simero</b><span>Tiles</span></li>
+          <li class="reveal"><b>Itaca</b><span>Tiles</span></li>
+          <li class="reveal"><b>Marfil</b><span>Tiles</span></li>
+          <li class="reveal"><b>Dimore</b><span>Surfaces</span></li>
+          <li class="reveal"><b>Nirali</b><span>Kitchen sinks</span></li>
+                  </ul>
+      </section>
+
+      <section class="block figures" aria-label="The catalogue in numbers">
+        <div class="figure reveal"><b data-count="4281">4,281</b><span>products in the catalogue</span></div>
+        <div class="figure reveal"><b data-count="2736">2,736</b><span>tiles and slabs</span></div>
+        <div class="figure reveal"><b data-count="974">974</b><span>faucets and showers</span></div>
+        <div class="figure reveal"><b data-count="332">332</b><span>sanitaryware pieces</span></div>
+      </section>
+
+      <section class="block visit" id="visit" aria-labelledby="visit-title">
+        <div class="visit__lead">
+          <p class="eyebrow reveal">Visit</p>
+          <h2 class="headline reveal" id="visit-title">Char Rasta,<br /><em>Vapi</em>.</h2>
+          <p class="lede reveal">Premium bath, tile and surface selections for considered spaces. Bring your drawings; we will walk the rooms with you.</p>
+          <div class="visit__actions reveal">
+            <a class="pill pill--solid" href="https://www.google.com/maps/search/?api=1&amp;query=Marble+Park+Char+Rasta+Vapi" target="_blank" rel="noopener">Get directions</a>
+            <a class="pill" href="https://wa.me/919427119271" target="_blank" rel="noopener">WhatsApp us</a>
+          </div>
+        </div>
+        <dl class="visit__details">
+          <div class="reveal"><dt>Showroom</dt><dd>Near DCB Bank, Char Rasta,<br />Vapi, Gujarat 396191</dd></div>
+          <div class="reveal"><dt>Call</dt><dd><a href="tel:+912602424498">0260 242 4498</a><br /><a href="tel:+919427119271">94271 19271</a><br /><a href="tel:+917506133166">75061 33166</a><br /><a href="tel:+919712508070">97125 08070</a></dd></div>
+          <div class="reveal"><dt>Write</dt><dd><a href="mailto:sales@marblepark.in">sales@marblepark.in</a></dd></div>
+        </dl>
+      </section>
+
+      <footer class="foot">
+        <span>© 2026 Marble Park</span>
+        <span>Bath · Tile · Surface</span>
+        <a href="#top">Back to the entrance ↑</a>
+      </footer>
+    </div>
+  </main>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

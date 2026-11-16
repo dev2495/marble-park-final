@@ -26,3 +26,49 @@
 		format json
 	}
 }
+
+# The ERP's previous address. Printed QR stickers and links already sent to
+# customers use it, so every path is sent on to the same path at APP_HOST.
+# Must differ from APP_HOST.
+{$LEGACY_APP_HOST:65-1-24-110.sslip.io} {
+	redir https://{$APP_HOST}{uri} permanent
+}
+
+# Public website (static build of website/, synced to ${DATA_ROOT}/website).
+# Takes effect once marblepark.in and www.marblepark.in point at this server.
+marblepark.in {
+	redir https://www.marblepark.in{uri} permanent
+}
+
+www.marblepark.in {
+	encode zstd gzip
+	root * /srv/website
+	file_server
+
+	@hashed path /assets/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	@media path /media/* /og.jpg /favicon.svg
+	header @media Cache-Control "public, max-age=604800"
+	@page path / /index.html
+	header @page Cache-Control "no-cache"
+
+	# Single-page site: unknown paths go back to the entrance.
+	handle_errors 404 {
+		redir * / 302
+	}
+
+	header {
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; upgrade-insecure-requests"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

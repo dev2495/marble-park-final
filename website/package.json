@@ -1,0 +1,25 @@
+{
+  "name": "marble-park-website",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Marble Park public website: a scroll-driven walk through the showroom.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "sync:media": "node scripts/sync-media.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/fraunces": "^5.1.0",
+    "@fontsource-variable/manrope": "^5.1.0",
+    "lenis": "^1.1.18",
+    "three": "^0.171.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.171.0",
+    "sharp": "^0.33.5",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
+  }
+}

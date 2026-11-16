@@ -75,11 +75,13 @@ services:
     restart: unless-stopped
     environment:
       APP_HOST: ${APP_HOST}
+      LEGACY_APP_HOST: ${LEGACY_APP_HOST:-65-1-24-110.sslip.io}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${DATA_ROOT}/website:/srv/website:ro
       - ${DATA_ROOT}/caddy/data:/data
       - ${DATA_ROOT}/caddy/config:/config
     depends_on:
