@@ -79,13 +79,15 @@ const find = (id: string) => items.find((item) => item.id === id)!;
 
 const INK = new THREE.Color('#0b0a09');
 const IVORY = new THREE.Color('#e9e2d6');
+const DUSK = new THREE.Color('#2a2b33');
 
 const HALF = 3.6; // half-width of the dark corridor
 const CEILING = 5.2;
 const WING_END = -70; // gallery and bath wing share one corridor
 const KITCHEN_END = -98;
 const FEATURE = -116; // the closing wall
-const CORRIDOR_STRIP: Strip = { x: 0, y: 5.18, from: 0, to: WING_END, colour: '#ffe4bd' };
+const ENTRY = -1.05; // the gallery begins just behind the doors
+const CORRIDOR_STRIP: Strip = { x: 0, y: 5.18, from: -1.05, to: WING_END, colour: '#ffe4bd' };
 const KITCHEN_STRIP: Strip = { x: 1.7, y: 5.38, from: WING_END - 0.5, to: KITCHEN_END, colour: '#ffffff' };
 
 // The three display bays: which wall, where along the corridor, how wide.
@@ -205,10 +207,13 @@ const bandTexture = (colour: string, vertical: boolean, peak = 0.5) => canvasTex
 });
 
 const flat = (colour: string, extra: THREE.MeshBasicMaterialParameters = {}) => new THREE.MeshBasicMaterial({ color: colour, ...extra });
+// Decals (light washes, pools, contact shadows) sit a hair off the surface; the polygon
+// offset pulls them forward in depth so they cannot shimmer against it as the camera moves.
+const DECAL = { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 };
 const glow = (texture: THREE.Texture, opacity = 1) => new THREE.MeshBasicMaterial({
-  map: texture, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+  map: texture, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, ...DECAL,
 });
-const shade = (texture: THREE.Texture) => new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0, depthWrite: false });
+const shade = (texture: THREE.Texture) => new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0, depthWrite: false, ...DECAL });
 
 type Slab = { front: THREE.ShaderMaterial; mirror: THREE.MeshBasicMaterial; pool?: THREE.MeshBasicMaterial; z: number };
 
@@ -244,7 +249,7 @@ export class World {
 
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(54, 1, 0.1, 140);
+  private camera = new THREE.PerspectiveCamera(54, 1, 0.2, 150);
   private fog = new THREE.Fog(INK.clone(), 4, 26);
   private textures = new Map<string, THREE.Texture>();
   private keys = makeRail(0.8, 0.5);
@@ -263,6 +268,13 @@ export class World {
   private sign: THREE.MeshBasicMaterial[] = [];
   private halo!: THREE.MeshBasicMaterial;
   private wash!: THREE.MeshBasicMaterial;
+  private sky!: THREE.Mesh;
+  private inRain = false;
+  // Adaptive resolution: drop the pixel ratio on devices that cannot hold the frame rate.
+  private ratioCap = Math.min(window.devicePixelRatio, 2);
+  private ratio = Math.min(window.devicePixelRatio, 2);
+  private frameAverage = 1 / 60;
+  private frameClock = 0;
   private veilDark!: THREE.MeshBasicMaterial;
 
   private target = 0;
@@ -284,7 +296,7 @@ export class World {
   constructor(canvas: HTMLCanvasElement, reducedMotion: boolean) {
     this.still = reducedMotion;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.ratio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Tone mapping applies to the 3D models (the surface shaders handle their own light).
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -398,46 +410,197 @@ export class World {
     this.built = true;
   }
 
-  /** Night outside, and two bookmatched Rosso Levanto doors. */
+  /**
+   * The entrance at blue hour: a facade of warm cream stone grazed by
+   * uplights, a deep bronze portal framed in brass around two book-matched
+   * Rosso Levanto doors, a slim canopy with downlights, bollards along a
+   * polished stone approach, and all of it reflected in the paving.
+   */
   private buildThreshold() {
-    this.level(40, 26, flat('#080707', { transparent: true, opacity: 0.84 }), 0, 0, 12);
-    const wall = flat('#131110');
-    this.add(this.box(14, 11, 0.6, wall), -8.75, 5.5, -0.35);
-    this.add(this.box(14, 11, 0.6, wall), 8.75, 5.5, -0.35);
-    this.add(this.box(3.5, 6.3, 0.6, wall), 0, 7.85, -0.35);
+    // Sky: a dusk gradient on a large dome, never fogged.
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(120, 32, 16), new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false, fog: false,
+      vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: /* glsl */ `
+        varying vec3 vDir;
+        void main() {
+          float h = clamp(vDir.y, -0.2, 1.0);
+          vec3 zenith = vec3(0.035, 0.055, 0.105);
+          vec3 mid = vec3(0.10, 0.13, 0.21);
+          vec3 horizon = vec3(0.36, 0.30, 0.30);
+          vec3 colour = mix(horizon, mid, smoothstep(0.0, 0.18, h));
+          colour = mix(colour, zenith, smoothstep(0.18, 0.75, h));
+          gl_FragColor = vec4(colour, 1.0);
+          #include <colorspace_fragment>
+        }`,
+    }));
+    sky.renderOrder = -10;
+    this.add(sky, 0, 0, 10);
+    this.sky = sky;
 
-    const stone = this.textures.get('door-01')!;
-    const mirrored = stone.clone();
+    const portalW = 4.8;
+    const portalH = 6.4;
+    const facadeH = 10.5;
+    const facadeHalf = 16;
+    const canopyY = portalH + 0.05;
+    const canopyDepth = 2.8;
+    // Downlights in the canopy, also lighting the doors and the portal.
+    const downlights: Lamp[] = [-1.6, -0.55, 0.55, 1.6].map((x) => ({ position: [x, canopyY - 0.1, 1.6], target: [x * 0.8, 0, 2.4], intensity: 1.1, angle: 38, colour: '#ffdcae' }));
+
+    // Polished dark stone approach, see-through over the mirrored facade.
+    const paving = lit({
+      map: this.textures.get('wall-01'), colour: '#8f8a85', repeat: [40 / 1.2, 28 / 2.4], book: true, grout: 0.6,
+      gloss: 1.2, ambient: 0.22, opacity: 0.8, lamps: downlights,
+    });
+    this.level(40, 28, paving, 0, 0, 13.7).renderOrder = -1;
+
+    // The facade, in panels between the uplights so each gets its own grazing scallop of light.
+    const facade = new THREE.Group();
+    const stone = this.textures.get('slab-13');
+    const panel = (x0: number, x1: number, lamp: boolean, y0 = 0) => {
+      const cx = (x0 + x1) / 2;
+      const h = facadeH - y0;
+      const material = lit({
+        map: stone, colour: '#fff4e6', repeat: [Math.abs(x1 - x0) / 1.2, h / 2.4], book: true, grout: 0.7, gloss: 0.4, ambient: 0.3,
+        lamps: lamp ? [{ position: [cx, 0.12, 0.45], target: [cx, facadeH * 0.62, -0.3], intensity: 1.15, angle: 17, colour: '#ffd9a8' }] : [],
+      });
+      const mesh = this.plane(Math.abs(x1 - x0), h, material);
+      mesh.position.set(cx, y0 + h / 2, -0.3);
+      facade.add(mesh);
+      if (lamp) {
+        const fitting = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.14), flat('#2a2622'));
+        fitting.position.set(cx, 0.025, 0.42);
+        const lens = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.08), flat('#ffe2b8'));
+        lens.rotation.x = -Math.PI / 2;
+        lens.position.set(cx, 0.052, 0.42);
+        facade.add(fitting, lens);
+      }
+    };
+    const bay = 3.2;
+    for (let x = portalW / 2; x < facadeHalf; x += bay) {
+      panel(x, Math.min(facadeHalf, x + bay), true);
+      panel(-Math.min(facadeHalf, x + bay), -x, true);
+    }
+    panel(-portalW / 2, portalW / 2, false, portalH); // above the portal, behind the canopy
+    // A shadow-gap plinth and a brass parapet line.
+    const bronze = lit({ colour: '#3b2d23', noise: 0.15, ambient: 0.35, gloss: 0.6, lamps: downlights });
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(facadeHalf * 2, 0.22, 0.1), flat('#16120f'));
+    plinth.position.set(0, 0.11, -0.24);
+    const parapet = new THREE.Mesh(new THREE.BoxGeometry(facadeHalf * 2, 0.03, 0.08), flat('#b9975f'));
+    parapet.position.set(0, facadeH - 0.6, -0.24);
+    facade.add(plinth, parapet);
+    this.scene.add(facade);
+
+    // The portal: a deep bronze reveal around the doors, edged in brass, with a lit transom above them.
+    const depth = 0.7;
+    const portal = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const jamb = new THREE.Mesh(new THREE.PlaneGeometry(depth, portalH), bronze);
+      jamb.rotation.y = -side * Math.PI / 2;
+      jamb.position.set(side * portalW / 2, portalH / 2, -0.3 + depth / 2 - depth);
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(0.06, portalH + 0.06, 0.06), flat('#c7a46b'));
+      edge.position.set(side * (portalW / 2 + 0.03), portalH / 2, -0.27);
+      portal.add(jamb, edge);
+    }
+    const head = new THREE.Mesh(new THREE.PlaneGeometry(portalW, depth), bronze);
+    head.rotation.x = Math.PI / 2;
+    head.position.set(0, portalH, -0.3 - depth / 2);
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(portalW + 0.12, 0.06, 0.06), flat('#c7a46b'));
+    lintel.position.set(0, portalH + 0.03, -0.27);
+    portal.add(head, lintel);
+    // Back of the portal: bronze around the doors, and a warm glass transom over them.
+    const back = -0.3 - depth;
+    for (const side of [-1, 1]) {
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry((portalW - 3.5) / 2, portalH), bronze);
+      strip.position.set(side * (3.5 / 2 + (portalW - 3.5) / 4), portalH / 2, back);
+      portal.add(strip);
+    }
+    const transomGlass = canvasTexture(8, 64, (context) => {
+      const gradient = context.createLinearGradient(0, 0, 0, 64);
+      gradient.addColorStop(0, '#5a3d24');
+      gradient.addColorStop(1, '#f0c58c');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 8, 64);
+    });
+    const transom = new THREE.Mesh(new THREE.PlaneGeometry(3.5, portalH - 4.85), new THREE.MeshBasicMaterial({ map: transomGlass, fog: false }));
+    transom.position.set(0, 4.85 + (portalH - 4.85) / 2, back + 0.01);
+    for (const x of [-0.875, 0, 0.875]) {
+      const mullion = new THREE.Mesh(new THREE.BoxGeometry(0.03, portalH - 4.85, 0.03), flat('#c7a46b'));
+      mullion.position.set(x, 4.85 + (portalH - 4.85) / 2, back + 0.02);
+      portal.add(mullion);
+    }
+    const transomBar = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.08, 0.06), flat('#c7a46b'));
+    transomBar.position.set(0, 4.8, back + 0.02);
+    portal.add(transom, transomBar);
+    this.scene.add(portal);
+
+    // Canopy: a slim cantilevered slab with downlights, and the pools they throw.
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(portalW + 2.6, 0.22, canopyDepth), [flat('#1d1814'), flat('#1d1814'), flat('#2a231d'), flat('#120f0d'), flat('#1d1814'), flat('#1d1814')]);
+    canopy.position.set(0, canopyY + 0.11, -0.3 + canopyDepth / 2);
+    const fascia = new THREE.Mesh(new THREE.BoxGeometry(portalW + 2.6, 0.04, 0.02), flat('#c7a46b'));
+    fascia.position.set(0, canopyY + 0.2, -0.3 + canopyDepth + 0.01);
+    this.scene.add(canopy, fascia);
+    const pool = glowTexture('rgba(255,214,165,0.42)', 'rgba(255,214,165,0)');
+    for (const lamp of downlights) {
+      const lens = new THREE.Mesh(new THREE.CircleGeometry(0.06, 24), flat('#fff1d8'));
+      lens.rotation.x = Math.PI / 2;
+      lens.position.set(lamp.position[0], canopyY - 0.002, lamp.position[2]);
+      const pad = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.6), glow(pool, 0.9));
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set(lamp.target[0], 0.006, lamp.target[2]);
+      this.scene.add(lens, pad);
+    }
+
+    // Bollards lining the approach.
+    const post = lit({ colour: '#2b2520', ambient: 0.3, gloss: 0.5 });
+    const bollardGlow = glowTexture('rgba(255,210,160,0.38)', 'rgba(255,210,160,0)');
+    for (const side of [-1, 1]) {
+      for (let z = 3.6; z <= 15; z += 3.8) {
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.85, 0.16), post);
+        body.position.set(side * 3.1, 0.425, z);
+        const lightSlot = new THREE.Mesh(new THREE.BoxGeometry(0.165, 0.1, 0.165), flat('#ffdcae'));
+        lightSlot.position.set(side * 3.1, 0.72, z);
+        const pad = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 2.2), glow(bollardGlow, 0.85));
+        pad.rotation.x = -Math.PI / 2;
+        pad.position.set(side * 3.1, 0.007, z);
+        this.scene.add(body, lightSlot, pad);
+        this.reflect(body);
+      }
+    }
+    // The building and its canopy, upside down in the polished paving.
+    this.reflect(facade);
+    this.reflect(portal);
+    this.reflect(canopy);
+
+    // The doors: two leaves of book-matched Rosso Levanto with full-height brass pulls.
+    const doorStone = this.textures.get('door-01')!;
+    const mirrored = doorStone.clone();
     mirrored.wrapS = THREE.RepeatWrapping;
     mirrored.repeat.x = -1;
     mirrored.needsUpdate = true;
-    const edge = flat('#2a100d');
-    const brass = flat('#b9975f');
+    const doorEdge = flat('#2a100d');
+    const brass = flat('#c7a46b');
     const leaf = (group: THREE.Group, map: THREE.Texture, side: 1 | -1) => {
-      const face = new THREE.MeshBasicMaterial({ map, color: new THREE.Color(0.86, 0.86, 0.86) });
-      const mesh = this.box(1.75, 4.7, 0.09, [edge, edge, edge, edge, face, edge]);
-      mesh.position.set(side * 0.875, 2.35, 0);
-      const handle = this.box(0.035, 1.5, 0.045, brass);
-      handle.position.set(side * 1.57, 2.25, 0.09);
-      const reflection = this.plane(1.75, 4.7, new THREE.MeshBasicMaterial({ map, side: THREE.DoubleSide, color: new THREE.Color(0.7, 0.7, 0.7) }));
+      const face = lit({ map, ambient: 0.42, gloss: 0.9, lamps: downlights });
+      const mesh = this.box(1.75, 4.8, 0.09, [doorEdge, doorEdge, doorEdge, doorEdge, face, doorEdge]);
+      mesh.position.set(side * 0.875, 2.4, 0);
+      const handle = this.box(0.035, 1.8, 0.045, brass);
+      handle.position.set(side * 1.57, 2.3, 0.09);
+      const reflection = this.plane(1.75, 4.8, new THREE.MeshBasicMaterial({ map, side: THREE.DoubleSide, color: new THREE.Color(0.55, 0.55, 0.55) }));
       reflection.scale.y = -1;
-      reflection.position.set(side * 0.875, -2.35, 0.05);
+      reflection.position.set(side * 0.875, -2.4, 0.05);
+      reflection.renderOrder = -3;
       group.add(mesh, handle, reflection);
-      this.add(group, -side * 1.75, 0, 0);
+      this.add(group, -side * 1.75, 0, back + 0.05);
     };
-    leaf(this.doorLeft, stone, 1);
+    leaf(this.doorLeft, doorStone, 1);
     leaf(this.doorRight, mirrored, -1);
 
-    // A thin brass frame around the opening.
-    this.add(this.box(0.03, 4.74, 0.05, brass), -1.775, 2.37, 0.02);
-    this.add(this.box(0.03, 4.74, 0.05, brass), 1.775, 2.37, 0.02);
-    this.add(this.box(3.58, 0.03, 0.05, brass), 0, 4.725, 0.02);
-
+    // Warm light at the seam of the closed doors, and the spill when they open.
     this.seam = flat('#ffd9a3', { transparent: true });
-    this.add(this.plane(0.022, 4.7, this.seam), 0, 2.35, 0.06);
-
-    this.spill = glow(glowTexture('rgba(255,214,160,0.55)', 'rgba(255,214,160,0)'), 0);
-    this.level(7, 16, this.spill, 0, 0.01, 4);
+    this.add(this.plane(0.018, 4.8, this.seam), 0, 2.4, back + 0.11);
+    this.spill = glow(glowTexture('rgba(255,224,180,0.6)', 'rgba(255,224,180,0)'), 0);
+    this.level(6, 14, this.spill, 0, 0.012, 4);
   }
 
   /**
@@ -446,8 +609,8 @@ export class World {
    * book-matched slabs, and one fine line of light down the ceiling.
    */
   private buildCorridor() {
-    const length = -WING_END;
-    const mid = WING_END / 2;
+    const length = ENTRY - WING_END;
+    const mid = (ENTRY + WING_END) / 2;
     // Polished floor, slightly see-through over the mirrored room beneath it.
     const floor = lit({
       map: this.textures.get('slab-06'), repeat: [(HALF * 2) / 1.2, length / 2.4], book: true, grout: 0.3,
@@ -465,8 +628,8 @@ export class World {
     const [vanityFrom, vanityTo] = opening(VANITY);
     const [formFrom, formTo] = opening(FORM);
     const runs: Record<string, number[][]> = {
-      '-1': [[0, rainFrom], [rainTo, formFrom], [formTo, WING_END]],
-      '1': [[0, vanityFrom], [vanityTo, WING_END]],
+      '-1': [[ENTRY, rainFrom], [rainTo, formFrom], [formTo, WING_END]],
+      '1': [[ENTRY, vanityFrom], [vanityTo, WING_END]],
     };
     for (const side of [-1, 1]) {
       for (const [from, to] of runs[String(side)]) {
@@ -1072,8 +1235,26 @@ export class World {
 
   // --------------------------------------------------------------- frame
 
+  /** Keeps motion smooth: lower the render resolution when frames run long, raise it again when there is headroom. */
+  private adapt(delta: number) {
+    if (delta >= 0.1) return; // a throttled or backgrounded tab, not a slow device
+    this.frameAverage += (delta - this.frameAverage) * 0.05;
+    this.frameClock += delta;
+    if (this.frameClock < 2) return;
+    this.frameClock = 0;
+    let next = this.ratio;
+    if (this.frameAverage > 1 / 46 && this.ratio > 1) next = Math.max(1, this.ratio - 0.25);
+    else if (this.frameAverage < 1 / 57 && this.ratio < this.ratioCap) next = Math.min(this.ratioCap, this.ratio + 0.25);
+    if (next !== this.ratio) {
+      this.ratio = next;
+      this.renderer.setPixelRatio(next);
+      this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+    }
+  }
+
   render(time: number, delta: number) {
     if (!this.built) return;
+    this.adapt(delta);
     sample(this.keys, this.target, this.goal);
     const ease = this.still ? 1 : 1 - Math.exp(-delta * 4.2);
     const state = this.state;
@@ -1090,6 +1271,7 @@ export class World {
     const forward = this.scratch.copy(this.gaze).sub(this.eye).normalize();
     let nearest: Exhibit | null = null;
     let best = Infinity;
+    let activeScore = Infinity;
     for (const exhibit of this.exhibits) {
       const dx = exhibit.position.x - this.eye.x;
       const dy = exhibit.position.y - this.eye.y;
@@ -1100,8 +1282,11 @@ export class World {
       const angle = Math.acos(Math.min(1, Math.max(-1, cosine))) * 57.2958;
       if (angle > exhibit.cone) continue;
       const score = angle / exhibit.cone + distance / exhibit.reach;
+      if (exhibit === this.active) activeScore = score;
       if (score < best) { best = score; nearest = exhibit; }
     }
+    // Hysteresis: the caption stays put unless another product is clearly the one in view.
+    if (this.active && activeScore < Infinity && nearest !== this.active && best > activeScore - 0.14) nearest = this.active;
     if (nearest !== this.active) { this.active = nearest; this.onExhibit(nearest); }
 
     // In the gallery the head turns a little toward each slab.
@@ -1122,22 +1307,25 @@ export class World {
     const open = smooth(11.5, 4.2, z);
     this.doorLeft.rotation.y = open * 1.42;
     this.doorRight.rotation.y = -open * 1.42;
-    this.seam.opacity = (1 - smooth(0, 0.25, open)) * (0.75 + 0.25 * Math.sin(time * 1.6));
+    this.seam.opacity = 0.9 * (1 - smooth(0, 0.25, open));
     this.spill.opacity = smooth(0.05, 0.9, open) * (1 - smooth(1, -6, z));
 
     // Light changes from night stone to the bright hall and back.
     const tone = toneAt(z);
-    this.fog.color.copy(INK).lerp(IVORY, tone);
-    (this.scene.background as THREE.Color).copy(this.fog.color);
     const outside = smooth(-3, 6, z);
+    this.fog.color.copy(INK).lerp(IVORY, tone).lerp(DUSK, outside);
+    (this.scene.background as THREE.Color).copy(this.fog.color);
+    this.sky.visible = z > -8;
     // The last room is seen whole: almost no haze between the visitor and the wall.
     const finale = smooth(KITCHEN_END + 0.5, KITCHEN_END - 2.5, z);
-    this.fog.near = mix(mix(mix(4, 9, tone), 10, outside), 22, finale);
-    this.fog.far = mix(mix(mix(27, 48, tone), 52, outside), 90, finale);
+    this.fog.near = mix(mix(mix(4, 9, tone), 20, outside), 22, finale);
+    this.fog.far = mix(mix(mix(27, 48, tone), 95, outside), 90, finale);
     this.veilDark.opacity = smooth(0, 0.3, tone);
     // The page chrome turns dark-on-light inside the building, and back for the night outside and the finale.
     // The rain room's dark stone takes light text, like the night outside.
-    const inRain = this.bays.length > 0 && smooth(13, 5.2, this.eye.distanceTo(this.bays[0].mouth)) > 0.62;
+    const rainLevel = this.bays.length > 0 ? smooth(13, 5.2, this.eye.distanceTo(this.bays[0].mouth)) : 0;
+    this.inRain = this.inRain ? rainLevel > 0.5 : rainLevel > 0.64;
+    const inRain = this.inRain;
     const light = z < -1.5 && z > KITCHEN_END + 2.6 && !inRain;
     if (light !== this.light) { this.light = light; this.onTone(light); }
 
