@@ -366,10 +366,10 @@ export class SystemService {
         ? await this.updateMasterRow(tx.tileSize, existing.id, existing.updatedAt, data, 'tile size')
         : await tx.tileSize.create({ data: { id: ulid(), ...data } });
       await tx.auditEvent.create({ data: this.auditData(actorUserId, existing ? 'master.tile_size.update' : 'master.tile_size.create', 'TileSize', tileSize.id, `${existing ? 'Updated' : 'Created'} tile size ${tileSize.name}`, { before: existing, after: tileSize }) });
-      // Variants copy box coverage from this size when saved. Keep them in step
-      // when the size's area changes, so quotes never use a stale area.
+      // Variants copy box coverage from this size when saved. Every save of a
+      // size brings its variants back in step, so quotes never use a stale area.
       const areaPerPiece = Number(tileSize.areaPerPieceSqFt || 0);
-      if (existing && areaPerPiece > 0 && Math.abs(areaPerPiece - Number(existing.areaPerPieceSqFt || 0)) > 0.0001) {
+      if (existing && areaPerPiece > 0) {
         const variants = await tx.product.findMany({ where: { tileSizeId: tileSize.id }, select: { id: true, sku: true, piecesPerPack: true, coveragePerPack: true } });
         const changed: Array<{ sku: string; from: number; to: number }> = [];
         for (const variant of variants) {
