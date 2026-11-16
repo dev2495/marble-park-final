@@ -747,12 +747,15 @@ export class World {
       this.add(cheek, midX, height / 2, centre + end * width / 2);
     }
     this.level(depth, width, floor, midX, 0.002, centre).renderOrder = -1;
-    this.level(depth, width, flat('#1e1a17'), midX, height, centre, true);
+    // A few millimetres above the beam's underside, so the two never share a plane.
+    this.level(depth, width, flat('#1e1a17'), midX, height + 0.005, centre, true);
     // The beam over the opening, a brass edge, and the three downlights.
     const beam = lit({ colour: '#e6ddd0', noise: 0.16, ambient: 0.66, strip: { ...CORRIDOR_STRIP, fill: 1.1, shine: 0 } });
     this.add(this.box(0.3, CEILING - height, width, beam), side * (HALF + 0.15), (CEILING + height) / 2, centre);
-    this.add(this.box(0.03, 0.03, width, flat('#b39363')), side * (HALF + 0.02), height - 0.015, centre);
-    for (const end of [1, -1]) this.add(this.box(0.3, height, 0.03, flat('#b39363')), side * (HALF + 0.15), height / 2, centre + end * (width / 2 + 0.015));
+    this.add(this.box(0.03, 0.03, width - 0.1, flat('#b39363')), side * (HALF + 0.022), height - 0.017, centre);
+    // Brass edges down each side of the opening, set just inside it: no face shares a plane with
+    // the gallery wall or the side wall, so the edge cannot flicker as the camera passes.
+    for (const end of [1, -1]) this.add(this.box(0.04, height, 0.04, flat('#b39363')), side * (HALF + 0.022), height / 2, centre + end * (width / 2 - 0.021));
     const lens = flat('#fff0d2');
     for (const lamp of lamps) this.level(0.09, 0.09, lens, lamp.position[0], height - 0.004, lamp.position[2], true);
 
