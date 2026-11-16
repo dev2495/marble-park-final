@@ -322,7 +322,7 @@ export default function LeadDetailPage() {
           <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--ink-3)]">Quote versions</h2>
           <div className="mt-3 space-y-3">
             {chains.map((chain: any) => (
-              <QuoteChainCard key={chain.headQuoteId} chain={chain} onRevise={(qid) => startRevision({ variables: { quoteId: qid } })} revising={revising} />
+              <QuoteChainCard key={chain.headQuoteId} chain={chain} onRevise={(qid) => router.push(`/dashboard/quotes/${qid}`)} revising={revising} />
             ))}
           </div>
         </section>
@@ -359,7 +359,7 @@ export default function LeadDetailPage() {
                   onRequestChanges={(id, msg) => requestChanges({ variables: { id, message: msg } })}
                   onGenerate={(id) => generateQuote({ variables: { intentId: id, note: 'Generated from timeline' } })}
                   generating={generating}
-                  onRevise={(qid) => startRevision({ variables: { quoteId: qid } })}
+                  onRevise={(qid) => router.push(`/dashboard/quotes/${qid}`)}
                   revising={revising}
                 />
               </li>

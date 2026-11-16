@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marble Park Quote Workspace Sample</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: one screen, three columns. Areas rail (jump, never scroll hunting) | dense line grid | money + revision + people. */
+:root{
+  --bg:#f5f5f4; --bg-soft:#efefed; --surface:#ffffff; --surface-2:#faf9f8;
+  --ink:#18181b; --ink-2:#27272a; --ink-3:#52525b; --ink-4:#6a6a71;
+  --line:#e4e6ec; --line-strong:#d1d5dc;
+  --accent:#9d2a24; --accent-solid:#9d2a24; --accent-soft:#fdf2f1; --on-accent:#ffffff;
+  --ok:#047857; --ok-bg:#ecfdf5; --warn:#b45309; --warn-bg:#fffbeb; --bad:#b91c1c; --bad-bg:#fef2f2; --info:#1d4ed8; --info-bg:#eff6ff; --vio:#6d28d9; --vio-bg:#f5f3ff;
+  --f-ui:'Inter','SF Pro Text',system-ui,sans-serif; --f-display:'Fraunces','Inter',serif; --f-mono:'JetBrains Mono','SF Mono',ui-monospace,monospace;
+  --r:8px; --sh:0 10px 26px -18px rgba(15,23,42,.26); --sh-lg:0 24px 70px -30px rgba(15,23,42,.45);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#14151b; --bg-soft:#1a1c25; --surface:#1f2129; --surface-2:#262833;
+  --ink:#f4f4f5; --ink-2:#e4e4e7; --ink-3:#b9bbc6; --ink-4:#9a9ca8;
+  --line:#2e3140; --line-strong:#3d4154;
+  --accent:#ef8f87; --accent-solid:#b3362f; --accent-soft:rgba(214,106,98,.14); --on-accent:#ffffff;
+  --ok:#34d399; --ok-bg:rgba(16,185,129,.13); --warn:#fbbf24; --warn-bg:rgba(245,158,11,.13); --bad:#f87171; --bad-bg:rgba(239,68,68,.14); --info:#93b4ff; --info-bg:rgba(59,130,246,.15); --vio:#c4b5fd; --vio-bg:rgba(139,92,246,.16);
+  --sh:0 10px 26px -18px rgba(0,0,0,.7); --sh-lg:0 24px 70px -30px rgba(0,0,0,.9);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#14151b; --bg-soft:#1a1c25; --surface:#1f2129; --surface-2:#262833;
+  --ink:#f4f4f5; --ink-2:#e4e4e7; --ink-3:#b9bbc6; --ink-4:#9a9ca8;
+  --line:#2e3140; --line-strong:#3d4154;
+  --accent:#ef8f87; --accent-solid:#b3362f; --accent-soft:rgba(214,106,98,.14); --on-accent:#ffffff;
+  --ok:#34d399; --ok-bg:rgba(16,185,129,.13); --warn:#fbbf24; --warn-bg:rgba(245,158,11,.13); --bad:#f87171; --bad-bg:rgba(239,68,68,.14); --info:#93b4ff; --info-bg:rgba(59,130,246,.15); --vio:#c4b5fd; --vio-bg:rgba(139,92,246,.16);
+  --sh:0 10px 26px -18px rgba(0,0,0,.7); --sh-lg:0 24px 70px -30px rgba(0,0,0,.9);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/1.45 var(--f-ui);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--f-mono);font-size:11.5px}
+.muted{color:var(--ink-4)}
+h1,h2,h3{margin:0;text-wrap:balance}
+
+/* shell */
+.shell{display:flex;align-items:center;gap:14px;padding:8px 16px;background:var(--surface);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{font-family:var(--f-display);font-weight:700;font-size:16px;color:var(--accent);white-space:nowrap}
+.tabs{display:flex;gap:2px;background:var(--bg-soft);padding:3px;border-radius:var(--r)}
+.tabs a{padding:5px 11px;border-radius:6px;text-decoration:none;color:var(--ink-3);font-weight:600;font-size:12px;white-space:nowrap}
+.tabs a.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.sample{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sample label{font-size:11px;font-weight:600;color:var(--ink-4);text-transform:uppercase;letter-spacing:.08em}
+.sample select{height:30px;border:1px dashed var(--line-strong);border-radius:6px;background:var(--surface-2);padding:0 8px;font-weight:600}
+.me{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.av{width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;font-size:10px}
+
+.view{flex:1;min-height:0;display:none}
+.view.on{display:flex;flex-direction:column}
+
+/* quote header */
+.qh{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.qno{font-family:var(--f-display);font-size:20px;font-weight:700;letter-spacing:-.01em}
+.rev{font:600 11px var(--f-mono);background:var(--ink);color:var(--surface);padding:2px 7px;border-radius:5px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.p-new{background:var(--bg-soft);color:var(--ink-3)} .p-draft{background:var(--warn-bg);color:var(--warn)} .p-ready{background:var(--ok-bg);color:var(--ok)} .p-rev{background:var(--info-bg);color:var(--info)} .p-order{background:var(--vio-bg);color:var(--vio)}
+.who{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:12px;font-weight:500;white-space:nowrap}
+.chip b{font-weight:600}
+.chip.add{border-style:dashed;color:var(--accent);font-weight:600}
+.chip.need{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+.qh .act{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.saved{font-size:11.5px;color:var(--ink-4);margin-right:4px;white-space:nowrap}
+.btn{height:32px;padding:0 12px;border-radius:var(--r);border:1px solid var(--line-strong);background:var(--surface);font-weight:600;font-size:12.5px;white-space:nowrap}
+.btn:hover{background:var(--surface-2)}
+.btn.pri{background:var(--accent-solid);border-color:var(--accent-solid);color:var(--on-accent)}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.warn{background:var(--warn-bg);border-color:transparent;color:var(--warn)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.sm{height:26px;padding:0 9px;font-size:11.5px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--ink-3)}
+.banner{display:flex;gap:10px;align-items:center;padding:7px 16px;font-size:12.5px;font-weight:500;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.banner.b-rev{background:var(--info-bg);color:var(--info)} .banner.b-order{background:var(--vio-bg);color:var(--vio)}
+.banner b{font-weight:700}
+
+/* workspace grid */
+.ws{flex:1;min-height:0;display:grid;grid-template-columns:212px minmax(0,1fr) 316px}
+.rail{border-right:1px solid var(--line);background:var(--surface-2);overflow:auto;padding:10px 8px;display:flex;flex-direction:column;gap:2px}
+.rail h3,.side h3{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-4);padding:6px 8px 4px}
+.ar{display:flex;flex-direction:column;gap:1px;text-align:left;border:0;background:transparent;border-radius:6px;padding:7px 8px;width:100%}
+.ar:hover{background:var(--bg-soft)}
+.ar.on{background:var(--surface);box-shadow:inset 3px 0 0 var(--accent),0 1px 2px rgba(0,0,0,.06)}
+.ar .t{display:flex;justify-content:space-between;gap:6px;font-weight:600}
+.ar .s{font-size:11.5px;color:var(--ink-4)}
+.cnt{font:500 11px var(--f-mono);color:var(--ink-4)}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn);margin-left:5px}
+.rail .newarea{display:flex;gap:4px;padding:6px 8px}
+.rail .newarea input{flex:1;min-width:0}
+
+.main{min-width:0;display:flex;flex-direction:column;min-height:0}
+.addbar{position:relative;display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface);flex-wrap:wrap}
+.addbar .in{flex:1;min-width:200px;position:relative}
+.addbar input.q{width:100%;height:36px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--surface-2);padding:0 12px 0 34px;font-size:13.5px}
+.addbar .in svg{position:absolute;left:10px;top:10px;color:var(--ink-4)}
+.kbd{font:500 10.5px var(--f-mono);border:1px solid var(--line-strong);border-radius:4px;padding:1px 5px;color:var(--ink-4);background:var(--surface)}
+.into{font-size:12px;color:var(--ink-3);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.results{position:absolute;left:14px;right:14px;top:100%;z-index:20;background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r);box-shadow:var(--sh-lg);max-height:340px;overflow:auto;display:none}
+.results.on{display:block}
+.res{display:grid;grid-template-columns:38px 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:transparent;padding:7px 10px}
+.res:hover,.res:focus-visible{background:var(--bg-soft)}
+.res.qa{background:var(--accent-soft);color:var(--accent);font-weight:600;border-bottom:0}
+.lines{flex:1;overflow:auto;padding:0 0 30px}
+.sec{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;padding:7px 14px;background:var(--bg-soft);border-bottom:1px solid var(--line);border-top:1px solid var(--line)}
+.sec h2{font-size:12.5px;font-weight:700}
+.sec .sum{margin-left:auto;font-weight:600}
+.cols,.row{display:grid;grid-template-columns:40px minmax(150px,1fr) 128px 92px 70px 92px 104px 60px;gap:8px;align-items:center;padding:6px 14px}
+.cols{position:sticky;top:0;z-index:6;background:var(--surface);border-bottom:1px solid var(--line);font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4)}
+.cols span.r,.row .r{text-align:right}
+.row{border-bottom:1px solid var(--line);background:var(--surface);box-shadow:inset 3px 0 0 transparent}
+.row:hover{background:var(--surface-2)}
+.row.added{box-shadow:inset 3px 0 0 var(--ok)} .row.changed{box-shadow:inset 3px 0 0 var(--info)} .row.issue{box-shadow:inset 3px 0 0 var(--warn)}
+.row.removed{box-shadow:inset 3px 0 0 var(--bad);opacity:.62}
+.row.removed .nm{text-decoration:line-through}
+.th{width:40px;height:40px;border-radius:6px;background:var(--bg-soft);display:grid;place-items:center;color:var(--ink-3)}
+.nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub{font-size:11.5px;color:var(--ink-4);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.tag{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.t-ok{background:var(--ok-bg);color:var(--ok)} .t-info{background:var(--info-bg);color:var(--info)} .t-warn{background:var(--warn-bg);color:var(--warn)} .t-bad{background:var(--bad-bg);color:var(--bad)} .t-vio{background:var(--vio-bg);color:var(--vio)} .t-n{background:var(--bg-soft);color:var(--ink-3)}
+.cell{height:30px;width:100%;border:1px solid var(--line);border-radius:6px;background:var(--surface);padding:0 7px;text-align:right;font-variant-numeric:tabular-nums}
+.cell:hover{border-color:var(--line-strong)}
+.cell:disabled{background:var(--bg-soft);color:var(--ink-4)}
+.cell.bad{border-color:var(--warn);background:var(--warn-bg)}
+.qty{display:flex;flex-direction:column;gap:2px}
+.qty .u{font-size:11px;color:var(--ink-4);text-align:right}
+.amt{font-weight:700;text-align:right}
+.ico{width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--ink-4);display:inline-grid;place-items:center}
+.ico:hover{background:var(--bg-soft);color:var(--ink)}
+.more{grid-column:2/-1;display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:4px 0 6px;font-size:12px}
+.more label{display:flex;align-items:center;gap:6px;color:var(--ink-3)}
+.more .cell{width:92px}
+.empty{margin:36px auto;max-width:440px;text-align:center;color:var(--ink-3)}
+.empty h2{font-family:var(--f-display);font-size:20px;margin-bottom:6px;color:var(--ink)}
+.addline{padding:6px 14px 10px 62px}
+
+.side{border-left:1px solid var(--line);background:var(--surface-2);overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px}
+.card h3{padding:0 0 6px}
+.kv{display:flex;justify-content:space-between;gap:10px;padding:2.5px 0;color:var(--ink-3)}
+.kv b{color:var(--ink);font-weight:600}
+.total{display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--line);margin-top:6px;padding-top:8px}
+.total span{font-weight:600}
+.total b{font-family:var(--f-display);font-size:24px;font-weight:700}
+.iss{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;border:0;background:var(--warn-bg);color:var(--warn);border-radius:6px;padding:6px 8px;margin-top:4px;font-weight:500}
+.chg{display:flex;gap:7px;padding:3px 0;font-size:12px;color:var(--ink-2)}
+.chg i{font-style:normal;font-weight:700;width:12px}
+.hist{display:grid;grid-template-columns:auto 1fr auto;gap:8px;padding:4px 0;font-size:12px;align-items:center}
+.set{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px;font-size:12px}
+.set label{display:flex;flex-direction:column;gap:3px;color:var(--ink-4);font-weight:500}
+.set .cell{text-align:left}
+.note{font-size:11.5px;color:var(--ink-4);margin-top:6px}
+
+/* overlays */
+.scrim{position:fixed;inset:0;background:rgba(10,10,14,.45);z-index:50;display:none}
+.scrim.on{display:block}
+.dlg{position:fixed;z-index:51;background:var(--surface);border:1px solid var(--line);box-shadow:var(--sh-lg);display:none;flex-direction:column}
+.dlg.on{display:flex}
+.dlg.modal{left:50%;top:12%;transform:translateX(-50%);width:min(460px,calc(100% - 32px));border-radius:12px;max-height:80%}
+.dlg.drawer{right:0;top:0;bottom:0;width:min(440px,100%)}
+.dh{padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+.dh h2{font-family:var(--f-display);font-size:18px}
+.dh p{margin:3px 0 0;color:var(--ink-4);font-size:12px}
+.db{padding:14px 16px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.df{padding:10px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:var(--ink-3)}
+.fld input,.fld select{height:36px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--surface);padding:0 10px;font-weight:400;font-size:13.5px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.later{background:var(--warn-bg);color:var(--warn);border-radius:var(--r);padding:8px 10px;font-size:12px;font-weight:500}
+.pick{display:flex;justify-content:space-between;gap:10px;width:100%;text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:8px 10px}
+.pick:hover{border-color:var(--accent)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:60;background:var(--ink);color:var(--surface);padding:10px 16px;border-radius:10px;font-weight:500;box-shadow:var(--sh-lg);display:none;max-width:calc(100% - 32px)}
+.toast.on{display:block}
+
+/* other views */
+.page{flex:1;overflow:auto;padding:20px 16px 40px}
+.wrap{max-width:1040px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.page h1{font-family:var(--f-display);font-size:24px}
+.page p.lead{margin:0;color:var(--ink-3);max-width:68ch}
+.tbl{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.tbl th{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.tbl td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl tr:last-child td{border-bottom:0}
+.scroll{overflow-x:auto}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--sh);padding:28px;max-width:820px;margin:0 auto;width:100%}
+.sheet header{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid var(--accent);padding-bottom:12px;flex-wrap:wrap}
+.sheet h2{font-family:var(--f-display);font-size:22px}
+.sheet h3{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:18px 0 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.tile{border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.tile .ph{aspect-ratio:4/3;background:var(--bg-soft);display:grid;place-items:center;color:var(--ink-3)}
+.tile .ph svg{width:64px;height:64px}
+.tile .tx{padding:8px 9px}
+.tile .tx b{display:block;font-size:12.5px}
+
+@media (max-width:1080px){
+  body{overflow:auto;display:block;height:auto} html{height:auto}
+  .ws{display:block}
+  .rail{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)} .rail h3,.rail .newarea{display:none} .ar{width:auto;min-width:150px}
+  .lines{overflow:visible} .side{border-left:0;border-top:1px solid var(--line)}
+  .cols{display:none}
+  .row{grid-template-columns:40px repeat(4,minmax(0,1fr)) 60px;align-items:start}
+  .row>.c-name{grid-column:2/-1} .row>.qty{grid-column:1/3} .row>.more{grid-column:1/-1}
+  .view.on{display:block}
+}
+@media (prefers-reduced-motion:no-preference){ .row,.btn,.ar{transition:background .12s} }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <span class="brand">Marble Park</span>
+  <nav class="tabs" aria-label="Sample screens">
+    <a href="#quote" data-tab="quote">Quote workspace</a>
+    <a href="#architect-bundle" data-tab="architect-bundle">Architect bundle</a>
+    <a href="#follow-ups" data-tab="follow-ups">Follow-up queue <span id="fuCount" class="cnt"></span></a>
+    <a href="#fix-list" data-tab="fix-list">Bugs and fixes</a>
+  </nav>
+  <div class="sample">
+    <label for="preset">Sample state</label>
+    <select id="preset">
+      <option value="new">1. Walk-in, new quote</option>
+      <option value="draft">2. Draft with things to fix</option>
+      <option value="ready">3. Confirmed, ready to share</option>
+      <option value="revising" selected>4. Revising a confirmed quote</option>
+      <option value="tile">5. Tile quote (area to boxes)</option>
+      <option value="order">6. Part ordered</option>
+    </select>
+    <span class="me"><span class="av">KS</span>Kinjal Shah · Office staff</span>
+  </div>
+</div>
+
+<section class="view" id="v-quote">
+  <div id="qh"></div>
+  <div class="ws">
+    <aside class="rail" id="rail"></aside>
+    <div class="main">
+      <div class="addbar">
+        <div class="in">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input class="q" id="q" autocomplete="off" placeholder="Add item: type a code or name, or scan a showroom label">
+        </div>
+        <span class="into">adding to <select id="into" class="cell" style="width:auto;text-align:left"></select></span>
+        <span class="kbd">/</span>
+        <div class="results" id="results"></div>
+      </div>
+      <div class="lines" id="lines"></div>
+    </div>
+    <aside class="side" id="side"></aside>
+  </div>
+</section>
+
+<section class="view" id="v-architect-bundle"><div class="page"><div class="wrap" id="bundle"></div></div></section>
+<section class="view" id="v-follow-ups"><div class="page"><div class="wrap" id="followups"></div></div></section>
+<section class="view" id="v-fix-list"><div class="page"><div class="wrap" id="fixes"></div></div></section>
+
+<div class="scrim" id="scrim" data-a="close"></div>
+<div class="dlg" id="dlg" role="dialog" aria-modal="true"></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const ME = 'Kinjal Shah';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const money = (n) => '₹' + Math.round(n || 0).toLocaleString('en-IN');
+const n2 = (n) => (Math.round(n * 100) / 100).toLocaleString('en-IN');
+
+const ICON = {
+  faucet: '<path d="M5 20h6M8 20v-7M8 13c0-4 2-6 6-6h3v3h-3c-1.5 0-2 .8-2 2v1M17 12v2"/>',
+  basin: '<path d="M3 11h18c0 4-3.5 7-9 7s-9-3-9-7ZM12 18v3M9 21h6M12 6v5M12 6h3"/>',
+  shower: '<path d="M4 20V8a4 4 0 0 1 8 0M8 11h8l1 3H7l1-3ZM9 17v2M12 17v3M15 17v2"/>',
+  wc: '<path d="M7 3h4v9H7zM7 12h10a5 5 0 0 1-5 6h-1l1 3H8l-1-9Z"/>',
+  acc: '<path d="M4 7v4M20 7v4M4 9h16M8 9v9h8V9"/>',
+  tile: '<path d="M4 4h16v16H4zM12 4v16M4 12h16"/>',
+  bag: '<path d="M6 8h12l1 12H5L6 8ZM9 8V6a3 3 0 0 1 6 0v2"/>',
+};
+const icon = (k, s = 22) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICON[k] || ICON.acc}</svg>`;
+
+// Catalogue. `per` = square feet in one stock unit, taken once from Tile Size Master.
+const CAT = {
+  'KOH-23490': { name: 'Single-lever basin mixer, tall', brand: 'Kohler', fin: 'Brushed bronze', ic: 'faucet', unit: 'PC', mrp: 28400, disc: 22, fam: 'cp' },
+  'KOH-K2660': { name: 'Vessel basin 410 mm', brand: 'Kohler', fin: 'White', ic: 'basin', unit: 'PC', mrp: 19800, disc: 20, fam: 'cp' },
+  'GRO-26574': { name: 'Rain shower 310 mm with arm', brand: 'Grohe', fin: 'Chrome', ic: 'shower', unit: 'PC', mrp: 46500, disc: 25, fam: 'cp' },
+  'GRO-34667': { name: 'Thermostat concealed, 2 outlet', brand: 'Grohe', fin: 'Chrome', ic: 'faucet', unit: 'PC', mrp: 38900, disc: 25, fam: 'cp' },
+  'TOT-CW822': { name: 'Wall-hung WC, soft-close seat', brand: 'Toto', fin: 'White', ic: 'wc', unit: 'PC', mrp: 54200, disc: 18, fam: 'cp' },
+  'JAQ-ACC-1151': { name: 'Towel rail 600 mm', brand: 'Jaquar', fin: 'Chrome', ic: 'acc', unit: 'PC', mrp: 4350, disc: 30, fam: 'cp' },
+  'JAQ-SCB-833': { name: 'Counter basin 550 mm', brand: 'Jaquar', fin: 'White', ic: 'basin', unit: 'PC', mrp: 9600, disc: 30, fam: 'cp' },
+  'JAQ-OHS-1989': { name: 'Overhead shower 200 mm', brand: 'Jaquar', fin: 'Chrome', ic: 'shower', unit: 'PC', mrp: 7850, disc: 30, fam: 'cp' },
+  'JAQ-FLR-5011': { name: 'Pillar tap, Florentine', brand: 'Jaquar', fin: 'Chrome', ic: 'faucet', unit: 'PC', mrp: 5200, disc: 30, fam: 'cp' },
+  'GRO-30270': { name: 'Kitchen mixer, pull-out spray', brand: 'Grohe', fin: 'Steel', ic: 'faucet', unit: 'PC', mrp: 31200, disc: 25, fam: 'cp' },
+  'FRK-BOX-220': { name: 'Undermount sink 22 x 18 in', brand: 'Franke', fin: 'Steel', ic: 'basin', unit: 'PC', mrp: 24800, disc: 20, fam: 'cp' },
+  'JAQ-HF-573': { name: 'Health faucet with 1 m hose', brand: 'Jaquar', fin: 'Chrome', ic: 'faucet', unit: 'PC', mrp: 2150, disc: 30, fam: 'cp' },
+  'JAQ-AV-5053': { name: 'Angle valve', brand: 'Jaquar', fin: 'Chrome', ic: 'faucet', unit: 'PC', mrp: 1250, disc: 30, fam: 'cp' },
+  'GRO-40535': { name: 'Soap dispenser, wall mount', brand: 'Grohe', fin: 'Chrome', ic: 'acc', unit: 'PC', mrp: 6900, disc: 25, fam: 'cp' },
+  'FRAP-1218-G': { name: 'Frappuccino slab 1200 x 1800 mm', brand: 'Kajaria', fin: 'Glossy', ic: 'tile', unit: 'PC', mrp: 185, disc: 12, fam: 'tile', tile: { per: 23.25, label: '1 pc = 23.25 sqft' } },
+  'STAT-0612-M': { name: 'Statuario 600 x 1200 mm', brand: 'Kajaria', fin: 'Matt', ic: 'tile', unit: 'BOX', mrp: 92, disc: 10, fam: 'tile', tile: { per: 15.5, label: 'box of 2 = 15.5 sqft' } },
+  'TERZ-0606-G': { name: 'Terrazzo grey 600 x 600 mm', brand: 'Somany', fin: 'Matt', ic: 'tile', unit: 'BOX', mrp: 68, disc: 10, fam: 'tile', tile: { per: 15.5, label: 'box of 4 = 15.5 sqft' } },
+  'WOOD-0212-R': { name: 'Rustic wood plank 200 x 1200 mm', brand: 'Somany', fin: 'Rustic', ic: 'tile', unit: 'BOX', mrp: 74, disc: 8, fam: 'tile', tile: { per: 12.92, label: 'box of 5 = 12.92 sqft' } },
+  'CHEM-S1-20': { name: 'Tile adhesive S1, 20 kg bag', brand: 'MYK Laticrete', fin: '', ic: 'bag', unit: 'BAG', mrp: 780, disc: 5, fam: 'tile' },
+};
+
+let uid = 100;
+const L = (area, code, o = {}) => ({ id: 'l' + (uid++), area, code, qty: 1, req: 0, special: 0, gst: 18, ordered: 0, ...pick(CAT[code]), ...o });
+function pick(p) { return { disc: p.disc, mrp: p.mrp }; }
+const MB = 'Master Bathroom', DB = "Dev's Bathroom", PR = 'Powder Room', KT = 'Kitchen';
+function cpLines() {
+  return [
+    L(MB, 'KOH-23490'), L(MB, 'KOH-K2660'), L(MB, 'GRO-26574'), L(MB, 'GRO-34667'), L(MB, 'TOT-CW822'), L(MB, 'JAQ-ACC-1151', { qty: 2 }),
+    L(DB, 'KOH-23490'), L(DB, 'JAQ-SCB-833'), L(DB, 'JAQ-OHS-1989'), L(DB, 'TOT-CW822'),
+    L(PR, 'JAQ-FLR-5011'), L(PR, 'JAQ-SCB-833'),
+    L(KT, 'GRO-30270'), L(KT, 'FRK-BOX-220'),
+  ];
+}
+const CUSTOMER = { name: 'Rakesh Patel', mobile: '98250 41207', place: 'Shela, Ahmedabad' };
+const ARCH = { name: 'Ar. Mehul Shah', firm: 'Studio Aakar' };
+const baseFollowUps = () => [
+  { type: 'Customer', rec: 'Nisha Desai · 99090 55120', by: 'Hardik Thakkar', when: 'Yesterday, 6:10 pm', missing: ['Site address', 'GSTIN'], used: 'MP-Q-2026-0409' },
+  { type: 'SKU', rec: 'QA-1121 · Brass floor drain 5 in', by: 'Kinjal Shah', when: 'Yesterday, 1:32 pm', missing: ['HSN', 'Photo', 'Floor price'], used: 'MP-Q-2026-0407' },
+  { type: 'Architect', rec: 'Ar. Pooja Vyas', by: 'Hardik Thakkar', when: '14 Nov', missing: ['Firm', 'Mobile'], used: 'MP-Q-2026-0401' },
+];
+
+let S;
+function preset(key) {
+  uid = 100;
+  const b = {
+    key, no: 'MP-Q-2026-0412', fam: 'cp', project: 'Patel Residence, 4 bathrooms', customer: { ...CUSTOMER }, architect: { ...ARCH },
+    owner: 'Hardik Thakkar', preparedBy: ME, preparedAt: '12 Nov, 4:18 pm', confirmedBy: '', confirmedAt: '', revisedBy: '',
+    status: 'draft', rev: 0, lines: cpLines(), base: null, baseTotal: 0, qdisc: 0, gstOn: true, valid: '2026-12-01', pdf: 'priced',
+    areaSel: 'all', open: null, areas: [MB, DB, PR, KT], history: [], order: null, saved: 'Draft saved just now', followUps: baseFollowUps(),
+  };
+  if (key === 'new') Object.assign(b, { no: 'New quote', customer: null, architect: null, project: '', lines: [], areas: ['General Selection'], status: 'new', preparedAt: 'now', saved: 'Nothing to save yet' });
+  if (key === 'draft') {
+    b.lines = b.lines.slice(0, 9); b.lines[5].qty = 0; b.areas = [MB, DB];
+    CAT['QA-1123'] = { name: 'Stone basin, hand-carved', brand: 'Local', fin: 'Black granite', ic: 'basin', unit: 'PC', mrp: 0, disc: 0, fam: 'cp', follow: true };
+    b.lines.push(L(DB, 'QA-1123'));
+    b.followUps.unshift({ type: 'SKU', rec: 'QA-1123 · Stone basin, hand-carved', by: ME, when: 'Today, 12:20 pm', missing: ['MRP', 'HSN', 'Photo'], used: b.no });
+  }
+  const confirm = () => Object.assign(b, { status: 'ready', rev: 2, confirmedBy: ME, confirmedAt: '14 Nov, 11:05 am', revisedBy: ME, saved: 'All changes saved',
+    history: [{ r: 2, when: '14 Nov, 11:05 am', by: ME, total: 0 }, { r: 1, when: '12 Nov, 4:40 pm', by: ME, total: 395420 }] });
+  if (key === 'ready' || key === 'revising' || key === 'order') { confirm(); S = b; b.history[0].total = totals().total; }
+  if (key === 'revising') {
+    startRevision(b);
+    b.lines[2].disc = 28; b.lines[5].qty = 4; b.lines[11].removed = true; b.lines.push(L(PR, 'JAQ-HF-573'));
+  }
+  if (key === 'tile') {
+    Object.assign(b, { no: 'MP-Q-2026-0415', fam: 'tile', project: 'Patel Residence, flooring', areas: ['Living Room', MB, 'Balcony'], status: 'ready', rev: 1,
+      confirmedBy: ME, confirmedAt: 'Today, 10:12 am', saved: 'All changes saved', history: [{ r: 1, when: 'Today, 10:12 am', by: ME, total: 0 }] });
+    b.lines = [L('Living Room', 'FRAP-1218-G', { req: 480 }), L('Living Room', 'CHEM-S1-20', { qty: 12 }), L(MB, 'STAT-0612-M', { req: 210 }), L(MB, 'TERZ-0606-G', { req: 64 }), L('Balcony', 'WOOD-0212-R', { req: 96 })];
+    S = b; b.history[0].total = totals().total;
+  }
+  if (key === 'order') {
+    b.status = 'order'; b.order = { no: 'SO-2026-0188', when: '15 Nov', by: ME };
+    b.lines.forEach((l) => { if (l.area === MB) l.ordered = l.qty; });
+  }
+  S = b;
+}
+function startRevision(b) {
+  b.status = 'revising';
+  b.base = Object.fromEntries(b.lines.map((l) => [l.id, { qty: l.qty, req: l.req, disc: l.disc, special: l.special, area: l.area }]));
+  const keep = S; S = b; b.baseTotal = totals().total; S = keep;
+  b.saved = 'Revision draft saved just now';
+}
+
+// ---- maths: MRP > discount (NRP) > optional special > quote discount > GST on top. Unchanged business rules. ----
+function calc(l) {
+  const p = CAT[l.code];
+  const units = p.tile ? (l.req > 0 ? Math.ceil(l.req / p.tile.per - 1e-9) : 0) : Number(l.qty) || 0;
+  const pq = p.tile ? units * p.tile.per : units;
+  const nrp = l.mrp * (1 - (Number(l.disc) || 0) / 100);
+  const rate = Number(l.special) > 0 ? Number(l.special) : nrp;
+  const issue = l.removed ? '' : l.mrp <= 0 ? 'MRP missing' : units <= 0 ? (p.tile ? 'Enter area' : 'Enter quantity') : '';
+  return { p, units, pq, nrp, rate, amount: l.removed ? 0 : pq * rate, mrpValue: l.removed ? 0 : pq * l.mrp, issue };
+}
+function totals(area) {
+  const ls = S.lines.filter((l) => !l.removed && (!area || l.area === area));
+  const sub = ls.reduce((s, l) => s + calc(l).amount, 0), mrp = ls.reduce((s, l) => s + calc(l).mrpValue, 0);
+  const qd = sub * (Number(S.qdisc) || 0) / 100, taxable = sub - qd, gst = S.gstOn ? taxable * 0.18 : 0;
+  return { n: ls.length, sub, mrp, qd, taxable, gst, total: taxable + gst };
+}
+const issues = () => S.lines.map((l) => ({ l, c: calc(l) })).filter((x) => x.c.issue);
+function mark(l) {
+  if (S.status !== 'revising' || !S.base) return null;
+  if (l.removed) return { k: 'removed', t: 'Removed in this revision' };
+  const b = S.base[l.id];
+  if (!b) return { k: 'added', t: 'Added in this revision' };
+  const d = [];
+  const tile = CAT[l.code].tile;
+  if (tile ? b.req !== l.req : b.qty !== l.qty) d.push(tile ? `area ${b.req} → ${l.req} sqft` : `qty ${b.qty} → ${l.qty}`);
+  if (b.disc !== l.disc) d.push(`discount ${b.disc}% → ${l.disc}%`);
+  if (b.special !== l.special) d.push(`special ${b.special ? money(b.special) : 'none'} → ${l.special ? money(l.special) : 'none'}`);
+  if (b.area !== l.area) d.push(`moved from ${b.area}`);
+  return d.length ? { k: 'changed', t: 'Was: ' + d.join(', '), d } : null;
+}
+const changes = () => S.lines.map((l) => ({ l, m: mark(l) })).filter((x) => x.m);
+const locked = (l) => l.ordered > 0 && l.ordered >= l.qty;
+
+// ---- render ----
+function render() { renderHead(); renderRail(); renderLines(); renderSide(); renderOther(); $('fuCount').textContent = S.followUps.length; }
+
+function renderHead() {
+  const iss = issues().length, ch = changes().length, t = totals();
+  const pill = { new: ['p-new', 'New'], draft: ['p-draft', iss ? `Draft · ${iss} to fix` : 'Draft'], ready: ['p-ready', 'Confirmed'], revising: ['p-rev', `Revising → R${S.rev + 1}`], order: ['p-order', 'Part ordered'] }[S.status];
+  let act = '';
+  const share = `<button class="btn" data-a="pdf">PDF</button><button class="btn" data-a="go-bundle" ${S.architect ? '' : 'disabled title="Add an architect to enable"'}>Architect bundle</button><button class="btn" data-a="share">Share link</button>`;
+  if (S.status === 'new' || S.status === 'draft') act = `<button class="btn pri" data-a="confirm" ${!S.customer || !S.lines.length ? 'disabled' : ''}>${iss ? `Fix ${iss} to confirm` : 'Confirm quote'}</button>`;
+  if (S.status === 'ready') act = share + `<button class="btn pri" data-a="convert">Convert to order</button>`;
+  if (S.status === 'revising') act = `<button class="btn ghost" data-a="discard">Discard changes</button><button class="btn pri" data-a="save-rev" ${iss || !ch ? 'disabled' : ''}>Save as R${S.rev + 1}</button>`;
+  if (S.status === 'order') act = share + `<button class="btn pri" data-a="convert">Order remaining</button>`;
+  const cust = S.customer
+    ? `<button class="chip" data-a="customer"><b>${esc(S.customer.name)}</b><span class="muted">${esc(S.customer.mobile)}${S.customer.place ? ' · ' + esc(S.customer.place) : ''}</span>${S.customer.follow ? '<span class="tag t-warn">follow up</span>' : ''}</button>`
+    : `<button class="chip need" data-a="customer">+ Customer (name and mobile is enough)</button>`;
+  const arch = S.architect
+    ? `<button class="chip" data-a="architect"><span class="muted">Architect</span><b>${esc(S.architect.name)}</b>${S.architect.follow ? '<span class="tag t-warn">follow up</span>' : ''}</button>`
+    : `<button class="chip add" data-a="architect">+ Architect</button>`;
+  let banner = '';
+  if (S.status === 'revising') banner = `<div class="banner b-rev"><b>You are editing R${S.rev + 1}.</b><span>The customer still sees R${S.rev} (${money(S.baseTotal)}) until you save. Saving updates this same quote, PDF and architect bundle. No new quote number, no extra files.</span></div>`;
+  if (S.status === 'order') banner = `<div class="banner b-order"><b>${esc(S.order.no)}</b><span>covers Master Bathroom. Ordered items are locked. Everything else can still be revised or ordered.</span></div>`;
+  $('qh').innerHTML = `<div class="qh">
+    <span class="qno">${esc(S.no)}</span>${S.rev ? `<span class="rev" title="Revision ${S.rev} of the same quote">R${S.rev}</span>` : ''}
+    <span class="pill ${pill[0]}">${pill[1]}</span>
+    <div class="who">${cust}${arch}<span class="chip"><span class="muted">${S.fam === 'tile' ? 'Tile and Chemical' : 'CP and Sanitary'}</span></span></div>
+    <div class="act"><span class="saved">${esc(S.saved)}</span>${act}</div></div>${banner}`;
+}
+
+function renderRail() {
+  const t = totals();
+  const row = (key, name, n, sum, warn) => `<button class="ar ${S.areaSel === key ? 'on' : ''}" data-a="area" data-v="${esc(key)}"><span class="t"><span>${esc(name)}${warn ? '<span class="dot" title="Needs attention"></span>' : ''}</span><span class="cnt">${n}</span></span><span class="s num">${money(sum)}</span></button>`;
+  $('rail').innerHTML = `<h3>Areas</h3>` + row('all', 'All areas', t.n, t.sub, false)
+    + S.areas.map((a) => { const x = totals(a); return row(a, a, x.n, x.sub, issues().some((i) => i.l.area === a)); }).join('')
+    + `<div class="newarea"><input class="cell" id="newArea" style="text-align:left" placeholder="+ New area" aria-label="New area name"><button class="btn sm" data-a="add-area">Add</button></div>`;
+  const into = $('into'), cur = S.areaSel !== 'all' ? S.areaSel : (into.value && S.areas.includes(into.value) ? into.value : S.areas[0]);
+  into.innerHTML = S.areas.map((a) => `<option ${a === cur ? 'selected' : ''}>${esc(a)}</option>`).join('');
+}
+
+function rowHtml(l) {
+  const c = calc(l), p = c.p, m = mark(l), lk = locked(l);
+  const elsewhere = S.lines.filter((x) => x.code === l.code && x.id !== l.id && !x.removed).map((x) => x.area);
+  const cls = l.removed ? 'removed' : m ? m.k : c.issue ? 'issue' : '';
+  const qty = p.tile
+    ? `<div class="qty"><input class="cell ${c.issue === 'Enter area' ? 'bad' : ''}" id="f-${l.id}-req" data-f="req" data-id="${l.id}" type="number" min="0" value="${l.req || ''}" placeholder="sqft" aria-label="Area in square feet" ${lk || l.removed ? 'disabled' : ''}><span class="u num" id="u-${l.id}">${unitText(l)}</span></div>`
+    : `<div class="qty"><input class="cell ${c.issue === 'Enter quantity' ? 'bad' : ''}" id="f-${l.id}-qty" data-f="qty" data-id="${l.id}" type="number" min="${l.ordered || 0}" value="${l.qty || ''}" placeholder="qty" aria-label="Quantity" ${lk || l.removed ? 'disabled' : ''}><span class="u">${esc(p.unit)}${l.ordered ? ` · ${l.ordered} ordered` : ''}</span></div>`;
+  const open = S.open === l.id;
+  return `<div class="row ${cls}" id="row-${l.id}">
+    <div class="th">${icon(p.ic)}</div>
+    <div class="c-name" style="min-width:0"><div class="nm" title="${esc(p.name)}">${esc(p.name)}</div>
+      <div class="sub"><span class="mono">${esc(l.code)}</span><span>${esc(p.brand)}${p.fin ? ' · ' + esc(p.fin) : ''}</span>
+      ${p.tile ? `<span class="tag t-n">${esc(p.tile.label)}</span>` : ''}${p.follow ? '<span class="tag t-warn">Quick-added · follow up</span>' : ''}
+      ${elsewhere.length ? `<span class="tag t-n" title="Same item, separate line per area">also in ${esc([...new Set(elsewhere)].join(', '))}</span>` : ''}
+      ${lk ? `<span class="tag t-vio">Ordered · ${esc(S.order.no)}</span>` : ''}<span id="mk-${l.id}">${markHtml(m, c)}</span></div></div>
+    ${qty}
+    <div class="r num">${l.mrp > 0 ? money(l.mrp) + `<div class="muted" style="font-size:11px">/ ${p.tile ? 'sqft' : esc(p.unit.toLowerCase())}</div>` : `<button class="btn sm warn" data-a="mrp" data-id="${l.id}">Add MRP</button>`}</div>
+    <input class="cell" id="f-${l.id}-disc" data-f="disc" data-id="${l.id}" type="number" min="0" max="100" value="${l.disc}" aria-label="Discount percent off MRP" ${lk || l.removed || l.mrp <= 0 ? 'disabled' : ''}>
+    <div class="r num" id="rt-${l.id}">${rateText(l)}</div>
+    <div class="amt num" id="amt-${l.id}">${l.mrp > 0 ? money(c.amount) : '—'}</div>
+    <div class="c-act" style="display:flex;justify-content:flex-end">${l.removed
+      ? `<button class="btn sm" data-a="undo" data-id="${l.id}">Undo</button>`
+      : `<button class="ico" data-a="open" data-id="${l.id}" aria-expanded="${open}" title="More: special rate, add to another area">${open ? '▴' : '▾'}</button><button class="ico" data-a="remove" data-id="${l.id}" title="Remove" ${lk ? 'disabled' : ''}>✕</button>`}</div>
+    ${open && !l.removed ? `<div class="more">
+      <label>Special rate ₹ <input class="cell" id="f-${l.id}-special" data-f="special" data-id="${l.id}" type="number" min="0" value="${l.special || ''}" placeholder="none" ${lk ? 'disabled' : ''}></label>
+      <label>GST % <input class="cell" style="width:60px" id="f-${l.id}-gst" type="number" value="${l.gst}" disabled></label>
+      <span class="muted">Also add to</span>${S.areas.filter((a) => a !== l.area).map((a) => `<button class="btn sm" data-a="copy" data-id="${l.id}" data-v="${esc(a)}">+ ${esc(a)}</button>`).join('')}
+    </div>` : ''}
+  </div>`;
+}
+const unitText = (l) => { const c = calc(l), p = c.p; return c.units ? `${c.units} ${p.unit.toLowerCase()} · covers ${n2(c.pq)} sqft` : 'boxes follow the area'; };
+const rateText = (l) => { const c = calc(l); return l.mrp > 0 ? money(c.rate) + (Number(l.special) > 0 ? '<div class="tag t-info" style="display:inline-block">special</div>' : '') : '—'; };
+const markHtml = (m, c) => m ? `<span class="tag ${{ added: 't-ok', changed: 't-info', removed: 't-bad' }[m.k]}">${esc(m.t)}</span>` : c.issue ? `<span class="tag t-warn">${esc(c.issue)}</span>` : '';
+
+function renderLines() {
+  const areas = S.areaSel === 'all' ? S.areas : [S.areaSel];
+  if (!S.lines.length) {
+    $('lines').innerHTML = `<div class="empty"><h2>Start with the customer or the first item</h2><p>Type a code or name above, or scan a showroom label. A walk-in needs only a name and mobile number. Anything you add in a hurry is flagged for follow-up, so the quote never waits on master data.</p><p style="margin-top:14px"><button class="btn pri" data-a="customer">Add customer</button> <button class="btn" data-a="focus-q">Add first item</button></p></div>`;
+    return;
+  }
+  const head = `<div class="cols"><span></span><span>Item</span><span class="r">${S.fam === 'tile' ? 'Area / qty' : 'Qty'}</span><span class="r">MRP</span><span class="r">Disc %</span><span class="r">Rate</span><span class="r">Amount</span><span></span></div>`;
+  $('lines').innerHTML = head + areas.map((a) => {
+    const ls = S.lines.filter((l) => l.area === a), t = totals(a);
+    return `<div class="sec" style="top:29px"><h2>${esc(a)}</h2><span class="cnt">${t.n} item${t.n === 1 ? '' : 's'}</span><span class="sum num">${money(t.sub)}</span></div>`
+      + (ls.length ? ls.map(rowHtml).join('') : `<div class="row"><span></span><span class="muted">Nothing here yet.</span></div>`)
+      + `<div class="addline"><button class="btn sm ghost" data-a="add-here" data-v="${esc(a)}">+ Add item to ${esc(a)}</button></div>`;
+  }).join('');
+}
+
+function renderTotals() {
+  const t = totals();
+  $('tot').innerHTML = `<h3>Totals</h3>
+    <div class="kv"><span>MRP value</span><b class="num">${money(t.mrp)}</b></div>
+    <div class="kv"><span>Line discounts</span><b class="num">− ${money(t.mrp - t.sub)}</b></div>
+    ${t.qd ? `<div class="kv"><span>Quote discount ${S.qdisc}%</span><b class="num">− ${money(t.qd)}</b></div>` : ''}
+    <div class="kv"><span>Taxable value</span><b class="num">${money(t.taxable)}</b></div>
+    ${S.gstOn ? `<div class="kv"><span>GST 18%</span><b class="num">${money(t.gst)}</b></div>` : ''}
+    <div class="total"><span>Total</span><b class="num">${money(t.total)}</b></div>
+    ${S.status === 'revising' ? `<div class="kv" style="margin-top:4px"><span>Change from R${S.rev}</span><b class="num" style="color:${t.total >= S.baseTotal ? 'var(--ok)' : 'var(--bad)'}">${t.total >= S.baseTotal ? '+' : '−'} ${money(Math.abs(t.total - S.baseTotal))}</b></div>` : ''}`;
+  const iss = issues();
+  $('iss').innerHTML = iss.length ? `<div class="card"><h3>To fix before confirming · ${iss.length}</h3>${iss.map((x) => `<button class="iss" data-a="jump" data-id="${x.l.id}"><b>${esc(x.c.issue)}</b><span>${esc(x.c.p.name)} · ${esc(x.l.area)}</span></button>`).join('')}</div>` : '';
+  const ch = changes();
+  $('chg').innerHTML = S.status === 'revising' ? `<div class="card"><h3>This revision · ${ch.length} change${ch.length === 1 ? '' : 's'}</h3>${ch.length ? ch.map((x) => `<div class="chg"><i style="color:var(--${{ added: 'ok', changed: 'info', removed: 'bad' }[x.m.k]})">${{ added: '+', changed: '~', removed: '−' }[x.m.k]}</i><span><b>${esc(CAT[x.l.code].name)}</b> · ${esc(x.l.area)}${x.m.d ? '<br><span class="muted">' + esc(x.m.d.join(', ')) + '</span>' : ''}</span></div>`).join('') : '<p class="note" style="margin:0">Change any quantity, discount or item. Changed lines are marked as you go.</p>'}</div>` : '';
+}
+function renderSide() {
+  $('side').innerHTML = `<div class="card" id="tot"></div><div id="iss"></div><div id="chg"></div>
+    <div class="card"><h3>People</h3>
+      <div class="kv"><span>Prepared by</span><b>${esc(S.preparedBy)}</b></div><div class="note" style="margin:0 0 4px">Office staff · ${esc(S.preparedAt)}</div>
+      <div class="kv"><span>Confirmed by</span><b>${S.confirmedBy ? esc(S.confirmedBy) : '<span class="muted">Not confirmed yet</span>'}</b></div>${S.confirmedAt ? `<div class="note" style="margin:0 0 4px">${esc(S.confirmedAt)}</div>` : ''}
+      <div class="kv"><span>Sales owner</span><b>${esc(S.owner)}</b></div>
+      <p class="note">Both names print on the PDF and show in the quote register.</p></div>
+    ${S.history.length ? `<div class="card"><h3>Revisions</h3>${S.history.map((h, i) => `<div class="hist"><span class="rev" style="${i ? 'background:var(--bg-soft);color:var(--ink-3)' : ''}">R${h.r}</span><span>${esc(h.when)}<br><span class="muted">${esc(h.by)}</span></span><b class="num">${money(h.total)}</b></div>`).join('')}<p class="note">One quote number and one live PDF. Earlier revisions stay here as a change log only.</p></div>` : ''}
+    <div class="card"><h3>Quote settings</h3><div class="set">
+      <label>Quote discount %<input class="cell" id="f-qdisc" data-g="qdisc" type="number" min="0" max="100" value="${S.qdisc || ''}" placeholder="0"></label>
+      <label>Valid until<input class="cell" id="f-valid" type="date" value="${S.valid}"></label>
+      <label>Tax<select class="cell" id="f-gst" data-g="gst"><option value="1" ${S.gstOn ? 'selected' : ''}>GST quotation</option><option value="0" ${S.gstOn ? '' : 'selected'}>Without GST</option></select></label>
+      <label>PDF<select class="cell" id="f-pdf"><option>Show prices</option><option>Selection only</option></select></label>
+      <label style="grid-column:1/-1">Project / site<input class="cell" id="f-proj" value="${esc(S.project)}" placeholder="e.g. Patel Residence"></label>
+    </div></div>`;
+  renderTotals();
+}
+function patch(l) { // update one line in place: keeps keyboard focus while typing
+  const c = calc(l), row = $('row-' + l.id), m = mark(l);
+  if (!row) return;
+  row.className = 'row ' + (l.removed ? 'removed' : m ? m.k : c.issue ? 'issue' : '');
+  $('mk-' + l.id).innerHTML = markHtml(m, c);
+  $('amt-' + l.id).textContent = l.mrp > 0 ? money(c.amount) : '—';
+  $('rt-' + l.id).innerHTML = rateText(l);
+  if ($('u-' + l.id)) $('u-' + l.id).textContent = unitText(l);
+  const f = $(`f-${l.id}-${CAT[l.code].tile ? 'req' : 'qty'}`); if (f) f.classList.toggle('bad', !!c.issue && c.issue !== 'MRP missing');
+  renderTotals(); renderHead(); renderRail();
+}
+
+function renderOther() {
+  // Architect bundle: images only, grouped by area, always built from the live quote.
+  const live = S.lines.filter((l) => !l.removed);
+  $('bundle').innerHTML = !S.architect || !live.length
+    ? `<h1>Architect bundle</h1><p class="lead">Add an architect and at least one item to the quote. The bundle button then appears on the quote and builds a picture-only PDF of exactly the items in it.</p>`
+    : `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><h1 style="margin-right:auto">Architect bundle</h1><span class="pill p-ready">Matches R${S.status === 'revising' ? S.rev + 1 + ' draft' : S.rev || 1}</span><button class="btn" data-a="share">Copy share link</button><button class="btn pri" data-a="pdf">Download PDF</button></div>
+      <p class="lead">Pictures of the selected items only: no prices, no discounts. It is rebuilt from the quote every time it is opened, so a revised quote always gives the architect the current selection on the same link.</p>
+      <div class="sheet"><header><div><h2>Selection for ${esc(S.architect.name)}</h2><div class="muted">${esc(S.architect.firm || '')}</div></div><div style="text-align:right"><b>${esc(S.project || 'Project')}</b><div class="muted">${esc(S.customer ? S.customer.name : '')} · ${esc(S.no)} R${S.rev || 1}</div></div></header>
+      ${S.areas.map((a) => { const ls = live.filter((l) => l.area === a); return ls.length ? `<h3>${esc(a)}</h3><div class="grid">${ls.map((l) => { const c = calc(l), p = c.p; return `<div class="tile"><div class="ph">${icon(p.ic, 64)}</div><div class="tx"><b>${esc(p.name)}</b><span class="mono">${esc(l.code)}</span><div class="muted">${esc(p.brand)}${p.fin ? ' · ' + esc(p.fin) : ''} · ${p.tile ? n2(c.pq) + ' sqft' : c.units + ' ' + p.unit.toLowerCase()}</div></div></div>`; }).join('')}</div>` : ''; }).join('')}
+      <p class="note" style="margin-top:18px">Prepared by ${esc(S.preparedBy)}, Marble Park. Product photos come from the catalogue; the drawings here stand in for them in this sample.</p></div>`;
+
+  $('followups').innerHTML = `<h1>Follow-up queue</h1><p class="lead">Every record added with quick add lands here with what is still missing. Nothing blocks the quote at the counter; the office completes the details later. One queue for customers, SKUs, architects, vendors, brands and tile sizes.</p>
+    <div class="scroll"><table class="tbl"><thead><tr><th>Type</th><th>Record</th><th>Still missing</th><th>Added by</th><th>Used in</th><th></th></tr></thead><tbody>
+    ${S.followUps.length ? S.followUps.map((f, i) => `<tr><td><span class="tag t-n">${esc(f.type)}</span></td><td><b>${esc(f.rec)}</b></td><td>${f.missing.map((m) => `<span class="tag t-warn" style="margin-right:4px">${esc(m)}</span>`).join('')}</td><td>${esc(f.by)}<div class="muted">${esc(f.when)}</div></td><td class="mono">${esc(f.used)}</td><td style="text-align:right"><button class="btn sm" data-a="fu-done" data-v="${i}">Complete</button></td></tr>`).join('') : '<tr><td colspan="6" class="muted">Nothing waiting. Quick-added records will appear here.</td></tr>'}
+    </tbody></table></div>`;
+
+  const fx = [
+    ['Revise opens a blank form and makes a new quote', 'Revise copies the lines into a separate "intent" form that only knows one price field. The quote stores MRP, discount and special rate, so every rate arrives empty. Saving then creates a new quote number and marks the old one superseded.', 'Revise happens in place on this screen with every value kept. Saving bumps R2 to R3 on the same quote. One number, one PDF, one share link.'],
+    ['Convert to sales order says MRP is missing', 'Pressing Save draft (or Ctrl+S) on a fully priced quote wipes the "MRP confirmed" stamp on every line. Conversion checks that stamp, not the MRP itself, and reports it as an MRP problem.', 'Saving never removes a valid confirmation. Convert is offered only when the quote is confirmed, and any blocker names the exact line and reason.'],
+    ['Frappuccino 1200 x 1800 mm area is doubled', 'The quote builder converts a box area to a per-piece area for tiles stocked by piece. The intent and revise form skips that step and uses the whole box area per piece. The exact product still needs a check against its master record.', 'One shared calculation for tile area everywhere, read from Tile Size Master, with the pack shown on the line (1 pc = 23.25 sqft).'],
+    ['Same item cannot go in two areas', 'The builder silently ignores a product that is already on the quote.', 'Every area keeps its own line. "Also add to" copies an item into another area in one click.'],
+    ['Prepared by shows the sales owner', 'The PDF prints the responsible sales user. Who actually built and confirmed the quote is not stored.', 'Prepared by and Confirmed by are stored with time and shown on the quote, register and PDF.'],
+    ['New customer or SKU needs a trip to another page', 'Customer and product must be created in their own master screens first, with many required fields.', 'Quick add inside the quote: name and mobile for a customer, name and MRP for a SKU. Each is flagged in the follow-up queue.'],
+    ['Long quotes mean endless scrolling', 'Each line is a tall card with six boxes, and the screen has ten metric tiles above the lines.', 'One compact row per item, areas in a side rail with totals, issues listed on the right with jump links.'],
+    ['Old quote files pile up', 'Every revision is its own quote with its own PDF.', 'The PDF and architect bundle are always built from the current revision. Earlier revisions stay as a change log, not as files.'],
+  ];
+  $('fixes').innerHTML = `<h1>Bugs and fixes</h1><p class="lead">What was found in the code for each problem you reported, and what the new workspace does instead. Pricing rules stay as they are today.</p>
+    <div class="scroll"><table class="tbl"><thead><tr><th style="width:22%">Problem</th><th>Cause found</th><th>What changes</th></tr></thead><tbody>${fx.map((r) => `<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+// ---- dialogs ----
+function dialog(kind, html) { const d = $('dlg'); d.className = 'dlg on ' + kind; d.innerHTML = html; $('scrim').classList.add('on'); const f = d.querySelector('input,select,button'); if (f) f.focus(); }
+function closeDlg() { $('dlg').className = 'dlg'; $('scrim').classList.remove('on'); }
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 4200); }
+
+function customerDlg() {
+  const recent = [CUSTOMER, { name: 'Nisha Desai', mobile: '99090 55120', place: '', follow: true }, { name: 'Jignesh Mehta', mobile: '98980 77314', place: 'Bopal, Ahmedabad' }];
+  dialog('modal', `<div class="dh"><h2>Customer</h2><p>Pick an existing customer or add a walk-in in five seconds.</p></div><div class="db">
+    <form id="qc" class="two"><label class="fld">Name<input id="qc-name" required placeholder="Walk-in name"></label><label class="fld">Mobile<input id="qc-mobile" required inputmode="numeric" placeholder="10-digit mobile"></label>
+    <div class="later" style="grid-column:1/-1">Address, GSTIN and email can wait. The customer is saved now and flagged in the follow-up queue.</div>
+    <button class="btn pri" style="grid-column:1/-1">Add and use on this quote</button></form>
+    <div class="muted" style="font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase">Recent customers</div>
+    ${recent.map((c, i) => `<button class="pick" data-a="use-customer" data-v="${i}"><span><b>${esc(c.name)}</b> · ${esc(c.mobile)}</span><span class="muted">${esc(c.place || 'details pending')}</span></button>`).join('')}</div>`);
+  customerDlg.recent = recent;
+}
+function architectDlg() {
+  dialog('modal', `<div class="dh"><h2>Architect</h2><p>Linking an architect turns on the picture-only architect bundle.</p></div><div class="db">
+    <button class="pick" data-a="use-architect"><span><b>${esc(ARCH.name)}</b></span><span class="muted">${esc(ARCH.firm)}</span></button>
+    <form id="qa" class="two"><label class="fld" style="grid-column:1/-1">New architect name<input id="qa-name" required placeholder="Ar. name"></label>
+    <div class="later" style="grid-column:1/-1">Firm and contact can be added later from the follow-up queue.</div>
+    <button class="btn pri" style="grid-column:1/-1">Add and link</button></form>
+    ${S.architect ? '<button class="btn ghost" data-a="no-architect">Remove architect from this quote</button>' : ''}</div>`);
+}
+function skuDlg(name) {
+  dialog('modal', `<div class="dh"><h2>Quick add SKU</h2><p>For a new arrival that is not in Product Master yet.</p></div><form id="qs"><div class="db">
+    <label class="fld">Item name<input id="qs-name" required value="${esc(name)}"></label>
+    <div class="two"><label class="fld">Category<select id="qs-cat">${S.fam === 'tile' ? '<option value="tile">Tile</option><option value="bag">Chemical</option>' : '<option value="basin">Basin</option><option value="faucet">Faucet</option><option value="shower">Shower</option><option value="wc">Sanitaryware</option><option value="acc">Accessory</option>'}</select></label>
+    <label class="fld">Brand<input id="qs-brand" placeholder="optional"></label></div>
+    <div class="two"><label class="fld">MRP ₹ (before GST)<input id="qs-mrp" type="number" min="1" required placeholder="per piece"></label><label class="fld">Photo<input id="qs-photo" type="file" accept="image/*" style="padding-top:7px"></label></div>
+    <div class="later">Saved to Product Master with a code and this MRP, then added to the quote. HSN, floor price and full details are flagged for follow-up.</div></div>
+    <div class="df"><button type="button" class="btn" data-a="close">Cancel</button><button class="btn pri">Add to ${esc($('into').value)}</button></div></form>`);
+}
+function mrpDlg(l) {
+  dialog('modal', `<div class="dh"><h2>Add MRP</h2><p>${esc(CAT[l.code].name)} · ${esc(l.code)}</p></div><form id="qm" data-id="${l.id}"><div class="db">
+    <label class="fld">MRP ₹ per ${esc(CAT[l.code].unit.toLowerCase())} (before GST)<input id="qm-mrp" type="number" min="1" required></label>
+    <div class="later">MRP still belongs to Product Master. This saves it there, records you as the source, and unblocks the line without leaving the quote.</div></div>
+    <div class="df"><button type="button" class="btn" data-a="close">Cancel</button><button class="btn pri">Save MRP</button></div></form>`);
+}
+function convertDlg() {
+  const ls = S.lines.filter((l) => !l.removed && l.ordered < l.qty || (CAT[l.code].tile && !l.removed));
+  const sum = ls.reduce((s, l) => s + calc(l).amount, 0) * (1 - S.qdisc / 100) * (S.gstOn ? 1.18 : 1);
+  dialog('drawer', `<div class="dh"><h2>Convert to sales order</h2><p>${esc(S.no)} R${S.rev} · confirmed by ${esc(S.confirmedBy)}</p></div><div class="db">
+    <div class="card" style="background:var(--ok-bg);border-color:transparent;color:var(--ok);font-weight:600">Ready to order: every line has MRP, rate and quantity.</div>
+    ${ls.map((l) => { const c = calc(l); return `<div class="kv" style="align-items:center"><span><b>${esc(c.p.name)}</b><br><span class="muted">${esc(l.area)}</span></span><input class="cell" style="width:70px" type="number" id="co-${l.id}" value="${c.units - l.ordered}" min="0" max="${c.units - l.ordered}" aria-label="Quantity to order"></div>`; }).join('')}
+    <div class="two"><label class="fld">Payment<select id="co-pay"><option>Cash</option><option>Credit</option></select></label><label class="fld">Advance ₹<input id="co-adv" type="number" placeholder="0"></label></div>
+    <label class="fld">Promised dispatch<input id="co-date" type="date" value="2026-11-24"></label></div>
+    <div class="df"><span class="muted" style="margin-right:auto">Order value <b class="num" style="color:var(--ink)">${money(sum)}</b></span><button class="btn" data-a="close">Cancel</button><button class="btn pri" data-a="do-convert">Create sales order</button></div>`);
+}
+
+// ---- actions ----
+function touch() { // any edit to a confirmed quote starts a revision automatically
+  if (S.status === 'ready') { startRevision(S); }
+  if (S.status === 'new' && (S.lines.length || S.customer)) S.status = 'draft';
+  S.saved = S.status === 'revising' ? 'Revision draft saved just now' : 'Draft saved just now';
+}
+function addLine(code, area, o) {
+  if (S.status === 'ready') startRevision(S);
+  const l = L(area, code, o); if (CAT[code].tile) l.req = 0;
+  S.lines.push(l); touch(); render();
+  const f = $(`f-${l.id}-${CAT[code].tile ? 'req' : 'qty'}`); if (f) { f.scrollIntoView({ block: 'center' }); f.focus(); f.select(); }
+}
+function search(q) {
+  const r = $('results'); q = q.trim().toLowerCase();
+  if (q.length < 2) { r.classList.remove('on'); return; }
+  const hits = Object.entries(CAT).filter(([code, p]) => p.fam === S.fam && (code + ' ' + p.name + ' ' + p.brand).toLowerCase().includes(q)).slice(0, 7);
+  r.innerHTML = hits.map(([code, p]) => `<button class="res" data-a="pick" data-v="${esc(code)}"><span class="th" style="width:38px;height:38px">${icon(p.ic, 20)}</span><span><b>${esc(p.name)}</b><br><span class="muted"><span class="mono">${esc(code)}</span> · ${esc(p.brand)}${p.fin ? ' · ' + esc(p.fin) : ''}${S.lines.some((l) => l.code === code && !l.removed) ? ' · already on this quote, adds another line' : ''}</span></span><span class="num" style="text-align:right"><b>${money(p.mrp)}</b><br><span class="muted">MRP / ${p.tile ? 'sqft' : p.unit.toLowerCase()}</span></span></button>`).join('')
+    + `<button class="res qa" data-a="quick-sku"><span class="th" style="width:38px;height:38px;background:transparent;color:inherit">＋</span><span>Not in the catalogue? Quick add “${esc($('q').value.trim())}” as a new SKU</span><span></span></button>`;
+  r.classList.add('on');
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-a]'); if (!b) { if (!e.target.closest('.addbar')) $('results').classList.remove('on'); return; }
+  const a = b.dataset.a, v = b.dataset.v, l = S.lines.find((x) => x.id === b.dataset.id);
+  if (a === 'close') closeDlg();
+  if (a === 'area') { S.areaSel = v; render(); $('lines').scrollTop = 0; }
+  if (a === 'add-area') { const n = $('newArea').value.trim(); if (n && !S.areas.includes(n)) { S.areas.push(n); S.areaSel = n; render(); $('q').focus(); toast(`${n} added. Items you add now go into it.`); } }
+  if (a === 'add-here') { $('into').value = v; $('q').focus(); }
+  if (a === 'focus-q') $('q').focus();
+  if (a === 'pick') { $('results').classList.remove('on'); $('q').value = ''; addLine(v, $('into').value); }
+  if (a === 'quick-sku') { $('results').classList.remove('on'); skuDlg($('q').value.trim()); }
+  if (a === 'open') { S.open = S.open === l.id ? null : l.id; renderLines(); }
+  if (a === 'copy') { addLine(l.code, v, { disc: l.disc, special: l.special }); toast(`${CAT[l.code].name} also added to ${v} as its own line.`); }
+  if (a === 'remove') { if (S.status === 'ready') startRevision(S); if (S.status === 'revising' && S.base[l.id]) l.removed = true; else S.lines = S.lines.filter((x) => x !== l); touch(); render(); }
+  if (a === 'undo') { l.removed = false; render(); }
+  if (a === 'mrp') mrpDlg(l);
+  if (a === 'jump') { S.areaSel = 'all'; render(); const r = $('row-' + l.id); r.scrollIntoView({ block: 'center' }); const f = r.querySelector('input:not(:disabled),button.warn'); if (f) f.focus(); }
+  if (a === 'customer') customerDlg();
+  if (a === 'architect') architectDlg();
+  if (a === 'use-customer') { S.customer = { ...customerDlg.recent[v] }; touch(); closeDlg(); render(); }
+  if (a === 'use-architect') { S.architect = { ...ARCH }; touch(); closeDlg(); render(); }
+  if (a === 'no-architect') { S.architect = null; closeDlg(); render(); }
+  if (a === 'confirm') {
+    const iss = issues(); if (iss.length) { S.areaSel = 'all'; render(); $('row-' + iss[0].l.id).scrollIntoView({ block: 'center' }); toast(`${iss.length} line${iss.length === 1 ? '' : 's'} to fix first. They are listed on the right.`); return; }
+    Object.assign(S, { status: 'ready', rev: 1, confirmedBy: ME, confirmedAt: 'Today, just now', saved: 'All changes saved' }); if (S.no === 'New quote') S.no = 'MP-Q-2026-0416';
+    S.history.unshift({ r: 1, when: 'Today, just now', by: ME, total: totals().total }); render(); toast(`${S.no} confirmed by ${ME}. PDF, share link and order conversion are ready.`);
+  }
+  if (a === 'save-rev') {
+    S.lines = S.lines.filter((x) => !x.removed); S.rev += 1; S.status = S.order ? 'order' : 'ready'; S.base = null; S.revisedBy = ME; S.confirmedBy = ME; S.confirmedAt = 'Today, just now'; S.saved = 'All changes saved';
+    S.history.unshift({ r: S.rev, when: 'Today, just now', by: ME, total: totals().total }); render();
+    toast(`Saved as R${S.rev} on the same quote. The PDF, share link and architect bundle now show R${S.rev}.`);
+  }
+  if (a === 'discard') { const k = S.key; preset(k === 'revising' ? 'ready' : k); $('preset').value = S.key; render(); toast('Changes discarded. The confirmed quote is untouched.'); }
+  if (a === 'convert') convertDlg();
+  if (a === 'do-convert') { S.lines.forEach((x) => { if (!x.removed) x.ordered = CAT[x.code].tile ? 1 : x.qty; }); S.status = 'order'; S.order = S.order || { no: 'SO-2026-0191', when: 'Today', by: ME }; closeDlg(); render(); toast(`Sales order ${S.order.no} created from ${S.no} R${S.rev}.`); }
+  if (a === 'pdf') toast(`Opens the one live PDF for ${S.no}. It always shows the latest saved revision.`);
+  if (a === 'share') toast('Share link copied. The same link keeps working after every revision.');
+  if (a === 'go-bundle') location.hash = 'architect-bundle';
+  if (a === 'fu-done') { const f = S.followUps.splice(v, 1)[0]; render(); toast(`${f.rec} marked complete.`); }
+});
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (t.id === 'q') return search(t.value);
+  if (t.dataset.f) {
+    const l = S.lines.find((x) => x.id === t.dataset.id); const was = S.status;
+    l[t.dataset.f] = t.value === '' ? 0 : Math.max(0, Number(t.value)); touch();
+    if (was !== S.status) { renderSide(); } patch(l);
+  }
+  if (t.dataset.g === 'qdisc') { S.qdisc = Math.min(100, Math.max(0, Number(t.value) || 0)); renderTotals(); renderHead(); }
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'preset') { preset(e.target.value); render(); }
+  if (e.target.dataset.g === 'gst') { S.gstOn = e.target.value === '1'; renderTotals(); }
+  if (e.target.id === 'f-proj') S.project = e.target.value;
+});
+document.addEventListener('submit', (e) => {
+  e.preventDefault(); const id = e.target.id;
+  if (id === 'qc') { S.customer = { name: $('qc-name').value.trim(), mobile: $('qc-mobile').value.trim(), place: '', follow: true }; S.followUps.unshift({ type: 'Customer', rec: `${S.customer.name} · ${S.customer.mobile}`, by: ME, when: 'Just now', missing: ['Site address', 'GSTIN'], used: S.no }); touch(); closeDlg(); render(); toast(`${S.customer.name} added and linked. Flagged for follow-up.`); $('q').focus(); }
+  if (id === 'qa') { S.architect = { name: $('qa-name').value.trim(), firm: '', follow: true }; S.followUps.unshift({ type: 'Architect', rec: S.architect.name, by: ME, when: 'Just now', missing: ['Firm', 'Mobile'], used: S.no }); touch(); closeDlg(); render(); toast(`${S.architect.name} linked. Architect bundle is now available.`); }
+  if (id === 'qs') {
+    const code = 'QA-' + (1124 + Object.keys(CAT).filter((k) => k.startsWith('QA-')).length), name = $('qs-name').value.trim(), ic = $('qs-cat').value;
+    CAT[code] = { name, brand: $('qs-brand').value.trim() || 'Unbranded', fin: '', ic, unit: ic === 'tile' ? 'BOX' : 'PC', mrp: Number($('qs-mrp').value), disc: 0, fam: S.fam, follow: true, ...(ic === 'tile' ? { tile: { per: 15.5, label: 'pack size pending' } } : {}) };
+    S.followUps.unshift({ type: 'SKU', rec: `${code} · ${name}`, by: ME, when: 'Just now', missing: ['HSN', 'Floor price'].concat($('qs-photo').files.length ? [] : ['Photo']), used: S.no });
+    $('q').value = ''; closeDlg(); addLine(code, $('into').value); toast(`${code} created in Product Master and added. Flagged for follow-up.`);
+  }
+  if (id === 'qm') { const l = S.lines.find((x) => x.id === e.target.dataset.id); const m = Number($('qm-mrp').value); CAT[l.code].mrp = m; S.lines.forEach((x) => { if (x.code === l.code) x.mrp = m; }); const f = S.followUps.find((x) => x.rec.startsWith(l.code)); if (f) f.missing = f.missing.filter((x) => x !== 'MRP'); touch(); closeDlg(); render(); toast('MRP saved to Product Master. The line is priced.'); }
+});
+document.addEventListener('keydown', (e) => {
+  const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName);
+  if (e.key === '/' && !typing) { e.preventDefault(); location.hash = 'quote'; $('q').focus(); }
+  if (e.key === 'Escape') { closeDlg(); $('results').classList.remove('on'); }
+  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.f) e.target.blur();
+  if (e.key === 'Enter' && e.target.id === 'newArea') document.querySelector('[data-a="add-area"]').click();
+});
+
+function route() {
+  const h = (location.hash || '#quote').slice(1), v = ['quote', 'architect-bundle', 'follow-ups', 'fix-list'].includes(h) ? h : 'quote';
+  document.querySelectorAll('.view').forEach((x) => x.classList.toggle('on', x.id === 'v-' + v));
+  document.querySelectorAll('.tabs a').forEach((x) => x.classList.toggle('on', x.dataset.tab === v));
+  renderOther();
+}
+window.addEventListener('hashchange', route);
+preset('revising'); render(); route();
+</script>
+</body>
+</html>

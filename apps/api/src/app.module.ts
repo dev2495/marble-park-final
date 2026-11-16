@@ -28,6 +28,7 @@ import { ReportingModule } from './modules/reporting/reporting.module';
 import { HealthController } from './health.controller';
 
 import { SearchModule } from './modules/search/search.module';
+import { FollowUpsModule } from './modules/follow-ups/follow-ups.module';
 import { AssetsModule } from './modules/assets/assets.module';
 
 @Module({
@@ -103,6 +104,7 @@ import { AssetsModule } from './modules/assets/assets.module';
     IntentsModule,
     ReceivablesModule,
     ReportingModule,
+    FollowUpsModule,
   ],
   controllers: [HealthController],
 })

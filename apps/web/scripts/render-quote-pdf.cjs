@@ -24,6 +24,7 @@ const React = require('react');
 const { groupQuoteLines, requestedQuantityLabel } = require('@marble-park/pricing-contract/quote-display');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
 const { PRICING_VERSION, priceQuoteLines } = require('@marble-park/pricing-contract');
+const ARCHITECT_BUNDLE = process.env.PDF_ARCHITECT_BUNDLE === '1';
 
 const colors = {
   ink: '#222222',
@@ -112,15 +113,17 @@ const styles = StyleSheet.create({
   imageCol: { width: '13%' },
   image: { width: 46, height: 46, objectFit: 'contain', borderRadius: 6, backgroundColor: colors.cream },
   imageCompact: { width: 34, height: 34 },
-  descCol: { width: '39%', paddingRight: 6 },
+  descCol: { width: '31%', paddingRight: 6 },
+  discCol: { width: '8%', textAlign: 'right' },
   qtyCol: { width: '10%', textAlign: 'center' },
   rateCol: { width: '14%', textAlign: 'right' },
   finalRateCol: { width: '13%', textAlign: 'right' },
   amountCol: { width: '11%', textAlign: 'right' },
-  tileImageCol: { width: '10%' },
-  tileDescCol: { width: '28%', paddingRight: 5 },
-  tileFulfilCol: { width: '14%', textAlign: 'center' },
-  tileCoverageCol: { width: '12%', textAlign: 'center' },
+  tileImageCol: { width: '9%' },
+  tileDescCol: { width: '23%', paddingRight: 5 },
+  tileFulfilCol: { width: '13%', textAlign: 'center' },
+  tileCoverageCol: { width: '11%', textAlign: 'center' },
+  tileDiscCol: { width: '8%', textAlign: 'right' },
   tileMrpCol: { width: '12%', textAlign: 'right' },
   tileSellingCol: { width: '13%', textAlign: 'right' },
   tileAmountCol: { width: '11%', textAlign: 'right' },
@@ -157,6 +160,25 @@ const styles = StyleSheet.create({
   closingText: { fontSize: 11, lineHeight: 1.55, marginBottom: 18, color: '#dcd0c0' },
   closingTermsTitle: { fontSize: 12, fontWeight: 800, marginTop: 22, marginBottom: 8, color: '#ffffff', letterSpacing: 1.4, textTransform: 'uppercase' },
 });
+
+// Saving on MRP for one unit after every discount (line and quote level),
+// compared in the same tax terms as the MRP.
+function discountPercent(rate) {
+  const mrp = Number(rate.mrp || 0);
+  if (!(mrp > 0) || !(rate.finalUnitPayable >= 0)) return '';
+  const pct = (1 - Number(rate.finalUnitPayable || 0) / mrp) * 100;
+  if (!Number.isFinite(pct) || Math.abs(pct) < 0.05) return '0%';
+  const rounded = Math.round(pct * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
+}
+const ULID_LIKE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+function preparedByName(quote, quoteMeta) {
+  const prepared = String(quoteMeta.preparedByName || '').trim() || (ULID_LIKE.test(String(quoteMeta.preparedBy || '')) ? '' : String(quoteMeta.preparedBy || '').trim());
+  return prepared || quote.owner?.name || 'Marble Park Team';
+}
+function confirmedByName(quoteMeta) {
+  return String(quoteMeta.confirmedByName || '').trim();
+}
 
 function money(value) {
   return `Rs. ${Math.round(Number(value || 0)).toLocaleString('en-IN')}`;
@@ -480,7 +502,7 @@ async function fetchQuote(id, apiUrl) {
   }
   const query = `query QuoteForPdf($id: ID!) {
     quote(id: $id) {
-      id quoteNumber quoteType title projectName validUntil createdAt
+      id quoteNumber quoteType title projectName validUntil createdAt versionNumber
       lines quoteMeta displayMode discountPercent notes
       architectId architectName architect
       customer owner lead approval
@@ -503,7 +525,8 @@ async function fetchQuote(id, apiUrl) {
     settings: payload.data.documentSettings?.data || null,
     brands: payload.data.masterProductBrands || [],
   };
-  assertQuoteCommercialReady(result.quote, safeJson(result.quote.quoteMeta, {}).taxMode === 'non_gst' ? 'non_gst' : 'gst');
+  // The architect bundle shows pictures only, so it needs no commercial checks.
+  if (!ARCHITECT_BUNDLE) assertQuoteCommercialReady(result.quote, safeJson(result.quote.quoteMeta, {}).taxMode === 'non_gst' ? 'non_gst' : 'gst');
   return result;
 }
 
@@ -641,7 +664,7 @@ function CompactSelectionDocument({ payload, requestUrl }) {
         quote.customer?.name || 'Premium Client',
         quote.projectName || quote.title || '',
         fmtDate(quote.createdAt),
-        quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team',
+        `Prepared by ${preparedByName(quote, quoteMeta)}`,
       ].filter(Boolean).join('\n')),
     ),
     e(View, { style: styles.cardGrid },
@@ -703,6 +726,7 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
       e(Text, { style: [styles.th, styles.descCol] }, 'Description'),
       e(Text, { style: [styles.th, styles.qtyCol] }, 'Qty'),
       showPrices ? e(Text, { style: [styles.th, styles.rateCol] }, 'MRP\nrate') : null,
+      showPrices ? e(Text, { style: [styles.th, styles.discCol] }, 'Disc.\non MRP') : null,
       showPrices ? e(Text, { style: [styles.th, styles.finalRateCol] }, 'Selling\nprice') : null,
       showPrices ? e(Text, { style: [styles.th, styles.amountCol] }, 'Total') : null,
     ),
@@ -720,6 +744,7 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
+        showPrices ? e(Text, { style: [styles.td, styles.discCol] }, discountPercent(rate)) : null,
         showPrices ? e(Text, { style: [styles.td, styles.finalRateCol] }, `${money(rate.finalUnitPayable)}\nper ${rate.pricingUom}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.amountCol] }, money(rate.displayAmount)) : null,
       );
@@ -740,6 +765,7 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
       e(Text, { style: [styles.th, styles.tileFulfilCol] }, 'Box / Pc / Kg'),
       e(Text, { style: [styles.th, styles.tileCoverageCol] }, 'Tile area'),
       e(Text, { style: [styles.th, styles.tileMrpCol] }, 'MRP RATE\nPER UNIT'),
+      e(Text, { style: [styles.th, styles.tileDiscCol] }, 'DISC.\nON MRP'),
       e(Text, { style: [styles.th, styles.tileSellingCol] }, 'SELLING RATE\nPER UNIT'),
       e(Text, { style: [styles.th, styles.tileAmountCol] }, 'Amount'),
     ),
@@ -773,6 +799,7 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
               : '—'
           : '—'),
         e(Text, { style: [styles.td, styles.tileMrpCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`),
+        e(Text, { style: [styles.td, styles.tileDiscCol] }, discountPercent(rate)),
         e(Text, { style: [styles.td, styles.tileSellingCol] }, `${money(rate.finalUnitPayable)}\nper ${rate.pricingUom}`),
         e(Text, { style: [styles.td, styles.tileAmountCol] }, money(rate.displayAmount)),
       );
@@ -849,7 +876,11 @@ function PricedDocumentBody(payload, requestUrl) {
         e(Text, { style: [styles.label, { marginTop: 9 }] }, 'Valid Until'),
         e(Text, { style: styles.value }, fmtDate(quote.validUntil) || '30 days'),
         e(Text, { style: [styles.label, { marginTop: 9 }] }, 'Sales Person'),
-        e(Text, { style: styles.value }, quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team'),
+        e(Text, { style: styles.value }, quote.owner?.name || 'Marble Park Team'),
+        e(Text, { style: [styles.label, { marginTop: 9 }] }, 'Prepared By'),
+        e(Text, { style: styles.text }, preparedByName(quote, quoteMeta)),
+        confirmedByName(quoteMeta) ? e(Text, { style: [styles.label, { marginTop: 7 }] }, 'Confirmed By') : null,
+        confirmedByName(quoteMeta) ? e(Text, { style: styles.text }, `${confirmedByName(quoteMeta)}${quoteMeta.confirmedAt ? ` · ${fmtDate(quoteMeta.confirmedAt)}` : ''}`) : null,
       ),
     ),
     ...groups.map((group) => quoteType === 'tile'
@@ -874,9 +905,79 @@ function PricedDocumentBody(payload, requestUrl) {
     ),
     e(BrandStrip, { payload, quoteMeta, requestUrl }),
     e(View, { style: styles.footer },
-      e(Text, null, `Prepared by: ${quote.owner?.name || quoteMeta.preparedBy || 'Marble Park Team'}`),
+      e(Text, null, `Prepared by: ${preparedByName(quote, quoteMeta)}${confirmedByName(quoteMeta) ? ` · Confirmed by: ${confirmedByName(quoteMeta)}` : ''}`),
       e(Text, null, settings.documentFooter || `Thank you for choosing ${settings.companyName || 'Marble Park'}. ${settings.supportEmail || ''}`),
       e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}`, style: styles.pageNumber }),
+    ),
+  );
+}
+
+// ============= Architect bundle (pictures only) =============
+
+const bundleStyles = StyleSheet.create({
+  page: { backgroundColor: '#ffffff', paddingTop: 26, paddingBottom: 46, paddingHorizontal: 28, fontFamily: 'Helvetica', color: colors.ink },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', borderBottomWidth: 3, borderBottomColor: colors.redAccent, paddingBottom: 10, marginBottom: 6 },
+  title: { fontSize: 19, fontWeight: 900 },
+  sub: { marginTop: 3, fontSize: 9, color: colors.muted },
+  meta: { fontSize: 8.5, color: colors.muted, textAlign: 'right', lineHeight: 1.45 },
+  area: { marginTop: 14, marginBottom: 8, fontSize: 11, fontWeight: 900, color: colors.redAccent, letterSpacing: 1.4, textTransform: 'uppercase' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  card: { width: '31.6%', borderWidth: 1, borderColor: colors.line, borderRadius: 6, overflow: 'hidden', marginBottom: 2 },
+  imageWrap: { height: 132, backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center' },
+  image: { width: '100%', height: '100%', objectFit: 'contain' },
+  noImage: { fontSize: 8, color: colors.tan },
+  body: { padding: 7 },
+  name: { fontSize: 8.8, fontWeight: 800, lineHeight: 1.25 },
+  line: { marginTop: 2, fontSize: 7.4, color: colors.muted, lineHeight: 1.3 },
+});
+
+function ArchitectBundleDocument({ payload, requestUrl }) {
+  const e = React.createElement;
+  const quote = payload.quote;
+  const settings = payload.settings || {};
+  const quoteMeta = safeJson(quote.quoteMeta, {});
+  const groups = groupByArea(asArray(quote.lines));
+  const architect = quote.architectName || quote.architect?.name || quoteMeta.architectName || '';
+  const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.png', requestUrl);
+  const quantity = (line) => {
+    const isTile = String(line.category || '').toLowerCase() === 'tiles';
+    if (isTile && Number(line.requestedArea || 0) > 0) return `${line.requestedArea} ${line.pricingUom || 'SQFT'}`;
+    const qty = Number(line.qty || line.quantity || 0);
+    return qty ? `${qty} ${String(line.inventoryUom || line.unit || 'PC').toUpperCase()}` : '';
+  };
+  return e(Document, null,
+    e(Page, { size: 'A4', style: bundleStyles.page, wrap: true },
+      e(View, { style: bundleStyles.head, fixed: true },
+        e(View, { style: { flexDirection: 'row', alignItems: 'center', gap: 10 } },
+          companyLogo ? e(Image, { src: companyLogo, style: { width: 40, height: 40, objectFit: 'contain' } }) : null,
+          e(View, null,
+            e(Text, { style: bundleStyles.title }, architect ? `Selection for ${architect}` : 'Product selection'),
+            e(Text, { style: bundleStyles.sub }, [quote.architect?.firmName, quote.projectName || quote.title].filter(Boolean).join(' · ')),
+          ),
+        ),
+        e(Text, { style: bundleStyles.meta }, [quote.customer?.name, quote.quoteNumber, fmtDate(new Date())].filter(Boolean).join('\n')),
+      ),
+      ...groups.flatMap((group) => [
+        e(Text, { key: `${group.area}-title`, style: bundleStyles.area, minPresenceAhead: 160 }, `${group.area} · ${group.rows.length} item${group.rows.length === 1 ? '' : 's'}`),
+        e(View, { key: `${group.area}-grid`, style: bundleStyles.grid },
+          ...group.rows.map((line, index) => {
+            const src = imageSrc(line, requestUrl);
+            const size = String(line.tileSize || line.dimensions || '').trim();
+            return e(View, { key: `${line.sku || index}`, style: bundleStyles.card, wrap: false },
+              e(View, { style: bundleStyles.imageWrap }, src ? e(Image, { src, style: bundleStyles.image }) : e(Text, { style: bundleStyles.noImage }, 'Image not available')),
+              e(View, { style: bundleStyles.body },
+                e(Text, { style: bundleStyles.name }, line.name || line.sku || 'Selected item'),
+                e(Text, { style: bundleStyles.line }, identityCodesFor(line, payload.brands) || line.sku || ''),
+                e(Text, { style: bundleStyles.line }, [line.brand, line.finish, size && !String(line.name || '').includes(size) ? size : '', quantity(line)].filter(Boolean).join(' · ')),
+              ),
+            );
+          }),
+        ),
+      ]),
+      e(View, { style: styles.footer, fixed: true },
+        e(Text, null, `${settings.companyName || 'Marble Park'} · Prepared by ${preparedByName(quote, quoteMeta)} · Pictures only, no prices`),
+        e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}`, style: styles.pageNumber }),
+      ),
     ),
   );
 }
@@ -885,6 +986,7 @@ function PricedDocumentBody(payload, requestUrl) {
 
 function buildDocument(payload, requestUrl) {
   const e = React.createElement;
+  if (ARCHITECT_BUNDLE) return ArchitectBundleDocument({ payload, requestUrl });
   const quote = payload.quote;
   const settings = payload.settings;
   const quoteMeta = safeJson(quote.quoteMeta, {});

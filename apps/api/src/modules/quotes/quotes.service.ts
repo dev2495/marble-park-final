@@ -77,6 +77,30 @@ export interface CreateSalesOrderInput {
   paymentTerms?: string;
 }
 
+// Quote names read "<Customer first name>-<serial>" and each saved revision of
+// the same quote appends a letter: Rakesh-0412, Rakesh-0412a, Rakesh-0412b ...
+const NAME_HONORIFICS = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'shri', 'smt', 'sri', 'ms/', 'm/s', 'prof', 'er', 'ar']);
+export function customerFirstName(name: unknown) {
+  const words = String(name || '').split(/[\s,]+/).map((word) => word.replace(/[^A-Za-z0-9]/g, '')).filter(Boolean);
+  const first = words.find((word) => !NAME_HONORIFICS.has(word.toLowerCase())) || words[0] || 'Quote';
+  return (first.charAt(0).toUpperCase() + first.slice(1).toLowerCase()).slice(0, 20);
+}
+export function revisionLetter(versionNumber: number) {
+  let n = Math.max(0, Math.trunc(Number(versionNumber || 1)) - 1);
+  let letters = '';
+  while (n > 0) {
+    n -= 1;
+    letters = String.fromCharCode(97 + (n % 26)) + letters;
+    n = Math.floor(n / 26);
+  }
+  return letters;
+}
+// Values the server owns inside quoteMeta. Client saves never overwrite them.
+const SERVER_META_KEYS = ['preparedById', 'preparedByName', 'preparedAt', 'confirmedById', 'confirmedByName', 'confirmedAt', 'baseQuoteNumber', 'revisedById', 'revisedByName', 'revisedAt'];
+// Fields that decide price or quantity. A change to any of them on a confirmed
+// quote is a new revision; presentation edits (images, room labels) are not.
+const COMMERCIAL_LINE_KEYS = ['productId', 'area', 'qty', 'quantity', 'requestedArea', 'requestedPieces', 'nrpMode', 'nrpInput', 'specialMode', 'specialInput', 'taxRate'];
+
 const QUOTE_STATUSES = ['incomplete_pricing', 'draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'partially_ordered', 'confirmed', 'won', 'closed', 'lost', 'expired', 'superseded', 'cancelled'];
 
 // Eager-include retained ONLY for endpoints that legitimately need the embedded
@@ -258,14 +282,29 @@ export class QuotesService {
     const quoteType = this.normalizeQuoteType(data.quoteType || rawQuoteMeta.quoteType, assertedLines);
     this.assertQuoteTypeEligibility(quoteType, assertedLines, 'creating a quote');
     const brandSnapshot = await this.governedQuoteBrandMetadata(quoteType);
+    this.assertUniqueProductPerArea(assertedLines);
     const pricing = priceQuoteLines(assertedLines, this.quoteDiscountInput(rawQuoteMeta, data.discountPercent || 0), { requireMrp: !saveAsDraft });
     const normalizedLines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || ownerId));
     const incompletePricing = pricing.pricingErrors.length > 0;
     const displayMode = this.normalizeDisplayMode(data.displayMode);
     const consultingArchitect = await this.resolveConsultingArchitect(data.architectId);
+    const preparedById = actorUserId || ownerId;
+    const preparedByName = await this.actorName(preparedById);
+    const nowIso = new Date().toISOString();
+    const confirmedNow = !saveAsDraft && !incompletePricing;
+    const [customerRow, parentRow] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: customerId }, select: { name: true } }),
+      data.supersedesQuoteId ? this.prisma.quote.findUnique({ where: { id: data.supersedesQuoteId } }) : Promise.resolve(null),
+    ]);
+    const baseNumberForRevision = parentRow ? this.baseQuoteNumber(parentRow) : '';
     const quoteMeta = this.normalizeQuoteMeta(
       {
         ...rawQuoteMeta,
+        preparedById,
+        preparedByName,
+        preparedBy: preparedByName || rawQuoteMeta.preparedBy || '',
+        preparedAt: nowIso,
+        ...(confirmedNow ? { confirmedById: preparedById, confirmedByName: preparedByName, confirmedAt: nowIso } : {}),
         pricingVersion: rawQuoteMeta.pricingVersion || RETAIL_LADDER_VERSION,
         taxTreatment: 'EXCLUSIVE',
         quoteDiscount: { mode: pricing.quoteDiscountMode, value: pricing.quoteDiscountValue, allocatedInclusive: pricing.totals.quoteDiscountInclusive },
@@ -284,7 +323,10 @@ export class QuotesService {
     let created: any = null;
     let lastError: any = null;
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const quoteNumber = await this.generateQuoteNumber();
+      // A revision of an ordered quote keeps the family name with the next letter.
+      const quoteNumber = parentRow && attempt < 2
+        ? `${baseNumberForRevision}${revisionLetter(Number((parentRow as any).versionNumber || 1) + 1)}`
+        : await this.generateQuoteNumber(customerRow?.name);
       try {
         created = await this.prisma.$transaction(async (tx) => {
           let leadId = data.leadId;
@@ -348,7 +390,7 @@ export class QuotesService {
               coverImage: '',
               notes: data.notes || '',
               versions: [],
-              quoteMeta,
+              quoteMeta: { ...quoteMeta, baseQuoteNumber: parentRow ? baseNumberForRevision : quoteNumber },
               intentId: intentId || null,
               supersedesQuoteId: supersedesId,
               versionNumber,
@@ -430,6 +472,9 @@ export class QuotesService {
     const saveAsDraft = Boolean((data as any).saveAsDraft);
     const updateData: any = { ...data };
     delete updateData.saveAsDraft;
+    const currentServerMeta = this.serverMeta(current.quoteMeta);
+    const actorId = actorUserId || current.ownerId;
+    let revisionBump: { versionNumber: number; quoteNumber: string; previousNumber: string; previousTotal: number } | null = null;
     if (data.discountPercent !== undefined || data.lines !== undefined || data.quoteType !== undefined) {
       const assertedLines = await this.persistQuoteLineImages(data.lines !== undefined
         ? this.withTaxTreatment(await this.assertQuoteLines(data.lines, 'updating a quote', true, saveAsDraft), this.quoteTaxTreatment(current))
@@ -442,9 +487,37 @@ export class QuotesService {
         quoteType,
         quoteType === currentType ? this.parseQuoteMeta(current.quoteMeta) : undefined,
       );
-      const pricing = priceQuoteLines(assertedLines, this.quoteDiscountInput(nextMeta, data.discountPercent ?? current.discountPercent ?? 0), { requireMrp: !saveAsDraft });
+      this.assertUniqueProductPerArea(assertedLines);
+      const nextDiscount = this.quoteDiscountInput(nextMeta, data.discountPercent ?? current.discountPercent ?? 0);
+      const pricing = priceQuoteLines(assertedLines, nextDiscount, { requireMrp: !saveAsDraft });
       const incompletePricing = pricing.pricingErrors.length > 0;
-      updateData.lines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : (actorUserId || current.ownerId));
+      updateData.lines = this.withMrpConfirmation(pricing.lines, saveAsDraft ? null : actorId);
+      const actorName = await this.actorName(actorId);
+      const nowIso = new Date().toISOString();
+      const commercialChanged = this.commercialSignature(current.lines, this.quoteDiscountForQuote(current), currentType)
+        !== this.commercialSignature(assertedLines, nextDiscount, quoteType);
+      // Editing a confirmed quote saves a lettered revision of the same quote:
+      // one number family, one live PDF, no second quote.
+      if (!saveAsDraft && !incompletePricing && commercialChanged && this.isIssuedQuote(current) && current.status !== 'superseded') {
+        const versionNumber = Number(current.versionNumber || 1) + 1;
+        const base = this.baseQuoteNumber(current);
+        revisionBump = { versionNumber, quoteNumber: `${base}${revisionLetter(versionNumber)}`, previousNumber: current.quoteNumber, previousTotal: Number(current.commercialTotal || 0) };
+        updateData.versionNumber = versionNumber;
+        updateData.quoteNumber = revisionBump.quoteNumber;
+        updateData.versions = [
+          { version: Number(current.versionNumber || 1), quoteNumber: current.quoteNumber, total: Number(current.commercialTotal || 0), lineCount: this.normalizeLines(current.lines).length, replacedAt: nowIso, replacedById: actorId, replacedByName: actorName },
+          ...(Array.isArray(current.versions) ? current.versions : []),
+        ].slice(0, 100);
+        currentServerMeta.baseQuoteNumber = base;
+        currentServerMeta.revisedById = actorId;
+        currentServerMeta.revisedByName = actorName;
+        currentServerMeta.revisedAt = nowIso;
+      }
+      if (!saveAsDraft && !incompletePricing) {
+        currentServerMeta.confirmedById = actorId;
+        currentServerMeta.confirmedByName = actorName;
+        currentServerMeta.confirmedAt = nowIso;
+      }
       updateData.discountPercent = pricing.quoteDiscountPercent;
       updateData.commercialTotal = pricing.totals.grandTotal;
       updateData.quoteDiscountMode = pricing.quoteDiscountMode;
@@ -458,6 +531,7 @@ export class QuotesService {
         quoteDiscount: { mode: pricing.quoteDiscountMode, value: pricing.quoteDiscountValue, allocatedInclusive: pricing.totals.quoteDiscountInclusive },
         quoteType,
         ...brandSnapshot,
+        ...currentServerMeta,
       }, pricing.lines);
       updateData.quoteType = quoteType;
       updateData.approvalStatus = incompletePricing ? 'incomplete' : pricing.requiresApproval ? 'pending' : 'approved';
@@ -475,12 +549,17 @@ export class QuotesService {
       };
     }
     if (data.displayMode !== undefined) updateData.displayMode = this.normalizeDisplayMode(data.displayMode);
-    if (data.quoteMeta !== undefined && updateData.quoteMeta === undefined) {
+    const commercialChange = data.discountPercent !== undefined || data.lines !== undefined || data.quoteType !== undefined;
+    if (data.quoteMeta !== undefined && !commercialChange) {
       const metadataLines = await this.assertQuoteLines((await this.findById(id)).lines, 'updating quote metadata');
       const metadataType = this.normalizeQuoteType(current.quoteType || this.parseQuoteMeta(data.quoteMeta).quoteType, metadataLines);
       this.assertQuoteTypeEligibility(metadataType, metadataLines, 'updating quote metadata');
-      const brandSnapshot = await this.governedQuoteBrandMetadata(metadataType, this.parseQuoteMeta(current.quoteMeta));
-      updateData.quoteMeta = this.normalizeQuoteMeta({ ...this.parseQuoteMeta(data.quoteMeta), quoteType: metadataType, ...brandSnapshot }, metadataLines);
+      const currentMeta = this.parseQuoteMeta(current.quoteMeta);
+      const brandSnapshot = await this.governedQuoteBrandMetadata(metadataType, currentMeta);
+      // Tax mode and quote discount belong to the priced lines, so a
+      // settings-only save keeps the saved values.
+      const pricedMeta = Object.fromEntries(['taxMode', 'taxTreatment', 'quoteDiscount', 'pricingVersion'].filter((key) => currentMeta[key] !== undefined).map((key) => [key, currentMeta[key]]));
+      updateData.quoteMeta = this.normalizeQuoteMeta({ ...this.parseQuoteMeta(data.quoteMeta), quoteType: metadataType, ...brandSnapshot, ...pricedMeta, ...currentServerMeta }, metadataLines);
     }
     if (data.architectId !== undefined) {
       const consultingArchitect = await this.resolveConsultingArchitect(data.architectId);
@@ -491,6 +570,7 @@ export class QuotesService {
         : this.normalizeQuoteMeta(current.quoteMeta, await this.assertQuoteLines(current.lines, 'updating quote architect'));
       updateData.quoteMeta = {
         ...baseMeta,
+        ...currentServerMeta,
         architectName: consultingArchitect?.name || '',
       };
     }
@@ -503,7 +583,7 @@ export class QuotesService {
       }
       await tx.auditEvent.create({ data: { id: ulid(), actorUserId: actorUserId || saved.ownerId,
         action: 'quote.update', entityType: 'Quote', entityId: id,
-        summary: `Saved ${saved.quoteNumber} and its normalized lines atomically`, metadata: JSON.parse(JSON.stringify(updateData)) } });
+        summary: revisionBump ? `Saved revision ${saved.quoteNumber} (was ${revisionBump.previousNumber})` : `Saved ${saved.quoteNumber} and its normalized lines atomically`, metadata: JSON.parse(JSON.stringify({ ...updateData, revisionBump })) } });
       return saved;
     }, { timeout: 15000 });
     await this.notifications.createMany([
@@ -540,7 +620,7 @@ export class QuotesService {
       const presentationLines = await this.assertQuoteLines(current.lines, 'updating quote presentation');
       const quoteType = this.normalizeQuoteType(current.quoteType || this.parseQuoteMeta(current.quoteMeta).quoteType, presentationLines);
       const brandSnapshot = await this.governedQuoteBrandMetadata(quoteType, this.parseQuoteMeta(current.quoteMeta));
-      updateData.quoteMeta = this.normalizeQuoteMeta({ ...this.parseQuoteMeta(data.quoteMeta), quoteType, ...brandSnapshot }, presentationLines);
+      updateData.quoteMeta = this.normalizeQuoteMeta({ ...this.parseQuoteMeta(data.quoteMeta), quoteType, ...brandSnapshot, ...this.serverMeta(current.quoteMeta) }, presentationLines);
     }
 
     if (data.linePresentation !== undefined) {
@@ -1948,13 +2028,71 @@ export class QuotesService {
     }, { isolationLevel: 'Serializable', timeout: 30000 });
   }
 
-  private async generateQuoteNumber(): Promise<string> {
-    return nextDocumentNumber(this.prisma as any, 'quote', 'QT', new Date(), {
+  private async generateQuoteNumber(customerName?: string | null): Promise<string> {
+    // The shared counter keeps serials unique; only the visible name changes.
+    const sequenced = await nextDocumentNumber(this.prisma as any, 'quote', 'QT', new Date(), {
       existingNumbers: async (prefixForYear) => (await this.prisma.quote.findMany({
         where: { quoteNumber: { startsWith: prefixForYear } },
         select: { quoteNumber: true },
       })).map((row) => row.quoteNumber),
     });
+    const serial = sequenced.split('/').pop() || sequenced;
+    return `${customerFirstName(customerName)}-${serial}`;
+  }
+
+  private baseQuoteNumber(quote: any) {
+    const meta = this.parseQuoteMeta(quote?.quoteMeta);
+    if (meta.baseQuoteNumber) return String(meta.baseQuoteNumber);
+    const number = String(quote?.quoteNumber || '');
+    const suffix = revisionLetter(Number(quote?.versionNumber || 1));
+    return suffix && number.endsWith(suffix) ? number.slice(0, -suffix.length) : number;
+  }
+
+  private async actorName(userId?: string | null) {
+    if (!userId) return '';
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } }).catch(() => null);
+    return String(user?.name || '');
+  }
+
+  private serverMeta(meta: any) {
+    const parsed = this.parseQuoteMeta(meta);
+    return Object.fromEntries(SERVER_META_KEYS.filter((key) => parsed[key] !== undefined).map((key) => [key, parsed[key]]));
+  }
+
+  private commercialSignature(lines: any[], discount: { mode: string; value: number }, quoteType: string) {
+    return JSON.stringify({
+      quoteType,
+      discount: { mode: discount.mode, value: Number(discount.value || 0) },
+      lines: this.normalizeLines(lines).map((line: any) => COMMERCIAL_LINE_KEYS.map((key) => {
+        const value = line?.[key];
+        return value === undefined || value === null || value === '' ? null : typeof value === 'number' || /^-?\d+(\.\d+)?$/.test(String(value)) ? Number(value) : String(value).trim();
+      })),
+    });
+  }
+
+  // A quote counts as issued once every line was saved with confirmed pricing
+  // or it was sent; later commercial edits then become lettered revisions.
+  private isIssuedQuote(quote: any) {
+    const meta = this.parseQuoteMeta(quote?.quoteMeta);
+    if (meta.confirmedAt) return true;
+    if (['sent', 'approved', 'confirmed', 'customer_followup', 'partially_ordered'].includes(String(quote?.status || ''))) return true;
+    const lines = this.normalizeLines(quote?.lines);
+    return quote?.pricingStatus === 'complete' && lines.length > 0 && lines.every((line: any) => line?.mrpConfirmedAt && line?.mrpConfirmedById);
+  }
+
+  // One product may appear in many rooms, but only once per room: order lines
+  // are keyed by product and room.
+  private assertUniqueProductPerArea(lines: any[]) {
+    const seen = new Set<string>();
+    for (const line of this.normalizeLines(lines)) {
+      const productId = String(line?.productId || '').trim();
+      if (!productId) continue;
+      const key = `${productId}::${String(line.area || 'General Selection').trim()}`;
+      if (seen.has(key)) {
+        throw new BadRequestException(`${line.sku || line.name || 'An item'} is listed twice in ${line.area || 'General Selection'}. Combine the quantities into one line for that area.`);
+      }
+      seen.add(key);
+    }
   }
 
   private defaultValidUntil(): Date {
@@ -2417,11 +2555,12 @@ export class QuotesService {
     if (missingIndex >= 0) {
       const line = lines[missingIndex];
       throw new BadRequestException({
-        message: `Cannot ${action}: confirm MRP for ${line.sku || line.name || `line ${missingIndex + 1}`}.`,
+        // Usually the quote was last saved as a draft, which leaves pricing unconfirmed.
+        message: `This quote is saved as a draft, so its prices are not confirmed yet (first unconfirmed line: ${line.sku || line.name || `line ${missingIndex + 1}`}). Press Confirm quote first.`,
         code: 'QUOTE_MRP_CONFIRMATION_REQUIRED',
         field: 'mrp',
         lineKey: line.lineKey || line.quoteLineId || String(missingIndex),
-        remediation: 'Open the quote, verify MRP per selected UOM, then Validate changes.',
+        remediation: 'Open the quote and press Confirm quote. Then try again.',
       });
     }
     if (quote?.approvalStatus === 'pending' && !/approv/i.test(action)) {

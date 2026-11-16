@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 
 const BOOT = gql`
   query ProductMrpControlBoot {
-    me { id name role }
+    me { id name role effectivePermissions }
     productMrpBulkFilterOptions
   }
 `;
@@ -174,7 +174,7 @@ function ProductMrpControlPage(){
   const debounced=useDebouncedValue(search.trim(),300);
   const pageSize=40;
   const {data:boot,loading:bootLoading,error:bootError}=useQuery(BOOT,{fetchPolicy:'network-only',errorPolicy:'all'});
-  const privileged=['owner','admin'].includes(String(boot?.me?.role||'').toLowerCase());
+  const privileged=['owner','admin'].includes(String(boot?.me?.role||'').toLowerCase())||(boot?.me?.effectivePermissions||[]).includes('pricing.manage');
   const {data,loading,error,refetch}=useQuery(READINESS,{variables:{search:debounced||undefined,status:tab==='missing'?'missing':mrpStatus,sort,brand:brand||undefined,category:category||undefined,includeCost:tab==='missing',skip:page*pageSize,take:pageSize},skip:!privileged,fetchPolicy:'network-only'});
   const [getWorkbook,{loading:downloading}]=useLazyQuery(WORKBOOK,{fetchPolicy:'no-cache'});
   const [previewWorkbook,{loading:previewing}]=useMutation(PREVIEW);

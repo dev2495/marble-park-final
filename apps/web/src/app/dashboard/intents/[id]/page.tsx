@@ -4,6 +4,7 @@ import { gql, useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { tileStockUnitGeometry } from "@/lib/tile-rate";
 import {
   ArrowLeft,
   Camera,
@@ -421,8 +422,9 @@ export default function IntentDetailPage() {
           : ["SQFT", "SQM", "M2"].includes(String(product.priceUom || product.salesUom || "").toUpperCase())
             ? "AREA"
             : String(product.priceUom || product.salesUom || product.unit || "PC").toUpperCase() === "PC" ? "PIECE" : "BOX",
-        coveragePerPack: Number(product.coveragePerPack || 0),
-        piecesPerPack: Number(product.piecesPerPack || 1),
+        // A tile stocked by the piece covers one piece's area, not a whole box.
+        coveragePerPack: String(product.category || "").toLowerCase() === "tiles" ? tileStockUnitGeometry(product).coveragePerUnitSqFt : Number(product.coveragePerPack || 0),
+        piecesPerPack: String(product.category || "").toLowerCase() === "tiles" ? tileStockUnitGeometry(product).piecesPerUnit : Number(product.piecesPerPack || 1),
         requestedArea: 0,
         wastagePercent: 0,
       }];

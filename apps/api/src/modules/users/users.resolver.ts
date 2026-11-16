@@ -3,7 +3,7 @@ import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { GraphqlRequestContext, requirePermission, requireSession, sessionToken } from '../auth/session-context';
 import { GraphQLJSON } from 'graphql-scalars';
-import { effectivePermissionsForUser } from '../auth/rbac';
+import { IMPLIED_PERMISSIONS, PERMISSION_CATALOG, PERMISSION_GROUPS, ROLE_PERMISSIONS, effectivePermissionsForUser, roleDefaultPermissions } from '../auth/rbac';
 
 @ObjectType()
 export class UserOutput {
@@ -160,6 +160,17 @@ export class UsersResolver {
   async getUsers(@Context() ctx: GraphqlRequestContext) {
     await requirePermission(this.prisma, ctx, 'users.manage');
     return this.users.findAll();
+  }
+
+  @Query(() => GraphQLJSON, { name: 'permissionCatalog', description: 'Every right with its label, group, role defaults and implied rights.' })
+  async permissionCatalog(@Context() ctx: GraphqlRequestContext) {
+    await requirePermission(this.prisma, ctx, 'users.manage');
+    return {
+      groups: PERMISSION_GROUPS,
+      permissions: PERMISSION_CATALOG,
+      implied: IMPLIED_PERMISSIONS,
+      roles: Object.keys(ROLE_PERMISSIONS).map((role) => ({ role, defaults: roleDefaultPermissions(role) })),
+    };
   }
 
   @Query(() => [UserOutput], { name: 'users' })

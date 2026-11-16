@@ -359,7 +359,7 @@ export class LeadsService {
       supersedesQuoteId: referencesQuoteId,
       architectId: (parentQuote as any)?.architectId || undefined,
       saveAsDraft: true,
-    } as any);
+    } as any, createdBy);
     const incompletePricing = (quote.lines || []).some((line: any) => line.mrpMissing || !line.mrpValid);
     const pdfUrl = `/api/pdf/quote/${quote.id}`;
     await this.prisma.leadIntent.update({

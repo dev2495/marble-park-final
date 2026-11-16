@@ -9,6 +9,9 @@ export class CustomerOutput {
   @Field()
   id!: string;
 
+  @Field(() => GraphQLJSON, { nullable: true, description: 'Labels such as walk-in or follow-up.' })
+  tags?: any;
+
   @Field({ nullable: true })
   name?: string;
 

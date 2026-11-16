@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { QuickSkuButton } from '@/components/quick-add/quick-add';
 
 const MASTER_DATA = gql`
   query ProductMasterData {
@@ -354,7 +355,7 @@ export default function ProductMasterPage() {
   return <div className="space-y-6 pb-10">
     <section className="border-b border-[var(--line)] bg-[var(--surface)] px-1 py-5 text-[var(--ink-1)]">
       <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <div><p className="text-xs font-semibold uppercase text-[var(--ink-4)]">Product master</p><h1 className="mt-1 font-display text-3xl font-bold">Display code to saleable SKU</h1><p className="mt-2 max-w-3xl text-sm text-[var(--ink-3)]">Register each quoteable design once. Display samples stay non-saleable; opening stock and GRNs create physical lots.</p></div>
+        <div><p className="text-xs font-semibold uppercase text-[var(--ink-4)]">Product master</p><h1 className="mt-1 font-display text-3xl font-bold">Display code to saleable SKU</h1><div className="mt-3 flex flex-wrap items-center gap-2"><QuickSkuButton onDone={() => { void refetch(); }} /><span className="text-xs text-[var(--ink-4)]">Name only now; complete it later from the Follow-up queue.</span></div><p className="mt-2 max-w-3xl text-sm text-[var(--ink-3)]">Register each quoteable design once. Display samples stay non-saleable; opening stock and GRNs create physical lots.</p></div>
         <Button variant="outline" onClick={startNew}><Plus className="mr-2 h-4 w-4" /> New SKU</Button>
       </div>
       <div className="mt-4 grid max-w-3xl grid-cols-3 overflow-hidden rounded-lg border border-[var(--line)] text-xs font-semibold"><span className="flex items-center gap-2 bg-[#eef5ff] px-3 py-2 text-[#174ea6]"><ScanLine className="h-4 w-4" />1. Display code</span><span className="flex items-center gap-2 border-l border-[var(--line)] px-3 py-2"><Boxes className="h-4 w-4" />2. Product SKU</span><span className="flex items-center gap-2 border-l border-[var(--line)] px-3 py-2"><PackagePlus className="h-4 w-4" />3. Opening / GRN stock</span></div>

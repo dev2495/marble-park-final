@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 import { cn } from '@/lib/utils';
+import { MasterQuickAdd } from '@/components/quick-add/quick-add';
 
 const DATA = gql`query { masterProductBrands }`;
 const SAVE = gql`mutation($input: ProductBrandInput!) { saveProductBrand(input: $input) { data } }`;
@@ -80,7 +81,7 @@ export default function BrandMasterPage() {
     <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-6 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--brand-700)]">Master data · presentation</p>
-        <h1 className="mt-2 font-display text-3xl font-bold text-[var(--ink)] lg:text-4xl">Brand library</h1>
+        <h1 className="mt-2 font-display text-3xl font-bold text-[var(--ink)] lg:text-4xl">Brand library</h1><div className="mt-3 flex flex-wrap items-center gap-2"><MasterQuickAdd kind="brand" onDone={() => { void refetch(); }} /><span className="text-xs text-[var(--ink-4)]">Name only now; complete it later from the Follow-up queue.</span></div>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--ink-3)]">Maintain the exact name and customer-facing logo once. Quote editors can then choose which served brands appear in each PDF.</p>
       </div>
       <div className="flex gap-3">

@@ -485,13 +485,13 @@ export class ProductsResolver {
     @Args('skip', { type: () => Int, nullable: true }) skip?: number,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'pricing.manage');
     return this.products.pricingReadinessPage({ search, status, sort, brand, category, includeCost, skip, take });
   }
 
   @Query(() => GraphQLJSON)
   async productMrpBulkFilterOptions(@Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'pricing.manage');
     return this.mrpBulk.filterOptions();
   }
 
@@ -506,7 +506,7 @@ export class ProductsResolver {
     @Args('excludedIds', { type: () => [String], nullable: true }) excludedIds?: string[],
     @Args('selectAllMatching', { nullable: true }) selectAllMatching?: boolean,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'pricing.manage');
     return this.mrpBulk.workbook({ search, mrpStatus, brand, category, selectedIds, excludedIds, selectAllMatching }, user);
   }
 
@@ -516,7 +516,7 @@ export class ProductsResolver {
     @Args('filename') filename: string,
     @Args('contentBase64') contentBase64: string,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'pricing.manage');
     return this.mrpBulk.preview(filename, contentBase64, user.id);
   }
 
@@ -529,7 +529,7 @@ export class ProductsResolver {
     @Args('reason') reason: string,
     @Args('effectiveFrom') effectiveFrom: string,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'pricing.manage');
     return this.mrpBulk.apply(filename, contentBase64, confirmationToken, reason, effectiveFrom, user);
   }
 
@@ -550,7 +550,7 @@ export class ProductsResolver {
 
   @Mutation(() => ProductOutput)
   async completeProductPricing(@Args('input') input: ProductPricingCompletionInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requirePermission(this.prisma, ctx, 'pricing.manage');
     return this.products.completePricing(input, user.id);
   }
 
@@ -572,13 +572,13 @@ export class ProductsResolver {
     @Args('reason') reason: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    const user = await requirePermission(this.prisma, ctx, 'display_assets.manage');
     return this.products.archiveProductAlias(id, reason, user.id);
   }
 
   @Mutation(() => GraphQLJSON)
   async createDisplaySample(@Args('input') input: DisplaySampleInput, @Context() ctx: GraphqlRequestContext) {
-    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    const user = await requirePermission(this.prisma, ctx, 'display_assets.manage');
     return this.products.createDisplaySample(input, user.id);
   }
 
@@ -588,7 +588,7 @@ export class ProductsResolver {
     @Args('input') input: UpdateDisplaySampleInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    const user = await requirePermission(this.prisma, ctx, 'display_assets.manage');
     return this.products.updateDisplaySample(id, input, user.id);
   }
 
@@ -598,7 +598,7 @@ export class ProductsResolver {
     @Args('input') input: DisplaySampleTransitionInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    const user = await requirePermission(this.prisma, ctx, 'products.manage');
+    const user = await requirePermission(this.prisma, ctx, 'display_assets.manage');
     return this.products.transitionDisplaySample(id, input, user.id);
   }
 

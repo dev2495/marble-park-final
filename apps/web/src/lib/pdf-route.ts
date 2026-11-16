@@ -17,6 +17,10 @@ type RenderPdfInput = {
   includeApiUrl?: boolean;
   publicShareToken?: string;
   validationRedirectPath?: string;
+  /** Extra environment for the renderer, e.g. the picture-only architect bundle. */
+  rendererEnv?: Record<string, string>;
+  /** Skip commercial PDF bookkeeping for documents that are not the quotation. */
+  skipCommercialRecord?: boolean;
 };
 
 function rendererPath(scriptName: string) {
@@ -75,6 +79,7 @@ async function executeRenderer(input: RenderPdfInput, sessionToken: string) {
           ...process.env,
           PDF_SESSION_TOKEN: sessionToken,
           PDF_PUBLIC_SHARE_TOKEN: input.publicShareToken || '',
+          ...(input.rendererEnv || {}),
         },
       },
       (error, stdout, stderr) => {
@@ -97,7 +102,7 @@ async function recordCommercialResult(input: RenderPdfInput, sessionToken: strin
   const entityType = input.scriptName === 'render-quote-pdf.cjs' ? 'Quote'
     : input.scriptName === 'render-sales-order-pdf.cjs' ? 'SalesOrder' : null;
   // Public links cannot mutate private workflow state. Telemetry must never block a valid PDF.
-  if (!entityType || !sessionToken || input.publicShareToken) return;
+  if (!entityType || !sessionToken || input.publicShareToken || input.skipCommercialRecord) return;
   try {
     const response = await fetch(process.env.QUOTE_PDF_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/graphql', {
       method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(3000),

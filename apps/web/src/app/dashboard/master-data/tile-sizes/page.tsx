@@ -7,6 +7,7 @@ import { ArrowLeft, Grid3X3, RotateCcw, Save, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
+import { MasterQuickAdd } from '@/components/quick-add/quick-add';
 
 const TILE_SIZES = gql`query TileSizeMaster { tileSizes }`;
 const SAVE_TILE_SIZE = gql`mutation SaveTileSize($input: TileSizeInput!) { saveTileSize(input: $input) { data } }`;
@@ -38,7 +39,7 @@ export default function TileSizeMasterPage() {
   return <div className="space-y-5 pb-10">
     {[error, saveState.error].filter(Boolean).map((item: any, index) => <QueryErrorBanner key={index} error={item}/>)}
     <header className="flex flex-col justify-between gap-4 border-b border-[var(--line)] pb-5 pt-2 lg:flex-row lg:items-end">
-      <div><p className="text-xs font-semibold uppercase tracking-[.14em] text-[var(--ink-4)]">Tiles only · governed geometry</p><h1 className="mt-1 font-display text-3xl font-bold text-[var(--ink)]">Tile Size Master</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">One controlled source for dimensions, pieces per box and area conversion. Sizes are reused by variants; they never become stock records themselves.</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-[.14em] text-[var(--ink-4)]">Tiles only · governed geometry</p><h1 className="mt-1 font-display text-3xl font-bold text-[var(--ink)]">Tile Size Master</h1><div className="mt-3 flex flex-wrap items-center gap-2"><MasterQuickAdd kind="tileSize" onDone={() => { void refetch(); }} /><span className="text-xs text-[var(--ink-4)]">Name only now; complete it later from the Follow-up queue.</span></div><p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">One controlled source for dimensions, pieces per box and area conversion. Sizes are reused by variants; they never become stock records themselves.</p></div>
       <Button asChild variant="outline"><Link href="/dashboard/master-data/tiles"><ArrowLeft className="mr-2 h-4 w-4"/>Tile workspace</Link></Button>
     </header>
     {notice ? <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{notice}</div> : null}

@@ -6,6 +6,7 @@ import { Building2, RotateCcw, Save, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
+import { MasterQuickAdd } from '@/components/quick-add/quick-add';
 
 const DATA = gql`query { vendors(take: 200) }`;
 const SAVE = gql`mutation($input: VendorInput!) { saveVendor(input:$input){ data } }`;
@@ -29,7 +30,7 @@ export default function VendorMasterPage() {
         <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Vendor master</p>
-            <h1 className="mt-3 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">Supplier records for procurement and GRN.</h1>
+            <h1 className="mt-3 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">Supplier records for procurement and GRN.</h1><div className="mt-3 flex flex-wrap items-center gap-2"><MasterQuickAdd kind="vendor" onDone={() => { void refetch(); }} /><span className="text-xs text-[var(--ink-4)]">Name only now; complete it later from the Follow-up queue.</span></div>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">Vendors connect Product Master preferences, purchase orders, manual GRNs and supplier challan traceability.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">

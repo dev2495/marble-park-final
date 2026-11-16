@@ -114,6 +114,9 @@ export class QuoteOutput {
 
   @Field(() => GraphQLJSON, { nullable: true })
   approval?: any;
+
+  @Field(() => GraphQLJSON, { nullable: true, description: 'Change log of earlier revisions of this same quote (no separate documents).' })
+  versions?: any;
 }
 
 @InputType()

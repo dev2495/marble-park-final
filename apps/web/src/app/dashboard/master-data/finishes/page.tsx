@@ -6,6 +6,7 @@ import { Palette, RotateCcw, Save, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
+import { MasterQuickAdd } from '@/components/quick-add/quick-add';
 
 const DATA = gql`query { masterProductFinishes }`;
 const SAVE = gql`mutation($input: ProductFinishInput!) { saveProductFinish(input: $input) { data } }`;
@@ -26,7 +27,7 @@ export default function FinishMasterPage() {
       {saveError ? <QueryErrorBanner error={saveError} /> : null}
       <section className="mp-card rounded-r6 border border-[var(--line)] p-6">
         <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Finish master</p>
-        <h1 className="mt-3 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">Control colour, shade and finish values.</h1>
+        <h1 className="mt-3 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">Control colour, shade and finish values.</h1><div className="mt-3 flex flex-wrap items-center gap-2"><MasterQuickAdd kind="finish" onDone={() => { void refetch(); }} /><span className="text-xs text-[var(--ink-4)]">Name only now; complete it later from the Follow-up queue.</span></div>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">These values feed Product Master, Excel imports, catalogue filters and quote item descriptions.</p>
       </section>
       <section className="grid gap-6 xl:grid-cols-[0.7fr_1.3fr]">
