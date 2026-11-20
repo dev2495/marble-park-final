@@ -2,7 +2,7 @@ import '@fontsource-variable/fraunces/opsz.css';
 import '@fontsource-variable/fraunces/opsz-italic.css';
 import '@fontsource-variable/manrope';
 import Lenis from 'lenis';
-import { STOPS, World, type Exhibit } from './world';
+import { STOPS, TIMELINE, World, type Exhibit } from './world';
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector(selector) as T;
 // Dev only: ?p=0.42 freezes the walk at that point, for checking a single frame.
@@ -15,7 +15,8 @@ window.scrollTo(0, 0);
 
 const journey = $('#journey');
 const cards = [...document.querySelectorAll<HTMLElement>('.card')].map((element) => ({
-  element, from: Number(element.dataset.in), to: Number(element.dataset.out),
+  // Card timings are written on the walk's own scale (see TIMELINE in world.ts).
+  element, from: Number(element.dataset.in) / TIMELINE, to: Number(element.dataset.out) / TIMELINE,
 }));
 const railButtons = [...document.querySelectorAll<HTMLButtonElement>('.rail button')];
 const stops = Object.entries(STOPS) as Array<[keyof typeof STOPS, number]>;
@@ -75,7 +76,13 @@ function showExhibit(exhibit: Exhibit | null) {
 }
 
 function updateOverlays(p: number) {
-  for (const card of cards) card.element.classList.toggle('is-on', p >= card.from && p < card.to);
+  let anyCard = false;
+  for (const card of cards) {
+    const on = p >= card.from && p < card.to;
+    card.element.classList.toggle('is-on', on);
+    anyCard ||= on;
+  }
+  document.body.classList.toggle('has-card', anyCard);
   let current = stops[0][0];
   for (const [name, at] of stops) if (p >= at - 0.012) current = name;
   for (const button of railButtons) button.classList.toggle('is-active', button.dataset.stop === current);

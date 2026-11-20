@@ -17,9 +17,9 @@ export type Finish = { colour: string; matt: boolean };
 export function ceramic({ colour, matt }: Finish) {
   return new THREE.MeshPhysicalMaterial({
     color: colour,
-    roughness: matt ? 0.52 : 0.16,
-    clearcoat: matt ? 0.08 : 1,
-    clearcoatRoughness: matt ? 0.6 : 0.06,
+    roughness: matt ? 0.44 : 0.16,
+    clearcoat: matt ? 0.22 : 1,
+    clearcoatRoughness: matt ? 0.42 : 0.06,
     specularIntensity: matt ? 0.45 : 0.8,
     side: THREE.DoubleSide,
   });
@@ -520,4 +520,127 @@ export function ceilingPanel(spec: { width: number; depth: number; finish: THREE
   underside.position.y = -0.0072;
   group.add(box, underside);
   return group;
+}
+
+// ------------------------------------------------------- standing basins
+
+export type PedestalKind = 'marquina' | 'statuario' | 'fluted' | 'armani';
+
+/** A texture repeated round a turned shape (the source is left untouched). */
+function wrapped(source: THREE.Texture, around: number, up: number) {
+  const texture = source.clone();
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(around, up);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/** Walnut, as a painted grain running up the piece. */
+function walnut() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 512;
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = '#5a3a24';
+  context.fillRect(0, 0, 256, 512);
+  let seed = 7;
+  const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (let i = 0; i < 160; i += 1) {
+    const x = rand() * 256;
+    context.strokeStyle = `rgba(${28 + rand() * 30},${16 + rand() * 14},${8 + rand() * 8},${0.12 + rand() * 0.35})`;
+    context.lineWidth = 0.6 + rand() * 2.4;
+    context.beginPath();
+    context.moveTo(x, 0);
+    context.bezierCurveTo(x + rand() * 14 - 7, 170, x + rand() * 14 - 7, 340, x + rand() * 8 - 4, 512);
+    context.stroke();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.repeat.set(3, 1);
+  return texture;
+}
+
+/** A smooth turned profile through control points [radius, height]. */
+function profile(points: Array<[number, number]>, samples = 80) {
+  const curve = new THREE.SplineCurve(points.map(([r, y]) => new THREE.Vector2(r, y)));
+  return curve.getPoints(samples).map((p) => new THREE.Vector2(Math.max(0, p.x), p.y));
+}
+
+/**
+ * A floor-standing basin from the Comlux Comfort range: a turned column and a
+ * bowl, with the bowl's inside carried down to a waste in its floor. Built to
+ * the catalogue's width × depth × height; returns the group and the bowl
+ * floor height (for water to land on).
+ */
+export function pedestal(kind: PedestalKind, stones: { marquina: THREE.Texture; statuario: THREE.Texture; armani: THREE.Texture }) {
+  const group = new THREE.Group();
+  const roseGold = metal('#cf9f86', 0.3);
+  const brushedGold = metal('#d2ad6e', 0.34);
+  const stone = (map: THREE.Texture, roughness: number) => new THREE.MeshPhysicalMaterial({
+    map: wrapped(map, 1.6, 0.9), roughness, clearcoat: 1, clearcoatRoughness: 0.08, side: THREE.DoubleSide,
+  });
+  const turn = (points: THREE.Vector2[], material: THREE.Material, segments = 96) => {
+    const mesh = new THREE.Mesh(new THREE.LatheGeometry(points, segments), material);
+    group.add(mesh);
+    return mesh;
+  };
+  let floor = 0;
+  let waste: THREE.Material = roseGold;
+  if (kind === 'marquina') {
+    // YA-24170-1: a Black Marquina dish on a brushed rose gold vase, 445 × 445 × 900.
+    turn(profile([[0, 0], [0.158, 0.0], [0.16, 0.02], [0.152, 0.12], [0.136, 0.34], [0.112, 0.56], [0.086, 0.7], [0.08, 0.74], [0.095, 0.765], [0, 0.765]]), roseGold);
+    turn(profile([[0.07, 0.755], [0.1, 0.77], [0.17, 0.81], [0.212, 0.858], [0.2225, 0.89], [0.2215, 0.9], [0.207, 0.898], [0.185, 0.87], [0.12, 0.83], [0.05, 0.812], [0, 0.81]]), stone(stones.marquina, 0.18));
+    floor = 0.812;
+  } else if (kind === 'statuario') {
+    // YA-2411: a Statuario bowl on a walnut column, 445 × 445 × 900.
+    turn(profile([[0, 0], [0.142, 0], [0.145, 0.015], [0.13, 0.06], [0.122, 0.2], [0.12, 0.5], [0.121, 0.735], [0, 0.735]]), new THREE.MeshPhysicalMaterial({ map: walnut(), roughness: 0.42, clearcoat: 0.6, clearcoatRoughness: 0.3 }));
+    turn(profile([[0.1, 0.73], [0.13, 0.745], [0.19, 0.79], [0.218, 0.85], [0.2225, 0.895], [0.214, 0.9], [0.2, 0.892], [0.16, 0.855], [0.08, 0.828], [0, 0.825]]), stone(stones.statuario, 0.12));
+    floor = 0.826;
+    waste = brushedGold;
+  } else if (kind === 'fluted') {
+    // 8716-BG: a faceted brushed gold column with the bowl sunk into its top, 450 × 370 × 800.
+    const facets = new THREE.MeshPhysicalMaterial({ color: '#d2ad6e', metalness: 1, roughness: 0.3, flatShading: true, side: THREE.DoubleSide });
+    turn(profile([[0, 0], [0.2, 0], [0.214, 0.03], [0.222, 0.3], [0.225, 0.6], [0.225, 0.796], [0.215, 0.8], [0.19, 0.792], [0.15, 0.75], [0.07, 0.712], [0, 0.708]], 60), facets, 22);
+    group.scale.z = 0.37 / 0.45;
+    floor = 0.71;
+    waste = brushedGold;
+  } else {
+    // YA-2430: an Armani Grey drum on a brushed rose gold foot, 445 × 445 × 890.
+    turn(profile([[0, 0], [0.16, 0], [0.163, 0.02], [0.13, 0.05], [0.12, 0.15], [0.125, 0.23], [0, 0.23]]), roseGold);
+    turn(profile([[0.12, 0.225], [0.19, 0.24], [0.214, 0.34], [0.2225, 0.56], [0.218, 0.82], [0.212, 0.885], [0.198, 0.89], [0.18, 0.86], [0.11, 0.8], [0.04, 0.785], [0, 0.785]]), stone(stones.armani, 0.2));
+    floor = 0.787;
+  }
+  const plug = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.032, 0.006, 40), waste);
+  plug.position.y = floor + 0.003;
+  group.add(plug);
+  return { group, floor };
+}
+
+/**
+ * A wall-mounted basin spout with its mixer knob below, in wall space.
+ * Returns the outlet position.
+ */
+export function wallSpout(finish: THREE.Material, reach: number) {
+  const group = new THREE.Group();
+  const rose = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.012, 48), finish);
+  rose.rotation.x = Math.PI / 2;
+  rose.position.z = 0.006;
+  const path = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0, 0.01), new THREE.Vector3(0, 0, reach * 0.55), new THREE.Vector3(0, -0.004, reach - 0.03), new THREE.Vector3(0, -0.026, reach),
+  ]);
+  const spout = new THREE.Mesh(new THREE.TubeGeometry(path, 40, 0.011, 20), finish);
+  const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.0115, 0.0115, 0.012, 20), finish);
+  tip.position.set(0, -0.03, reach);
+  const knobPlate = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.01, 48), finish);
+  knobPlate.rotation.x = Math.PI / 2;
+  knobPlate.position.set(0, -0.16, 0.005);
+  const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 0.05, 32), finish);
+  knob.rotation.x = Math.PI / 2;
+  knob.position.set(0, -0.16, 0.035);
+  const lever = new THREE.Mesh(new RoundedBoxGeometry(0.012, 0.06, 0.012, 2, 0.004), finish);
+  lever.position.set(0, -0.13, 0.055);
+  group.add(rose, spout, tip, knobPlate, knob, lever);
+  return { group, outlet: new THREE.Vector3(0, -0.037, reach) };
 }

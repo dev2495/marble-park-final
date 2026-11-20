@@ -43,7 +43,16 @@ export type LitOptions = {
   strip?: Strip;
   opacity?: number;
   side?: THREE.Side;
+  /**
+   * A cast relief pattern, after Hey Concrete's 3D wall panels: the surface is
+   * shaded as if carved, with its grooves darkened. `size` is one module along
+   * the wall and up it, in metres; `depth` is how deep the carving reads.
+   */
+  relief?: { kind: ReliefKind; size: [number, number]; depth: number };
 };
+
+export type ReliefKind = 'drape' | 'ridge' | 'prism' | 'billow' | 'ivy';
+const RELIEF: Record<ReliefKind, number> = { drape: 1, ridge: 2, prism: 3, billow: 4, ivy: 5 };
 
 const MAX_LAMPS = 4;
 const FALLOFF = 0.18;
@@ -83,6 +92,9 @@ const fragmentShader = /* glsl */ `
   uniform vec4 uStrip;
   uniform vec3 uStripCol;
   uniform vec2 uStripMix;
+  uniform float uRelief;
+  uniform vec2 uReliefSize;
+  uniform float uReliefDepth;
   varying vec2 vUv;
   varying vec3 vWorld;
   varying vec3 vNormal;
@@ -92,6 +104,17 @@ const fragmentShader = /* glsl */ `
   float noise(vec2 p) {
     vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
+
+  // Height of the relief, 0 in the grooves to 1 on the faces, in module units.
+  float reliefHeight(vec2 q) {
+    vec2 f = fract(q);
+    if (uRelief < 1.5) { float x = 2.0 * f.x - 1.0; return sqrt(max(0.0, 1.0 - x * x)); }            // Drape: round flutes
+    if (uRelief < 2.5) { return smoothstep(0.0, 0.78, f.x) * (1.0 - smoothstep(0.84, 1.0, f.x)); }   // Ridge: raked fins
+    if (uRelief < 3.5) { vec2 d = abs(2.0 * f - 1.0); return 1.0 - max(d.x, d.y); }                   // Prism: pyramids
+    if (uRelief < 4.5) { return 0.5 + 0.5 * sin(6.2832 * (q.y + 0.22 * sin(3.1416 * q.x))); }        // Billow: drifting waves
+    float c = fract(q.y + abs(2.0 * f.x - 1.0) * 0.5);                                                // Ivy: chevron leaves
+    return smoothstep(0.0, 0.12, c) * (1.0 - c);
   }
 
   void main() {
@@ -123,6 +146,27 @@ const fragmentShader = /* glsl */ `
     // Geometry below the floor is a mirror image, so it is lit as the thing it reflects.
     vec3 P = vec3(vWorld.x, abs(vWorld.y), vWorld.z);
     vec3 N = normalize(vNormal);
+    if (uRelief > 0.5) {
+      // Pattern coordinates run along the wall (whichever way it faces) and up it.
+      vec2 q = vec2(abs(N.x) > abs(N.z) ? vWorld.z * sign(N.x) : -vWorld.x * sign(N.z), P.y) / uReliefSize;
+      vec2 width = fwidth(q);
+      float detail = 1.0 - smoothstep(0.12, 0.45, max(width.x, width.y)); // fade before it can shimmer
+      float e = 0.01;
+      float h = reliefHeight(q);
+      vec2 slope = vec2(reliefHeight(q + vec2(e, 0.0)) - reliefHeight(q - vec2(e, 0.0)), reliefHeight(q + vec2(0.0, e)) - reliefHeight(q - vec2(0.0, e))) / (2.0 * e);
+      // World-space directions of the pattern axes, from screen derivatives (no tangents needed).
+      vec3 dp1 = dFdx(vWorld); vec3 dp2 = dFdy(vWorld);
+      vec2 dq1 = dFdx(q); vec2 dq2 = dFdy(q);
+      vec3 perp2 = cross(dp2, N); vec3 perp1 = cross(N, dp1);
+      float det = dot(dp1, perp2);
+      if (abs(det) > 1e-12) {
+        vec3 gradU = (perp2 * dq1.x + perp1 * dq2.x) / det;
+        vec3 gradV = (perp2 * dq1.y + perp1 * dq2.y) / det;
+        vec3 grad = (slope.x * gradU + slope.y * gradV) * uReliefDepth * detail;
+        N = normalize(N - grad);
+      }
+      albedo *= mix(0.86, mix(0.6, 1.06, h), detail);
+    }
     vec3 V = normalize(cameraPosition - vWorld);
     vec3 light = vec3(uAmbient);
     vec3 shine = vec3(0.0);
@@ -208,6 +252,9 @@ export function lit(options: LitOptions = {}) {
         uStrip: { value: strip ? new THREE.Vector4(strip.x, strip.y, strip.from, strip.to) : new THREE.Vector4() },
         uStripCol: { value: strip ? new THREE.Color(strip.colour ?? '#ffe4bd') : new THREE.Color(0, 0, 0) },
         uStripMix: { value: new THREE.Vector2(strip?.shine ?? 1, strip?.fill ?? 1) },
+        uRelief: { value: options.relief ? RELIEF[options.relief.kind] : 0 },
+        uReliefSize: { value: new THREE.Vector2(...(options.relief?.size ?? [1, 1])) },
+        uReliefDepth: { value: options.relief?.depth ?? 0 },
       },
     ]),
     vertexShader,
