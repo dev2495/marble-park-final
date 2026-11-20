@@ -207,11 +207,16 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     loadedFor.current = signature;
     const meta = quote.quoteMeta || {};
     const productMap = new Map((legacyProducts.data?.productsByIds || []).map((product: any) => [String(product.id), product]));
+    const roomNames = new Map<string, string>();
     const loaded: Line[] = (Array.isArray(quote.lines) ? quote.lines : []).map((line: any, index: number) => {
       const prepared = String(line.pricingVersion || '') === 'unified_retail_v1'
         ? { ...line, area: line.area || DEFAULT_AREA, quoteImage: line.quoteImage || line.customImageUrl || '' }
         : prepareLegacyLine(line, productMap.get(String(line.productId || '')));
-      return { ...prepared, qty: prepared.qty ?? prepared.quantity, _k: `q${index}` };
+      // One spelling per room, so "kitchen" and "Kitchen" are the same room.
+      const room = String(prepared.area || DEFAULT_AREA).trim().replace(/\s+/g, ' ') || DEFAULT_AREA;
+      const key = room.toLowerCase();
+      if (!roomNames.has(key)) roomNames.set(key, room);
+      return { ...prepared, area: roomNames.get(key), qty: prepared.qty ?? prepared.quantity, _k: `q${index}` };
     });
     const nextTaxMode: TaxMode = meta.taxMode === 'non_gst' ? 'non_gst' : 'gst';
     const nextDiscountType: DiscountMode = (meta.quoteDiscount?.mode || meta.quoteDiscount?.type) === 'FIXED_AMOUNT' || meta.quoteDiscount?.type === 'amount' ? 'FIXED_AMOUNT' : 'PERCENT';
@@ -310,6 +315,25 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
   }, [extraAreas, lines]);
   useEffect(() => { if (!areas.some((area) => area === targetArea)) setTargetArea(areas[0]); }, [areas, targetArea]);
   useEffect(() => { if (areaFilter !== 'all' && !areas.includes(areaFilter)) setAreaFilter('all'); }, [areaFilter, areas]);
+  const sameRoom = (a: unknown, b: unknown) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  const canonicalRoom = (name: string) => areas.find((area) => sameRoom(area, name)) || name.trim();
+  // Combined quantity of each item across every room.
+  const itemTotals = useMemo(() => {
+    const map = new Map<string, { name: string; unit: string; qty: number; rooms: Array<{ area: string; qty: number }> }>();
+    for (const line of activeLines) {
+      const key = String(line.productId || '');
+      if (!key) continue;
+      const tile = isTileLine(line);
+      const qty = tile && tilePriceUom(line.pricingUom) !== 'PC' ? draftNumber(line.requestedArea) : draftNumber(line.qty ?? line.quantity);
+      const unit = tile && tilePriceUom(line.pricingUom) !== 'PC' ? tilePriceUom(line.pricingUom).toLowerCase() : String(line.inventoryUom || line.unit || 'pc').toLowerCase();
+      const entry = map.get(key) || { name: String(line.name || line.sku || ''), unit, qty: 0, rooms: [] };
+      entry.qty += qty;
+      entry.rooms.push({ area: String(line.area || DEFAULT_AREA), qty });
+      map.set(key, entry);
+    }
+    return map;
+  }, [activeLines]);
+  const multiRoomItems = useMemo(() => Array.from(itemTotals.entries()).filter(([, entry]) => entry.rooms.length > 1), [itemTotals]);
   const areaTotals = useMemo(() => new Map(areas.map((area) => {
     const keys = activeLines.filter((line) => line.area === area).map((line) => line._k);
     return [area, { count: keys.length, value: keys.reduce((sum, key) => sum + Number(rowByKey.get(key)?.grossBeforeQuoteDiscount || 0), 0), warn: keys.some((key) => (issuesByKey.get(key) || []).some((issue) => issue.blocking)) }];
@@ -343,25 +367,41 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       else { setError(`${product.internalCode || product.sku} belongs in a ${family === 'tile' ? 'Tile & Chemical' : 'CP & Sanitary'} quote.`); return false; }
     }
     if (family !== effective) return false;
-    const existing = activeLines.find((line) => line.productId === product.id && String(line.area).toLowerCase() === String(area).toLowerCase());
+    const room = canonicalRoom(area);
+    const existing = activeLines.find((line) => line.productId === product.id && sameRoom(line.area, room));
     if (existing) {
       setFocusKey(existing._k);
-      notify(`${product.name} is already in ${area}. Change its quantity there, or add it to another area.`);
+      const others = (itemTotals.get(product.id)?.rooms || []).filter((row) => !sameRoom(row.area, room)).map((row) => row.area);
+      notify(`${product.name} is already in ${room}, so its quantity is selected to change.${others.length ? '' : ' To use it in another room, pick that room in "into" first.'}`);
       return false;
     }
-    const line = lineFromProduct(product, area);
+    const line = lineFromProduct(product, room);
     setLines((current) => [...current, line]);
     setFocusKey(line._k);
     setError('');
     return true;
   };
-  const updateLine = (key: string, patch: Record<string, any>) => setLines((current) => current.map((line) => (line._k === key ? patchLine(line, patch) : line)));
+  const updateLine = (key: string, patch: Record<string, any>) => {
+    if ('area' in patch) {
+      const moving = lines.find((line) => line._k === key);
+      const clash = moving && activeLines.find((line) => line._k !== key && line.productId === moving.productId && sameRoom(line.area, patch.area));
+      if (clash) { setFocusKey(clash._k); notify(`${moving!.name} is already in ${clash.area}. Change the quantity there instead of moving this line.`); return; }
+      patch = { ...patch, area: canonicalRoom(String(patch.area)) };
+    }
+    setLines((current) => current.map((line) => (line._k === key ? patchLine(line, patch) : line)));
+  };
+  const undoRemove = (line: Line) => {
+    const clash = activeLines.find((row) => row.productId === line.productId && sameRoom(row.area, line.area));
+    if (clash) { setFocusKey(clash._k); notify(`${line.name} was added to ${line.area} again, so the removed line cannot come back. Change the quantity on the new line.`); return; }
+    setLines((current) => current.map((row) => (row._k === line._k ? { ...row, _removed: undefined } : row)));
+  };
   const removeLine = (line: Line) => {
     if (baseline?.has(line._k) && persistedConfirmed) setLines((current) => current.map((row) => (row._k === line._k ? { ...row, _removed: true } : row)));
     else setLines((current) => current.filter((row) => row._k !== line._k));
   };
   const copyToArea = (line: Line, area: string) => {
-    if (activeLines.some((row) => row.productId === line.productId && row.area === area)) { notify(`${line.name} is already in ${area}.`); return; }
+    const existing = activeLines.find((row) => row.productId === line.productId && sameRoom(row.area, area));
+    if (existing) { setFocusKey(existing._k); notify(`${line.name} is already in ${area}. Its quantity is selected to change.`); return; }
     const key = lineKey();
     const copy: Line = { ...line, _k: key, area, lineKey: `product:${line.productId}:${key}`, _removed: undefined };
     delete (copy as any).quoteLineId;
@@ -372,17 +412,26 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     notify(`${line.name} added to ${area} as its own line.`);
   };
   const addArea = () => {
-    const name = newArea.trim();
-    if (!name) return;
-    if (!areas.some((area) => area.toLowerCase() === name.toLowerCase())) setExtraAreas((current) => [...current, name]);
+    const typed = newArea.trim().replace(/\s+/g, ' ');
+    if (!typed) return;
+    const existing = areas.find((area) => sameRoom(area, typed));
+    if (!existing) setExtraAreas((current) => [...current, typed]);
+    const name = existing || typed;
     setTargetArea(name);
     setAreaFilter(name);
+    if (existing) notify(`${existing} already exists. New items will go there.`);
     setNewArea('');
     window.setTimeout(() => searchRef.current?.focus(), 30);
   };
   const renameArea = (from: string, to: string) => {
-    const name = to.trim();
-    if (!name || name === from) return;
+    const typed = to.trim().replace(/\s+/g, ' ');
+    if (!typed || typed === from) return;
+    const into = areas.find((area) => area !== from && sameRoom(area, typed));
+    const name = into || typed;
+    if (into) {
+      const clash = activeLines.find((line) => sameRoom(line.area, from) && activeLines.some((other) => sameRoom(other.area, into) && other.productId === line.productId));
+      if (clash) { notify(`${from} and ${into} both have ${clash.name}. Remove one of them before joining the two rooms.`); return; }
+    }
     setLines((current) => current.map((line) => (line.area === from ? { ...line, area: name } : line)));
     setExtraAreas((current) => current.map((area) => (area === from ? name : area)));
     if (targetArea === from) setTargetArea(name);
@@ -394,7 +443,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     const timer = window.setTimeout(() => {
       const row = document.getElementById(`line-${focusKey}`);
       row?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      row?.querySelector<HTMLInputElement>('input[data-primary]')?.focus();
+      const input = row?.querySelector<HTMLInputElement>('input[data-primary]');
+      input?.focus();
+      input?.select();
       setFocusKey(null);
     }, 60);
     return () => window.clearTimeout(timer);
@@ -579,6 +630,14 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [dialog]);
+  // Enter pressed before results arrive adds the first match once they do.
+  const [pendingEnter, setPendingEnter] = useState(false);
+  useEffect(() => {
+    if (!pendingEnter || searchQuery.loading || debounced !== search.trim()) return;
+    setPendingEnter(false);
+    if (results[0]) { if (addProduct(results[0])) { setSearch(''); setResultsOpen(false); } }
+    else if (search.trim().length >= 2) setResultsOpen(true);
+  }, [pendingEnter, searchQuery.loading, debounced, search, results]); // eslint-disable-line react-hooks/exhaustive-deps
   const onSearchKey = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     const count = results.length + 1;
     if (event.key === 'ArrowDown') { event.preventDefault(); setResultsOpen(true); setSearchIndex((index) => (index + 1) % count); }
@@ -586,8 +645,11 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     if (event.key === 'Escape') { setResultsOpen(false); setSearch(''); }
     if (event.key === 'Enter') {
       event.preventDefault();
+      if (search.trim().length < 2) return;
+      const settled = !searchQuery.loading && debounced === search.trim();
+      if (!settled) { setPendingEnter(true); return; }
       if (searchIndex < results.length && results[searchIndex]) { if (addProduct(results[searchIndex])) { setSearch(''); setResultsOpen(false); } }
-      else if (search.trim().length >= 2) { setResultsOpen(false); setDialog('sku'); }
+      else if (searchIndex === results.length) { setResultsOpen(false); setDialog('sku'); }
     }
   };
 
@@ -696,7 +758,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
                   <kbd className="absolute right-2 top-2 rounded border border-[var(--line-strong)] bg-[var(--surface)] px-1.5 font-mono text-[10px] text-[var(--ink-4)]">/</kbd>
                 </div>
                 <label className="flex items-center gap-1.5 text-xs text-[var(--ink-3)]">into
-                  <select value={targetArea} onChange={(event) => setTargetArea(event.target.value)} className="h-9 max-w-[12rem] rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold">{areas.map((area) => <option key={area}>{area}</option>)}</select>
+                  <select aria-label="Room for new items" value={targetArea} onChange={(event) => setTargetArea(event.target.value)} className="h-9 max-w-[12rem] rounded-lg border-2 border-[var(--brand-500)] bg-[var(--brand-50)] px-2 text-xs font-semibold text-[var(--brand-800)]">{areas.map((area) => <option key={area}>{area}</option>)}</select>
                 </label>
                 <button type="button" onClick={() => { setScanOpen((value) => !value); setScanResult(null); }} className={cn(secondaryButton, 'h-9 px-3')}><Camera className="h-4 w-4" />{scanOpen ? 'Close scan' : 'Scan'}</button>
                 <button type="button" onClick={() => setDialog('sku')} className={cn(secondaryButton, 'h-9 px-3')}><Plus className="h-4 w-4" />New SKU</button>
@@ -760,16 +822,19 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
                             <div className="flex items-center gap-3">
                               {canEditLines ? <AreaName name={area} onRename={(value) => renameArea(area, value)} /> : <b className="text-[12.5px]">{area}</b>}
                               <span className="font-mono text-[11px] text-[var(--ink-4)]">{info.count} item{info.count === 1 ? '' : 's'}</span>
+                              {canEditLines ? (area === targetArea
+                                ? <span className="rounded-full bg-[var(--brand-600)] px-2 py-0.5 text-[10.5px] font-semibold text-white">new items go here</span>
+                                : <button type="button" onClick={() => { setTargetArea(area); searchRef.current?.focus(); }} className="rounded-full border border-[var(--line-strong)] px-2 py-0.5 text-[10.5px] font-semibold text-[var(--ink-3)] hover:border-[var(--brand-400)] hover:text-[var(--brand-700)]">Add items here</button>) : null}
                               <span className="ml-auto text-[12.5px] font-semibold tabular-nums">{money(info.value)}</span>
                             </div>
                           </td>
                         </tr>
                         {areaLines.map((line) => (
-                          <LineRow key={line._k} line={line} row={rowByKey.get(line._k)} issues={issuesByKey.get(line._k) || []} editable={canEditLines && !line._removed} quoteType={quoteType}
+                          <LineRow key={line._k} onFocusRoom={() => { if (!line._removed && line.area !== targetArea) setTargetArea(line.area); }} total={itemTotals.get(String(line.productId || ''))} line={line} row={rowByKey.get(line._k)} issues={issuesByKey.get(line._k) || []} editable={canEditLines && !line._removed} quoteType={quoteType}
                             change={revisionChanges.find((item) => item.line._k === line._k)} ordered={orderedQtyByKey.get(String(line.lineKey || '')) || 0} brands={brands}
                             otherAreas={areas.filter((value) => value !== line.area)} alsoIn={activeLines.filter((row) => row.productId === line.productId && row._k !== line._k).map((row) => row.area)}
                             expanded={expanded === line._k} onToggle={() => setExpanded((current) => (current === line._k ? null : line._k))}
-                            onChange={(patch) => updateLine(line._k, patch)} onRemove={() => removeLine(line)} onUndo={() => setLines((current) => current.map((row) => (row._k === line._k ? { ...row, _removed: undefined } : row)))}
+                            onChange={(patch) => updateLine(line._k, patch)} onRemove={() => removeLine(line)} onUndo={() => undoRemove(line)}
                             onCopy={(target) => copyToArea(line, target)} taxMode={taxMode} />
                         ))}
                         {!areaLines.length ? <tr><td colSpan={7} className="px-14 py-3 text-xs text-[var(--ink-4)]">Nothing here yet.</td></tr> : null}
@@ -821,6 +886,20 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
                   </div>
                 ))}
               </div>
+            </Card>
+          ) : null}
+
+          {multiRoomItems.length ? (
+            <Card title={`Same item in more than one room · ${multiRoomItems.length}`}>
+              <div className="space-y-2 text-xs">
+                {multiRoomItems.map(([key, entry]) => (
+                  <div key={key}>
+                    <div className="flex justify-between gap-2"><b className="truncate text-[var(--ink)]">{entry.name}</b><b className="shrink-0 tabular-nums">{Number(entry.qty.toFixed(2))} {entry.unit}</b></div>
+                    <p className="text-[var(--ink-4)]">{entry.rooms.map((room) => `${room.area} ${Number(room.qty.toFixed(2))}`).join(' · ')}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] text-[var(--ink-4)]">Each room keeps its own line and price. The total is what is ordered and dispatched.</p>
             </Card>
           ) : null}
 
@@ -964,7 +1043,8 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
 
 const numberCell = 'h-8 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-right text-[13px] tabular-nums outline-none hover:border-[var(--line-strong)] focus:border-[var(--brand-500)] focus:ring-2 focus:ring-[var(--ring)] disabled:bg-[var(--bg-soft)] disabled:text-[var(--ink-4)]';
 
-function LineRow({ line, row, issues, editable, quoteType, change, ordered, brands, otherAreas, alsoIn, expanded, onToggle, onChange, onRemove, onUndo, onCopy, taxMode }: {
+function LineRow({ line, row, issues, editable, quoteType, change, ordered, brands, otherAreas, alsoIn, expanded, onToggle, onChange, onRemove, onUndo, onCopy, taxMode, onFocusRoom, total }: {
+  onFocusRoom: () => void; total?: { qty: number; unit: string; rooms: Array<{ area: string; qty: number }> };
   line: Line; row: any; issues: Array<{ key: string; message: string; blocking: boolean }>; editable: boolean; quoteType: QuoteType;
   change?: { kind: 'added' | 'changed' | 'removed'; detail: string[] }; ordered: number; brands: any[]; otherAreas: string[]; alsoIn: string[];
   expanded: boolean; onToggle: () => void; onChange: (patch: Record<string, any>) => void; onRemove: () => void; onUndo: () => void; onCopy: (area: string) => void; taxMode: TaxMode;
@@ -982,7 +1062,7 @@ function LineRow({ line, row, issues, editable, quoteType, change, ordered, bran
   const mrpUnit = row?.mrpUnit || '';
   return (
     <>
-      <tr id={`line-${line._k}`} className={cn('group bg-[var(--surface)] hover:bg-[var(--surface-2)]', line._removed && 'opacity-60')}>
+      <tr id={`line-${line._k}`} onFocusCapture={onFocusRoom} className={cn('group bg-[var(--surface)] hover:bg-[var(--surface-2)]', line._removed && 'opacity-60')}>
         <td className={cn('border-b border-[var(--line)] px-3 py-1.5 align-middle', stripe)}>
           <ProductImageFrame src={productImage(line.media) || line.quoteImage || '/catalogue-art/faucet.svg'} alt="" className="h-10 w-10 rounded-md" imageClassName="p-0.5" />
         </td>
@@ -992,7 +1072,7 @@ function LineRow({ line, row, issues, editable, quoteType, change, ordered, bran
             <span className="font-mono">{line.internalCode || line.sku}</span>
             {brandCode || line.brand ? <span>{brandCode || line.brand}</span> : null}
             {tile && Number(line.coveragePerPack || 0) > 0 ? <span className="rounded bg-[var(--bg-soft)] px-1.5 text-[10.5px] font-semibold text-[var(--ink-3)]">1 {String(line.inventoryUom || 'box').toLowerCase()} = {Number(line.coveragePerPack).toFixed(2)} sqft</span> : null}
-            {alsoIn.length ? <span className="rounded bg-[var(--bg-soft)] px-1.5 text-[10.5px] font-semibold text-[var(--ink-3)]">also in {Array.from(new Set(alsoIn)).join(', ')}</span> : null}
+            {alsoIn.length && total ? <span className="rounded bg-[var(--info-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--info)]" title={total.rooms.map((room) => `${room.area}: ${room.qty} ${total.unit}`).join('\n')}>also in {Array.from(new Set(alsoIn)).join(', ')} · {Number(total.qty.toFixed(2))} {total.unit} in total</span> : null}
             {lockedByOrder ? <span className="rounded bg-violet-100 px-1.5 text-[10.5px] font-semibold text-violet-800 dark:bg-violet-500/15 dark:text-violet-300">{ordered} ordered</span> : null}
             {line._removed ? <span className="rounded bg-[var(--danger-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--danger)]">removed in this revision</span>
               : change?.kind === 'added' ? <span className="rounded bg-[var(--success-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--success)]">added</span>
@@ -1120,6 +1200,13 @@ function OrderDrawer({ open, onClose, quote, fulfillment, onDone }: { open: bool
     setQuantities(next);
   }, [fulfillment?.lines, open]);
   const lines = fulfillment?.lines || [];
+  // Same item ordered for several rooms: show the combined quantity.
+  const skuTotals = lines.reduce((map: Map<string, { order: number; rooms: number }>, line: any) => {
+    const entry = map.get(line.sku) || { order: 0, rooms: 0 };
+    entry.order += Number(quantities[line.id] || 0);
+    entry.rooms += 1;
+    return map.set(line.sku, entry);
+  }, new Map<string, { order: number; rooms: number }>());
   const selected = lines.map((line: any) => ({ quoteLineId: line.id, quantity: Number(quantities[line.id] || 0) })).filter((line: any) => line.quantity > 0);
   const submit = async () => {
     setError('');
@@ -1141,7 +1228,7 @@ function OrderDrawer({ open, onClose, quote, fulfillment, onDone }: { open: bool
         <div className="max-h-72 space-y-1 overflow-y-auto">
           {lines.map((line: any) => (
             <label key={line.id} className="grid grid-cols-[1fr_6rem] items-center gap-3 rounded-lg border border-[var(--line)] px-3 py-2">
-              <span className="min-w-0"><b className="block truncate text-sm text-[var(--ink)]">{line.name}</b><span className="text-xs text-[var(--ink-4)]">{line.area} · ordered {line.ordered} of {line.quantity} {String(line.unit || '').toLowerCase()} · {line.remaining} left</span></span>
+              <span className="min-w-0"><b className="block truncate text-sm text-[var(--ink)]">{line.name}</b><span className="text-xs text-[var(--ink-4)]">{line.area} · ordered {line.ordered} of {line.quantity} {String(line.unit || '').toLowerCase()} · {line.remaining} left</span>{(skuTotals.get(line.sku)?.rooms || 0) > 1 ? <span className="block text-[11px] font-semibold text-[var(--info)]">In {skuTotals.get(line.sku)!.rooms} rooms · {skuTotals.get(line.sku)!.order} {String(line.unit || '').toLowerCase()} ordering now in total</span> : null}</span>
               <input type="number" min={0} max={line.remaining} disabled={!line.remaining} value={quantities[line.id] ?? ''} onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))} aria-label={`Order quantity for ${line.name}`} className={numberCell} />
             </label>
           ))}

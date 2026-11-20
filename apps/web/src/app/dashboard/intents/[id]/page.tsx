@@ -304,6 +304,12 @@ export default function IntentDetailPage() {
     },
   );
 
+  // Room that new rows go into. The same code may sit in several rooms,
+  // but only once per room.
+  const [targetRoom, setTargetRoom] = useState("General Selection");
+  const [roomNotice, setRoomNotice] = useState("");
+  const sameRoom = (a: unknown, b: unknown) => String(a || "General Selection").trim().toLowerCase() === String(b || "General Selection").trim().toLowerCase();
+  const notifyRoom = (message: string) => { setRoomNotice(message); window.setTimeout(() => setRoomNotice((current) => (current === message ? "" : current)), 5000); };
   // Product search panel for adding rows
   const [searchTerm, setSearchTerm] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -327,12 +333,27 @@ export default function IntentDetailPage() {
     "office_staff",
   ].includes(role) || Boolean(me?.effectivePermissions?.includes("quotes.manage"));
   const grouped = useMemo(() => {
-    const map = new Map<string, Row[]>();
+    const map = new Map<string, { name: string; rows: Row[] }>();
     for (const row of rows) {
-      const key = row.area || "General Selection";
-      map.set(key, [...(map.get(key) || []), row]);
+      const name = String(row.area || "General Selection").trim() || "General Selection";
+      const key = name.toLowerCase();
+      const entry = map.get(key) || { name, rows: [] };
+      entry.rows.push(row);
+      map.set(key, entry);
     }
-    return Array.from(map.entries());
+    return Array.from(map.values()).map((entry) => [entry.name, entry.rows] as [string, Row[]]);
+  }, [rows]);
+  // Combined quantity of each code across rooms.
+  const codeTotals = useMemo(() => {
+    const map = new Map<string, { qty: number; rooms: string[]; unit: string }>();
+    for (const row of rows) {
+      if (!row.productId) continue;
+      const entry = map.get(row.productId) || { qty: 0, rooms: [], unit: String(row.unit || "PC") };
+      entry.qty += Number(row.qty || 0);
+      entry.rooms.push(String(row.area || "General Selection"));
+      map.set(row.productId, entry);
+    }
+    return map;
   }, [rows]);
 
   if (loading && !intent)
@@ -371,6 +392,13 @@ export default function IntentDetailPage() {
   );
 
   const updateRow = (idx: number, patch: Partial<Row>) => {
+    if (patch.area !== undefined) {
+      const moving = rows[idx];
+      const clash = rows.find((row, i) => i !== idx && row.productId && row.productId === moving?.productId && sameRoom(row.area, patch.area));
+      if (clash) { notifyRoom(`${moving?.sku || moving?.name} is already in ${clash.area}. Change the quantity there instead of moving this row.`); return; }
+      const existingName = rows.find((row, i) => i !== idx && sameRoom(row.area, patch.area))?.area;
+      if (existingName) patch = { ...patch, area: existingName };
+    }
     setRows((prev) =>
       prev.map((row, i) => {
         if (i !== idx) return row;
@@ -392,8 +420,13 @@ export default function IntentDetailPage() {
     setDirty(true);
   };
   const addFromProduct = (product: any) => {
+    const roomName = rows.find((row) => sameRoom(row.area, targetRoom))?.area || targetRoom.trim() || "General Selection";
+    if (rows.some((row) => row.productId === product.id && sameRoom(row.area, roomName))) {
+      notifyRoom(`${product.internalCode || product.sku} is already in ${roomName}. Change its quantity there, or pick another room in "Add to room" first.`);
+      return;
+    }
     setRows((prev) => {
-      if (prev.some((row) => row.productId === product.id)) return prev;
+      if (prev.some((row) => row.productId === product.id && sameRoom(row.area, roomName))) return prev;
       return [...prev, {
         productId: product.id,
         sku: product.sku,
@@ -405,7 +438,7 @@ export default function IntentDetailPage() {
         qty: ["SQFT", "SQM", "M2"].includes(String(product.salesUom || "").toUpperCase()) && Number(product.coveragePerPack || 0) > 0 ? 0 : 1,
         price: Number(product.defaultNrpInclusive || 0),
         unit: product.unit || "PC",
-        area: "General Selection",
+        area: roomName,
         media: product.media,
         type:
           String(product.category || "").toLowerCase() === "tiles"
@@ -462,6 +495,8 @@ export default function IntentDetailPage() {
     await updateIntent({
       variables: { id, input: { rows: JSON.stringify(rows), notes } },
     });
+    // Already with the office: saving is enough, submitting again is refused.
+    if (intent?.status === "pending_quote") return;
     await submitIntent({ variables: { id } });
   };
 
@@ -647,8 +682,17 @@ export default function IntentDetailPage() {
               <Camera className="mr-2 h-4 w-4" />{scanOpen ? "Close scanner" : "Scan showroom item"}
             </Button>
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <label htmlFor="intent-target-room" className="font-semibold text-[var(--ink-3)]">Add to room</label>
+            <input id="intent-target-room" list="intent-area-list" value={targetRoom} onChange={(e) => setTargetRoom(e.target.value)} onBlur={() => setTargetRoom((value) => rows.find((row) => sameRoom(row.area, value))?.area || value.trim() || "General Selection")} className="h-9 w-60 rounded-md border-2 border-[var(--brand-500)] bg-[var(--brand-50)] px-2 text-sm font-semibold text-[var(--brand-800)]" />
+            {grouped.map(([area]) => (
+              <button key={area} type="button" onClick={() => setTargetRoom(area)} className={`rounded-full border px-2.5 py-1 font-semibold ${sameRoom(area, targetRoom) ? "border-[var(--brand-600)] bg-[var(--brand-600)] text-white" : "border-[var(--line)] text-[var(--ink-3)] hover:border-[var(--brand-400)]"}`}>{area}</button>
+            ))}
+            <span className="text-[var(--ink-4)]">The same code can be added to each room with its own quantity.</span>
+          </div>
+          {roomNotice ? <div role="status" className="mt-2 rounded-r4 bg-amber-50 p-2.5 text-xs font-semibold text-amber-900">{roomNotice}</div> : null}
           {scanOpen ? <div className="mt-3 rounded-r4 border border-emerald-200 bg-emerald-50 p-3"><PhysicalQrScanner compact busy={scanState.loading} onDetected={addFromScan}/></div> : null}
-          {scanResult ? <div className="mt-3"><ScanProductSelector result={scanResult} busy={scanState.loading} existingProductIds={rows.map((row) => row.productId || "")} primaryLabel="Add selected to intent" onPrimary={addScannedProducts} onDismiss={() => setScanResult(null)}/></div> : null}
+          {scanResult ? <div className="mt-3"><ScanProductSelector result={scanResult} busy={scanState.loading} existingProductIds={rows.filter((row) => sameRoom(row.area, targetRoom)).map((row) => row.productId || "")} primaryLabel="Add selected to intent" onPrimary={addScannedProducts} onDismiss={() => setScanResult(null)}/></div> : null}
           {scanMessage ? <div role="status" className={`mt-3 flex items-center gap-2 rounded-r4 p-3 text-xs font-semibold ${scanMessage.startsWith("Scan blocked") ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}>{scanMessage.startsWith("Scan blocked") ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}{scanMessage}</div> : null}
           {scanState.error ? <div className="mt-3"><QueryErrorBanner error={scanState.error}/></div> : null}
         </section>
@@ -704,6 +748,11 @@ export default function IntentDetailPage() {
                             {row.brand ? ` · ${row.brand}` : ""}
                             {row.finish ? ` · ${row.finish}` : ""}
                           </p>
+                          {row.productId && (codeTotals.get(row.productId)?.rooms.length || 0) > 1 ? (
+                            <p className="mt-1 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-blue-800">
+                              Also in {codeTotals.get(row.productId)!.rooms.filter((room) => !sameRoom(room, row.area)).join(", ")} · {codeTotals.get(row.productId)!.qty} {codeTotals.get(row.productId)!.unit} in total
+                            </p>
+                          ) : null}
                           {isTile ? (
                             <p className="mt-1 text-xs font-semibold text-[var(--brand-700)]">
                               Display code {row.tileCode || row.sku} ·{" "}

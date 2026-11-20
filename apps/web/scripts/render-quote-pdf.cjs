@@ -807,6 +807,47 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
   );
 }
 
+// Items quoted in more than one room, with the combined quantity that will
+// be ordered and dispatched. Each room keeps its own line and price above.
+function combinedItems(lines) {
+  const map = new Map();
+  for (const line of lines) {
+    const key = String(line.productId || line.sku || '');
+    if (!key) continue;
+    const isTile = String(line.category || '').toLowerCase() === 'tiles';
+    const areaQty = isTile && Number(line.requestedArea || 0) > 0;
+    const qty = areaQty ? Number(line.requestedArea) : Number(line.qty || line.quantity || 0);
+    const unit = areaQty ? String(line.pricingUom || 'SQFT').toUpperCase() : String(line.inventoryUom || line.unit || 'PC').toUpperCase();
+    const entry = map.get(key) || { name: line.name || line.sku, code: line.internalCode || line.sku || '', unit, qty: 0, rooms: [] };
+    entry.qty += qty;
+    entry.rooms.push(`${line.area || 'General Selection'} ${Number(qty.toFixed(2))}`);
+    map.set(key, entry);
+  }
+  return [...map.values()].filter((entry) => entry.rooms.length > 1);
+}
+
+function CombinedItemsBox({ lines, compact }) {
+  const e = React.createElement;
+  const items = combinedItems(lines);
+  if (!items.length) return null;
+  return e(View, { style: [styles.areaBlock, compact ? styles.areaBlockCompact : null], wrap: false },
+    e(View, { style: styles.areaHeader },
+      e(Text, { style: styles.areaTitle }, 'Same item in more than one room'),
+      e(Text, { style: styles.areaCount }, `${items.length} item(s)`),
+    ),
+    e(View, { style: styles.tableHeader },
+      e(Text, { style: [styles.th, { width: '40%' }] }, 'Item'),
+      e(Text, { style: [styles.th, { width: '42%' }] }, 'Rooms'),
+      e(Text, { style: [styles.th, { width: '18%', textAlign: 'right' }] }, 'Total qty'),
+    ),
+    ...items.map((item, index) => e(View, { key: `${item.code}-${index}`, style: [styles.tableRow, { minHeight: 0 }] },
+      e(View, { style: { width: '40%', paddingRight: 6 } }, e(Text, { style: styles.td }, item.name), item.code ? e(Text, { style: styles.meta }, item.code) : null),
+      e(Text, { style: [styles.td, { width: '42%' }] }, item.rooms.join('  ·  ')),
+      e(Text, { style: [styles.td, { width: '18%', textAlign: 'right', fontWeight: 900 }] }, `${Number(item.qty.toFixed(2))} ${item.unit}`),
+    )),
+  );
+}
+
 function PricedDocumentBody(payload, requestUrl) {
   const e = React.createElement;
   const quote = payload.quote;
@@ -886,6 +927,7 @@ function PricedDocumentBody(payload, requestUrl) {
     ...groups.map((group) => quoteType === 'tile'
       ? e(TileAreaTable, { key: group.area, group, requestUrl, brands: payload.brands, compact })
       : e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode, brands: payload.brands, compact })),
+    e(CombinedItemsBox, { lines, compact }),
     e(View, { style: [styles.totalsWrap, compact ? styles.totalsWrapCompact : null], wrap: false },
       e(View, { style: [styles.notesBox, compact ? styles.notesBoxCompact : null] },
         e(Text, { style: styles.label }, 'Remarks'),
