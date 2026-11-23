@@ -20,7 +20,7 @@ export default function ReportPage({ params }: { params: Promise<{ slug: string 
   const [ready, setReady] = useState(false);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
-    setFilters(Object.fromEntries(['preset', 'from', 'to', 'brand', 'category', 'ownerId', 'locationId', 'tab'].map((key) => [key, query.get(key) || undefined])));
+    setFilters(Object.fromEntries(['preset', 'from', 'to', 'brand', 'category', 'ownerId', 'locationId', 'tab', 'days'].map((key) => [key, query.get(key) || undefined])));
     setReady(true);
   }, [slug]);
   const clean = useMemo(() => Object.fromEntries(Object.entries(filters).filter(([, value]) => value)), [filters]);
@@ -51,8 +51,9 @@ export default function ReportPage({ params }: { params: Promise<{ slug: string 
           <button type="button" onClick={() => refetch()} aria-label="Refresh report" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-3)]"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /></button>
         </div>
         <p className="mt-1.5 max-w-[70ch] text-sm text-[var(--ink-3)]">{config.why}</p>
-        {config.period || config.brand || config.category || config.owner || config.location ? (
+        {config.period || config.brand || config.category || config.owner || config.location || config.days ? (
           <div className="mt-4 flex flex-wrap items-center gap-2">
+            {config.days ? <DaysPicker value={filters.days || '30'} onChange={(days) => update({ days: days === '30' ? undefined : days })} /> : null}
             {config.period ? <PeriodSwitch value={filters.preset || 'month'} onChange={(preset) => update({ preset })} /> : null}
             {config.period && filters.preset === 'custom' ? <><input type="date" aria-label="From date" value={filters.from || ''} onChange={(event) => update({ from: event.target.value })} className={select} /><input type="date" aria-label="To date" value={filters.to || ''} onChange={(event) => update({ to: event.target.value })} className={select} /></> : null}
             {config.brand ? <select aria-label="Brand" value={filters.brand || ''} onChange={(event) => update({ brand: event.target.value || undefined })} className={select}><option value="">All brands</option>{(options?.brands || []).map((name: string) => <option key={name} value={name}>{name}</option>)}</select> : null}
@@ -79,6 +80,30 @@ export default function ReportPage({ params }: { params: Promise<{ slug: string 
         </>}
         <p className="flex flex-wrap gap-2.5 text-xs text-[var(--ink-4)]"><span>As of {asOf}</span><span>·</span><span>Data since {live.dataSince}</span></p>
       </div> : null}
+    </div>
+  );
+}
+
+const DAY_CHOICES = ['30', '60', '90', '180'];
+
+/** "Not asked in" period: 30 / 60 / 90 / 180 days or any number. 30 is the default. */
+function DaysPicker({ value, onChange }: { value: string; onChange: (days: string) => void }) {
+  const preset = DAY_CHOICES.includes(value);
+  const [custom, setCustom] = useState(preset ? '' : value);
+  useEffect(() => { if (!DAY_CHOICES.includes(value)) setCustom(value); }, [value]);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[13px] text-[var(--ink-3)]">Not asked in</span>
+      <div role="group" aria-label="Not asked in" className="inline-flex rounded-[10px] border border-[var(--line)] bg-[var(--surface)] p-0.5">
+        {DAY_CHOICES.map((days) => (
+          <button key={days} type="button" aria-pressed={value === days} onClick={() => { setCustom(''); onChange(days); }} className={`min-h-10 rounded-[8px] px-3 text-[13px] ${value === days ? 'bg-[var(--ink)] font-medium text-[var(--surface)]' : 'text-[var(--ink-3)]'}`}>{days} days</button>
+        ))}
+      </div>
+      <input type="number" min={1} max={3650} inputMode="numeric" aria-label="Custom number of days" placeholder="Other" value={custom}
+        onChange={(event) => setCustom(event.target.value)}
+        onBlur={() => { const days = Math.round(Number(custom)); if (days >= 1 && days <= 3650) onChange(String(days)); }}
+        onKeyDown={(event) => { if (event.key === 'Enter') (event.target as HTMLInputElement).blur(); }}
+        className="min-h-11 w-24 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 text-[13px] text-[var(--ink-2)]" />
     </div>
   );
 }

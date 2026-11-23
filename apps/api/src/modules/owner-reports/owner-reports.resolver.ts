@@ -16,6 +16,7 @@ class OwnerReportFilters {
   @Field({ nullable: true }) ownerId?: string;
   @Field({ nullable: true }) locationId?: string;
   @Field({ nullable: true }) tab?: string;
+  @Field({ nullable: true, description: 'Not-asked report: how many days without a customer request.' }) days?: string;
 }
 
 @Resolver()

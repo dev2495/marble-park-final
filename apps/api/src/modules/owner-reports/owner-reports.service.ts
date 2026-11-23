@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { stockStatus, stockThreshold } from '../common/stock-status';
 
-export type ReportFilters = { preset?: string; from?: string; to?: string; brand?: string; category?: string; ownerId?: string; locationId?: string; tab?: string };
+export type ReportFilters = { preset?: string; from?: string; to?: string; brand?: string; category?: string; ownerId?: string; locationId?: string; tab?: string; days?: string };
 type Viewer = { id: string; role: string; canCost: boolean };
 type Range = { from: Date; to: Date; prevFrom: Date; prevTo: Date; days: number; label: string };
 
@@ -11,6 +11,7 @@ export const REPORT_PERMISSIONS: Record<string, string[]> = {
   'sales-quotes': ['reports.sales', 'reports.executive'], salespeople: ['reports.sales', 'reports.executive'], architects: ['reports.sales', 'reports.executive'],
   'walk-ins': ['reports.sales', 'reports.executive'], 'demand-gap': ['reports.sales', 'reports.inventory', 'reports.executive'],
   'orders-invoices': ['reports.executive', 'reports.finance'], 'stock-value': ['reports.inventory', 'reports.executive'], 'dead-stock': ['reports.inventory', 'reports.executive'],
+  'not-asked': ['reports.inventory', 'reports.executive'],
   movers: ['reports.inventory', 'reports.executive'], 'open-orders': ['reports.procurement', 'reports.executive'], 'data-health': ['reports.inventory', 'reports.executive'],
 };
 
@@ -152,7 +153,7 @@ export class OwnerReportsService {
     const sampleSet = new Set<string>(samples.map((row: any) => row.productId));
     const stock = new Map<string, any>();
     products.forEach((product: any) => stock.set(product.id, {
-      ...product, code: product.internalCode || product.sku, mrp: n(product.defaultMrpInclusive), onHand: 0, available: 0, reserved: 0, hold: 0, damaged: 0, valueCost: 0, costedUnits: 0, missingCost: 0, firstReceived: null, lots: [], everStocked: false, out30: 0, lastOut: null,
+      ...product, code: product.internalCode || product.sku, mrp: n(product.defaultMrpInclusive), onHand: 0, available: 0, reserved: 0, hold: 0, damaged: 0, valueCost: 0, costedUnits: 0, missingCost: 0, firstReceived: null, lastReceived: null, lots: [], everStocked: false, out30: 0, lastOut: null,
     }));
     lotRows.forEach((row: any) => {
       const item = stock.get(row.lot.productId); if (!item) return;
@@ -160,6 +161,7 @@ export class OwnerReportsService {
       item.everStocked = true; item.onHand += qty; item.available += n(row.available); item.reserved += n(row.reserved); item.hold += n(row.hold); item.damaged += n(row.damaged);
       item.valueCost += qty * cost; if (cost > 0) item.costedUnits += qty; else item.missingCost += qty;
       const received = new Date(row.lot.receivedAt); if (!item.firstReceived || received < item.firstReceived) item.firstReceived = received;
+      if (qty > 0 && (!item.lastReceived || received > item.lastReceived)) item.lastReceived = received;
       item.lots.push({ ...row.lot, qty, location: row.location?.name || '', cost });
     });
     const cutoff = Date.now() - 30 * DAY;
@@ -214,7 +216,7 @@ export class OwnerReportsService {
   async report(kind: string, filters: ReportFilters, viewer: Viewer) {
     const handlers: Record<string, () => Promise<any>> = {
       'sales-quotes': () => this.salesQuotes(filters, viewer), salespeople: () => this.salespeople(filters, viewer), architects: () => this.architects(filters, viewer), 'walk-ins': () => this.walkIns(filters, viewer),
-      'demand-gap': () => this.demandGap(filters, viewer), 'orders-invoices': () => this.ordersInvoices(filters, viewer), 'stock-value': () => this.stockValue(filters, viewer), 'dead-stock': () => this.deadStock(filters, viewer),
+      'demand-gap': () => this.demandGap(filters, viewer), 'orders-invoices': () => this.ordersInvoices(filters, viewer), 'stock-value': () => this.stockValue(filters, viewer), 'dead-stock': () => this.deadStock(filters, viewer), 'not-asked': () => this.notAsked(filters, viewer),
       movers: () => this.movers(filters, viewer), 'open-orders': () => this.openOrders(filters, viewer), 'data-health': () => this.dataHealth(filters, viewer),
     };
     if (!handlers[kind]) throw new BadRequestException('Unknown report');
@@ -503,6 +505,101 @@ export class OwnerReportsService {
     };
   }
 
+  /**
+   * When each product was last asked for by a customer, from every signal that
+   * is dated and tied to a customer: quote lines (drafts too: the customer asked),
+   * intents, sales orders and showroom scans. Website views are left out: they
+   * are anonymous and only kept as running totals.
+   */
+  private async lastAskedByProduct() {
+    const [quotes, intents, orderLines, scans]: any[] = await Promise.all([
+      this.prisma.quote.findMany({ select: { id: true, quoteNumber: true, createdAt: true, sentAt: true, confirmedAt: true, lines: true } }),
+      (this.prisma as any).leadIntent.findMany({ select: { createdAt: true, submittedAt: true, rows: true } }),
+      (this.prisma as any).salesOrderLine.findMany({ where: { productId: { not: null } }, select: { productId: true, createdAt: true, salesOrderId: true } }),
+      (this.prisma as any).showroomVisitScan.findMany({ select: { productId: true, updatedAt: true } }),
+    ]);
+    const last = new Map<string, { when: Date; how: string }>();
+    const seen = (productId: unknown, when: unknown, how: string) => {
+      const id = String(productId || ''); const at = when ? new Date(when as any) : null;
+      if (!id || !at || Number.isNaN(at.getTime())) return;
+      const current = last.get(id);
+      if (!current || at > current.when) last.set(id, { when: at, how });
+    };
+    const asArray = (value: unknown): any[] => { if (Array.isArray(value)) return value; if (typeof value === 'string') { try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; } } return []; };
+    quotes.forEach((quote: any) => {
+      const when = [quote.createdAt, quote.sentAt, quote.confirmedAt].filter(Boolean).map((value: any) => new Date(value)).sort((a: Date, b: Date) => b.getTime() - a.getTime())[0];
+      asArray(quote.lines).forEach((line: any) => seen(line?.productId, when, `Quote ${quote.quoteNumber}`));
+    });
+    intents.forEach((intent: any) => asArray(intent.rows).forEach((row: any) => seen(row?.productId, intent.submittedAt || intent.createdAt, 'Lead intent')));
+    const orderIds = Array.from(new Set(orderLines.map((line: any) => line.salesOrderId).filter(Boolean))) as string[];
+    const orders: any[] = orderIds.length ? await this.prisma.salesOrder.findMany({ where: { id: { in: orderIds } }, select: { id: true, orderNumber: true } }) : [];
+    const orderNumber = new Map(orders.map((order) => [order.id, order.orderNumber]));
+    orderLines.forEach((line: any) => seen(line.productId, line.createdAt, `Order ${orderNumber.get(line.salesOrderId) || ''}`.trim()));
+    scans.forEach((scan: any) => seen(scan.productId, scan.updatedAt, 'Showroom scan'));
+    return last;
+  }
+
+  private async notAsked(filters: ReportFilters, viewer: Viewer) {
+    const days = Math.min(Math.max(Math.round(Number(filters.days) || 30), 1), 3650);
+    const now = Date.now();
+    const cutoff = now - days * DAY;
+    const [{ stocked }, lastAsked] = await Promise.all([this.loadStock(filters, viewer), this.lastAskedByProduct()]);
+    const age = (value: Date | null) => (value ? Math.floor((now - new Date(value).getTime()) / DAY) : null);
+    // Stock that arrived inside the window has not had N days to be asked about yet.
+    const fresh = stocked.filter((item: any) => item.lastReceived && new Date(item.lastReceived).getTime() >= cutoff);
+    const freshIds = new Set(fresh.map((item: any) => item.id));
+    const list = stocked.filter((item: any) => !freshIds.has(item.id)).filter((item: any) => { const asked = lastAsked.get(item.id); return !asked || asked.when.getTime() < cutoff; });
+    const rows = list.map((item: any) => {
+      const asked = lastAsked.get(item.id) || null;
+      const inStock = age(item.firstReceived);
+      const suggestion = !item.isSample ? 'Put a piece on display' : (inStock || 0) > 90 ? 'Promote / offer to architects' : 'Watch';
+      return {
+        id: item.id, sku: item.code, name: String(item.name || '').trim() || item.code, brand: item.brand, cat: item.category, size: item.dimensions || '',
+        onHand: item.onHand, available: item.available, valueMrp: round(item.valueMrp), cost: item.valueCost,
+        lastAsked: asked ? dateLabel(asked.when) : 'Never', how: asked ? asked.how : 'No quote, intent, order or scan', notAsked: asked ? age(asked.when) : null,
+        lastReceived: item.lastReceived ? dateLabel(item.lastReceived) : '', inStock, lastOut: item.lastOut ? dateLabel(item.lastOut) : 'Never',
+        display: item.isSample ? 'Yes' : 'No', suggestion, href: `/dashboard/products?product=${item.id}`,
+      };
+    }).sort((a: any, b: any) => b.valueMrp - a.valueMrp);
+    const total = this.stockTotals(stocked, viewer.canCost);
+    const value = rows.reduce((sum: number, row: any) => sum + row.valueMrp, 0);
+    const never = rows.filter((row: any) => row.notAsked == null);
+    const since = new Date(`${DATA_SINCE} 00:00:00 GMT+0530`);
+    const bands: Array<[string, (row: any) => boolean]> = [
+      [`${days}–${days * 2} days`, (row) => row.notAsked != null && row.notAsked < days * 2],
+      [`${days * 2}+ days`, (row) => row.notAsked != null && row.notAsked >= days * 2],
+      ['Never asked', (row) => row.notAsked == null],
+    ];
+    const notices: any[] = [];
+    if (!Number.isNaN(since.getTime()) && cutoff < since.getTime()) notices.push({ level: 'info', text: `Customer requests are recorded from ${DATA_SINCE}, which is less than ${days} days ago. “Never” means not asked since then, not never at all.` });
+    if (fresh.length) notices.push({ level: 'info', text: `${units(fresh.length)} item${fresh.length === 1 ? '' : 's'} received in the last ${days} days ${fresh.length === 1 ? 'is' : 'are'} left out, since customers have not had ${days} days to ask about ${fresh.length === 1 ? 'it' : 'them'}.` });
+    return {
+      notices,
+      empty: rows.length ? null : { title: `Everything in stock was asked for in the last ${days} days`, body: 'Try a shorter period, or check again later.' },
+      kpis: [
+        { key: 'n', label: `Not asked in ${days} days`, value: rows.length, format: 'num', sub: `${units(rows.reduce((sum: number, row: any) => sum + row.onHand, 0))} units in stock` },
+        { key: 'mrp', label: 'Value at MRP', value, format: 'inr', sub: 'tied up, before GST' },
+        ...(viewer.canCost ? [{ key: 'cost', label: 'At cost', value: rows.reduce((sum: number, row: any) => sum + n(row.cost), 0), format: 'inr', sub: `Costs entered for ${pct(total.coverage)} of units`, warn: total.missingUnits > 0 }] : []),
+        { key: 'share', label: 'Share of stock', value: total.mrp ? value / total.mrp : null, format: 'pct', sub: 'by value at MRP' },
+        { key: 'never', label: 'Never asked', value: never.length, format: 'num', sub: 'no request on record' },
+      ],
+      charts: [
+        { key: 'bands', type: 'hbar', title: 'How long since anyone asked', sub: 'Value at MRP', kind: 'inr', rows: bands.map(([label, test]) => ({ label, v: round(rows.filter(test).reduce((sum: number, row: any) => sum + row.valueMrp, 0)) })) },
+        { key: 'brand', type: 'hbar', title: 'By brand', sub: 'Value at MRP not asked for', kind: 'inr', rows: top(groupSum(rows, (row: any) => row.brand, (row: any) => row.valueMrp), 10) },
+      ],
+      table: {
+        title: `In stock, not asked for in ${days} days`, exportName: `not-asked-${days}-days`,
+        columns: [
+          { key: 'sku', label: 'Code', mono: true }, { key: 'name', label: 'Product', sub: 'brand' }, { key: 'cat', label: 'Category' }, { key: 'size', label: 'Size' },
+          { key: 'onHand', label: 'On hand', kind: 'num' }, { key: 'available', label: 'Available', kind: 'num' }, { key: 'valueMrp', label: 'Value at MRP', kind: 'inr' }, ...(viewer.canCost ? [{ key: 'cost', label: 'At cost', kind: 'inr' }] : []),
+          { key: 'lastAsked', label: 'Last asked', sub: 'how' }, { key: 'notAsked', label: 'Days not asked', kind: 'num' }, { key: 'lastReceived', label: 'Last received' }, { key: 'inStock', label: 'Days in stock', kind: 'num' },
+          { key: 'lastOut', label: 'Last went out' }, { key: 'display', label: 'On display' }, { key: 'suggestion', label: 'Suggested' },
+        ],
+        rows,
+      },
+    };
+  }
+
   private async movers(filters: ReportFilters, viewer: Viewer) {
     const { items, stocked } = await this.loadStock(filters, viewer);
     const openLines: any[] = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrder: { status: { in: ['ordered', 'sent', 'partial_received'] } } }, select: { productId: true, orderedQuantity: true, receivedQuantity: true, cancelledQuantity: true } });
@@ -664,7 +761,7 @@ export class OwnerReportsService {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Marble Park';
     const sheet = workbook.addWorksheet('Report', { views: [{ state: 'frozen', ySplit: 1 }] });
-    const columns: any[] = report.table.columns.flatMap((column: any) => (column.sub ? [column, { key: column.sub, label: column.sub === 'brand' ? 'Brand' : column.sub === 'date' ? 'Date' : column.sub === 'arch' ? 'Architect' : column.sub === 'firm' ? 'Firm' : column.sub === 'mobile' ? 'Mobile' : column.sub }] : [column]));
+    const columns: any[] = report.table.columns.flatMap((column: any) => (column.sub ? [column, { key: column.sub, label: column.sub === 'brand' ? 'Brand' : column.sub === 'date' ? 'Date' : column.sub === 'arch' ? 'Architect' : column.sub === 'firm' ? 'Firm' : column.sub === 'mobile' ? 'Mobile' : column.sub === 'how' ? 'How asked' : column.sub }] : [column]));
     sheet.addRow(columns.map((column) => column.label));
     sheet.getRow(1).eachCell((cell: any) => { cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7F2925' } }; });
     report.table.rows.forEach((row: any) => sheet.addRow(columns.map((column) => row[column.key] ?? '')));
