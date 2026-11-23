@@ -240,7 +240,10 @@ async function main() {
   if (!id || !requestUrl || !apiUrl) throw new Error('Usage: render-labels-pdf.cjs <runId> <requestUrl> <apiUrl>');
   // dx/dy are this workstation's printer alignment (mm, right/down positive).
   const params = new URL(requestUrl).searchParams;
-  process.stdout.write(await renderLabelsPdf(await fetchRun(id, apiUrl), { offsetXMm: params.get('dx'), offsetYMm: params.get('dy') }));
+  const run = await fetchRun(id, apiUrl);
+  const buffer = await renderLabelsPdf(run, { offsetXMm: params.get('dx'), offsetYMm: params.get('dy') });
+  process.stderr.write(`\nMP_DOCUMENT_NUMBER=${JSON.stringify(String(run?.runNumber || ''))}\n`); // names the downloaded file
+  process.stdout.write(buffer);
 }
 
 module.exports = { assertRunReady, renderLabelsPdf, SAFE_MARGIN_MM, MAX_ALIGNMENT_OFFSET_MM };

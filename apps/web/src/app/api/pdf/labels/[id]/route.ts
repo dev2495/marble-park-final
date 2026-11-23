@@ -11,6 +11,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     request: req,
     scriptName: 'render-labels-pdf.cjs',
     filename: `Sticker_Run_${id}.pdf`,
+    filenameFromNumber: (number) => `Stickers ${number}.pdf`,
     action: 'GenerateLabelPrintRunPdf',
     errorMessage: 'Sticker PDF could not be generated. Keep this run open and retry; print counts were not changed.',
     includeApiUrl: true,

@@ -396,6 +396,7 @@ async function main() {
   })));
   payload.order = { ...payload.order, lines: hydratedLines };
   const buffer = await renderToBuffer(buildDocument(payload, requestUrl));
+  process.stderr.write(`\nMP_DOCUMENT_NUMBER=${JSON.stringify(String(payload.order?.orderNumber || ''))}\n`); // names the downloaded file
   process.stdout.write(buffer);
 }
 

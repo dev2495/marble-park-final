@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
+import { documentNumberFromRendererLog, pdfContentDisposition, pdfDownloadName } from './pdf-filename';
 
 const MAX_PDF_BYTES = 80 * 1024 * 1024;
 const PDF_RENDER_TIMEOUT_MS = 60_000;
@@ -11,7 +12,10 @@ type RenderPdfInput = {
   id: string;
   request: NextRequest;
   scriptName: string;
+  /** Used when the renderer does not announce a document number. */
   filename: string;
+  /** Builds the download name from the document number; default `<number>.pdf`. */
+  filenameFromNumber?: (safeNumber: string) => string;
   action: string;
   errorMessage: string;
   includeApiUrl?: boolean;
@@ -67,7 +71,7 @@ async function executeRenderer(input: RenderPdfInput, sessionToken: string) {
   const args = [rendererPath(input.scriptName), input.id, input.request.url];
   if (input.includeApiUrl) args.push(apiUrl);
 
-  return new Promise<Buffer>((resolve, reject) => {
+  return new Promise<{ buffer: Buffer; documentNumber: string }>((resolve, reject) => {
     execFile(
       process.execPath,
       args,
@@ -92,7 +96,7 @@ async function executeRenderer(input: RenderPdfInput, sessionToken: string) {
           reject(new Error('Renderer returned an invalid PDF payload'));
           return;
         }
-        resolve(buffer);
+        resolve({ buffer, documentNumber: documentNumberFromRendererLog(stderr?.toString() || '') });
       },
     );
   });
@@ -132,13 +136,13 @@ export async function servePdf(input: RenderPdfInput) {
   }
 
   try {
-    const buffer = await executeRenderer(input, sessionToken);
+    const { buffer, documentNumber } = await executeRenderer(input, sessionToken);
     await recordCommercialResult(input, sessionToken, true);
     const disposition = input.request.nextUrl.searchParams.get('download') === '1' ? 'attachment' : 'inline';
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `${disposition}; filename="${input.filename}"`,
+        'Content-Disposition': pdfContentDisposition(disposition, pdfDownloadName(documentNumber, input.filename, input.filenameFromNumber)),
         'Content-Length': String(buffer.length),
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff',

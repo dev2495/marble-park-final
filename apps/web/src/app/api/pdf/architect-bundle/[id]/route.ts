@@ -13,6 +13,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     request: req,
     scriptName: 'render-quote-pdf.cjs',
     filename: `MarblePark_Architect_Selection_${id}.pdf`,
+    filenameFromNumber: (number) => `${number} Architect Selection.pdf`,
     action: 'GenerateArchitectBundlePdf',
     errorMessage: 'Architect selection document could not be generated.',
     includeApiUrl: true,

@@ -7,7 +7,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeft, Camera, Check, ChevronDown, ChevronUp, Copy, Download, FileImage, ImagePlus, Layers3, Bath, Loader2, Plus, Printer, Search, Send, Share2, ShoppingCart, Trash2, Undo2, X,
 } from 'lucide-react';
@@ -83,10 +83,12 @@ function pct(value: number) {
   return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }
 
+const PHONE_BAR_ACTIONS = new Set(['draft', 'confirm', 'docs', 'share', 'order', 'discard', 'save']);
+
 const STATUS_PILL: Record<Mode, { label: string; className: string }> = {
   new: { label: 'New', className: 'bg-[var(--bg-soft)] text-[var(--ink-3)]' },
   draft: { label: 'Draft', className: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
-  confirmed: { label: 'Confirmed', className: 'bg-[var(--success-bg)] text-[var(--success)]' },
+  confirmed: { label: 'Ready to send', className: 'bg-[var(--success-bg)] text-[var(--success)]' },
   revising: { label: 'Revising', className: 'bg-[var(--info-bg)] text-[var(--info)]' },
   locked: { label: 'Ordered', className: 'bg-violet-100 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300' },
   reviseOrdered: { label: 'Revising', className: 'bg-[var(--info-bg)] text-[var(--info)]' },
@@ -673,9 +675,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       buttons.push(<button key="confirm" type="button" disabled={busy || !customer || !activeLines.length} onClick={() => { if (!pricingReady) { firstBlockingFocus(); setError(blocking.length ? `${blocking.length} thing${blocking.length === 1 ? '' : 's'} to fix before confirming. They are listed on the right.` : discountIssue || 'Add items first.'); return; } return isNew ? saveNew(false) : saveExisting(false); }} className={primaryButton}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{blocking.length ? `Fix ${blocking.length} to confirm` : 'Confirm quote'}</button>);
     }
     if (mode === 'confirmed' || mode === 'locked') {
-      if (settingsDirty) buttons.push(<button key="save" type="button" disabled={busy} onClick={saveSettings} className={primaryButton}>Save changes</button>);
-      buttons.push(<button key="docs" type="button" onClick={() => setDialog('documents')} className={secondaryButton}><Download className="h-4 w-4" />PDF</button>);
-      buttons.push(<button key="share" type="button" disabled={busy || approvalPending} onClick={share} className={secondaryButton}><Share2 className="h-4 w-4" />Share</button>);
+      if (settingsDirty) buttons.push(<button key="save-settings" type="button" disabled={busy} onClick={saveSettings} className={primaryButton}>Save changes</button>);
+      buttons.push(<button key="docs" type="button" onClick={() => setDialog('documents')} className={secondaryButton}><Download className="h-4 w-4" /><span className="mp-bar-label">PDF</span></button>);
+      buttons.push(<button key="share" type="button" disabled={busy || approvalPending} onClick={share} className={secondaryButton}><Share2 className="h-4 w-4" /><span className="mp-bar-label">Share</span></button>);
       if (mode === 'locked') buttons.push(<button key="rev" type="button" onClick={() => setReviseOrdered(true)} className={secondaryButton}>Revise</button>);
       buttons.push(<button key="order" type="button" disabled={approvalPending} onClick={() => setDialog('order')} className={primaryButton}><ShoppingCart className="h-4 w-4" />{mode === 'locked' ? 'Order remaining' : 'Convert to order'}</button>);
     }
@@ -689,6 +691,11 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     }
     return buttons;
   })();
+  // On phones the sticky bottom bar carries the main actions; the header keeps only the others, so nothing shows twice.
+  const inPhoneBar = (node: ReactNode) => isValidElement(node) && PHONE_BAR_ACTIONS.has(String(node.key));
+  const phoneBarActions = headerActions.filter(inPhoneBar);
+  const phoneHeaderActions = headerActions.filter((node) => !inPhoneBar(node));
+  const sentLabel = quote?.status === 'sent' ? `Sent ${shortDate(quote.sentAt)}` : '';
 
   return (
     <div className="flex flex-col gap-3 pb-24 xl:h-[calc(100vh-7.5rem)] xl:pb-0">
@@ -697,10 +704,10 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Link href="/dashboard/quotes" aria-label="Back to quotes" className="rounded-md p-1.5 text-[var(--ink-4)] hover:bg-[var(--bg-soft)]"><ArrowLeft className="h-4 w-4" /></Link>
           <h1 className="font-display text-xl font-bold tracking-[-0.01em] text-[var(--ink)]">{quoteTitle}</h1>
-          <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold', pill.className)}><span className="h-1.5 w-1.5 rounded-full bg-current" />{mode === 'closed' ? (quote?.supersededByQuoteId ? 'Superseded' : String(quote?.status || '').replace('_', ' ')) : pill.label}{mode === 'draft' && blocking.length ? ` · ${blocking.length} to fix` : ''}</span>
+          <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold', pill.className)}><span className="h-1.5 w-1.5 rounded-full bg-current" />{mode === 'closed' ? (quote?.supersededByQuoteId ? 'Superseded' : String(quote?.status || '').replace('_', ' ')) : mode === 'confirmed' && sentLabel ? sentLabel : pill.label}{mode === 'draft' && blocking.length ? ` · ${blocking.length} to fix` : ''}</span>
           {approvalPending ? <span className="rounded-full bg-[var(--warning-bg)] px-2.5 py-1 text-xs font-semibold text-[var(--warning)]">Waiting for owner price approval</span> : null}
-          {quote?.status === 'sent' ? <span className="rounded-full bg-[var(--bg-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--ink-3)]">Sent {shortDate(quote.sentAt)}</span> : null}
-          <div className="flex flex-wrap items-center gap-1.5">
+          {sentLabel && mode !== 'confirmed' ? <span className="rounded-full bg-[var(--bg-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--ink-3)]">{sentLabel}</span> : null}
+          <div className="-mx-1 flex w-full items-center gap-1.5 overflow-x-auto px-1 [&>*]:shrink-0 sm:mx-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:px-0">
             <button type="button" disabled={!isNew} onClick={() => setDialog('customer')} className={cn('inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium', customer ? 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)] disabled:cursor-default' : 'border-[var(--brand-500)] bg-[var(--brand-50)] font-semibold text-[var(--brand-700)]')}>
               {customer ? <><b className="font-semibold text-[var(--ink)]">{customer.name}</b><span className="text-[var(--ink-4)]">{customer.mobile}{customer.city ? ` · ${customer.city}` : ''}</span>{isFollowUp(customer) ? <span className="rounded bg-[var(--warning-bg)] px-1.5 text-[10px] font-semibold text-[var(--warning)]">follow up</span> : null}</> : <><Plus className="h-3.5 w-3.5" />Customer (name and mobile is enough)</>}
             </button>
@@ -709,9 +716,10 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
             </button>
             <QuoteTypeChip quoteType={quoteType} editable={isNew && activeLines.length === 0} onChange={(value) => { quoteTypeLocked.current = true; setQuoteType(value); }} />
           </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 xl:ml-auto">
             <span className="text-xs text-[var(--ink-4)]">{busy ? 'Saving…' : mode === 'revising' ? `Customer still sees ${quote.quoteNumber}` : settingsDirty || (mode === 'draft' && commercialDirty) ? 'Unsaved changes' : !isNew ? 'All changes saved' : ''}</span>
-            {headerActions}
+            <span className="hidden xl:contents">{headerActions}</span>
+            <span className="contents xl:hidden">{phoneHeaderActions}</span>
           </div>
         </div>
       </section>
@@ -977,8 +985,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
 
       {/* Mobile action bar */}
       <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-[var(--line)] bg-[var(--surface)]/95 p-3 backdrop-blur xl:hidden">
-        <div className="min-w-0 flex-1"><p className="text-[11px] text-[var(--ink-4)]">Total</p><b className="font-display text-lg tabular-nums">{money(totals.total)}</b></div>
-        {headerActions.slice(-2)}
+        <div className="min-w-0 flex-1"><p className="text-[11px] text-[var(--ink-4)]">Total</p><b className="whitespace-nowrap font-display text-base tabular-nums sm:text-lg">{money(totals.total)}</b></div>
+        {/* Narrow phones: PDF and Share become square icon buttons and the cart icon drops, so the total stays readable. */}
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2 [&_.mp-bar-label]:sr-only [&>button:has(.mp-bar-label)]:w-10 [&>button:has(.mp-bar-label)]:px-0 [&>button]:px-3 [&_.lucide-shopping-cart]:hidden sm:[&_.mp-bar-label]:not-sr-only sm:[&>button:has(.mp-bar-label)]:w-auto sm:[&>button]:px-4 sm:[&_.lucide-shopping-cart]:inline">{phoneBarActions}</div>
       </div>
 
       {/* Dialogs */}

@@ -24,6 +24,8 @@ async function main() {
     e(View, { style: s.total }, e(Text, null, 'Closing balance'), e(Text, null, money(account.summary?.balance))),
     e(View, { style: s.footer }, e(Text, null, settings.supportPhone || settings.supportEmail || ''), e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}` })),
   ));
-  process.stdout.write(await renderToBuffer(document));
+  const buffer = await renderToBuffer(document);
+  process.stderr.write(`\nMP_DOCUMENT_NUMBER=${JSON.stringify(String(account.customer?.name || ''))}\n`); // names the downloaded file
+  process.stdout.write(buffer);
 }
 main().catch((error) => { console.error(error?.stack || error); process.exit(1); });

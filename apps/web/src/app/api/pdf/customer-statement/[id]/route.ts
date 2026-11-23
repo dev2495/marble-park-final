@@ -6,5 +6,5 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  return servePdf({ id, request: req, scriptName: 'render-customer-statement-pdf.cjs', filename: `Customer_Statement_${id}.pdf`, action: 'GenerateCustomerStatementPdf', errorMessage: 'Customer statement could not be generated.', includeApiUrl: true });
+  return servePdf({ id, request: req, scriptName: 'render-customer-statement-pdf.cjs', filename: `Customer_Statement_${id}.pdf`, filenameFromNumber: (name) => `Statement ${name}.pdf`, action: 'GenerateCustomerStatementPdf', errorMessage: 'Customer statement could not be generated.', includeApiUrl: true });
 }

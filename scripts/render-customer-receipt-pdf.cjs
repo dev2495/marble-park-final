@@ -25,6 +25,8 @@ async function main() {
     e(View, { style: s.note }, e(Text, { style: s.label }, 'Narration'), e(Text, { style: s.small }, payment.notes || 'Payment received and posted to the customer account.')),
     e(View, { style: s.footer }, e(Text, null, settings.supportPhone || settings.supportEmail || ''), e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}` })),
   ));
-  process.stdout.write(await renderToBuffer(document));
+  const buffer = await renderToBuffer(document);
+  process.stderr.write(`\nMP_DOCUMENT_NUMBER=${JSON.stringify(String(payment.receiptNumber || ''))}\n`); // names the downloaded file
+  process.stdout.write(buffer);
 }
 main().catch((error) => { console.error(error?.stack || error); process.exit(1); });
