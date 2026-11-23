@@ -1,12 +1,12 @@
 'use client';
 
-import { useDeferredValue, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import {
   Bath, Bell, Boxes, Briefcase, ChevronDown, ClipboardCheck, ClipboardList, FileSpreadsheet,
-  KeyRound, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Search, Settings, Shield,
+  KeyRound, LayoutDashboard, ListChecks, LogOut, PackageSearch, Receipt, Settings, Shield,
   Truck, UserCircle2, Users, UserCog, UserCheck, BadgeCheck, CreditCard, FileText, RotateCcw,
   Menu, X,
   ArrowLeftRight, QrCode, Scale, BarChart3, HelpCircle, BellRing, Store,
@@ -23,21 +23,12 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { guideForRoute } from '@/lib/help-content';
 import { CompanyLogo } from '@/components/company-logo';
 import { SessionTimeoutGuard } from '@/components/session-timeout-guard';
+import { GlobalSearch } from '@/components/global-search';
 
 const ME_QUERY = gql`
   query LayoutMe {
     me { id name email avatarUrl role effectivePermissions permissionOverrides }
     documentSettings { data }
-  }
-`;
-
-const SEARCH_QUERY = gql`
-  query GlobalSearch($query: String!) {
-    globalSearch(query: $query) {
-      products
-      leads
-      quotes
-    }
   }
 `;
 
@@ -198,10 +189,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [roleOverride, setRoleOverride] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showResults, setShowResults] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const deferredSearchQuery = useDeferredValue(searchQuery.trim());
   const { data: meData, loading: meLoading, error: meError } = useQuery(ME_QUERY, { fetchPolicy: 'network-only', errorPolicy: 'all' });
   const [logout] = useMutation(LOGOUT_MUTATION);
 
@@ -239,12 +227,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return pathname.startsWith(`${href}/`);
   };
 
-  const { data: searchResults, loading: searching } = useQuery(SEARCH_QUERY, {
-    variables: { query: deferredSearchQuery },
-    skip: !showResults || deferredSearchQuery.length < 2,
-    fetchPolicy: 'cache-first',
-    notifyOnNetworkStatusChange: false,
-  });
   const { data: notificationData, loading: notificationsLoading, error: notificationsError, refetch: refetchNotifications } = useQuery(NOTIFICATIONS_QUERY, {
     skip: !user,
     pollInterval: 60000,
@@ -382,52 +364,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Global search */}
-              <div className="relative min-w-0 flex-1 lg:w-[26rem] lg:flex-none">
-                <div className={cn('flex h-9 items-center rounded-md border bg-[var(--surface)] px-3 shadow-sm-soft transition-colors', showResults ? 'border-[var(--brand-400)]' : 'border-[var(--line)]')}>
-                  <Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" />
-                  <input
-                    value={searchQuery}
-                    onChange={(event) => {
-                      setSearchQuery(event.target.value);
-                      setShowResults(event.target.value.length > 1);
-                    }}
-                    onFocus={() => setShowResults(searchQuery.length > 1)}
-                    onBlur={() => setTimeout(() => setShowResults(false), 180)}
-                    placeholder="Search SKU, customer, lead, quote…"
-                    aria-label="Search products, customers, leads and quotes"
-                    className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)]"
-                  />
-                  {searching ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--brand-600)]" /> : null}
-                </div>
-
-                {showResults && deferredSearchQuery.length >= 2 ? (
-                  <div className="animate-fade-in animate-slide-in absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)] lg:w-[26rem]">
-                    <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">Products</div>
-                    <div className="max-h-80 overflow-y-auto custom-scrollbar">
-                      {searchResults?.globalSearch?.products?.length ? (
-                        searchResults.globalSearch.products.map((product: any) => (
-                          <button
-                            key={product.id}
-                            onMouseDown={() => router.push(`/dashboard/products?sku=${product.sku}`)}
-                            className="flex w-full items-center justify-between gap-3 rounded-md p-2.5 text-left transition-colors hover:bg-[var(--bg-soft)]"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-[var(--ink)]">{product.name}</p>
-                              <p className="truncate text-[11px] font-medium text-[var(--ink-4)]">
-                                <span className="mp-mono">{product.sku}</span> · {product.brand}
-                              </p>
-                            </div>
-                            <span className="shrink-0 text-sm font-semibold text-[var(--ink)]">{Number(product.defaultNrpInclusive || 0) > 0 ? `NRP ₹${Number(product.defaultNrpInclusive).toLocaleString('en-IN')}` : 'Price on quote'}</span>
-                          </button>
-                        ))
-                      ) : (
-                        <p className="p-3 text-sm text-[var(--ink-4)]">No matches.</p>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
+              {/* Global search: everything a person may open, grouped */}
+              <GlobalSearch />
 
               {/* Quick light/dark toggle */}
               <ThemeToggle className="hidden sm:inline-flex" />

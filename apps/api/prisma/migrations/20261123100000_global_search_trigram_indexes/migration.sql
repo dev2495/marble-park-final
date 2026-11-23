@@ -1,0 +1,40 @@
+-- Header search matches parts of names and document numbers anywhere in the text
+-- ("0063" inside QT/2026/0063). Trigram indexes keep those contains-searches fast
+-- as records grow. See apps/api/src/modules/search/search.service.ts.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS "Customer_mobile_trgm_idx" ON "Customer" USING GIN ("mobile" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Customer_email_trgm_idx" ON "Customer" USING GIN ("email" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Customer_city_trgm_idx" ON "Customer" USING GIN ("city" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Customer_gstNo_trgm_idx" ON "Customer" USING GIN ("gstNo" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Lead_title_trgm_idx" ON "Lead" USING GIN ("title" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "SalesOrder_orderNumber_trgm_idx" ON "SalesOrder" USING GIN ("orderNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "DispatchChallan_challanNumber_trgm_idx" ON "DispatchChallan" USING GIN ("challanNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "DispatchChallan_vehicleNumber_trgm_idx" ON "DispatchChallan" USING GIN ("vehicleNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "DispatchChallan_driverName_trgm_idx" ON "DispatchChallan" USING GIN ("driverName" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "DispatchChallan_transporterName_trgm_idx" ON "DispatchChallan" USING GIN ("transporterName" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "SalesInvoice_invoiceNumber_trgm_idx" ON "SalesInvoice" USING GIN ("invoiceNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "CustomerPayment_receiptNumber_trgm_idx" ON "CustomerPayment" USING GIN ("receiptNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "CustomerPayment_reference_trgm_idx" ON "CustomerPayment" USING GIN ("reference" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "PurchaseOrder_poNumber_trgm_idx" ON "PurchaseOrder" USING GIN ("poNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "PurchaseOrder_vendorName_trgm_idx" ON "PurchaseOrder" USING GIN ("vendorName" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "GoodsReceiptNote_grnNumber_trgm_idx" ON "GoodsReceiptNote" USING GIN ("grnNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "GoodsReceiptNote_vendorName_trgm_idx" ON "GoodsReceiptNote" USING GIN ("vendorName" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "GoodsReceiptNote_supplierBill_trgm_idx" ON "GoodsReceiptNote" USING GIN ("supplierBill" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "GoodsReceiptNote_supplierChallan_trgm_idx" ON "GoodsReceiptNote" USING GIN ("supplierChallan" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Vendor_name_trgm_idx" ON "Vendor" USING GIN ("name" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Architect_name_trgm_idx" ON "Architect" USING GIN ("name" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Architect_firmName_trgm_idx" ON "Architect" USING GIN ("firmName" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "InventoryLot_lotNumber_trgm_idx" ON "InventoryLot" USING GIN ("lotNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "DisplaySample_sampleNumber_trgm_idx" ON "DisplaySample" USING GIN ("sampleNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "StockTransfer_transferNumber_trgm_idx" ON "StockTransfer" USING GIN ("transferNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "ReturnOrder_returnNumber_trgm_idx" ON "ReturnOrder" USING GIN ("returnNumber" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "VaultAsset_title_trgm_idx" ON "VaultAsset" USING GIN ("title" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "VaultAsset_originalName_trgm_idx" ON "VaultAsset" USING GIN ("originalName" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "ShowroomVisit_name_trgm_idx" ON "ShowroomVisit" USING GIN ("name" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "ShowroomVisit_mobile_trgm_idx" ON "ShowroomVisit" USING GIN ("mobile" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "TileDesign_name_trgm_idx" ON "TileDesign" USING GIN ("name" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "TileDesign_designCode_trgm_idx" ON "TileDesign" USING GIN ("designCode" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "TileDesign_collection_trgm_idx" ON "TileDesign" USING GIN ("collection" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Product_category_trgm_idx" ON "Product" USING GIN ("category" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Product_dimensions_trgm_idx" ON "Product" USING GIN ("dimensions" gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "Product_finish_trgm_idx" ON "Product" USING GIN ("finish" gin_trgm_ops);

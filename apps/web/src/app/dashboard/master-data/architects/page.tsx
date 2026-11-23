@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { Compass, RotateCcw, Save, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,8 @@ export default function ArchitectMasterPage() {
   const { data, loading, error, refetch } = useQuery(DATA, { fetchPolicy: 'cache-and-network' });
   const [form, setForm] = useState<any>(empty);
   const [search, setSearch] = useState('');
+  // Global search links here with ?search=… so the page opens on that record.
+  useEffect(() => { const value = new URLSearchParams(window.location.search).get('search'); if (value) setSearch(value); }, []);
   const [save, { loading: saving, error: saveError }] = useMutation(SAVE, { onCompleted: () => { void refetch(); setForm(empty); } });
   const architects = useMemo<any[]>(() => data?.architects || [], [data?.architects]);
   const filtered = architects.filter((row) => `${row.name} ${row.firmName} ${row.phone} ${row.email} ${row.city} ${row.registrationNo}`.toLowerCase().includes(search.toLowerCase()));

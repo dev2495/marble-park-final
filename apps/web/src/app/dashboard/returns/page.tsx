@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { AlertTriangle, CheckCircle2, PackageCheck, RotateCcw, Search, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,8 @@ const money = (value: number) => `₹${Number(value || 0).toLocaleString('en-IN'
 
 export default function ReturnsPage() {
   const [search, setSearch] = useState('');
+  // Global search links here with ?search=… so the page opens on that record.
+  useEffect(() => { const value = new URLSearchParams(window.location.search).get('search'); if (value) setSearch(value); }, []);
   const [selectedLineId, setSelectedLineId] = useState('');
   const [qty, setQty] = useState('1');
   const [reason, setReason] = useState('');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import Link from 'next/link';
 import { Archive, ArrowLeft, ArrowRight, Boxes, ChevronLeft, ChevronRight, History, ImagePlus, PackagePlus, Plus, Save, ScanLine, Trash2 } from 'lucide-react';
@@ -82,6 +82,8 @@ async function fileBase64(file: File) {
 export default function ProductMasterPage() {
   const pageSize = 50;
   const [search, setSearch] = useState('');
+  // Follow-ups and global search link here with ?search=<SKU>.
+  useEffect(() => { const value = new URLSearchParams(window.location.search).get('search'); if (value) setSearch(value); }, []);
   const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<any>(emptyProduct);

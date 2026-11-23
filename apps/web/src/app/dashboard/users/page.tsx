@@ -201,6 +201,8 @@ export default function UsersPage() {
   const [resetPassword, setResetPassword] = useState('');
   const [message, setMessage] = useState('');
   const [userSearch, setUserSearch] = useState('');
+  // Global search links here with ?search=… so the page opens on that record.
+  useEffect(() => { const value = new URLSearchParams(window.location.search).get('search'); if (value) setUserSearch(value); }, []);
   const [roleFilter, setRoleFilter] = useState('all');
   const [confirmRemove, setConfirmRemove] = useState(false);
 

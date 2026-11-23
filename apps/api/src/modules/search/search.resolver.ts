@@ -9,10 +9,10 @@ class SearchResult {
   @Field(() => GraphQLJSON)
   products: any;
 
-  @Field(() => GraphQLJSON)
+  @Field(() => GraphQLJSON, { deprecationReason: 'Use searchEverything; always empty, so results follow each page’s access rules.' })
   leads: any;
 
-  @Field(() => GraphQLJSON)
+  @Field(() => GraphQLJSON, { deprecationReason: 'Use searchEverything; always empty, so results follow each page’s access rules.' })
   quotes: any;
 }
 
@@ -23,9 +23,17 @@ export class SearchResolver {
     private prisma: PrismaService,
   ) {}
 
+  /** Product picker search for quotes, orders, intents and procurement. */
   @Query(() => SearchResult)
   async globalSearch(@Args('query') query: string, @Context() ctx: GraphqlRequestContext) {
     await requireSession(this.prisma, ctx);
-    return this.searchService.search(query);
+    return { products: await this.searchService.products(query), leads: [], quotes: [] };
+  }
+
+  /** Header search: grouped results, limited to what this person may open. */
+  @Query(() => [GraphQLJSON])
+  async searchEverything(@Args('query') query: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireSession(this.prisma, ctx);
+    return this.searchService.everything(query, user);
   }
 }

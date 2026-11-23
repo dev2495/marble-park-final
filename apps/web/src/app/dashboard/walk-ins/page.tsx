@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { gql, useMutation, useQuery } from '@apollo/client';
@@ -34,6 +34,8 @@ export default function WalkInsPage() {
   const router = useRouter();
   const today = indiaDay();
   const [day, setDay] = useState(today);
+  // Global search links a walk-in with ?day=YYYY-MM-DD.
+  useEffect(() => { const value = new URLSearchParams(window.location.search).get('day'); if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) setDay(value); }, []);
   const [status, setStatus] = useState('');
   const { data, loading, error, refetch } = useQuery(WALK_INS, { variables: { day, status: status || undefined }, fetchPolicy: 'cache-and-network', pollInterval: 30000 });
   const [startQuote] = useMutation(START_QUOTE);

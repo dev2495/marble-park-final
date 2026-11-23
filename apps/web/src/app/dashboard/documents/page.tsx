@@ -73,6 +73,8 @@ export default function DocumentCenterPage() {
   const pageSize = 48;
   const [tab, setTab] = useState<'vault' | 'generated'>('vault');
   const [search, setSearch] = useState('');
+  // Global search links here with ?search=… so the page opens on that record.
+  useEffect(() => { const value = new URLSearchParams(window.location.search).get('search'); if (value) setSearch(value); }, []);
   const deferredSearch = useDeferredValue(search.trim());
   const [category, setCategory] = useState('all');
   const [kind, setKind] = useState('all');

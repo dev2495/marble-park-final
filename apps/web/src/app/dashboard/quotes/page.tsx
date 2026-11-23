@@ -45,6 +45,8 @@ export default function QuotesRegisterPage() {
   const [quoteType, setQuoteType] = useState('all');
   const [architectId, setArchitectId] = useState('all');
   const [search, setSearch] = useState('');
+  // Global search links here with ?search=… so the page opens on that record.
+  useEffect(() => { const value = new URLSearchParams(window.location.search).get('search'); if (value) setSearch(value); }, []);
   const [customerSearch, setCustomerSearch] = useState('');
   const [ownerSearch, setOwnerSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
