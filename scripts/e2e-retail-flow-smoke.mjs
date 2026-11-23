@@ -29,7 +29,7 @@ async function main() {
   const inventoryId = inventoryData.createInventory.id;
 
   const customerData = await gql(`mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name mobile city } }`, {
-    input: { name: `E2E Patel Residence ${sku}`, phone: '9898989898', email: `${sku.toLowerCase()}@example.com`, city: 'Ahmedabad', address: 'E2E Site Road', gstNo: '24ABCDE1234F1Z5', notes: 'E2E customer', forceCreate: true },
+    input: { name: `E2E Patel Residence ${sku}`, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, email: `${sku.toLowerCase()}@example.com`, city: 'Ahmedabad', address: 'E2E Site Road', gstNo: '24ABCDE1234F1Z5', notes: 'E2E customer', forceCreate: true },
   }, token);
   const customer = customerData.createCustomer;
 

@@ -50,7 +50,7 @@ async function main() {
   assert(location, 'An active stock location is required');
   await gql(`mutation($input: ManualGoodsReceiptInput!) { createManualGoodsReceipt(input: $input) }`, { input: { vendorName: 'Lifecycle vendor', locationId: location.id, reason: 'Isolated lifecycle acceptance opening receipt', idempotencyKey: `${sku}-GRN`, lines: JSON.stringify([{ productId: product.id, receivedQuantity: 3, enteredUnitCost: 700, rateUom: 'PC' }]) } }, token);
 
-  const customer = (await gql(`mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`, { input: { name: `Direct customer ${stamp}`, phone: '9000000012', email: `direct-${stamp.toLowerCase()}@example.test`, city: 'Vapi', address: 'Lifecycle test', forceCreate: true } }, token)).createCustomer;
+  const customer = (await gql(`mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`, { input: { name: `Direct customer ${stamp}`, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, email: `direct-${stamp.toLowerCase()}@example.test`, city: 'Vapi', address: 'Lifecycle test', forceCreate: true } }, token)).createCustomer;
   cleanup.customerIds.push(customer.id);
   const owners = (await gql(`query { salesAssignees }`, {}, token)).salesAssignees;
   assert(owners[0]?.id, 'At least one active sales owner is required');

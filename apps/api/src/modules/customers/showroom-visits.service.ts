@@ -3,16 +3,13 @@ import { ulid } from 'ulid';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { cleanToken, publicToken, VISIT_TOKEN_LENGTH } from '../products/public-catalogue.service';
+import { customersByMobileKey, indianMobile } from '../common/phone';
 
 const STATUSES = ['open', 'quoting', 'closed'] as const;
 // A phone that checks in twice in one day continues the same visit.
 const SAME_VISIT_MS = 12 * 60 * 60 * 1000;
 
-function tenDigitMobile(input: unknown) {
-  const digits = String(input || '').replace(/\D/g, '');
-  const local = digits.length > 10 ? digits.slice(-10) : digits;
-  return /^[6-9]\d{9}$/.test(local) ? local : '';
-}
+const tenDigitMobile = indianMobile;
 
 function clean(input: unknown, max: number) {
   return String(input || '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -69,9 +66,10 @@ export class ShowroomVisitsService {
     return { active: true, name: visit.name, scanned: visit.scans.length };
   }
 
+  /** The oldest customer with this phone, however the number was typed when saved. */
   private async customerByMobile(mobile: string) {
-    const candidates = await this.prisma.customer.findMany({ where: { mobile: { contains: mobile } }, select: { id: true, name: true, mobile: true }, take: 5 });
-    return candidates.find((row) => tenDigitMobile(row.mobile) === mobile) || null;
+    const [match] = await customersByMobileKey(this.prisma, mobile, { take: 1 });
+    return match ? { id: match.id, name: match.name, mobile: match.mobile } : null;
   }
 
   async list(args: { day?: string; status?: string }) {

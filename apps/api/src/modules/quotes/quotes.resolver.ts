@@ -356,6 +356,12 @@ export class QuotesResolver {
     });
   }
 
+  @Query(() => [GraphQLJSON], { description: 'Open quotes for a customer, for the heads-up when starting a new one.' })
+  async customerOpenQuotes(@Args('customerId', { type: () => ID }) customerId: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, QUOTE_ROLES);
+    return this.quotes.customerOpenQuotes(customerId, { id: user.id, canSeeAll: canManageQuotes(user) });
+  }
+
   @Query(() => QuoteOutput)
   async quote(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
     const user = await requireSession(this.prisma, ctx);

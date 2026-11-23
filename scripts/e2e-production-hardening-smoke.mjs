@@ -55,7 +55,7 @@ async function main() {
     {
       input: {
         name: `Production Smoke Vendor ${sku}`,
-        phone: '9000000011',
+        phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */,
         email: `${sku.toLowerCase()}@vendor.example`,
         city: 'Ahmedabad',
         state: 'Gujarat',
@@ -143,7 +143,7 @@ async function main() {
     {
       input: {
         name: `Production Hardening Customer ${sku}`,
-        phone: '9898981212',
+        phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */,
         email: `${sku.toLowerCase()}@example.com`,
         city: 'Ahmedabad',
         address: 'Production hardening site',

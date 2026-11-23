@@ -8,8 +8,10 @@ import { gql, useLazyQuery, useMutation, useQuery } from '@apollo/client';
 import { Loader2, Plus, Search, X } from 'lucide-react';
 import { describeApolloError } from '@/lib/apollo-errors';
 import { cn } from '@/lib/utils';
+import { maskedMobile, mobileKey } from '@/lib/customer-display';
 
 const SEARCH_CUSTOMERS = gql`query QuickCustomerSearch($search: String, $take: Float) { customers(search: $search, take: $take) { id name mobile city siteAddress email tags } }`;
+const CUSTOMER_CHECK = gql`query QuickCustomerCheck($phone: String, $name: String, $city: String) { customerDuplicateCandidates(phone: $phone, name: $name, city: $city) }`;
 const QUICK_ADD_CUSTOMER = gql`mutation QuickAddCustomer($input: QuickAddCustomerInput!) { quickAddCustomer(input: $input) }`;
 const QUICK_ADD_PRODUCT = gql`mutation QuickAddProduct($input: QuickAddProductInput!) { quickAddProduct(input: $input) }`;
 const QUICK_ADD_MASTER = gql`mutation QuickAddMaster($kind: String!, $input: QuickAddMasterInput!) { quickAddMaster(kind: $kind, input: $input) }`;
@@ -79,6 +81,18 @@ export function CustomerPicker({ open, onClose, onPick }: { open: boolean; onClo
   const [error, setError] = useState('');
   const [runSearch, { data, loading }] = useLazyQuery(SEARCH_CUSTOMERS, { fetchPolicy: 'network-only' });
   const [quickAdd, quickState] = useMutation(QUICK_ADD_CUSTOMER);
+  const [runCheck, checkState] = useLazyQuery(CUSTOMER_CHECK, { fetchPolicy: 'network-only' });
+  const phoneKey = mobileKey(mobile);
+  const trimmedName = name.trim();
+  // Phone is the customer's identity: check it (and same names) while typing.
+  useEffect(() => {
+    if (!open || (!phoneKey && trimmedName.length < 2)) return;
+    const timer = window.setTimeout(() => runCheck({ variables: { phone: phoneKey || undefined, name: trimmedName.length >= 2 ? trimmedName : undefined, city: city.trim() || undefined } }), 250);
+    return () => window.clearTimeout(timer);
+  }, [open, phoneKey, trimmedName, city, runCheck]);
+  const candidates: any[] = (phoneKey || trimmedName.length >= 2) ? (checkState.data?.customerDuplicateCandidates || []) : [];
+  const phoneMatch = phoneKey ? candidates.find((row) => row.matchedOn?.includes('mobile')) : null;
+  const sameNames = candidates.filter((row) => !row.matchedOn?.includes('mobile') && (row.matchedOn?.includes('name') || row.matchedOn?.includes('name+city')));
   useEffect(() => {
     if (!open) return;
     const timer = window.setTimeout(() => runSearch({ variables: { search: search.trim() || undefined, take: 12 } }), search ? 220 : 0);
@@ -94,6 +108,7 @@ export function CustomerPicker({ open, onClose, onPick }: { open: boolean; onClo
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
+    if (phoneMatch) { setError(`This mobile already belongs to ${phoneMatch.name}. Use that customer.`); return; }
     try {
       const result = (await quickAdd({ variables: { input: { name: name.trim(), mobile: mobile.trim(), city: city.trim() || undefined } } })).data?.quickAddCustomer;
       if (!result?.customer) throw new Error('The customer could not be saved.');
@@ -127,8 +142,19 @@ export function CustomerPicker({ open, onClose, onPick }: { open: boolean; onClo
           </div>
           <Field label="City (optional)"><input value={city} onChange={(event) => setCity(event.target.value)} className={inputClass} /></Field>
           <LaterNote>Address, GSTIN and email can wait. The customer is saved now and listed in the Follow-up queue.</LaterNote>
+          {phoneMatch ? (
+            <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--info)]/40 bg-[var(--info-bg)] px-3 py-2 text-xs text-[var(--info)]">
+              <span className="min-w-0 flex-1"><b>Already a customer:</b> {phoneMatch.name}{phoneMatch.city ? ` · ${phoneMatch.city}` : ''} · {phoneMatch.maskedMobile || maskedMobile(phoneMatch.mobile)}</span>
+              <button type="button" onClick={() => { onPick({ ...phoneMatch, phone: phoneMatch.mobile }, `${phoneMatch.name} already had this mobile, so the existing customer is used.`); setName(''); setMobile(''); setCity(''); setSearch(''); }} className="rounded-md bg-[var(--info)] px-2.5 py-1 font-semibold text-white">Use this customer</button>
+            </div>
+          ) : null}
+          {!phoneMatch && sameNames.length ? (
+            <p className="rounded-lg bg-[var(--bg-soft)] px-3 py-2 text-xs text-[var(--ink-3)]">
+              {sameNames.length === 1 ? 'Another customer' : `${sameNames.length} other customers`} named {trimmedName} ({sameNames.map((row) => [row.city, row.maskedMobile].filter(Boolean).join(' ')).join(', ')}). A different mobile means a different customer; check the number.
+            </p>
+          ) : null}
           {error ? <p role="alert" className="text-xs font-semibold text-[var(--danger)]">{error}</p> : null}
-          <button className={cn(primaryButton, 'w-full')} disabled={quickState.loading}>{quickState.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Add and use</button>
+          <button className={cn(primaryButton, 'w-full')} disabled={quickState.loading || Boolean(phoneMatch)}>{quickState.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{phoneMatch ? 'Number already saved' : 'Add and use'}</button>
         </form>
       </div>
     </Modal>

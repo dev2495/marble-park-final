@@ -58,7 +58,7 @@ async function main() {
   const restrictedPassword = `PricingRbac-${suffix}!`;
   const restrictedUser = (await gql(
     'mutation($input:CreateUserInput!){createUser(input:$input){id email role effectivePermissions}}',
-    { input: { name: `Pricing cost RBAC ${suffix}`, email: restrictedEmail, phone: '9000000082', password: restrictedPassword, role: 'inventory_manager', permissionOverrides: {} } }, token,
+    { input: { name: `Pricing cost RBAC ${suffix}`, email: restrictedEmail, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, password: restrictedPassword, role: 'inventory_manager', permissionOverrides: {} } }, token,
   )).createUser;
   createdRestrictedUserId = restrictedUser.id;
   const restrictedToken = (await gql('mutation($input:LoginInput!){login(input:$input){token}}', { input: { email: restrictedEmail, password: restrictedPassword } })).login.token;
@@ -79,7 +79,7 @@ async function main() {
   assert(restrictedCostEntryBlocked, 'Non-owner cost entry must be rejected by the API, not merely hidden in the UI');
   const customer = (await gql(
     'mutation($input:CreateCustomerInput!){createCustomer(input:$input){id name}}',
-    { input: { name: `Quote ladder customer ${suffix}`, phone: '9000000081', email: `quote-ladder-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Isolated acceptance only', forceCreate: true } }, token,
+    { input: { name: `Quote ladder customer ${suffix}`, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, email: `quote-ladder-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Isolated acceptance only', forceCreate: true } }, token,
   )).createCustomer;
   cleanup.customerIds.push(customer.id);
 

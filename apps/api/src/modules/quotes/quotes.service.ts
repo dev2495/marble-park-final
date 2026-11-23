@@ -79,6 +79,23 @@ export interface CreateSalesOrderInput {
 
 // Quote names read "<Customer first name>-<serial>" and each saved revision of
 // the same quote appends a letter: Rakesh-0412, Rakesh-0412a, Rakesh-0412b ...
+// The serial restarts every year, so from 2027 the two-digit year sits in the
+// name (Rakesh-27-0001) and a name can never repeat. 2026 names keep their form.
+const FIRST_YEAR_WITH_YEAR_IN_NAME = 2027;
+export function quoteNameFor(customerName: unknown, year: number, serial: string) {
+  const first = customerFirstName(customerName);
+  return year >= FIRST_YEAR_WITH_YEAR_IN_NAME ? `${first}-${String(year % 100).padStart(2, '0')}-${serial}` : `${first}-${serial}`;
+}
+/** The serial a quote name used in `year`, in any format it was ever written, or null. */
+export function quoteSerialForYear(quoteNumber: unknown, year: number): number | null {
+  const value = String(quoteNumber || '').trim();
+  const legacy = value.match(/^QT\/(\d{4})\/(\d+)[a-z]*$/);
+  if (legacy) return Number(legacy[1]) === year ? Number(legacy[2]) : null;
+  const named = value.match(/^[A-Za-z0-9]+-(?:(\d{2})-)?(\d{4,})[a-z]*$/);
+  if (!named) return null;
+  const nameYear = named[1] === undefined ? (FIRST_YEAR_WITH_YEAR_IN_NAME - 1) : 2000 + Number(named[1]);
+  return nameYear === year ? Number(named[2]) : null;
+}
 const NAME_HONORIFICS = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'shri', 'smt', 'sri', 'ms/', 'm/s', 'prof', 'er', 'ar']);
 export function customerFirstName(name: unknown) {
   const words = String(name || '').split(/[\s,]+/).map((word) => word.replace(/[^A-Za-z0-9]/g, '')).filter(Boolean);
@@ -170,8 +187,13 @@ export class QuotesService {
       { architectName: { contains: search, mode: 'insensitive' } },
       { customer: { name: { contains: search, mode: 'insensitive' } } },
       { owner: { name: { contains: search, mode: 'insensitive' } } },
+      // Two customers can share a name; their phone tells them apart.
+      ...(search.replace(/\D/g, '').length >= 4 ? [{ customer: { mobile: { contains: search.replace(/\D/g, '').slice(-10) } } }] : []),
     ] });
-    if (customerSearch) and.push({ customer: { name: { contains: customerSearch, mode: 'insensitive' } } });
+    if (customerSearch) and.push({ OR: [
+      { customer: { name: { contains: customerSearch, mode: 'insensitive' } } },
+      ...(customerSearch.replace(/\D/g, '').length >= 4 ? [{ customer: { mobile: { contains: customerSearch.replace(/\D/g, '').slice(-10) } } }] : []),
+    ] });
     if (ownerSearch) and.push({ owner: { name: { contains: ownerSearch, mode: 'insensitive' } } });
     if (and.length) where.AND = and;
     const sort = String(args?.sort || 'newest');
@@ -2030,14 +2052,51 @@ export class QuotesService {
 
   private async generateQuoteNumber(customerName?: string | null): Promise<string> {
     // The shared counter keeps serials unique; only the visible name changes.
+    // The counter re-syncs from every name format ever used, so it can always
+    // recover past the highest serial already taken this year.
     const sequenced = await nextDocumentNumber(this.prisma as any, 'quote', 'QT', new Date(), {
-      existingNumbers: async (prefixForYear) => (await this.prisma.quote.findMany({
-        where: { quoteNumber: { startsWith: prefixForYear } },
-        select: { quoteNumber: true },
-      })).map((row) => row.quoteNumber),
+      existingNumbers: async (prefixForYear) => {
+        const year = Number(prefixForYear.split('/')[1]);
+        const rows = await this.prisma.quote.findMany({ select: { quoteNumber: true } });
+        return rows
+          .map((row) => quoteSerialForYear(row.quoteNumber, year))
+          .filter((serial): serial is number => serial !== null)
+          .map((serial) => `${prefixForYear}${serial}`);
+      },
     });
-    const serial = sequenced.split('/').pop() || sequenced;
-    return `${customerFirstName(customerName)}-${serial}`;
+    const [, yearText, serial] = sequenced.split('/');
+    return quoteNameFor(customerName, Number(yearText), serial || sequenced);
+  }
+
+  /**
+   * Quotes still open for a customer, newest first, so sales can see one is
+   * already running before starting another. Quotes the viewer may not open
+   * show their number and owner only.
+   */
+  async customerOpenQuotes(customerId: string, viewer: { id: string; canSeeAll: boolean }) {
+    if (!customerId) return [];
+    const rows: any[] = await this.prisma.quote.findMany({
+      where: { customerId, supersededByQuoteId: null, status: { notIn: ['cancelled', 'superseded', 'closed', 'lost', 'expired', 'won'] } },
+      select: { id: true, quoteNumber: true, status: true, quoteType: true, commercialTotal: true, createdAt: true, updatedAt: true, ownerId: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 5,
+    } as any);
+    const ownerIds = Array.from(new Set(rows.map((row) => row.ownerId).filter(Boolean)));
+    const owners = ownerIds.length ? await this.prisma.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true } }) : [];
+    return rows.map((row) => {
+      const visible = viewer.canSeeAll || row.ownerId === viewer.id;
+      return {
+        id: visible ? row.id : null,
+        quoteNumber: row.quoteNumber,
+        status: row.status,
+        quoteType: row.quoteType,
+        total: visible ? Number(row.commercialTotal || 0) : null,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        ownerName: owners.find((owner) => owner.id === row.ownerId)?.name || '',
+        mine: row.ownerId === viewer.id,
+      };
+    });
   }
 
   private baseQuoteNumber(quote: any) {

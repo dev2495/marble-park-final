@@ -86,7 +86,7 @@ async function main() {
     {
       input: {
         name: 'E2E Intent Customer',
-        phone: '9888888888',
+        phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */,
         email: `${sku.toLowerCase()}@example.com`,
         city: 'Ahmedabad',
         address: 'E2E Intent Site',

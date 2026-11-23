@@ -65,7 +65,7 @@ async function main() {
 
   const customer = (await gql(
     `mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`,
-    { input: { name: `Accounts customer ${suffix}`, phone: '9000000011', email: `${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'E2E test address', forceCreate: true } }, token,
+    { input: { name: `Accounts customer ${suffix}`, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, email: `${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'E2E test address', forceCreate: true } }, token,
   )).data.createCustomer;
   cleanupContext.customerIds.push(customer.id);
 

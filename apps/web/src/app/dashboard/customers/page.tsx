@@ -6,6 +6,8 @@ import { AlertTriangle, Building2, Mail, MapPin, Phone, Plus } from 'lucide-reac
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
+import Link from 'next/link';
+import { maskedMobile } from '@/lib/customer-display';
 
 const GET_CUSTOMERS = gql`
   query Customers($search: String, $skip: Float, $take: Float) {
@@ -30,6 +32,7 @@ export default function CustomersPage() {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ name: '', email: '', phone: '', city: '', gstNo: '' });
   const [forceCreate, setForceCreate] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
   const [role, setRole] = useState<string>('');
   const [page, setPage] = useState(0);
   const pageSize = 24;
@@ -70,16 +73,20 @@ export default function CustomersPage() {
   }, [formData, showForm, probeDuplicates]);
 
   const duplicates: any[] = useMemo(() => dupData?.customerDuplicateCandidates || [], [dupData]);
+  // Phone, GST or email already used = the same customer. A same name only warns.
+  const blocking = duplicates.filter((dup) => dup.blocking);
+  const sameNames = duplicates.filter((dup) => !dup.blocking);
+  const overrideReady = forceCreate && overrideReason.trim().length >= 3;
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSubmitError(null);
-    if (duplicates.length > 0 && !forceCreate) {
-      setSubmitError(new Error(`Possible duplicate of ${duplicates[0].name}. Tick "create anyway" to override (owner/admin only).`));
+    if (blocking.length > 0 && !overrideReady) {
+      setSubmitError(new Error(`This ${blocking[0].matchedOn?.includes('mobile') ? 'mobile' : blocking[0].matchedOn?.includes('gstNo') ? 'GST number' : 'email'} already belongs to ${blocking[0].name}. Use that customer${canForceCreate ? ', or tick "separate customer" and give a reason' : ''}.`));
       return;
     }
     try {
-      const { data: result, errors } = await createCustomer({ variables: { input: { ...formData, forceCreate: forceCreate || undefined } } });
+      const { data: result, errors } = await createCustomer({ variables: { input: { ...formData, forceCreate: blocking.length && forceCreate ? true : undefined, overrideReason: blocking.length && forceCreate ? overrideReason.trim() : undefined } } });
       if (errors?.length) {
         setSubmitError(new Error(errors.map((e) => e.message).join(' • ')));
         return;
@@ -88,6 +95,7 @@ export default function CustomersPage() {
       setShowForm(false);
       setFormData({ name: '', email: '', phone: '', city: '', gstNo: '' });
       setForceCreate(false);
+      setOverrideReason('');
       await refetch();
     } catch (err) {
       setSubmitError(err as Error);
@@ -122,34 +130,44 @@ export default function CustomersPage() {
             <Input placeholder="Phone" aria-label="Customer phone" value={formData.phone} onChange={(event) => setFormData({ ...formData, phone: event.target.value })} required />
             <Input placeholder="City" aria-label="Customer city" value={formData.city} onChange={(event) => setFormData({ ...formData, city: event.target.value })} />
             <Input placeholder="GST number (optional)" aria-label="GST number" value={formData.gstNo} onChange={(event) => setFormData({ ...formData, gstNo: event.target.value })} className="md:col-span-3" />
-            <Button type="submit" disabled={creating || (duplicates.length > 0 && !forceCreate)}>{creating ? 'Saving…' : 'Save'}</Button>
+            <Button type="submit" disabled={creating || (blocking.length > 0 && !overrideReady)}>{creating ? 'Saving…' : 'Save'}</Button>
 
-            {duplicates.length > 0 ? (
+            {blocking.length > 0 ? (
               <div role="alert" aria-live="polite" className="md:col-span-4 flex flex-col gap-2 rounded-2xl border border-amber-300 bg-amber-50/80 p-4 text-amber-900">
                 <div className="flex items-start gap-2">
                   <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4" />
                   <div className="flex-1">
-                    <p className="text-sm font-bold">Possible duplicate{duplicates.length > 1 ? 's' : ''} found</p>
-                    <ul className="mt-2 space-y-1 text-xs font-bold">
-                      {duplicates.map((dup) => (
+                    <p className="text-sm font-bold">Already a customer</p>
+                    <ul className="mt-2 space-y-1.5 text-xs font-bold">
+                      {blocking.map((dup) => (
                         <li key={dup.id} className="flex flex-wrap items-center gap-2">
                           <span className="text-[#18181b]">{dup.name}</span>
-                          <span className="text-amber-800/80">· {dup.city || 'no city'}</span>
-                          <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs uppercase tracking-wider">matched on {dup.matchedOn?.join(', ')}</span>
+                          <span className="text-amber-800/80">· {dup.city || 'no city'} · {dup.maskedMobile || maskedMobile(dup.mobile) || 'no mobile'}</span>
+                          <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs uppercase tracking-wider">same {dup.matchedOn?.filter((m: string) => m !== 'name' && m !== 'name+city').map((m: string) => (m === 'gstNo' ? 'GST' : m)).join(', ')}</span>
+                          <Link href={`/dashboard/quotes/new?customer=${encodeURIComponent(dup.id)}`} className="rounded-md bg-amber-900 px-2 py-0.5 text-white">Start a quote for them</Link>
                         </li>
                       ))}
                     </ul>
                   </div>
                 </div>
                 {canForceCreate ? (
-                  <label className="ml-6 flex items-center gap-2 text-xs font-bold">
-                    <input type="checkbox" checked={forceCreate} onChange={(event) => setForceCreate(event.target.checked)} aria-label="Create anyway, ignore duplicates" />
-                    <span>Create anyway (owner/admin override)</span>
-                  </label>
+                  <div className="ml-6 flex flex-col gap-2 text-xs font-bold">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={forceCreate} onChange={(event) => setForceCreate(event.target.checked)} aria-label="Add as a separate customer" />
+                      <span>This is a separate customer with the same details (owner/admin)</span>
+                    </label>
+                    {forceCreate ? <Input aria-label="Reason for separate customer" placeholder="Reason, e.g. husband and wife share one mobile" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} className="max-w-md" /> : null}
+                  </div>
                 ) : (
-                  <p className="ml-6 text-xs font-bold text-amber-800/80">Only owners/admins can override the duplicate guard.</p>
+                  <p className="ml-6 text-xs font-bold text-amber-800/80">Use the existing customer. Only owners/admins can add a separate customer with the same details.</p>
                 )}
               </div>
+            ) : null}
+
+            {sameNames.length > 0 ? (
+              <p className="md:col-span-4 rounded-2xl bg-[#f4f4f5] px-4 py-2.5 text-xs font-semibold text-[#52525b]">
+                {sameNames.length === 1 ? 'Another customer' : `${sameNames.length} other customers`} with this name: {sameNames.map((dup) => [dup.name, dup.city, dup.maskedMobile].filter(Boolean).join(' · ')).join('; ')}. A different mobile means a different customer, so you can save.
+              </p>
             ) : null}
 
             {(submitError || createError) ? (

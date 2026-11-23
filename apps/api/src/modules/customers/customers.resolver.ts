@@ -92,6 +92,9 @@ export class CreateCustomerInput {
 
   @Field(() => Boolean, { nullable: true, description: 'Bypass duplicate-customer guard. Owners/admins only.' })
   forceCreate?: boolean;
+
+  @Field(() => String, { nullable: true, description: 'Why a phone, GST or email that already belongs to a customer is reused (owner/admin override).' })
+  overrideReason?: string;
 }
 
 @InputType()

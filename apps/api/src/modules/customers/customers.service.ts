@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { customersByMobileKey, maskedMobile, mobileForStorage, mobileKey } from '../common/phone';
 
 export interface CreateCustomerInput {
   name: string;
@@ -20,6 +21,8 @@ export interface CreateCustomerInput {
    * duplicate exists. Callers (e.g. owner/admin override flow) must opt in.
    */
   forceCreate?: boolean;
+  /** Why a phone that already belongs to someone is being reused (owner/admin override). */
+  overrideReason?: string;
 }
 
 export interface UpdateCustomerInput {
@@ -51,16 +54,6 @@ function normaliseForMatch(input: string | null | undefined): string {
     .trim();
 }
 
-/**
- * Reduce a phone/mobile to its trailing 10 digits (typical India retail).
- * Strips +, spaces, dashes, country prefix variations, etc.
- */
-function normaliseMobile(input: string | null | undefined): string {
-  if (!input) return '';
-  const digits = String(input).replace(/[^0-9]/g, '');
-  return digits.length > 10 ? digits.slice(-10) : digits;
-}
-
 function normaliseGst(input: string | null | undefined): string {
   if (!input) return '';
   return String(input).toUpperCase().replace(/\s+/g, '');
@@ -78,7 +71,23 @@ export interface DuplicateCandidate {
   email: string | null;
   gstNo: string | null;
   city: string;
-  matchedOn: Array<'gstNo' | 'email' | 'mobile' | 'name+city'>;
+  maskedMobile: string;
+  matchedOn: Array<'gstNo' | 'email' | 'mobile' | 'name+city' | 'name'>;
+  /** Phone, GST or email: the same customer, so a new one is not allowed. Name matches only warn. */
+  blocking: boolean;
+}
+
+const BLOCKING_MATCHES = new Set(['gstNo', 'email', 'mobile']);
+
+function duplicateMessage(top: DuplicateCandidate) {
+  const where = [top.city, top.maskedMobile].filter(Boolean).join(' · ');
+  if (top.matchedOn.includes('mobile')) return `This mobile already belongs to ${top.name}${where ? ` (${where})` : ''}. Use that customer instead of adding a new one.`;
+  if (top.matchedOn.includes('gstNo')) return `This GST number already belongs to ${top.name}${where ? ` (${where})` : ''}.`;
+  return `This email already belongs to ${top.name}${where ? ` (${where})` : ''}.`;
+}
+
+function matchedPayload(duplicates: DuplicateCandidate[]) {
+  return duplicates.map((c) => ({ id: c.id, name: c.name, city: c.city, mobile: c.mobile, maskedMobile: c.maskedMobile, matchedOn: c.matchedOn, blocking: c.blocking }));
 }
 
 @Injectable()
@@ -86,13 +95,20 @@ export class CustomersService {
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   async findAll(args?: { search?: string; take?: number; skip?: number }): Promise<any[]> {
-    const where = args?.search
+    const search = String(args?.search || '').trim();
+    // "+91 98250 12345" should find a customer saved as 9825012345, and the reverse.
+    const phoneIds = mobileKey(search) ? (await customersByMobileKey(this.prisma, search, { take: 20 })).map((row: any) => row.id) : [];
+    const digits = search.replace(/\D/g, '');
+    const where = search
       ? {
           OR: [
-            { name: { contains: args.search, mode: 'insensitive' as const } },
-            { email: { contains: args.search, mode: 'insensitive' as const } },
-            { mobile: { contains: args.search, mode: 'insensitive' as const } },
-            { city: { contains: args.search, mode: 'insensitive' as const } },
+            { name: { contains: search, mode: 'insensitive' as const } },
+            { email: { contains: search, mode: 'insensitive' as const } },
+            { mobile: { contains: search, mode: 'insensitive' as const } },
+            ...(digits.length >= 4 && digits !== search ? [{ mobile: { contains: digits } }] : []),
+            { city: { contains: search, mode: 'insensitive' as const } },
+            { gstNo: { contains: search.replace(/\s+/g, ''), mode: 'insensitive' as const } },
+            ...(phoneIds.length ? [{ id: { in: phoneIds } }] : []),
           ],
         }
       : {};
@@ -112,22 +128,27 @@ export class CustomersService {
   }
 
   async create(data: CreateCustomerInput): Promise<any> {
-    if (!data.forceCreate) {
-      const duplicates = await this.findDuplicateCandidates({
-        gstNo: data.gstNo,
-        email: data.email,
-        phone: data.phone,
-        name: data.name || data.companyName,
-        city: data.city,
+    // Phone, GST and email identify a customer. A same name (even in the same
+    // city) is a different person until the number says otherwise, so it never blocks.
+    const duplicates = (await this.findDuplicateCandidates({
+      gstNo: data.gstNo,
+      email: data.email,
+      phone: data.phone,
+    })).filter((c) => c.blocking);
+    const overrideReason = String(data.overrideReason || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (duplicates.length > 0 && !data.forceCreate) {
+      throw new ConflictException({
+        message: duplicateMessage(duplicates[0]),
+        code: 'CUSTOMER_DUPLICATE',
+        matched: matchedPayload(duplicates),
       });
-      if (duplicates.length > 0) {
-        const top = duplicates[0];
-        throw new ConflictException({
-          message: `A customer that looks like a duplicate already exists (${top.name}, ${top.city || 'no city'}). Set forceCreate: true to bypass.`,
-          code: 'CUSTOMER_DUPLICATE',
-          matched: duplicates.map((c) => ({ id: c.id, name: c.name, city: c.city, matchedOn: c.matchedOn })),
-        });
-      }
+    }
+    if (duplicates.length > 0 && overrideReason.length < 3) {
+      throw new ConflictException({
+        message: `${duplicateMessage(duplicates[0])} To add a separate customer with the same details, give a reason.`,
+        code: 'CUSTOMER_DUPLICATE_REASON_REQUIRED',
+        matched: matchedPayload(duplicates),
+      });
     }
     const customer = await this.prisma.customer.create({
       data: this.toDbCustomer(data, true) as any,
@@ -137,8 +158,8 @@ export class CustomersService {
       action: 'customer.create',
       entityType: 'Customer',
       entityId: customer.id,
-      summary: `Customer ${customer.name} created${data.forceCreate ? ' (duplicate guard bypassed)' : ''}`,
-      metadata: { city: customer.city, email: customer.email, gstNo: customer.gstNo, forceCreate: !!data.forceCreate },
+      summary: `Customer ${customer.name} created${duplicates.length ? ` (same details as ${duplicates.map((c) => c.name).join(', ')}: ${overrideReason})` : ''}`,
+      metadata: { city: customer.city, email: customer.email, gstNo: customer.gstNo, forceCreate: !!data.forceCreate, overriddenDuplicateIds: duplicates.map((c) => c.id), overrideReason: duplicates.length ? overrideReason : undefined },
     });
     return this.toApiCustomer(customer);
   }
@@ -148,7 +169,7 @@ export class CustomersService {
    *   1. Same GST number (strongest — legal identity)
    *   2. Same email
    *   3. Same trailing-10-digit mobile
-   *   4. Same normalised name + same city (fuzzy fallback for walk-ins)
+   *   4. Same name (+ same city ranks higher) — a warning only, never blocking
    * Returns up to 5 ranked candidates, strongest match first.
    */
   async findDuplicateCandidates(input: {
@@ -161,15 +182,16 @@ export class CustomersService {
   }): Promise<DuplicateCandidate[]> {
     const gst = normaliseGst(input.gstNo);
     const email = normaliseEmail(input.email);
-    const mobile = normaliseMobile(input.phone);
+    const mobile = mobileKey(input.phone);
     const name = normaliseForMatch(input.name);
     const city = normaliseForMatch(input.city);
 
+    const phoneIds = mobile ? (await customersByMobileKey(this.prisma, mobile, { excludeId: input.excludeId, take: 10 })).map((row: any) => row.id) : [];
     const orFilters: any[] = [];
     if (gst) orFilters.push({ gstNo: { equals: gst, mode: 'insensitive' as const } });
     if (email) orFilters.push({ email: { equals: email, mode: 'insensitive' as const } });
-    if (mobile) orFilters.push({ mobile: { contains: mobile } });
-    if (name) orFilters.push({ name: { equals: input.name || '', mode: 'insensitive' as const } });
+    if (phoneIds.length) orFilters.push({ id: { in: phoneIds } });
+    if (name) orFilters.push({ name: { equals: String(input.name || '').trim(), mode: 'insensitive' as const } });
     if (orFilters.length === 0) return [];
 
     const candidates = await this.prisma.customer.findMany({
@@ -187,29 +209,26 @@ export class CustomersService {
       const matchedOn: DuplicateCandidate['matchedOn'] = [];
       if (gst && normaliseGst(c.gstNo) === gst) matchedOn.push('gstNo');
       if (email && normaliseEmail(c.email) === email) matchedOn.push('email');
-      if (mobile && normaliseMobile(c.mobile) === mobile) matchedOn.push('mobile');
-      if (
-        name &&
-        city &&
-        normaliseForMatch(c.name) === name &&
-        normaliseForMatch(c.city) === city
-      ) {
-        matchedOn.push('name+city');
+      if (mobile && mobileKey(c.mobile) === mobile) matchedOn.push('mobile');
+      if (name && normaliseForMatch(c.name) === name) {
+        matchedOn.push(city && normaliseForMatch(c.city) === city ? 'name+city' : 'name');
       }
       if (matchedOn.length === 0) continue;
       ranked.push({
         id: c.id,
         name: c.name,
         mobile: c.mobile,
+        maskedMobile: maskedMobile(c.mobile),
         email: c.email,
         gstNo: c.gstNo,
         city: c.city,
         matchedOn,
+        blocking: matchedOn.some((m) => BLOCKING_MATCHES.has(m)),
       });
     }
-    // Sort: more match dimensions first; gstNo/email beat mobile/name.
+    // Sort: blocking identity matches first; gstNo/email beat mobile/name.
     const weight = (m: DuplicateCandidate['matchedOn'][number]) =>
-      m === 'gstNo' ? 4 : m === 'email' ? 3 : m === 'mobile' ? 2 : 1;
+      m === 'gstNo' ? 8 : m === 'email' ? 6 : m === 'mobile' ? 5 : m === 'name+city' ? 1 : 0.5;
     ranked.sort((a, b) => {
       const sa = a.matchedOn.reduce((s, m) => s + weight(m), 0);
       const sb = b.matchedOn.reduce((s, m) => s + weight(m), 0);
@@ -228,12 +247,12 @@ export class CustomersService {
       phone: data.phone,
       excludeId: id,
     });
-    const blocking = duplicates.find((d) => d.matchedOn.includes('gstNo') || d.matchedOn.includes('email'));
+    const blocking = duplicates.find((d) => d.blocking);
     if (blocking) {
       throw new ConflictException({
-        message: `Another customer already uses this ${blocking.matchedOn.includes('gstNo') ? 'GST number' : 'email'} (${blocking.name}).`,
+        message: duplicateMessage(blocking).replace('already belongs to', 'already belongs to another customer,'),
         code: 'CUSTOMER_DUPLICATE',
-        matched: duplicates.map((c) => ({ id: c.id, name: c.name, city: c.city, matchedOn: c.matchedOn })),
+        matched: matchedPayload(duplicates.filter((d) => d.blocking)),
       });
     }
     const customer = await this.prisma.customer.update({
@@ -283,7 +302,7 @@ export class CustomersService {
     }
     if (data.email !== undefined) mapped.email = data.email;
     if (data.phone !== undefined || (data as any).mobile !== undefined) {
-      mapped.mobile = data.phone || (data as any).mobile;
+      mapped.mobile = mobileForStorage(data.phone || (data as any).mobile);
     }
     if (data.city !== undefined) mapped.city = data.city;
     if (data.state !== undefined) mapped.state = data.state;

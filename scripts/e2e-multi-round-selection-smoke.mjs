@@ -65,7 +65,7 @@ async function main() {
     {
       input: {
         name: `Multi Round Customer ${sku}`,
-        phone: '9876500000',
+        phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */,
         email: `${sku.toLowerCase()}@example.com`,
         city: 'Ahmedabad',
         address: 'Multi-round smoke site',

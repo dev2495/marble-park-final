@@ -177,7 +177,7 @@ async function main() {
 
   const customer = (await gql(
     `mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`,
-    { input: { name: `Quote asset release gate ${suffix}`, phone: '9000000042', email: `quote-assets-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Automated release gate', forceCreate: true } },
+    { input: { name: `Quote asset release gate ${suffix}`, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, email: `quote-assets-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Automated release gate', forceCreate: true } },
     token,
   )).createCustomer;
   state.customerId = customer.id;

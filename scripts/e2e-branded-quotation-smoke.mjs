@@ -95,7 +95,7 @@ async function main() {
   cleanupContext.productIds.push(basin.id, mixer.id, tile.id);
   const customer = (await gql(
     `mutation($input: CreateCustomerInput!) { createCustomer(input: $input) { id name } }`,
-    { input: { name: `Sample Client ${suffix}`, phone: '9876543210', email: `sample-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Sample residence, Vapi', forceCreate: true } },
+    { input: { name: `Sample Client ${suffix}`, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, email: `sample-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Sample residence, Vapi', forceCreate: true } },
     token,
   )).createCustomer;
   cleanupContext.customerIds.push(customer.id);

@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { PrismaService } from '../prisma/prisma.service';
+import { customersByMobileKey, mobileKey } from '../common/phone';
 import { CustomersService } from '../customers/customers.service';
 import { ProductsService } from '../products/products.service';
 import { SystemService } from '../system/system.service';
@@ -32,7 +33,7 @@ const QUICK_MASTER_KINDS: Record<string, FollowUpEntity> = {
 };
 
 function mobileDigits(value: unknown) {
-  return String(value || '').replace(/\D/g, '').slice(-10);
+  return mobileKey(value) || String(value || '').replace(/\D/g, '');
 }
 function asTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String);
@@ -64,9 +65,8 @@ export class FollowUpsService {
     const digits = mobileDigits(input.mobile);
     if (name.length < 2) throw new BadRequestException('Enter the customer name.');
     if (digits.length !== 10) throw new BadRequestException('Enter a 10-digit mobile number.');
-    // A returning walk-in is matched by mobile instead of creating a duplicate.
-    const candidates = await this.prisma.customer.findMany({ where: { mobile: { contains: digits.slice(-6) } }, take: 25 });
-    const match = candidates.find((row) => mobileDigits(row.mobile) === digits);
+    // Phone is the customer's identity: a known number reuses that customer.
+    const [match] = await customersByMobileKey(this.prisma, digits, { take: 1 });
     if (match) return { existing: true, customer: { ...match, phone: match.mobile } };
     const created = await this.customers.create({ name, phone: digits, city: input.city || '', forceCreate: true } as any);
     const flag = await this.flag(actorUserId);
@@ -177,6 +177,8 @@ export class FollowUpsService {
       if (text('mobile') !== undefined) {
         const digits = mobileDigits(text('mobile'));
         if (digits.length !== 10) throw new BadRequestException('Enter a 10-digit mobile number.');
+        const [clash] = await customersByMobileKey(this.prisma, digits, { excludeId: id, take: 1 });
+        if (clash) throw new ConflictException(`This mobile already belongs to ${clash.name}${clash.city ? ` (${clash.city})` : ''}. Check the number.`);
         data.mobile = digits;
       }
       if (data.name !== undefined && data.name.length < 2) throw new BadRequestException('Enter the customer name.');

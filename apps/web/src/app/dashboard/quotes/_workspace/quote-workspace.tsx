@@ -46,6 +46,7 @@ const PRODUCTS_BY_IDS = gql`query QuoteWorkspaceProducts($ids: [ID!]!) { product
 const SEARCH = gql`query QuoteWorkspaceSearch($query: String!) { globalSearch(query: $query) { products } }`;
 const FULFILLMENT = gql`query QuoteWorkspaceFulfillment($quoteId: ID!) { quoteFulfillment(quoteId: $quoteId) }`;
 const SCAN_LABEL = gql`mutation QuoteWorkspaceScan($labelCode: String!, $input: InternalLabelScanInput) { scanInternalLabel(labelCode: $labelCode, input: $input) }`;
+const OPEN_QUOTES = gql`query QuoteWorkspaceOpenQuotes($customerId: ID!) { customerOpenQuotes(customerId: $customerId) }`;
 const CREATE_QUOTE = gql`mutation QuoteWorkspaceCreate($input: CreateQuoteInput!) { createQuote(input: $input) { id quoteNumber status pricingStatus } }`;
 const UPDATE_QUOTE = gql`mutation QuoteWorkspaceUpdate($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id quoteNumber versionNumber status pricingStatus approvalStatus } }`;
 const SEND_QUOTE = gql`mutation QuoteWorkspaceSend($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
@@ -162,6 +163,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
   const [preloadIds, setPreloadIds] = useState<string[]>([]);
   const presetCustomer = useQuery(PRESET_CUSTOMER, { variables: { id: presetCustomerId }, skip: !presetCustomerId });
   const preload = useQuery(PRODUCTS_BY_IDS, { variables: { ids: preloadIds }, skip: !preloadIds.length });
+  // Heads-up only: a new quote for a customer who already has one open. Never blocks.
+  const openQuotesQuery = useQuery(OPEN_QUOTES, { variables: { customerId: customer?.id || '' }, skip: !isNew || !customer?.id, fetchPolicy: 'network-only' });
+  const openQuotes: any[] = isNew && customer?.id ? (openQuotesQuery.data?.customerOpenQuotes || []) : [];
   const preloadApplied = useRef(false);
 
   useEffect(() => {
@@ -727,6 +731,17 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       {/* Banners */}
       {setup.error ? <QueryErrorBanner error={setup.error} /> : null}
       {error ? <div role="alert" className="flex items-start gap-2 rounded-r4 border border-[var(--warning)]/40 bg-[var(--warning-bg)] px-4 py-2.5 text-sm font-medium text-[var(--warning)]"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span className="flex-1">{error}</span><button type="button" aria-label="Dismiss" onClick={() => setError('')}><X className="h-4 w-4" /></button></div> : null}
+      {openQuotes.length ? (
+        <Banner tone="info" title={`${customer?.name || 'This customer'} already has ${openQuotes.length === 1 ? 'an open quote' : `${openQuotes.length} open quotes`}.`}>
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {openQuotes.map((row) => {
+              const label = `${row.quoteNumber} · ${String(row.status || '').replace(/_/g, ' ')}${row.total != null ? ` · ${money(Number(row.total))}` : ''} · ${shortDate(row.updatedAt || row.createdAt)}${row.mine ? '' : row.ownerName ? ` · ${row.ownerName}` : ''}`;
+              return row.id ? <Link key={row.quoteNumber} href={`/dashboard/quotes/${row.id}`} className="font-semibold underline">{label}</Link> : <span key={row.quoteNumber} className="font-semibold">{label}</span>;
+            })}
+            <span>Open one of these, or carry on with a new quote.</span>
+          </span>
+        </Banner>
+      ) : null}
       {searchParams.get('pdfError') === 'commercial-pricing' && !persistedConfirmed ? <Banner tone="warning" title="The PDF needs a confirmed quote.">Fix the items listed on the right, then press Confirm quote.</Banner> : null}
       {mode === 'revising' ? <Banner tone="info" title={`You are editing ${nextRevisionName}.`}>{quote.quoteNumber} ({money(Number(quote.commercialTotal || 0))}) stays as it is until you save. Saving updates this same quote, its PDF, share link and architect bundle. No extra quote or file is made.</Banner> : null}
       {mode === 'locked' ? <Banner tone="violet" title="This quote has a sales order.">Prices and quantities are locked. Press Revise to prepare {nextRevisionName}; the ordered quote keeps its order history.</Banner> : null}

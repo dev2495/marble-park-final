@@ -116,7 +116,7 @@ async function main() {
 
   const customer = (await gql(
     'mutation($input:CreateCustomerInput!){createCustomer(input:$input){id}}',
-    { input: { name: `Tile quote customer ${suffix}`, phone: '9000000079', city: 'Vapi', address: 'Isolated tile quote acceptance', forceCreate: true } }, token,
+    { input: { name: `Tile quote customer ${suffix}`, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, city: 'Vapi', address: 'Isolated tile quote acceptance', forceCreate: true } }, token,
   )).createCustomer;
   cleanup.customerIds.push(customer.id);
   const quote = (await gql(

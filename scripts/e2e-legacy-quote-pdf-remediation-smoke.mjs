@@ -37,7 +37,7 @@ async function main() {
   cleanup.productIds.push(product.id);
   const customer = (await gql(
     'mutation($input:CreateCustomerInput!){createCustomer(input:$input){id}}',
-    { input: { name: `Legacy PDF customer ${suffix}`, phone: '9000000079', email: `legacy-pdf-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Isolated acceptance only', forceCreate: true } },
+    { input: { name: `Legacy PDF customer ${suffix}`, phone: `9${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}` /* unique: phone is the customer identity */, email: `legacy-pdf-${suffix.toLowerCase()}@example.test`, city: 'Vapi', address: 'Isolated acceptance only', forceCreate: true } },
     token,
   )).createCustomer;
   cleanup.customerIds.push(customer.id);
