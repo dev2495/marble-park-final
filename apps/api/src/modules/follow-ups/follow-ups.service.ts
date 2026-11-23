@@ -1,3 +1,4 @@
+import { chemicalUnit } from '../common/chemical-unit';
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { PrismaService } from '../prisma/prisma.service';
@@ -87,7 +88,7 @@ export class FollowUpsService {
     if (category.toLowerCase() === 'tiles') throw new BadRequestException('Tiles need size and box coverage. Add them from Tile Master.');
     if (!Number.isFinite(mrp) || mrp <= 0) throw new BadRequestException('Enter the MRP. A line cannot be priced without it.');
     const chemical = category.toLowerCase() === 'chemicals';
-    const unit = chemical ? 'KG' : String(input.unit || 'PC').trim().toUpperCase();
+    const unit = chemical ? chemicalUnit(input.unit) : String(input.unit || 'PC').trim().toUpperCase();
     const sku = `QA-${Date.now().toString(36).toUpperCase()}${Math.floor(Math.random() * 36).toString(36).toUpperCase()}`;
     const product = await this.products.create({
       sku,

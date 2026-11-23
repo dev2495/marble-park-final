@@ -57,7 +57,8 @@ const CLOSE_REMAINDER = gql`mutation QuoteWorkspaceClose($quoteId: ID!, $reason:
 const UPLOAD = gql`mutation QuoteWorkspaceUpload($filename: String!, $contentBase64: String!, $scope: String) { uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result } }`;
 
 type Mode = 'new' | 'draft' | 'confirmed' | 'revising' | 'locked' | 'reviseOrdered' | 'closed';
-const SERVER_META = ['preparedById', 'preparedByName', 'preparedAt', 'confirmedById', 'confirmedByName', 'confirmedAt', 'baseQuoteNumber', 'revisedById', 'revisedByName', 'revisedAt'];
+const SERVER_META = ['preparedById', 'preparedByName', 'preparedAt', 'confirmedById', 'confirmedByName', 'confirmedAt', 'baseQuoteNumber', 'revisedById', 'revisedByName', 'revisedAt', 'ownerHistory'];
+const REASSIGN_OWNER = gql`mutation QuoteWorkspaceReassign($quoteId: ID!, $ownerId: ID!, $reason: String) { reassignQuoteOwner(quoteId: $quoteId, ownerId: $ownerId, reason: $reason) }`;
 
 function errorText(error: unknown, operation: string) {
   const diagnostic = describeApolloError(error, operation);
@@ -145,7 +146,16 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
   const [resultsOpen, setResultsOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'' | 'customer' | 'architect' | 'sku' | 'order' | 'cancel' | 'documents'>('');
+  const [dialog, setDialog] = useState<'' | 'customer' | 'architect' | 'sku' | 'order' | 'cancel' | 'documents' | 'owner'>('');
+  // Office staff, sales managers, owners and admins may hand a quote to another sales person.
+  const [canReassign, setCanReassign] = useState(false);
+  useEffect(() => {
+    try {
+      const me = JSON.parse(localStorage.getItem('user') || 'null');
+      setCanReassign(['admin', 'owner', 'sales_manager', 'office_staff'].includes(me?.role) || (me?.effectivePermissions || []).includes('quotes.manage'));
+    } catch { setCanReassign(false); }
+  }, []);
+  const [reassignOwner] = useMutation(REASSIGN_OWNER);
   const [scanOpen, setScanOpen] = useState(false);
   const [scanPayload, setScanPayload] = useState('');
   const [scanResult, setScanResult] = useState<any>(null);
@@ -935,7 +945,17 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
               <label className="mt-1 flex items-center justify-between gap-2 text-xs text-[var(--ink-3)]">Sales person
                 <select value={ownerId} onChange={(event) => setOwnerId(event.target.value)} className="h-8 max-w-[11rem] rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold">{assignees.map((user: any) => <option key={user.id} value={user.id}>{user.name}</option>)}</select>
               </label>
-            ) : <Row label="Sales person" value={owner?.name || '—'} />}
+            ) : (
+              <div className="flex items-center justify-between gap-2 py-0.5 text-xs">
+                <span className="text-[var(--ink-3)]">Sales person</span>
+                <span className="flex items-center gap-2"><b className="font-semibold text-[var(--ink)]">{owner?.name || '—'}</b>{canReassign && !quote?.supersededByQuoteId ? <button type="button" onClick={() => setDialog('owner')} className="text-[11px] font-semibold text-[var(--brand-700)] hover:underline">Change</button> : null}</span>
+              </div>
+            )}
+            {Array.isArray(meta.ownerHistory) && meta.ownerHistory.length ? (
+              <ul className="mt-1 space-y-0.5 text-[11px] text-[var(--ink-4)]">
+                {meta.ownerHistory.slice(-3).reverse().map((entry: any) => <li key={entry.at}>Was {entry.fromName || '—'} until {shortDate(entry.at)} · changed by {entry.byName}{entry.reason ? ` · ${entry.reason}` : ''}</li>)}
+              </ul>
+            ) : null}
             <p className="mt-1 text-[11px] text-[var(--ink-4)]">Prepared and confirmed names print on the PDF.</p>
           </Card>
 
@@ -1011,6 +1031,11 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       <QuickSkuDialog open={dialog === 'sku'} onClose={() => setDialog('')} initialName={search.trim()} family={quoteType} onCreated={(product) => { setDialog(''); setSearch(''); if (addProduct(product)) notify(`${product.sku} created in Product Master and added to ${targetArea}. It is listed in the Follow-up queue.`); }} />
       {quote ? <DocumentsDialog open={dialog === 'documents'} onClose={() => setDialog('')} quote={quote} pdfReady={pdfReady} hasArchitect={Boolean(architect?.id || quote.architectId)} /> : null}
       {quote ? <OrderDrawer open={dialog === 'order'} onClose={() => setDialog('')} quote={quote} fulfillment={fulfillment} onDone={async (message) => { await Promise.all([quoteQuery.refetch(), fulfillmentQuery.refetch()]); loadedFor.current = ''; notify(message); }} /> : null}
+      {quote ? <OwnerDialog open={dialog === 'owner'} onClose={() => setDialog('')} current={owner} assignees={assignees} onConfirm={(nextId, reason) => run('ReassignQuoteOwner', async () => {
+        const result = (await reassignOwner({ variables: { quoteId: quote.id, ownerId: nextId, reason: reason || undefined } })).data?.reassignQuoteOwner;
+        setDialog(''); loadedFor.current = ''; await quoteQuery.refetch();
+        notify(`${quote.quoteNumber} is now with ${result?.to?.name || 'the new sales person'}.${result?.ordersKept ? ` ${result.ordersKept} order${result.ordersKept === 1 ? '' : 's'} already made stay with ${result.from?.name || 'the previous person'}.` : ''}`);
+      })} /> : null}
       {quote ? <CancelDialog open={dialog === 'cancel'} onClose={() => setDialog('')} onConfirm={(reason) => run('CancelQuote', async () => { await cancelQuote({ variables: { id: quote.id, reason } }); setDialog(''); loadedFor.current = ''; await quoteQuery.refetch(); notify(`${quote.quoteNumber} cancelled.`); })} /> : null}
 
       {toast ? <div role="status" className="fixed bottom-20 left-1/2 z-[80] max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-xl bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-[var(--surface)] shadow-lg-soft xl:bottom-6">{toast}</div> : null}
@@ -1192,6 +1217,32 @@ function DocLink({ href, icon, title, detail, disabled, newTab }: { href: string
   const body = <><span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--brand-50)] text-[var(--brand-700)]">{icon}</span><span><b className="block text-sm text-[var(--ink)]">{title}</b><span className="text-xs text-[var(--ink-4)]">{detail}</span></span></>;
   if (disabled) return <div className="flex items-center gap-3 rounded-lg border border-[var(--line)] p-3 opacity-55">{body}</div>;
   return <a href={href} target={newTab ? '_blank' : undefined} rel="noreferrer" className="flex items-center gap-3 rounded-lg border border-[var(--line)] p-3 hover:border-[var(--brand-400)] hover:bg-[var(--surface-2)]">{body}</a>;
+}
+
+function OwnerDialog({ open, onClose, current, assignees, onConfirm }: { open: boolean; onClose: () => void; current: any; assignees: any[]; onConfirm: (ownerId: string, reason: string) => void }) {
+  const [nextId, setNextId] = useState('');
+  const [reason, setReason] = useState('');
+  useEffect(() => { if (open) { setNextId(''); setReason(''); } }, [open]);
+  const choices = assignees.filter((user: any) => user.id !== current?.id);
+  const next = choices.find((user: any) => user.id === nextId);
+  return (
+    <Modal open={open} onClose={onClose} title="Change sales person" subtitle={`Now: ${current?.name || '—'}`}
+      footer={<><button type="button" onClick={onClose} className={secondaryButton}>Keep {current?.name || 'current'}</button><button type="button" disabled={!nextId} onClick={() => onConfirm(nextId, reason.trim())} className={primaryButton}>Hand to {next?.name || '…'}</button></>}>
+      <div className="space-y-3">
+        <Field label="New sales person">
+          <select value={nextId} onChange={(event) => setNextId(event.target.value)} className={inputClass}>
+            <option value="">Choose…</option>
+            {choices.map((user: any) => <option key={user.id} value={user.id}>{user.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Reason (optional)"><input value={reason} onChange={(event) => setReason(event.target.value)} className={inputClass} placeholder="e.g. Amita on leave, customer asked for Nikhil" /></Field>
+        <div className="grid gap-2 text-xs sm:grid-cols-2">
+          <div className="rounded-lg bg-[var(--info-bg)] p-3 text-[var(--info)]"><b className="block">Moves to {next?.name || 'the new person'}</b>This quote and future revisions, its lead, open follow-ups and open intents, and any orders made from it from now on.</div>
+          <div className="rounded-lg bg-[var(--bg-soft)] p-3 text-[var(--ink-3)]"><b className="block text-[var(--ink-2)]">Stays as it is</b>Orders, invoices, collections and dispatch already made, with {current?.name || 'the current person'}. Prices and items do not change. The change is kept on this quote.</div>
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 function CancelDialog({ open, onClose, onConfirm }: { open: boolean; onClose: () => void; onConfirm: (reason: string) => void }) {

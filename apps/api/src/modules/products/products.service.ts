@@ -1,3 +1,4 @@
+import { chemicalUnit } from '../common/chemical-unit';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
@@ -126,12 +127,13 @@ export class ProductsService {
     const status = String(data.status || 'active').trim().toLowerCase();
     const tileDefaults = category.toLowerCase() === 'tiles';
     const chemicalDefaults = category.toLowerCase() === 'chemicals';
+    const chemUnit = chemicalUnit(data.salesUom || data.unit);
     const tilePricing = tileDefaults ? tilePricingChoice(data.priceRateBasis, data.priceUom) : null;
     const defaults = this.validateSellingDefaults({
       ...data,
       ...(tilePricing || {}),
-      ...(chemicalDefaults ? { priceRateBasis: 'BOX', priceUom: 'KG' } : {}),
-    }, chemicalDefaults ? 'KG' : data.salesUom || data.unit, true);
+      ...(chemicalDefaults ? { priceRateBasis: 'BOX', priceUom: chemUnit } : {}),
+    }, chemicalDefaults ? chemUnit : data.salesUom || data.unit, true);
     if (!sku) throw new BadRequestException('SKU is required');
     if (!name) throw new BadRequestException('Product name is required');
     if (!category) throw new BadRequestException('Category is required');
@@ -156,7 +158,7 @@ export class ProductsService {
       await this.assertCodeAvailable(normalizedSupplierAlias, '');
     }
     const uoms = (chemicalDefaults
-      ? ['KG', 'KG', 'KG']
+      ? [chemUnit, chemUnit, chemUnit]
       : [data.baseUom || (tileDefaults ? 'PC' : data.unit) || 'PC', data.purchaseUom || data.unit || (tileDefaults ? 'BOX' : 'PC'), data.salesUom || data.unit || (tileDefaults ? 'BOX' : 'PC')])
       .map((value) => String(value).trim().toUpperCase());
     const coveragePerPack = this.numberAtLeastZero(data.coveragePerPack || 0, 'Coverage per pack');
@@ -176,7 +178,7 @@ export class ProductsService {
           brand,
           finish,
           dimensions: String(data.dimensions || '').trim(),
-          unit: chemicalDefaults ? 'KG' : String(data.unit || uoms[1]).trim().toUpperCase() || uoms[1],
+          unit: chemicalDefaults ? chemUnit : String(data.unit || uoms[1]).trim().toUpperCase() || uoms[1],
           tags: [],
           sellPrice: 0,
           floorPrice: 0,
@@ -209,7 +211,7 @@ export class ProductsService {
           piecesPerPack: chemicalDefaults ? 1 : Math.max(1, Math.trunc(Number(data.piecesPerPack || 1))),
           coveragePerPack: chemicalDefaults ? 0 : coveragePerPack,
           hsnCode: String(data.hsnCode || '').trim() || null,
-          trackLots: true, allowLoose: chemicalDefaults ? true : Boolean(data.allowLoose),
+          trackLots: true, allowLoose: chemicalDefaults ? chemUnit === 'KG' : Boolean(data.allowLoose),
           updatedAt: new Date(),
         } as any,
       });
@@ -289,6 +291,18 @@ export class ProductsService {
     const finalCategory = String(data.category === undefined ? current.category : data.category).trim().toLowerCase();
     const isTile = finalCategory === 'tiles';
     const isChemical = finalCategory === 'chemicals';
+    // A chemical is sold per KG or per BAG; keep the current unit unless one is sent.
+    const chemUnit = chemicalUnit(data.unit ?? data.salesUom, chemicalUnit(current.unit));
+    const chemicalUnitChanged = isChemical && String(current.category || '').trim().toLowerCase() === 'chemicals' && chemicalUnit(current.unit) !== chemUnit;
+    if (chemicalUnitChanged) {
+      if (data.defaultMrpInclusive === undefined || data.defaultMrpInclusive === null) {
+        throw new BadRequestException(`Changing this chemical from ${chemicalUnit(current.unit)} to ${chemUnit} needs its MRP per ${chemUnit}.`);
+      }
+      const stocked = await (this.prisma as any).inventoryLot.count({ where: { productId: id } });
+      if (stocked > 0) {
+        throw new BadRequestException(`This chemical already has stock counted in ${chemicalUnit(current.unit)}. Add a new SKU for the ${chemUnit} pack instead of changing this one.`);
+      }
+    }
     const pricingTouched = ['defaultMrpInclusive', 'defaultNrpInclusive', 'floorPriceInclusive', 'priceRateBasis', 'priceUom', 'mrpSource', 'pricingEffectiveFrom']
       .some((key) => (data as any)[key] !== undefined);
     const tilePricing = isTile && pricingTouched
@@ -313,7 +327,7 @@ export class ProductsService {
         defaultNrpInclusive: data.defaultNrpInclusive === undefined ? current.defaultNrpInclusive : data.defaultNrpInclusive,
         floorPriceInclusive: data.floorPriceInclusive === undefined ? current.floorPriceInclusive : data.floorPriceInclusive,
         priceRateBasis: tilePricing ? tilePricing.priceRateBasis : isChemical ? 'BOX' : data.priceRateBasis === undefined ? current.priceRateBasis : data.priceRateBasis,
-        priceUom: tilePricing ? tilePricing.priceUom : isChemical ? 'KG' : data.priceUom === undefined ? current.priceUom : data.priceUom,
+        priceUom: tilePricing ? tilePricing.priceUom : isChemical ? chemUnit : data.priceUom === undefined ? current.priceUom : data.priceUom,
         mrpSource: data.mrpSource === undefined ? current.mrpSource : data.mrpSource,
         pricingEffectiveFrom: data.pricingEffectiveFrom === undefined ? current.pricingEffectiveFrom : data.pricingEffectiveFrom,
       }, data.salesUom || current.salesUom);
@@ -360,15 +374,15 @@ export class ProductsService {
     if (data.allowLoose !== undefined) update.allowLoose = Boolean(data.allowLoose);
     if (isChemical) {
       Object.assign(update, {
-        unit: 'KG',
-        baseUom: 'KG',
-        purchaseUom: 'KG',
-        salesUom: 'KG',
+        unit: chemUnit,
+        baseUom: chemUnit,
+        purchaseUom: chemUnit,
+        salesUom: chemUnit,
         piecesPerPack: 1,
         coveragePerPack: 0,
-        allowLoose: true,
+        allowLoose: chemUnit === 'KG',
         priceRateBasis: 'BOX',
-        priceUom: 'KG',
+        priceUom: chemUnit,
         mrpRateBasis: 'BOX',
       });
     }

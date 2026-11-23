@@ -356,6 +356,18 @@ export class QuotesResolver {
     });
   }
 
+  @Mutation(() => GraphQLJSON, { description: 'Hand a quote to another sales person. Office staff, sales managers, owners and admins.' })
+  async reassignQuoteOwner(
+    @Args('quoteId', { type: () => ID }) quoteId: string,
+    @Args('ownerId', { type: () => ID }) ownerId: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('reason', { nullable: true }) reason?: string,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, QUOTE_ROLES);
+    if (!canManageQuotes(user)) throw new Error('Only office staff, sales managers, owners and admins can change the sales person.');
+    return this.quotes.reassignOwner(quoteId, ownerId, reason || '', { id: user.id, name: (user as any).name });
+  }
+
   @Query(() => [GraphQLJSON], { description: 'Open quotes for a customer, for the heads-up when starting a new one.' })
   async customerOpenQuotes(@Args('customerId', { type: () => ID }) customerId: string, @Context() ctx: GraphqlRequestContext) {
     const user = await requireRoles(this.prisma, ctx, QUOTE_ROLES);

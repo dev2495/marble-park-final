@@ -117,6 +117,8 @@ export default function ProductMasterPage() {
   const saving = creating || updating;
   const isTile = String(form.category || '').trim().toLowerCase() === 'tiles';
   const isChemical = String(form.category || '').trim().toLowerCase() === 'chemicals';
+  // Chemicals are sold loose per KG or in sealed bags per BAG.
+  const chemUnit = form.unit === 'BAG' ? 'BAG' : 'KG';
   const areaPriced = isTile && form.priceUom !== 'PC';
   const mrpChanged = isEditing && ((originalMrp !== '' && Math.abs(Number(form.defaultMrpInclusive) - Number(originalMrp)) > 0.0001) || (isTile && originalPriceUom !== form.priceUom));
   // Each entry names a field the save needs and the element to jump to, so a grey button always says why.
@@ -181,20 +183,23 @@ export default function ProductMasterPage() {
         priceRateBasis: wasTile ? current.priceRateBasis : 'AREA',
         priceUom: wasTile ? current.priceUom : 'SQFT',
       };
-      if (nextIsChemical) return {
-        ...current,
-        category,
-        tileSizeId: '',
-        unit: 'KG',
-        baseUom: 'KG',
-        purchaseUom: 'KG',
-        salesUom: 'KG',
-        piecesPerPack: '1',
-        coveragePerPack: '',
-        allowLoose: true,
-        priceRateBasis: 'BOX',
-        priceUom: 'KG',
-      };
+      if (nextIsChemical) {
+        const chemUnit = wasChemical && current.unit === 'BAG' ? 'BAG' : 'KG';
+        return {
+          ...current,
+          category,
+          tileSizeId: '',
+          unit: chemUnit,
+          baseUom: chemUnit,
+          purchaseUom: chemUnit,
+          salesUom: chemUnit,
+          piecesPerPack: '1',
+          coveragePerPack: '',
+          allowLoose: chemUnit === 'KG',
+          priceRateBasis: 'BOX',
+          priceUom: chemUnit,
+        };
+      }
       const unit = wasTile || wasChemical ? 'PC' : current.unit || 'PC';
       return {
         ...current,
@@ -225,14 +230,14 @@ export default function ProductMasterPage() {
     if (isEditing || form.images.length) shared.media = mediaPayload(form.images);
     shared.defaultMrpInclusive = Number(form.defaultMrpInclusive);
     shared.priceRateBasis = isTile ? (form.priceUom === 'PC' ? 'PIECE' : 'AREA') : isChemical ? 'BOX' : form.priceRateBasis;
-    shared.priceUom = isChemical ? 'KG' : form.priceUom;
+    shared.priceUom = isChemical ? chemUnit : form.priceUom;
     shared.mrpSource = form.mrpSource;
     if (mrpChanged) shared.mrpChangeReason = mrpChangeReason.trim();
     shared.pricingEffectiveFrom = form.pricingEffectiveFrom || undefined;
     if (form.defaultNrpInclusive !== '') {
       shared.defaultNrpInclusive = Number(form.defaultNrpInclusive);
       shared.priceRateBasis = isTile ? (form.priceUom === 'PC' ? 'PIECE' : 'AREA') : isChemical ? 'BOX' : form.priceRateBasis;
-      shared.priceUom = isChemical ? 'KG' : form.priceUom;
+      shared.priceUom = isChemical ? chemUnit : form.priceUom;
       shared.pricingEffectiveFrom = form.pricingEffectiveFrom || undefined;
     } else if (isEditing) {
       shared.defaultNrpInclusive = null;
@@ -251,13 +256,13 @@ export default function ProductMasterPage() {
       });
     } else if (isChemical) {
       Object.assign(shared, {
-        unit: 'KG',
-        baseUom: 'KG',
-        purchaseUom: 'KG',
-        salesUom: 'KG',
+        unit: chemUnit,
+        baseUom: chemUnit,
+        purchaseUom: chemUnit,
+        salesUom: chemUnit,
         piecesPerPack: 1,
         coveragePerPack: 0,
-        allowLoose: true,
+        allowLoose: chemUnit === 'KG',
         ...(isEditing ? { tileSizeId: null } : {}),
       });
     } else {
@@ -376,7 +381,7 @@ export default function ProductMasterPage() {
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Finish <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><SearchableSelect value={form.finish} onValueChange={(finish) => setForm({ ...form, finish })} options={[{ value: '', label: 'No finish' }, ...finishes.map((item: any) => ({ value: item.name, label: item.name, description: item.code ? `Finish code ${item.code}` : undefined, keywords: item.code }))]} placeholder="No finish" searchPlaceholder="Search finishes…" /></label>
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Material <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><SearchableSelect value={form.materialId} onValueChange={(materialId) => setForm({ ...form, materialId })} options={[{ value: '', label: 'No material' }, ...materials.map((item: any) => ({ value: item.id, label: item.name, description: item.code ? `Code ${item.code}` : undefined, keywords: item.code }))]} placeholder="No material" searchPlaceholder="Search materials…" /></label>
           {!isTile && !isChemical ? <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Unit <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><SearchableSelect value={form.unit} onValueChange={(unit) => setForm({ ...form, unit })} options={uoms.map((item: any) => ({ value: item.code, label: `${item.code} · ${item.name}`, keywords: item.name }))} searchPlaceholder="Search units…" /></label> : null}
-          {isChemical ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-800">Chemical quote item</p><p className="mt-1 text-sm font-semibold text-emerald-950">Inventory, purchase, sales and quote rate UOM are governed as KG.</p></div> : null}
+          {isChemical ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-800">Chemical quote item</p><label className="mt-2 flex items-center gap-2 text-sm font-semibold text-emerald-950">Sold per<select aria-label="Chemical sold per" value={chemUnit} onChange={(event) => { const next = event.target.value; setForm({ ...form, unit: next, baseUom: next, purchaseUom: next, salesUom: next, priceUom: next, allowLoose: next === 'KG' }); }} className="h-9 rounded-md border border-emerald-300 bg-white px-2 text-sm"><option value="KG">KG · loose by weight</option><option value="BAG">BAG · sealed bag</option></select></label><p className="mt-1 text-xs text-emerald-900">Stock, purchase, sale and MRP all use {chemUnit}. A chemical that already has stock keeps its unit; add a new SKU for the other pack.</p></div> : null}
           {isTile ? <div className="space-y-4 border-y border-[#dbeafe] bg-[#f7faff] px-1 py-4 md:col-span-2"><div><h3 className="text-sm font-semibold text-[#18181b]">Tile and box details</h3><p className="mt-1 text-xs text-[#52525b]">Coverage is stored in sq ft per box for stock geometry. The selling rate can be per sq ft, sq metre, or piece.</p></div><div className="grid gap-3 md:grid-cols-2">
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Tile size</span><SearchableSelect value={form.tileSizeId} onValueChange={(tileSizeId) => setForm({ ...form, tileSizeId })} options={[{ value: '', label: 'Not specified' }, ...tileSizes.map((item: any) => ({ value: item.id, label: item.name, description: item.code }))]} placeholder="Not specified" searchPlaceholder="Search size or code…" /></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Stock / purchase UOM</span><SearchableSelect value={form.purchaseUom} onValueChange={(purchaseUom) => setForm({ ...form, purchaseUom, unit: purchaseUom })} options={uoms.map((item: any) => ({ value: item.code, label: `${item.code} · ${item.name}` }))} searchPlaceholder="Search units…" /></label>
@@ -391,11 +396,11 @@ export default function ProductMasterPage() {
           <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">HSN code <span className="normal-case tracking-normal text-[#71717a]">(optional)</span></span><Input value={form.hsnCode} onChange={(event) => setForm({ ...form, hsnCode: event.target.value })} /></label>
           <div className="grid gap-3 rounded-xl bg-[#f8f4ef] p-4 md:col-span-2 md:grid-cols-2 xl:grid-cols-3">
             <div className="md:col-span-2 xl:col-span-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-black uppercase tracking-[0.18em] text-[#9f342d]">Governed selling policy</p><Link href="/dashboard/master-data/pricing-readiness?tab=missing" className="text-xs font-black text-[#9f342d] underline underline-offset-4">Complete missing MRP</Link></div><p className="mt-1 text-xs leading-5 text-[#52525b]">MRP is required. NRP and floor use the selected rate unit. Tile stock remains in boxes/pieces. Chemical rates remain per KG. Actual cost comes only from received inventory lots.</p></div>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP ₹ before GST / {isTile ? form.priceUom : isChemical ? 'KG' : form.priceUom} *</span><Input id="sku-mrp" data-needs-value required type="number" min={0.01} step="0.01" value={form.defaultMrpInclusive} onChange={(event) => setForm({ ...form, defaultMrpInclusive: event.target.value })} placeholder={isTile ? `Required per ${form.priceUom}` : isChemical ? 'Required per KG' : 'Required'} /></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP ₹ before GST / {isTile ? form.priceUom : isChemical ? chemUnit : form.priceUom} *</span><Input id="sku-mrp" data-needs-value required type="number" min={0.01} step="0.01" value={form.defaultMrpInclusive} onChange={(event) => setForm({ ...form, defaultMrpInclusive: event.target.value })} placeholder={isTile ? `Required per ${form.priceUom}` : isChemical ? `Required per ${chemUnit}` : 'Required'} /></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Default NRP ₹ before GST</span><Input type="number" min={0.01} step="0.01" value={form.defaultNrpInclusive} onChange={(event) => setForm({ ...form, defaultNrpInclusive: event.target.value })} placeholder="Optional" /></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Floor price ₹ before GST</span><Input type="number" min={0.01} step="0.01" value={form.floorPriceInclusive} onChange={(event) => setForm({ ...form, floorPriceInclusive: event.target.value })} placeholder="Optional · below this needs owner approval" /></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price basis</span><select value={isTile ? (form.priceUom === 'PC' ? 'PIECE' : 'AREA') : isChemical ? 'BOX' : form.priceRateBasis} onChange={(event) => setForm({ ...form, priceRateBasis: event.target.value })} disabled={isTile || isChemical} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70"><option value="BOX">Box / governed UOM</option><option value="PIECE">Piece</option><option value="AREA">Area</option></select></label>
-            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price UOM</span><select value={isChemical ? 'KG' : form.priceUom} onChange={(event) => setForm({ ...form, priceUom: event.target.value, priceRateBasis: isTile ? (event.target.value === 'PC' ? 'PIECE' : 'AREA') : form.priceRateBasis })} disabled={isChemical} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70">{isTile ? <><option value="SQFT">SQFT · per sq ft</option><option value="SQM">SQM · per sq metre</option><option value="PC">PC · per piece</option></> : uoms.map((item: any) => <option key={item.code} value={item.code}>{item.code} · {item.name}</option>)}</select></label>
+            <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Price UOM</span><select value={isChemical ? chemUnit : form.priceUom} onChange={(event) => setForm({ ...form, priceUom: event.target.value, priceRateBasis: isTile ? (event.target.value === 'PC' ? 'PIECE' : 'AREA') : form.priceRateBasis })} disabled={isChemical} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70">{isTile ? <><option value="SQFT">SQFT · per sq ft</option><option value="SQM">SQM · per sq metre</option><option value="PC">PC · per piece</option></> : uoms.map((item: any) => <option key={item.code} value={item.code}>{item.code} · {item.name}</option>)}</select></label>
             {isTile ? <p className="text-[11px] leading-5 text-[#9f342d] md:col-span-2 xl:col-span-3">Changing the tile rate unit does not convert the numbers above. Review the MRP, NRP and floor price in the selected unit before saving.</p> : null}
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">MRP source</span><select value={form.mrpSource} onChange={(event) => setForm({ ...form, mrpSource: event.target.value })} disabled={!form.defaultMrpInclusive} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-50"><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
             <label className="space-y-2"><span className="text-xs font-medium uppercase tracking-widest text-[#52525b]">Effective from</span><Input type="date" value={form.pricingEffectiveFrom} onChange={(event) => setForm({ ...form, pricingEffectiveFrom: event.target.value })} disabled={!form.defaultMrpInclusive && !form.defaultNrpInclusive} /></label>

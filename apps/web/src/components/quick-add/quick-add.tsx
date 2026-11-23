@@ -224,6 +224,8 @@ export function QuickSkuDialog({ open, onClose, initialName, family, onCreated }
   const [brand, setBrand] = useState('');
   const [mrp, setMrp] = useState('');
   const [unit, setUnit] = useState('PC');
+  // Chemicals are sold loose per KG or in sealed bags per BAG.
+  const [chemicalUnit, setChemicalUnit] = useState('KG');
   const [photo, setPhoto] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -245,7 +247,7 @@ export function QuickSkuDialog({ open, onClose, initialName, family, onCreated }
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(photo.type) || photo.size > 5 * 1024 * 1024) throw new Error('Use a JPG, PNG or WebP photo under 5 MB.');
         mediaUrl = (await upload({ variables: { filename: photo.name, contentBase64: await fileBase64(photo), scope: 'product-image' } })).data?.uploadStoredAsset?.result?.publicUrl;
       }
-      const product = (await quickAdd({ variables: { input: { name: name.trim(), category, brand: brand.trim() || undefined, mrp: Number(mrp), unit: category.toLowerCase() === 'chemicals' ? 'KG' : unit, mediaUrl } } })).data?.quickAddProduct;
+      const product = (await quickAdd({ variables: { input: { name: name.trim(), category, brand: brand.trim() || undefined, mrp: Number(mrp), unit: category.toLowerCase() === 'chemicals' ? chemicalUnit : unit, mediaUrl } } })).data?.quickAddProduct;
       if (!product?.id) throw new Error('The item could not be saved.');
       onCreated(product);
     } catch (err) {
@@ -271,10 +273,10 @@ export function QuickSkuDialog({ open, onClose, initialName, family, onCreated }
           </Field>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label={`MRP ₹ per ${chemical ? 'KG' : unit.toLowerCase()}`} hint="Before GST, as on Product Master"><input required type="number" min="1" step="0.01" value={mrp} onChange={(event) => setMrp(event.target.value)} className={inputClass} /></Field>
+          <Field label={`MRP ₹ per ${chemical ? chemicalUnit.toLowerCase() : unit.toLowerCase()}`} hint="Before GST, as on Product Master"><input required type="number" min="1" step="0.01" value={mrp} onChange={(event) => setMrp(event.target.value)} className={inputClass} /></Field>
           <Field label="Sold per">
-            <select value={chemical ? 'KG' : unit} disabled={chemical} onChange={(event) => setUnit(event.target.value)} className={inputClass}>
-              {chemical ? <option>KG</option> : ['PC', 'SET', 'BOX'].map((value) => <option key={value}>{value}</option>)}
+            <select value={chemical ? chemicalUnit : unit} onChange={(event) => (chemical ? setChemicalUnit(event.target.value) : setUnit(event.target.value))} className={inputClass}>
+              {chemical ? [['KG', 'KG · loose by weight'], ['BAG', 'BAG · sealed bag']].map(([value, label]) => <option key={value} value={value}>{label}</option>) : ['PC', 'SET', 'BOX'].map((value) => <option key={value}>{value}</option>)}
             </select>
           </Field>
           <Field label="Photo (optional)"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPhoto(event.target.files?.[0] || null)} className="pt-2 text-xs" /></Field>

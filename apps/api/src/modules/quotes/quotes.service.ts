@@ -1,3 +1,4 @@
+import { chemicalUnit } from '../common/chemical-unit';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
@@ -113,7 +114,7 @@ export function revisionLetter(versionNumber: number) {
   return letters;
 }
 // Values the server owns inside quoteMeta. Client saves never overwrite them.
-const SERVER_META_KEYS = ['preparedById', 'preparedByName', 'preparedAt', 'confirmedById', 'confirmedByName', 'confirmedAt', 'baseQuoteNumber', 'revisedById', 'revisedByName', 'revisedAt'];
+const SERVER_META_KEYS = ['preparedById', 'preparedByName', 'preparedAt', 'confirmedById', 'confirmedByName', 'confirmedAt', 'baseQuoteNumber', 'revisedById', 'revisedByName', 'revisedAt', 'ownerHistory'];
 // Fields that decide price or quantity. A change to any of them on a confirmed
 // quote is a new revision; presentation edits (images, room labels) are not.
 const COMMERCIAL_LINE_KEYS = ['productId', 'area', 'qty', 'quantity', 'requestedArea', 'requestedPieces', 'nrpMode', 'nrpInput', 'specialMode', 'specialInput', 'taxRate'];
@@ -2069,6 +2070,50 @@ export class QuotesService {
   }
 
   /**
+   * Hands a quote to another sales person. From now on the quote, its lead,
+   * the lead's open follow-ups and open intents belong to the new person, and
+   * so do orders converted from it later. What already happened stays as it
+   * is: sales orders, invoices, collections and dispatch already created keep
+   * their sales person, and every handover is kept on the quote with who,
+   * when and why. Prices, lines and status are not touched.
+   */
+  async reassignOwner(quoteId: string, nextOwnerId: string, reasonInput: string, actor: { id: string; name?: string }) {
+    const quote: any = await this.prisma.quote.findUnique({ where: { id: quoteId }, include: { owner: { select: { id: true, name: true } }, customer: { select: { name: true } } } } as any);
+    if (!quote) throw new NotFoundException('Quote not found');
+    if (quote.supersededByQuoteId) throw new BadRequestException('A newer version replaced this quote. Change the sales person on the current version.');
+    const next = await this.prisma.user.findUnique({ where: { id: String(nextOwnerId || '') }, select: { id: true, name: true, role: true, active: true } });
+    if (!next || !next.active || !['sales', 'sales_manager', 'owner', 'admin'].includes(next.role)) throw new BadRequestException('Choose an active sales person.');
+    if (next.id === quote.ownerId) throw new BadRequestException(`${next.name} is already the sales person on ${quote.quoteNumber}.`);
+    const reason = String(reasonInput || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const previous = { id: quote.ownerId as string, name: String(quote.owner?.name || '') };
+    const actorName = actor.name || (await this.actorName(actor.id));
+    const at = new Date();
+    const meta = this.parseQuoteMeta(quote.quoteMeta);
+    const history = Array.isArray(meta.ownerHistory) ? meta.ownerHistory : [];
+    const entry = { fromId: previous.id, fromName: previous.name, toId: next.id, toName: next.name, byId: actor.id, byName: actorName, at: at.toISOString(), reason };
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.quote.update({ where: { id: quote.id }, data: { ownerId: next.id, quoteMeta: { ...meta, ownerHistory: [...history, entry] }, updatedAt: at } as any });
+      // The lead moves only if it was the previous person's; a lead someone else owns is left alone.
+      const lead = quote.leadId ? await tx.lead.findUnique({ where: { id: quote.leadId }, select: { id: true, ownerId: true } }) : null;
+      const leadMoved = Boolean(lead && lead.ownerId === previous.id);
+      if (leadMoved) await tx.lead.update({ where: { id: lead!.id }, data: { ownerId: next.id, updatedAt: at } });
+      const followUps = lead ? await tx.followUpTask.updateMany({ where: { leadId: lead.id, ownerId: previous.id, status: { in: ['pending', 'open'] } }, data: { ownerId: next.id, updatedAt: at } }) : { count: 0 };
+      const intents = lead ? await (tx as any).leadIntent.updateMany({ where: { leadId: lead.id, ownerId: previous.id, status: { in: ['draft', 'pending_quote', 'in_quote'] } }, data: { ownerId: next.id, updatedAt: at } }) : { count: 0 };
+      const keptOrders = await tx.salesOrder.count({ where: { quoteId: quote.id } });
+      const message = `Sales person changed from ${previous.name || 'previous owner'} to ${next.name} by ${actorName}${reason ? ` (${reason})` : ''}.`;
+      await tx.activity.create({ data: { id: ulid(), leadId: lead?.id || null, quoteId: quote.id, userId: actor.id, type: 'owner_changed', message } });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId: actor.id, action: 'quote.owner_change', entityType: 'Quote', entityId: quote.id, summary: `${quote.quoteNumber}: ${message}`,
+        metadata: { from: previous, to: { id: next.id, name: next.name }, reason, leadMoved, followUpsMoved: followUps.count, intentsMoved: intents.count, ordersKept: keptOrders } } });
+      return { leadMoved, followUpsMoved: followUps.count, intentsMoved: intents.count, ordersKept: keptOrders };
+    });
+    await this.notifications.createMany([
+      { title: 'Quote assigned to you', message: `${actorName} gave you ${quote.quoteNumber} (${quote.customer?.name || 'customer'})${reason ? `: ${reason}` : '.'}`, type: 'quote_assigned', entityType: 'Quote', entityId: quote.id, href: `/dashboard/quotes/${quote.id}`, targetUserId: next.id, metadata: { quoteNumber: quote.quoteNumber, fromId: previous.id } },
+      ...(previous.id && previous.id !== actor.id ? [{ title: 'Quote moved to another sales person', message: `${quote.quoteNumber} (${quote.customer?.name || 'customer'}) is now with ${next.name}. Orders already made from it stay with you.`, type: 'quote_assigned', entityType: 'Quote', entityId: quote.id, href: '/dashboard/orders', targetUserId: previous.id, metadata: { quoteNumber: quote.quoteNumber, toId: next.id } }] : []),
+    ]).catch(() => null);
+    return { quoteId: quote.id, quoteNumber: quote.quoteNumber, from: previous, to: { id: next.id, name: next.name }, ...result };
+  }
+
+  /**
    * Quotes still open for a customer, newest first, so sales can see one is
    * already running before starting another. Quotes the viewer may not open
    * show their number and owner only.
@@ -2378,9 +2423,9 @@ export class QuotesService {
         brand: product.brand,
         finish: product.finish,
         dimensions: product.dimensions,
-        unit: isChemical ? 'KG' : product.unit,
-        inventoryUom: isChemical ? 'KG' : String((useProductPricing ? null : line.inventoryUom) || product.purchaseUom || product.unit || 'PC').trim().toUpperCase(),
-        pricingUom: isChemical ? 'KG' : String((useProductPricing ? null : line.pricingUom) || product.priceUom || (rateBasis === 'PIECE' ? 'PC' : product.salesUom || product.unit) || 'PC').trim().toUpperCase(),
+        unit: isChemical ? chemicalUnit(product.unit) : product.unit,
+        inventoryUom: isChemical ? chemicalUnit(product.unit) : String((useProductPricing ? null : line.inventoryUom) || product.purchaseUom || product.unit || 'PC').trim().toUpperCase(),
+        pricingUom: isChemical ? chemicalUnit(product.unit) : String((useProductPricing ? null : line.pricingUom) || product.priceUom || (rateBasis === 'PIECE' ? 'PC' : product.salesUom || product.unit) || 'PC').trim().toUpperCase(),
         qty,
         quantity: qty,
         pricingVersion: RETAIL_LADDER_VERSION,
