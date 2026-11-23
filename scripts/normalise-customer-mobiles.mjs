@@ -14,9 +14,12 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 const apply = process.argv.includes('--apply');
 
+// Same rule as apps/api/src/modules/common/phone.ts: 10 digits after an optional
+// 0 / 91 / 091. An 11-digit typo is listed for a person to fix, never guessed.
 function mobileKey(input) {
   const digits = String(input ?? '').replace(/\D/g, '');
-  return digits.length >= 10 ? digits.slice(-10) : '';
+  const match = digits.match(/^(?:0|91|091|0091)?(\d{10})$/);
+  return match ? match[1] : '';
 }
 
 const customers = await prisma.customer.findMany({ select: { id: true, name: true, mobile: true, city: true, createdAt: true }, orderBy: { createdAt: 'asc' } });

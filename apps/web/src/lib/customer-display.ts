@@ -1,10 +1,11 @@
 // How a customer or quote is named on screen so two people with the same name
 // are never confused: the phone (last 4 digits) travels with the name.
 
-/** Last 10 digits of a phone, or '' when shorter. Same rule as the API. */
+/** The 10-digit number (after an optional 0 / 91 / +91), or ''. Same rule as the API. */
 export function mobileKey(input: unknown) {
   const digits = String(input ?? '').replace(/\D/g, '');
-  return digits.length >= 10 ? digits.slice(-10) : '';
+  const match = digits.match(/^(?:0|91|091|0091)?(\d{10})$/);
+  return match ? match[1] : '';
 }
 
 /** "••2345" */

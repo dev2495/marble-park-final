@@ -9,6 +9,10 @@ for (const typed of ['9825012345', '+91 98250 12345', '098250-12345', '91-982501
   assert.equal(mobileKey(typed), '9825012345', typed);
 }
 assert.equal(mobileKey('12345'), '');
+assert.equal(mobileKey('98241483322'), ''); // 11 digits, no 0/91 prefix: a typo, not guessed
+assert.equal(mobileKey('919825012345'), '9825012345');
+assert.equal(mobileKey('09825012345'), '9825012345');
+assert.equal(mobileForStorage('98241483322'), '98241483322'); // kept as typed for a person to fix
 assert.equal(mobileKey(''), '');
 assert.equal(mobileKey(null), '');
 assert.equal(indianMobile('+91 98250 12345'), '9825012345');

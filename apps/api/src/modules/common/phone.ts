@@ -1,11 +1,17 @@
 // One rule for customer phone numbers everywhere: the phone is the customer's
-// identity, compared on its last 10 digits so "+91 98250 12345", "098250-12345"
+// identity, compared on its 10-digit number so "+91 98250 12345", "098250-12345"
 // and "9825012345" are the same person. Names may repeat; numbers may not.
 
-/** The last 10 digits of a phone, or '' when it has fewer than 10 digits. */
+/**
+ * The 10-digit number, or '' when it cannot be read safely. Accepts 10 digits,
+ * or 10 digits after a leading 0, 91 or 091 (+91 …). Anything else, such as an
+ * 11-digit typo, is not guessed at: taking its last 10 digits would quietly
+ * turn it into someone else's number.
+ */
 export function mobileKey(input: unknown): string {
   const digits = String(input ?? '').replace(/\D/g, '');
-  return digits.length >= 10 ? digits.slice(-10) : '';
+  const match = digits.match(/^(?:0|91|091|0091)?(\d{10})$/);
+  return match ? match[1] : '';
 }
 
 /** A 10-digit Indian mobile starting 6-9, or ''. */
