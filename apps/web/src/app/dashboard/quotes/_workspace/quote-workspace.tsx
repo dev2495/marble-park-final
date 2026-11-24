@@ -24,6 +24,18 @@ import {
   type DiscountMode, type Line, type QuoteType, type TaxMode,
 } from './model';
 
+// Text the system once saved into every quote; never typed by a person, so the
+// field shows empty and the PDF uses the Settings text instead.
+const LEGACY_QUOTE_TEXT = new Set([
+  'Prices are valid until the quote validity date. Installation, civil work and unloading are excluded unless mentioned.',
+  'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, civil work and unloading are excluded unless mentioned.',
+  'Bank details will be shared by Marble Park accounts team at order confirmation.',
+]);
+const quoteOwnText = (value: unknown) => {
+  const text = String(value ?? '').trim();
+  return text && !LEGACY_QUOTE_TEXT.has(text) ? text : '';
+};
+
 const SETUP = gql`
   query QuoteWorkspaceSetup {
     architects(status: "active", take: 300)
@@ -253,8 +265,8 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       displayMode: (quote.displayMode === 'selection' ? 'selection' : 'priced') as 'priced' | 'selection',
       architectId: nextArchitect?.id || '',
       remarks: /^prepared from quote studio\.?$/i.test(loadedRemarks) || /^generated from product intent\.?$/i.test(loadedRemarks) ? '' : loadedRemarks,
-      terms: meta.terms || '',
-      bankDetails: meta.bankDetails || '',
+      terms: quoteOwnText(meta.terms),
+      bankDetails: quoteOwnText(meta.bankDetails),
       coverImage: quote.coverImage || meta.coverImage || '',
       tagline: meta.tagline || '',
     };
@@ -349,11 +361,16 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     }
     return map;
   }, [activeLines]);
-  const multiRoomItems = useMemo(() => Array.from(itemTotals.entries()).filter(([, entry]) => entry.rooms.length > 1), [itemTotals]);
   const areaTotals = useMemo(() => new Map(areas.map((area) => {
     const keys = activeLines.filter((line) => line.area === area).map((line) => line._k);
     return [area, { count: keys.length, value: keys.reduce((sum, key) => sum + Number(rowByKey.get(key)?.grossBeforeQuoteDiscount || 0), 0), warn: keys.some((key) => (issuesByKey.get(key) || []).some((issue) => issue.blocking)) }];
   })), [activeLines, areas, issuesByKey, rowByKey]);
+
+  // What each room comes to after every discount and GST; the rows add up to the total.
+  const areaSummary = useMemo(() => areas.map((area) => {
+    const keys = activeLines.filter((line) => line.area === area).map((line) => line._k);
+    return { area, count: keys.length, total: keys.reduce((sum, key) => sum + Number(rowByKey.get(key)?.total || 0), 0) };
+  }).filter((row) => row.count > 0), [activeLines, areas, rowByKey]);
 
   type RevisionChange = { line: Line; kind: 'added' | 'changed' | 'removed'; detail: string[] };
   const revisionChanges = useMemo<RevisionChange[]>(() => {
@@ -922,17 +939,18 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
             </Card>
           ) : null}
 
-          {multiRoomItems.length ? (
-            <Card title={`Same item in more than one room · ${multiRoomItems.length}`}>
-              <div className="space-y-2 text-xs">
-                {multiRoomItems.map(([key, entry]) => (
-                  <div key={key}>
-                    <div className="flex justify-between gap-2"><b className="truncate text-[var(--ink)]">{entry.name}</b><b className="shrink-0 tabular-nums">{Number(entry.qty.toFixed(2))} {entry.unit}</b></div>
-                    <p className="text-[var(--ink-4)]">{entry.rooms.map((room) => `${room.area} ${Number(room.qty.toFixed(2))}`).join(' · ')}</p>
-                  </div>
+          {areaSummary.length > 1 ? (
+            <Card title={`By area · ${areaSummary.length}`}>
+              <div className="space-y-1 text-xs">
+                {areaSummary.map((row) => (
+                  <button key={row.area} type="button" onClick={() => setAreaFilter(row.area)} className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-0.5 text-left hover:bg-[var(--surface-2)]">
+                    <span className="min-w-0 truncate"><b className="text-[var(--ink)]">{row.area}</b> <span className="text-[var(--ink-4)]">· {row.count} item{row.count === 1 ? '' : 's'}</span></span>
+                    <b className="shrink-0 tabular-nums">{money(row.total)}</b>
+                  </button>
                 ))}
+                <div className="flex items-baseline justify-between gap-2 border-t border-[var(--line)] px-1 pt-1.5"><span className="font-semibold">Total</span><b className="tabular-nums">{money(totals.total)}</b></div>
               </div>
-              <p className="mt-2 text-[11px] text-[var(--ink-4)]">Each room keeps its own line and price. The total is what is ordered and dispatched.</p>
+              <p className="mt-1.5 text-[11px] text-[var(--ink-4)]">{totals.quoteDiscount > 0 ? 'After quote discount. ' : ''}{taxMode === 'gst' ? (gstOnTop ? 'GST added. ' : 'GST included. ') : ''}The PDF shows the same summary.</p>
             </Card>
           ) : null}
 
@@ -994,6 +1012,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
               <div className="mt-2 space-y-2">
                 <label className="flex flex-col gap-1 text-[var(--ink-4)]">Terms<textarea disabled={mode === 'closed'} value={terms} onChange={(event) => setTerms(event.target.value)} placeholder={settings.defaultTerms || 'Default terms from Settings'} className="min-h-20 rounded-md border border-[var(--line)] bg-[var(--surface)] p-2 text-xs" /></label>
                 <label className="flex flex-col gap-1 text-[var(--ink-4)]">Bank details<textarea disabled={mode === 'closed'} value={bankDetails} onChange={(event) => setBankDetails(event.target.value)} placeholder={settings.bankDetails || 'Default bank details from Settings'} className="min-h-16 rounded-md border border-[var(--line)] bg-[var(--surface)] p-2 text-xs" /></label>
+                <p className="text-[11px] text-[var(--ink-4)]">Leave terms and bank details empty to use the ones in Settings. Changes in Settings then show on this quote's PDF.</p>
                 {displayMode === 'selection' ? (
                   <>
                     <label className="flex flex-col gap-1 text-[var(--ink-4)]">Cover tagline<input value={tagline} onChange={(event) => setTagline(event.target.value)} placeholder={settings.documentTagline || ''} className="h-8 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs" /></label>

@@ -536,6 +536,28 @@ function requiredSessionToken() {
   return token;
 }
 
+// Text the system used to write into every saved quote. It is not something a
+// person typed, so the current Settings text is used in its place.
+const LEGACY_QUOTE_TEXT = new Set([
+  'Prices are valid until the quote validity date. Installation, civil work and unloading are excluded unless mentioned.',
+  'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, civil work and unloading are excluded unless mentioned.',
+  'Bank details will be shared by Marble Park accounts team at order confirmation.',
+]);
+function quoteOwnText(value) {
+  const text = String(value || '').trim();
+  return text && !LEGACY_QUOTE_TEXT.has(text) ? text : '';
+}
+// Terms and bank details: what was typed on this quote, else Settings, else a plain fallback.
+function quoteTerms(quoteMeta, settings, fallback) {
+  return quoteOwnText(quoteMeta.terms) || String(settings?.defaultTerms || '').trim() || fallback;
+}
+function quoteBank(quoteMeta, settings) {
+  return quoteOwnText(quoteMeta.bankDetails) || String(settings?.bankDetails || '').trim() || 'Bank details will be shared by our accounts team at order confirmation.';
+}
+function documentTitle(settings) {
+  return String(settings?.quotationTitle || '').trim().toUpperCase() || 'QUOTATION';
+}
+
 // ============= Selection layout =============
 
 function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
@@ -563,7 +585,7 @@ function CoverPage({ quote, settings, requestUrl, quoteMeta }) {
       : e(Text, { style: styles.coverBrandWordmark }, String(company).toUpperCase()),
     // Quotation-family pill
     e(View, { style: styles.coverQuotationTab },
-      e(Text, { style: styles.coverQuotationText }, `${quoteTypeLabel(quote)} QUOTATION`),
+      e(Text, { style: [styles.coverQuotationText, documentTitle(settings).length > 12 ? { fontSize: 17, letterSpacing: 2, lineHeight: 1.4 } : null] }, documentTitle(settings).length > 12 ? `${quoteTypeLabel(quote)}\n${documentTitle(settings)}` : `${quoteTypeLabel(quote)} ${documentTitle(settings)}`),
     ),
     // Client / project ribbon at bottom
     e(View, { style: styles.coverRibbon },
@@ -650,7 +672,7 @@ function CompactSelectionDocument({ payload, requestUrl }) {
   const quoteMeta = safeJson(quote.quoteMeta, {});
   const rows = asArray(quote.lines);
   const companyLogo = buildAbsoluteUrl(settings.logoUrl || '/brand/marble-park-logo.png', requestUrl);
-  const terms = quoteMeta.terms || settings.defaultTerms || 'Selections remain subject to final stock, commercial terms and lot verification.';
+  const terms = quoteTerms(quoteMeta, settings, 'Selections remain subject to final stock, commercial terms and lot verification.');
   return e(Page, { size: 'A4', style: [styles.pagePadded, styles.pageCompact] },
     e(View, { style: styles.compactSelectionHeader },
       e(View, { style: { flexDirection: 'row', alignItems: 'center', gap: 9 } },
@@ -678,7 +700,7 @@ function CompactSelectionDocument({ payload, requestUrl }) {
   );
 }
 
-function SelectionAreaPage({ group, requestUrl, brands }) {
+function SelectionAreaPage({ group, requestUrl, brands, settings }) {
   const e = React.createElement;
   // 2 cards per row; up to 4 cards per page so the layout breathes.
   const pageChunks = chunk(group.rows, 4);
@@ -689,7 +711,7 @@ function SelectionAreaPage({ group, requestUrl, brands }) {
         ...rowsForPage.map((row, idx) => e(SelectionCard, { key: `${row.sku || row.tileCode || idx}`, row, requestUrl, brands })),
       ),
       e(View, { style: styles.footer },
-        e(Text, null, 'Marble Park · Premium Bath Solutions'),
+        e(Text, null, [settings?.companyName || 'Marble Park', settings?.documentTagline].filter(Boolean).join(' · ')),
         e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}`, style: styles.pageNumber }),
       ),
     ),
@@ -807,44 +829,52 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
   );
 }
 
-// Items quoted in more than one room, with the combined quantity that will
-// be ordered and dispatched. Each room keeps its own line and price above.
-function combinedItems(lines) {
-  const map = new Map();
-  for (const line of lines) {
-    const key = String(line.productId || line.sku || '');
-    if (!key) continue;
-    const isTile = String(line.category || '').toLowerCase() === 'tiles';
-    const areaQty = isTile && Number(line.requestedArea || 0) > 0;
-    const qty = areaQty ? Number(line.requestedArea) : Number(line.qty || line.quantity || 0);
-    const unit = areaQty ? String(line.pricingUom || 'SQFT').toUpperCase() : String(line.inventoryUom || line.unit || 'PC').toUpperCase();
-    const entry = map.get(key) || { name: line.name || line.sku, code: line.internalCode || line.sku || '', unit, qty: 0, rooms: [] };
-    entry.qty += qty;
-    entry.rooms.push(`${line.area || 'General Selection'} ${Number(qty.toFixed(2))}`);
-    map.set(key, entry);
+// One row per room: what that room comes to. The rows add up to the quote total.
+function areaSummary(lines) {
+  const rows = [];
+  for (const group of groupByArea(lines)) {
+    const rates = group.rows.map((line) => rateFor(line));
+    rows.push({
+      area: group.area,
+      items: group.rows.length,
+      taxable: rates.reduce((sum, rate) => sum + rate.taxableValue, 0),
+      tax: rates.reduce((sum, rate) => sum + rate.taxAmount, 0),
+      total: rates.reduce((sum, rate) => sum + rate.amount, 0),
+    });
   }
-  return [...map.values()].filter((entry) => entry.rooms.length > 1);
+  return rows;
 }
 
-function CombinedItemsBox({ lines, compact }) {
+function AreaSummaryBox({ lines, taxMode, discounted, compact }) {
   const e = React.createElement;
-  const items = combinedItems(lines);
-  if (!items.length) return null;
+  const rows = areaSummary(lines);
+  if (rows.length < 2) return null;
+  const gst = taxMode === 'gst';
+  const sum = (key) => rows.reduce((total, row) => total + row[key], 0);
+  const cols = gst ? { area: '44%', items: '10%', taxable: '17%', tax: '13%', total: '16%' } : { area: '64%', items: '12%', total: '24%' };
+  const right = { textAlign: 'right' };
+  const cells = (row, bold) => [
+    e(Text, { key: 'a', style: [styles.td, { width: cols.area, paddingRight: 6 }, bold ? { fontWeight: 900 } : null] }, row.area),
+    e(Text, { key: 'i', style: [styles.td, { width: cols.items }, right] }, String(row.items)),
+    gst ? e(Text, { key: 't', style: [styles.td, { width: cols.taxable }, right] }, money(row.taxable)) : null,
+    gst ? e(Text, { key: 'g', style: [styles.td, { width: cols.tax }, right] }, money(row.tax)) : null,
+    e(Text, { key: 'v', style: [styles.td, { width: cols.total, fontWeight: 900 }, right] }, money(row.total)),
+  ];
   return e(View, { style: [styles.areaBlock, compact ? styles.areaBlockCompact : null], wrap: false },
     e(View, { style: styles.areaHeader },
-      e(Text, { style: styles.areaTitle }, 'Same item in more than one room'),
-      e(Text, { style: styles.areaCount }, `${items.length} item(s)`),
+      e(Text, { style: styles.areaTitle }, 'Summary by area'),
+      e(Text, { style: styles.areaCount }, `${rows.length} areas${discounted ? ' · after quote discount' : ''}`),
     ),
     e(View, { style: styles.tableHeader },
-      e(Text, { style: [styles.th, { width: '40%' }] }, 'Item'),
-      e(Text, { style: [styles.th, { width: '42%' }] }, 'Rooms'),
-      e(Text, { style: [styles.th, { width: '18%', textAlign: 'right' }] }, 'Total qty'),
+      e(Text, { style: [styles.th, { width: cols.area }] }, 'Area'),
+      e(Text, { style: [styles.th, { width: cols.items }, right] }, 'Items'),
+      gst ? e(Text, { style: [styles.th, { width: cols.taxable }, right] }, 'Taxable') : null,
+      gst ? e(Text, { style: [styles.th, { width: cols.tax }, right] }, 'GST') : null,
+      e(Text, { style: [styles.th, { width: cols.total }, right] }, 'Area total'),
     ),
-    ...items.map((item, index) => e(View, { key: `${item.code}-${index}`, style: [styles.tableRow, { minHeight: 0 }] },
-      e(View, { style: { width: '40%', paddingRight: 6 } }, e(Text, { style: styles.td }, item.name), item.code ? e(Text, { style: styles.meta }, item.code) : null),
-      e(Text, { style: [styles.td, { width: '42%' }] }, item.rooms.join('  ·  ')),
-      e(Text, { style: [styles.td, { width: '18%', textAlign: 'right', fontWeight: 900 }] }, `${Number(item.qty.toFixed(2))} ${item.unit}`),
-    )),
+    ...rows.map((row, index) => e(View, { key: `${row.area}-${index}`, style: [styles.tableRow, { minHeight: 0 }] }, ...cells(row, false))),
+    e(View, { style: [styles.tableRow, { minHeight: 0, backgroundColor: '#faf4ec', borderBottomWidth: 0 }] },
+      ...cells({ area: 'Total', items: sum('items'), taxable: sum('taxable'), tax: sum('tax'), total: sum('total') }, true)),
   );
 }
 
@@ -869,13 +899,13 @@ function PricedDocumentBody(payload, requestUrl) {
   const total = pricedLines.reduce((sum, rate) => sum + rate.amount, 0);
   const gstOnTop = pricedLines.some((rate) => rate.gstOnTop);
   const DEFAULT_TERMS = 'Prices are valid until the quote validity date. Installation, unloading, plumbing and civil work are excluded unless mentioned.';
-  const rawTermsSource = quoteMeta.terms || settings.defaultTerms || DEFAULT_TERMS;
+  const rawTermsSource = quoteTerms(quoteMeta, settings, DEFAULT_TERMS);
   const rawTerms = String(rawTermsSource)
     .replace(/\s*Delivery depends on stock availability\.\s*/gi, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim() || DEFAULT_TERMS;
   const terms = taxMode === 'non_gst' ? String(rawTerms).split('\n').filter((line) => !/\bGST\b/i.test(line)).join('\n') : rawTerms;
-  const bank = quoteMeta.bankDetails || settings.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
+  const bank = quoteBank(quoteMeta, settings);
   const rawRemarks = String(quoteMeta.remarks || quote.notes || '').trim();
   const remarks = !rawRemarks || /^prepared from quote studio\.?$/i.test(rawRemarks)
     ? 'Selections can be revised area-wise before final order confirmation.'
@@ -895,7 +925,7 @@ function PricedDocumentBody(payload, requestUrl) {
         ),
       ),
       e(View, { style: styles.quoteIdentity },
-        e(Text, { style: styles.quoteTitle }, `${typeLabel}\nQUOTATION`),
+        e(Text, { style: styles.quoteTitle }, `${typeLabel}\n${documentTitle(settings)}`),
         e(Text, { style: styles.quoteDate }, `Date: ${fmtDate(quote.createdAt) || fmtDate(new Date())}`),
       ),
     ),
@@ -927,7 +957,7 @@ function PricedDocumentBody(payload, requestUrl) {
     ...groups.map((group) => quoteType === 'tile'
       ? e(TileAreaTable, { key: group.area, group, requestUrl, brands: payload.brands, compact })
       : e(PricedAreaTable, { key: group.area, group, showPrices: true, requestUrl, taxMode, brands: payload.brands, compact })),
-    e(CombinedItemsBox, { lines, compact }),
+    e(AreaSummaryBox, { lines, taxMode, discounted: discountAmount > 0, compact }),
     e(View, { style: [styles.totalsWrap, compact ? styles.totalsWrapCompact : null], wrap: false },
       e(View, { style: [styles.notesBox, compact ? styles.notesBoxCompact : null] },
         e(Text, { style: styles.label }, 'Remarks'),
@@ -1037,14 +1067,14 @@ function buildDocument(payload, requestUrl) {
   const isSelection = quote.displayMode === 'selection' || quoteMeta.layout === 'selection';
 
   if (isSelection) {
-    const terms = quoteMeta.terms || settings?.defaultTerms || 'Selection summary is for design coordination only. Final pricing, taxes, and delivery terms will be confirmed when the order is placed. Tile codes and shades may have small lot variations.';
-    const bank = quoteMeta.bankDetails || settings?.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.';
+    const terms = quoteTerms(quoteMeta, settings, 'Selection summary is for design coordination only. Final pricing, taxes, and delivery terms will be confirmed when the order is placed. Tile codes and shades may have small lot variations.');
+    const bank = quoteBank(quoteMeta, settings);
     if (lines.length <= 4) {
       return e(Document, null, e(CompactSelectionDocument, { payload, requestUrl }));
     }
     return e(Document, null,
       e(CoverPage, { quote, settings, requestUrl, quoteMeta }),
-      ...groups.flatMap((group) => SelectionAreaPage({ group, requestUrl, brands: payload.brands })),
+      ...groups.flatMap((group) => SelectionAreaPage({ group, requestUrl, brands: payload.brands, settings })),
       e(ClosingPage, { payload, settings, terms, bank, quoteMeta, requestUrl }),
     );
   }

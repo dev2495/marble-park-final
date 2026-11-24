@@ -133,6 +133,18 @@ const quoteInclude = {
   owner: { select: { id: true, name: true, email: true, role: true, phone: true, active: true } },
 } as any;
 
+// Text the system once wrote into every saved quote. It was never typed by a
+// person, so it is dropped and the document falls back to Settings.
+const LEGACY_QUOTE_TEXT = new Set([
+  'Prices are valid until the quote validity date. Installation, civil work and unloading are excluded unless mentioned.',
+  'Prices are valid until the quote validity date. Delivery depends on stock availability. Installation, civil work and unloading are excluded unless mentioned.',
+  'Bank details will be shared by Marble Park accounts team at order confirmation.',
+]);
+export function quoteOwnText(value: unknown): string {
+  const text = String(value ?? '').trim();
+  return text && !LEGACY_QUOTE_TEXT.has(text) ? text : '';
+}
+
 @Injectable()
 export class QuotesService {
   constructor(
@@ -2592,11 +2604,13 @@ export class QuotesService {
       preparedBy: parsed.preparedBy || '',
       showBrandLogos: parsed.showBrandLogos !== false,
       selectedBrandIds: Array.isArray(parsed.selectedBrandIds) ? parsed.selectedBrandIds.map(String) : undefined,
-      terms: parsed.terms || 'Prices are valid until the quote validity date. Installation, civil work and unloading are excluded unless mentioned.',
-      bankDetails: parsed.bankDetails || 'Bank details will be shared by Marble Park accounts team at order confirmation.',
       remarks: parsed.remarks && !/^prepared from quote studio\.?$/i.test(String(parsed.remarks).trim()) ? parsed.remarks : '',
       areas,
       ...parsed,
+      // Terms and bank details are kept only when typed for this quote; an
+      // empty value means the document uses the current Settings text.
+      terms: quoteOwnText(parsed.terms),
+      bankDetails: quoteOwnText(parsed.bankDetails),
     };
   }
 
