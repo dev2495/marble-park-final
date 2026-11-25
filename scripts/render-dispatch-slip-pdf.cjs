@@ -2,6 +2,20 @@
 const React = require('react');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
 
+// Long codes have no spaces; a hair-space break point after each separator
+// (and inside very long runs) lets them wrap inside their column.
+const CODE_GAP = '\u200A';
+function breakable(value) {
+  return String(value || '')
+    .replace(/([-\/_.,])(?=\S)/g, `$1${CODE_GAP}`)
+    .replace(/([^\s\u200A]{10})(?=[^\s\u200A])/g, `$1${CODE_GAP}`);
+}
+// Pass as hyphenationCallback: the hair spaces become plain break points, so a
+// code wraps without the extra hyphen the PDF would otherwise add.
+function codeBreaks(word) {
+  return word.split(/(\u200A)/).filter(Boolean);
+}
+
 const s = StyleSheet.create({
   page: { padding: 34, fontFamily: 'Helvetica', color: '#202020', backgroundColor: '#ffffff' },
   rule: { height: 4, backgroundColor: '#9f2924', marginBottom: 18 },
@@ -16,7 +30,7 @@ const s = StyleSheet.create({
   label: { fontSize: 7, fontWeight: 900, letterSpacing: 1.2, textTransform: 'uppercase', color: '#9f2924' }, value: { marginTop: 5, fontSize: 11, fontWeight: 900 },
   metaGrid: { marginTop: 14, flexDirection: 'row', flexWrap: 'wrap', borderWidth: 1, borderColor: '#dedede' }, metaCell: { width: '50%', minHeight: 45, padding: 10, borderBottomWidth: 1, borderRightWidth: 1, borderColor: '#eeeeee' },
   table: { marginTop: 18, borderWidth: 1, borderColor: '#dedede' }, tr: { flexDirection: 'row', minHeight: 34, paddingHorizontal: 8, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#eeeeee' }, th: { backgroundColor: '#202020', color: '#ffffff' },
-  c1: { width: '8%', fontSize: 7 }, c2: { width: '20%', fontSize: 7 }, c3: { width: '46%', fontSize: 7 }, c4: { width: '12%', fontSize: 7, textAlign: 'right' }, c5: { width: '14%', fontSize: 7, textAlign: 'right' },
+  c1: { width: '8%', fontSize: 7 }, c2: { width: '20%', fontSize: 7, paddingRight: 8 }, c3: { width: '46%', fontSize: 7, paddingRight: 8 }, c4: { width: '12%', fontSize: 7, textAlign: 'right' }, c5: { width: '14%', fontSize: 7, textAlign: 'right' },
   remarks: { marginTop: 16, minHeight: 52, borderWidth: 1, borderColor: '#dedede', padding: 11 },
   signatures: { marginTop: 48, flexDirection: 'row', justifyContent: 'space-between' }, sign: { width: '42%', borderTopWidth: 1, borderTopColor: '#777777', paddingTop: 7, fontSize: 8, color: '#666666' },
   footer: { position: 'absolute', left: 34, right: 34, bottom: 20, borderTopWidth: 1, borderTopColor: '#dedede', paddingTop: 7, flexDirection: 'row', justifyContent: 'space-between', fontSize: 7, color: '#777777' },
@@ -43,7 +57,7 @@ function build({ challan, settings }, requestUrl) {
     ),
     e(View, { style: s.panels }, e(View, { style: s.panel }, e(Text, { style: s.label }, 'Dispatch to'), e(Text, { style: s.value }, challan.customer?.name || 'Customer'), e(Text, { style: s.small }, challan.siteAddress || challan.customer?.siteAddress || ''), e(Text, { style: s.small }, challan.customer?.mobile || challan.customer?.phone || '')), e(View, { style: s.panel }, e(Text, { style: s.label }, 'References'), e(Text, { style: s.value }, challan.salesOrder?.orderNumber || challan.quote?.quoteNumber || '-'), e(Text, { style: s.small }, `Prepared: ${date(challan.createdAt)}`), challan.dispatchedAt ? e(Text, { style: s.small }, `Dispatched: ${date(challan.dispatchedAt)}`) : null)),
     e(View, { style: s.metaGrid }, e(View, { style: s.metaCell }, e(Text, { style: s.label }, 'Transporter'), e(Text, { style: s.value }, challan.transporterName || '-')), e(View, { style: s.metaCell }, e(Text, { style: s.label }, 'Vehicle'), e(Text, { style: s.value }, challan.vehicleNumber || '-')), e(View, { style: s.metaCell }, e(Text, { style: s.label }, 'Driver'), e(Text, { style: s.value }, challan.driverName || '-')), e(View, { style: s.metaCell }, e(Text, { style: s.label }, 'Contact'), e(Text, { style: s.value }, challan.contactPhone || '-'))),
-    e(View, { style: s.table }, e(View, { style: [s.tr, s.th] }, e(Text, { style: s.c1 }, '#'), e(Text, { style: s.c2 }, 'SKU / CODE'), e(Text, { style: s.c3 }, 'ITEM'), e(Text, { style: s.c4 }, 'QTY'), e(Text, { style: s.c5 }, 'UNIT')), ...lines.map((line, index) => e(View, { key: line.pickLineId || index, style: s.tr, wrap: false }, e(Text, { style: s.c1 }, String(index + 1)), e(Text, { style: s.c2 }, line.sku || ''), e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')), e(Text, { style: s.c4 }, String(line.dispatchQty || 0)), e(Text, { style: s.c5 }, line.unit || 'PC')))),
+    e(View, { style: s.table }, e(View, { style: [s.tr, s.th] }, e(Text, { style: s.c1 }, '#'), e(Text, { style: s.c2 }, 'SKU / CODE'), e(Text, { style: s.c3 }, 'ITEM'), e(Text, { style: s.c4 }, 'QTY'), e(Text, { style: s.c5 }, 'UNIT')), ...lines.map((line, index) => e(View, { key: line.pickLineId || index, style: s.tr, wrap: false }, e(Text, { style: s.c1 }, String(index + 1)), e(Text, { style: s.c2, hyphenationCallback: codeBreaks }, breakable(line.sku || '')), e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')), e(Text, { style: s.c4 }, String(line.dispatchQty || 0)), e(Text, { style: s.c5 }, line.unit || 'PC')))),
     e(View, { style: s.remarks }, e(Text, { style: s.label }, 'Remarks'), e(Text, { style: s.small }, challan.remarks || 'Goods dispatched in the quantities listed above.')), e(View, { style: s.signatures }, e(Text, { style: s.sign }, 'Warehouse authorised signatory'), e(Text, { style: s.sign }, 'Customer acknowledgement')), e(View, { style: s.footer }, e(Text, null, settings.supportPhone || settings.supportEmail || ''), e(Text, { render: ({ pageNumber, totalPages }) => `${pageNumber}/${totalPages}` })),
   ));
 }

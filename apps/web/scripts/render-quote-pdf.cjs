@@ -86,7 +86,7 @@ const styles = StyleSheet.create({
   companyLogo: { width: 58, height: 56, objectFit: 'contain' },
   brandWrap: { width: '64%', flexDirection: 'row', gap: 10, alignItems: 'center' },
   brand: { fontSize: 23, fontWeight: 900, letterSpacing: 1.6 },
-  subBrand: { marginTop: 3, fontSize: 7.5, color: colors.tan, letterSpacing: 3.4, textTransform: 'uppercase' },
+  subBrand: { marginTop: 3, fontSize: 7.5, color: colors.tan, letterSpacing: 2.2, lineHeight: 1.3, textTransform: 'uppercase' },
   companyMeta: { marginTop: 2, maxWidth: 245, fontSize: 6.8, color: colors.muted, lineHeight: 1.3 },
   quoteIdentity: { width: '33%', alignItems: 'flex-end' },
   quoteTitle: { maxWidth: 182, fontSize: 12.5, lineHeight: 1.15, fontWeight: 900, textAlign: 'right', letterSpacing: 0.4 },
@@ -460,7 +460,30 @@ function productCodeFor(line) {
 }
 
 function identityCodesFor(line, brands) {
-  return [...new Set([productCodeFor(line), brandCodeFor(line, brands)].filter(Boolean))].join(' · ');
+  return breakable([...new Set([productCodeFor(line), brandCodeFor(line, brands)].filter(Boolean))].join(' · '));
+}
+
+// Long codes such as MP-T-0498-1200X600-2PC-2-MARBLE-SURFACE have no spaces, so
+// the PDF cannot wrap them and they run into the next column. A hair-space
+// break point after each separator (and inside very long runs) lets them wrap.
+const CODE_GAP = '\u200A';
+function breakable(value) {
+  return String(value || '')
+    .replace(/([-\/_.,])(?=\S)/g, `$1${CODE_GAP}`)
+    .replace(/([^\s\u200A]{10})(?=[^\s\u200A])/g, `$1${CODE_GAP}`);
+}
+// Pass as hyphenationCallback: the hair spaces become plain break points, so a
+// code wraps without the extra hyphen the PDF would otherwise add.
+function codeBreaks(word) {
+  return word.split(/(\u200A)/).filter(Boolean);
+}
+
+// The finish (Chrome, Graphite Grey, Matt…) when the product has one and its
+// name does not already say it.
+function finishFor(line) {
+  const finish = String(line.finish || '').trim();
+  if (!finish || /^(na|n\/a|none|-|—)$/i.test(finish)) return '';
+  return String(line.name || '').toLowerCase().includes(finish.toLowerCase()) ? '' : finish;
 }
 
 function BrandStrip({ payload, quoteMeta, requestUrl }) {
@@ -652,11 +675,15 @@ function SelectionCard({ row, requestUrl, brands, compact = false }) {
       e(Text, { style: styles.cardLabelKey }, 'Size '), ':- ',
       e(Text, { style: styles.cardLabelValueBlack }, size),
     ),
-    e(Text, { style: styles.cardLabelRow },
+    e(Text, { style: styles.cardLabelRow, hyphenationCallback: codeBreaks },
       e(Text, { style: styles.cardLabelKey }, 'Design Name '), ':- ',
-      e(Text, { style: styles.cardLabelValueBlack }, designName),
+      e(Text, { style: styles.cardLabelValueBlack, hyphenationCallback: codeBreaks }, breakable(designName)),
     ),
-    identityCodes ? e(Text, { style: styles.meta }, identityCodes) : null,
+    finishFor(row) ? e(Text, { style: styles.cardLabelRow },
+      e(Text, { style: styles.cardLabelKey }, 'Finish '), ':- ',
+      e(Text, { style: styles.cardLabelValueBlack }, finishFor(row)),
+    ) : null,
+    identityCodes ? e(Text, { style: styles.meta, hyphenationCallback: codeBreaks }, identityCodes) : null,
     e(View, { style: [styles.cardImageWrap, compact ? styles.cardImageWrapCompact : null] },
       src
         ? e(Image, { src, style: styles.cardImage })
@@ -762,7 +789,8 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
         ),
         e(View, { style: styles.descCol },
           e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
-          identityCodes ? e(Text, { style: styles.meta }, identityCodes) : null,
+          finishFor(line) ? e(Text, { style: styles.meta }, `Finish: ${finishFor(line)}`) : null,
+          identityCodes ? e(Text, { style: styles.meta, hyphenationCallback: codeBreaks }, identityCodes) : null,
         ),
         e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
@@ -809,8 +837,9 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
         e(View, { style: styles.tileDescCol },
           e(Text, { style: styles.td }, line.name || line.description || line.sku || line.tileCode || 'Selection item'),
           size && !String(line.name || '').includes(size) ? e(Text, { style: styles.meta }, size) : null,
+          finishFor(line) ? e(Text, { style: styles.meta }, `Finish: ${finishFor(line)}`) : null,
           requestedQuantityLabel(line) ? e(Text, { style: styles.meta }, requestedQuantityLabel(line)) : null,
-          identityCodes ? e(Text, { style: styles.meta }, identityCodes) : null,
+          identityCodes ? e(Text, { style: styles.meta, hyphenationCallback: codeBreaks }, identityCodes) : null,
         ),
         e(Text, { style: [styles.td, styles.tileFulfilCol] }, fulfilment),
         e(Text, { style: [styles.td, styles.tileCoverageCol] }, isTile
@@ -918,10 +947,10 @@ function PricedDocumentBody(payload, requestUrl) {
     e(View, { style: styles.header },
       e(View, { style: styles.brandWrap },
         companyLogo ? e(View, { style: styles.companyLogoBox }, e(Image, { src: companyLogo, style: styles.companyLogo })) : e(View, { style: styles.logoBox }, e(Text, { style: styles.logoText }, 'MP')),
-        e(View, null,
+        e(View, { style: { flex: 1 } },
           e(Text, { style: styles.brand }, settings.companyName || 'MARBLE PARK'),
           e(Text, { style: styles.subBrand }, settings.documentTagline || 'Premium Bath & Surface Studio'),
-          contactLine ? e(Text, { style: styles.companyMeta }, contactLine) : null,
+          contactLine ? e(Text, { style: styles.companyMeta, hyphenationCallback: codeBreaks }, contactLine) : null,
         ),
       ),
       e(View, { style: styles.quoteIdentity },
@@ -1039,7 +1068,7 @@ function ArchitectBundleDocument({ payload, requestUrl }) {
               e(View, { style: bundleStyles.imageWrap }, src ? e(Image, { src, style: bundleStyles.image }) : e(Text, { style: bundleStyles.noImage }, 'Image not available')),
               e(View, { style: bundleStyles.body },
                 e(Text, { style: bundleStyles.name }, line.name || line.sku || 'Selected item'),
-                e(Text, { style: bundleStyles.line }, identityCodesFor(line, payload.brands) || line.sku || ''),
+                e(Text, { style: bundleStyles.line, hyphenationCallback: codeBreaks }, identityCodesFor(line, payload.brands) || breakable(line.sku)),
                 e(Text, { style: bundleStyles.line }, [line.brand, line.finish, size && !String(line.name || '').includes(size) ? size : '', quantity(line)].filter(Boolean).join(' · ')),
               ),
             );

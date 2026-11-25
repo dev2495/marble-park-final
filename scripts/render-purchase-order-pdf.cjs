@@ -2,6 +2,20 @@
 const React = require('react');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
 
+// Long codes have no spaces; a hair-space break point after each separator
+// (and inside very long runs) lets them wrap inside their column.
+const CODE_GAP = '\u200A';
+function breakable(value) {
+  return String(value || '')
+    .replace(/([-\/_.,])(?=\S)/g, `$1${CODE_GAP}`)
+    .replace(/([^\s\u200A]{10})(?=[^\s\u200A])/g, `$1${CODE_GAP}`);
+}
+// Pass as hyphenationCallback: the hair spaces become plain break points, so a
+// code wraps without the extra hyphen the PDF would otherwise add.
+function codeBreaks(word) {
+  return word.split(/(\u200A)/).filter(Boolean);
+}
+
 const s = StyleSheet.create({
   page: { padding: 34, fontFamily: 'Helvetica', color: '#211b16', backgroundColor: '#fffdf9' },
   pageCompact: { paddingTop: 24, paddingLeft: 28, paddingRight: 28, paddingBottom: 28 },
@@ -25,7 +39,7 @@ const s = StyleSheet.create({
   tr: { flexDirection: 'row', minHeight: 32, borderBottomWidth: 1, borderBottomColor: '#eee7e1', paddingHorizontal: 7, paddingVertical: 7 },
   trCompact: { minHeight: 24, paddingVertical: 5 },
   th: { backgroundColor: '#211b16', color: '#ffffff' },
-  c1: { width: '8%', fontSize: 7 }, c2: { width: '18%', fontSize: 7 }, c3: { width: '34%', fontSize: 7 }, c4: { width: '10%', fontSize: 7, textAlign: 'right' }, c5: { width: '14%', fontSize: 7, textAlign: 'right' }, c6: { width: '16%', fontSize: 7, textAlign: 'right' },
+  c1: { width: '5%', fontSize: 7 }, c2: { width: '22%', fontSize: 7, paddingRight: 8 }, c3: { width: '33%', fontSize: 7, paddingRight: 8 }, c4: { width: '10%', fontSize: 7, textAlign: 'right' }, c5: { width: '15%', fontSize: 7, textAlign: 'right' }, c6: { width: '15%', fontSize: 7, textAlign: 'right' },
   totalBlock: { marginTop: 14, marginLeft: 'auto', width: 240, borderTopWidth: 2, borderTopColor: '#211b16', paddingTop: 9 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4, fontSize: 10 },
   totalStrong: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, fontSize: 13, fontWeight: 900 },
@@ -115,8 +129,8 @@ function build({ order, settings }, requestUrl) {
         const lineValue = Number(line.metadata?.lineGross || 0) > 0 ? Number(line.metadata.lineGross) : baseQuantity * Number(line.unitCost || 0);
         return e(View, { key: line.id || index, style: [s.tr, compact ? s.trCompact : null], wrap: false },
           e(Text, { style: s.c1 }, String(index + 1)),
-          e(Text, { style: s.c2 }, line.metadata?.internalCode || line.sku || ''),
-          e(Text, { style: s.c3 }, [line.name, line.brand, line.finish].filter(Boolean).join(' · ')),
+          e(Text, { style: s.c2, hyphenationCallback: codeBreaks }, breakable(line.metadata?.internalCode || line.sku || '')),
+          e(Text, { style: s.c3, hyphenationCallback: codeBreaks }, breakable([line.name, line.brand, line.finish].filter(Boolean).join(' · '))),
           e(Text, { style: s.c4 }, `${displayQuantity} ${displayUom}`),
           e(Text, { style: s.c5 }, known ? `${money(displayRate)} / ${displayUom}` : 'Pending supplier rate'),
           e(Text, { style: s.c6 }, known ? money(lineValue) : 'Pending'),

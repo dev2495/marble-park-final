@@ -2,6 +2,20 @@
 const React = require('react');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
 
+// Long codes have no spaces; a hair-space break point after each separator
+// (and inside very long runs) lets them wrap inside their column.
+const CODE_GAP = '\u200A';
+function breakable(value) {
+  return String(value || '')
+    .replace(/([-\/_.,])(?=\S)/g, `$1${CODE_GAP}`)
+    .replace(/([^\s\u200A]{10})(?=[^\s\u200A])/g, `$1${CODE_GAP}`);
+}
+// Pass as hyphenationCallback: the hair spaces become plain break points, so a
+// code wraps without the extra hyphen the PDF would otherwise add.
+function codeBreaks(word) {
+  return word.split(/(\u200A)/).filter(Boolean);
+}
+
 const colors = {
   ink: '#171412',
   paper: '#fffaf2',
@@ -260,10 +274,8 @@ async function fetchOrder(id, apiUrl) {
     owner: order.owner || null,
     settings: data.documentSettings?.data || null,
     products: [],
-    reservations: normalizeLines(order.lines).map((line) => ({
-      productId: line.productId,
-      status: line.inventoryStatus || line.reservationStatus || line.stockStatus || 'reserved',
-    })),
+    // Stock held for this order per product: quantity reserved against quantity still on backorder.
+    reservations: Array.isArray(order.reservations) ? order.reservations : null,
     challans: [],
   };
 }
@@ -272,13 +284,24 @@ function buildDocument(payload, requestUrl) {
   const e = React.createElement;
   const { order, quote, customer, owner, settings, products, reservations, challans, logoData } = payload;
   const productMap = new Map((products || []).map((product) => [product.id, product]));
-  const reservationMap = new Map((reservations || []).map((reservation) => [reservation.productId, reservation]));
+  const reservationMap = new Map();
+  for (const reservation of reservations || []) {
+    const entry = reservationMap.get(reservation.productId) || { reserved: 0, waiting: 0 };
+    if (reservation.status === 'reserved') entry.reserved += Number(reservation.quantity || 0);
+    else entry.waiting += Number(reservation.quantity || 0);
+    reservationMap.set(reservation.productId, entry);
+  }
   const dispatchedMap = aggregateChallanQty(challans);
   const lines = normalizeLines(order.lines);
   const groups = groupByArea(lines);
   const priced = lines.map(linePricing);
   const exact = priced.some((line) => line.modern);
   const subtotal = priced.reduce((sum, line) => sum + line.amount, 0);
+  // GST split, when the lines carry it: GST on top (quotes since GST-on-top) or included.
+  const taxable = lines.reduce((sum, line) => sum + Number(line.taxableValue || 0), 0);
+  const gst = lines.reduce((sum, line) => sum + Number(line.taxAmount || 0), 0);
+  const gstOnTop = lines.some((line) => String(line.taxTreatment || '').toUpperCase() === 'EXCLUSIVE');
+  const showGst = exact && taxable > 0 && gst > 0;
   const advance = Number(order.advanceAmount || 0);
   const balance = Math.max(0, Number(order.totalAmount || subtotal) - advance);
   const companyName = settings?.companyName || 'Marble Park';
@@ -291,14 +314,21 @@ function buildDocument(payload, requestUrl) {
     const pricing = linePricing(line);
     const dispatched = dispatchedMap.get(key) || 0;
     const remaining = Math.max(0, qty - dispatched);
-    const reservation = line.productId ? reservationMap.get(line.productId) : null;
-    const ready = !line.productId || reservation?.status === 'reserved';
+    const stock = line.productId ? reservationMap.get(line.productId) : null;
+    // Without reservation data (older API) nothing is claimed as reserved.
+    const stockLabel = !line.productId ? 'Ready'
+      : remaining <= 0 && dispatched > 0 ? 'Dispatched'
+      : !stock ? 'Pending'
+      : stock.waiting <= 0 && stock.reserved > 0 ? 'Reserved'
+      : stock.reserved > 0 ? `Part: ${stock.reserved} held`
+      : 'Awaiting stock';
+    const ready = stockLabel === 'Reserved' || stockLabel === 'Ready' || stockLabel === 'Dispatched';
     const src = imageSrc(line, product, requestUrl);
     return e(View, { key: `${key}-${line.name}-${Math.random()}`, style: styles.row },
       e(View, { style: styles.imageCol }, src ? e(Image, { src, style: styles.image }) : e(Text, { style: styles.small }, 'No image')),
       e(View, { style: styles.descCol },
         e(Text, { style: { ...styles.td, fontWeight: 900 } }, line.name || product?.name || 'Item'),
-        e(Text, { style: styles.sku }, line.sku || product?.sku || ''),
+        e(Text, { style: styles.sku, hyphenationCallback: codeBreaks }, breakable(line.sku || product?.sku || '')),
         e(Text, { style: styles.meta }, [line.finish || product?.finish, line.dimensions || product?.dimensions, line.unit || product?.unit].filter(Boolean).join(' | ')),
         pricing.modern && pricing.unit !== String(line.unit || '').toUpperCase() ? e(Text, { style: styles.meta }, `Billed: ${quantityText(pricing.billed)} ${pricing.unit}`) : null,
       ),
@@ -307,7 +337,7 @@ function buildDocument(payload, requestUrl) {
         ? `${pricing.mrp == null ? '-' : money(pricing.mrp, true)}\n${money(pricing.rate, true)}\n/${pricing.unit}`
         : `${pricing.mrp == null ? '-' : money(pricing.mrp)}\n${money(pricing.rate)}`),
       e(Text, { style: [styles.td, styles.moneyCol] }, money(pricing.amount, pricing.modern)),
-      e(Text, { style: [styles.td, styles.statusCol, ready ? styles.statusReady : styles.statusBackorder] }, ready ? 'Reserved' : 'Pending'),
+      e(Text, { style: [styles.td, styles.statusCol, ready ? styles.statusReady : styles.statusBackorder] }, stockLabel),
       e(Text, { style: [styles.td, styles.qtyCol] }, String(dispatched)),
       e(Text, { style: [styles.td, styles.qtyCol] }, String(remaining)),
     );
@@ -365,12 +395,14 @@ function buildDocument(payload, requestUrl) {
       e(View, { style: styles.totalsWrap },
         e(View, { style: styles.notes },
           e(Text, { style: styles.label }, 'Dispatch instructions'),
-          e(Text, { style: styles.small }, 'Dispatch may be split line by line. Rows marked Pending cannot be dispatched until matching inward stock is received and reserved. Use this document to mark sent and balance quantities.'),
+          e(Text, { style: styles.small }, 'Dispatch may be split line by line. Rows marked Awaiting stock or Part cannot be fully dispatched until inward stock is received and reserved. Use this document to mark sent and balance quantities.'),
           e(Text, { style: [styles.label, { marginTop: 10 }] }, 'Notes'),
           e(Text, { style: styles.small }, order.notes || quote?.notes || 'No special notes.'),
         ),
         e(View, { style: styles.totals },
-          e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal, exact))),
+          showGst ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Taxable value'), e(Text, { style: styles.totalValue }, money(taxable, exact))) : null,
+          showGst ? e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, gstOnTop ? 'Add: GST' : 'GST (included)'), e(Text, { style: styles.totalValue }, money(gst, exact))) : null,
+          showGst ? null : e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Subtotal'), e(Text, { style: styles.totalValue }, money(subtotal, exact))),
           e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Order total'), e(Text, { style: styles.totalValue }, money(order.totalAmount || subtotal, exact))),
           e(View, { style: styles.totalRow }, e(Text, { style: styles.totalLabel }, 'Advance'), e(Text, { style: styles.totalValue }, money(advance, exact))),
           e(View, { style: styles.grand }, e(View, { style: styles.totalRow }, e(Text, { style: styles.grandText }, 'Balance'), e(Text, { style: styles.grandText }, money(balance, exact)))),

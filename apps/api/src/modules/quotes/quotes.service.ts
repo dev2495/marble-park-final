@@ -857,14 +857,10 @@ export class QuotesService {
     } as any) as any;
   }
 
-  private async assertCustomerCreditAvailableTx(tx: any, customerId: string, additionalAmount: number) {
+  // What a customer already owes or has committed on credit, against their limit.
+  private async customerCreditPositionTx(tx: any, customerId: string) {
     const profile = await tx.customerCreditProfile.findUnique({ where: { customerId } });
-    if (profile?.creditHold) {
-      throw new BadRequestException(profile.holdReason || 'This customer is on credit hold. Release the hold before creating a credit sales order.');
-    }
     const creditLimit = Number(profile?.creditLimit || 0);
-    if (creditLimit <= 0) return;
-
     const [ledger, creditOrders] = await Promise.all([
       tx.customerLedgerEntry.aggregate({
         where: { customerId },
@@ -889,9 +885,31 @@ export class QuotesService {
       0,
     );
     const ledgerExposure = Number(ledger._sum.debit || 0) - Number(ledger._sum.credit || 0);
-    const currentExposure = Math.max(0, ledgerExposure + unbilledCommitment);
-    if (currentExposure + additionalAmount > creditLimit + 0.01) {
-      throw new BadRequestException(`Credit limit exceeded. Current committed exposure is ₹${currentExposure.toFixed(2)} against a limit of ₹${creditLimit.toFixed(2)}.`);
+    const exposure = Math.max(0, ledgerExposure + unbilledCommitment);
+    return {
+      creditHold: Boolean(profile?.creditHold),
+      holdReason: profile?.holdReason || '',
+      creditLimit,
+      exposure: Number(exposure.toFixed(2)),
+      available: creditLimit > 0 ? Number(Math.max(0, creditLimit - exposure).toFixed(2)) : null,
+    };
+  }
+
+  /** Credit room shown on the direct order desk before choosing Credit. */
+  async customerCreditPosition(customerId: string) {
+    const id = String(customerId || '').trim();
+    if (!id) throw new BadRequestException('Select a customer.');
+    return this.customerCreditPositionTx(this.prisma, id);
+  }
+
+  private async assertCustomerCreditAvailableTx(tx: any, customerId: string, additionalAmount: number) {
+    const position = await this.customerCreditPositionTx(tx, customerId);
+    if (position.creditHold) {
+      throw new BadRequestException(position.holdReason || 'This customer is on credit hold. Release the hold before creating a credit sales order.');
+    }
+    if (position.creditLimit <= 0) return;
+    if (position.exposure + additionalAmount > position.creditLimit + 0.01) {
+      throw new BadRequestException(`Credit limit exceeded. Current committed exposure is ₹${position.exposure.toFixed(2)} against a limit of ₹${position.creditLimit.toFixed(2)}.`);
     }
   }
 
@@ -1065,7 +1083,7 @@ export class QuotesService {
     throw new BadRequestException('Could not safely create this sales order. Review remaining quote quantities and try again.');
   }
 
-  async createDirectSalesOrder(input: CreateDirectSalesOrderInput, actorUserId: string) {
+  async createDirectSalesOrder(input: CreateDirectSalesOrderInput, actorUserId: string, actorRole = '') {
     const customerId = String(input.customerId || '').trim();
     const ownerId = String(input.ownerId || '').trim();
     if (!customerId) throw new BadRequestException('Select a customer.');
@@ -1078,8 +1096,19 @@ export class QuotesService {
     if (!owner || !owner.active || !['sales', 'sales_manager', 'owner', 'admin'].includes(owner.role)) {
       throw new BadRequestException('Select an active sales user.');
     }
-    const asserted = await this.persistQuoteLineImages(await this.assertQuoteLines(input.lines, 'creating a direct sales order', true));
+    // Same rules as a quote: Product Master MRP and unit, GST added on top.
+    const asserted = this.withTaxTreatment(
+      await this.persistQuoteLineImages(await this.assertQuoteLines(input.lines, 'creating a direct sales order', true)),
+      'EXCLUSIVE',
+    );
     const commercial = priceQuoteLines(asserted, 0, { requireMrp: true });
+    // A below-floor rate needs the owner's approval on a quote. A direct order
+    // has no approval step, so only the owner or an admin may place one.
+    const floorOverride = Boolean(commercial.requiresApproval);
+    if (floorOverride && !['owner', 'admin'].includes(String(actorRole))) {
+      const breach = commercial.floorBreaches?.[0];
+      throw new BadRequestException(`${breach?.sku || 'A line'} is below the owner floor rate${breach ? ` (₹${Number(breach.floorPriceInclusive).toFixed(2)})` : ''}. Raise the rate, or make a quote so the owner can approve it.`);
+    }
     const lines = this.withMrpConfirmation(commercial.lines, actorUserId);
     if (commercial.totals.grandTotal <= 0) throw new BadRequestException('A direct sales order must have a positive value.');
     const paymentMode = String(input.paymentMode || '').toLowerCase() === 'credit' ? 'credit' : 'cash';
@@ -1177,7 +1206,7 @@ export class QuotesService {
             { id: ulid(), title: 'Direct sales order created', message: `${orderNumber} is assigned to you. Track fulfilment from the order register.`, type: 'sales_order_created', entityType: 'SalesOrder', entityId: salesOrderId, targetUserId: ownerId, href: `/dashboard/orders?search=${encodeURIComponent(orderNumber)}` },
             { id: ulid(), title: 'New direct order for fulfilment', message: `${orderNumber}. Review reserved and pending-inward quantities before dispatch.`, type: 'dispatch_ready', entityType: 'SalesOrder', entityId: salesOrderId, targetRole: 'dispatch_ops', href: `/dashboard/dispatch?search=${encodeURIComponent(orderNumber)}` },
           ] });
-          await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'sales_order.direct_create', entityType: 'SalesOrder', entityId: salesOrderId, summary: `Created direct order ${orderNumber}`, metadata: { customerId, ownerId, totalAmount: commercial.totals.grandTotal } } });
+          await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'sales_order.direct_create', entityType: 'SalesOrder', entityId: salesOrderId, summary: `Created direct order ${orderNumber}`, metadata: { customerId, ownerId, totalAmount: commercial.totals.grandTotal, taxTreatment: 'EXCLUSIVE', ...(floorOverride ? { belowFloorApprovedBy: actorUserId, floorBreaches: commercial.floorBreaches } : {}) } } });
           return salesOrder;
         }, { isolationLevel: 'Serializable', timeout: 30000 });
       } catch (error: any) {
@@ -1776,7 +1805,12 @@ export class QuotesService {
         select: { id: true, name: true, email: true, role: true, phone: true, active: true },
       }),
     ]);
-    return { ...order, customer, owner };
+    // Real stock position per line, so documents never claim stock is reserved when it is on backorder.
+    const reservations = await this.prisma.reservation.findMany({
+      where: { salesOrderId: id, status: { not: 'released' } },
+      select: { productId: true, salesOrderLineId: true, quantity: true, status: true },
+    });
+    return { ...order, customer, owner, reservations };
   }
 
   async salesOrderStats(args?: { range?: string }) {

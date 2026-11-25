@@ -519,7 +519,13 @@ export class QuotesResolver {
   @Mutation(() => GraphQLJSON)
   async createDirectSalesOrder(@Args('input') input: CreateDirectSalesOrderInput, @Context() ctx: GraphqlRequestContext) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
-    return this.quotes.createDirectSalesOrder(input as any, user.id);
+    return this.quotes.createDirectSalesOrder(input as any, user.id, user.role);
+  }
+
+  @Query(() => GraphQLJSON)
+  async directOrderCustomerCredit(@Args('customerId', { type: () => ID }) customerId: string, @Context() ctx: GraphqlRequestContext) {
+    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'office_staff']);
+    return this.quotes.customerCreditPosition(customerId);
   }
 
   @Query(() => GraphQLJSON)
