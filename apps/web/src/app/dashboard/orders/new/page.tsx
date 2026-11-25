@@ -1,11 +1,12 @@
 'use client';
 
 // Direct sales order: an order without a quote. Lines are priced exactly like
-// a quote (Product Master MRP and unit, NRP, optional special, GST on top), so
-// what is shown here is what the server saves.
+// a quote (Product Master MRP and unit, NRP, optional special, GST on top or a
+// bill without GST), so what is shown here is what the server saves.
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { gql, useLazyQuery, useMutation, useQuery } from '@apollo/client';
+import type { TaxMode } from '../../quotes/_workspace/model';
 import { AlertTriangle, ArrowLeft, CheckCircle2, IndianRupee, PackagePlus, Search, Trash2, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,6 +24,7 @@ const SEARCH_PRODUCTS = gql`query DirectOrderProducts($query: String!) { globalS
 const PRODUCTS_BY_IDS = gql`query DirectOrderProductsByIds($ids: [ID!]!) { productsByIds(ids: $ids) { id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive floorPriceInclusive priceRateBasis priceUom mrpSource media status } }`;
 const STOCK = gql`query DirectOrderStock($productId: String) { inventoryBalances(productId: $productId, take: 1) { id available onHand reserved } }`;
 const CREDIT = gql`query DirectOrderCredit($customerId: ID!) { directOrderCustomerCredit(customerId: $customerId) }`;
+const ORDER_STOCK = gql`query DirectOrderCreated($id: ID!) { salesOrder(id: $id) }`;
 const CREATE = gql`mutation CreateDirectSalesOrder($input: CreateDirectSalesOrderInput!) { createDirectSalesOrder(input: $input) }`;
 
 const FLOOR_ROLES = ['owner', 'admin'];
@@ -46,6 +48,7 @@ export default function DirectSalesOrderPage() {
   const [ownerId, setOwnerId] = useState('');
   const [query, setQuery] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
+  const [taxMode, setTaxMode] = useState<TaxMode>('gst');
   const [paymentMode, setPaymentMode] = useState<'cash' | 'credit'>('cash');
   const [advanceAmount, setAdvanceAmount] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('Cash on order');
@@ -70,7 +73,8 @@ export default function DirectSalesOrderPage() {
     if (salesUsers.some((user) => user.id === me.id)) setOwnerId(me.id);
   }, [me?.id, ownerId, salesUsers]);
 
-  const pricing = useMemo(() => priceLines(lines, 'gst', 'PERCENT', 0), [lines]);
+  const pricing = useMemo(() => priceLines(lines, taxMode, 'PERCENT', 0), [lines, taxMode]);
+  const withGst = taxMode === 'gst';
   const rowByKey = useMemo(() => new Map(pricing.rows.map((row: any) => [row._k, row])), [pricing.rows]);
   const issuesByKey = useMemo(() => new Map(lines.map((line) => [line._k, lineIssues(line, rowByKey.get(line._k), quoteTypeForProduct(line))])), [lines, rowByKey]);
   const totals = useMemo(() => pricing.rows.reduce((sum: any, row: any) => ({
@@ -114,10 +118,11 @@ export default function DirectSalesOrderPage() {
         paymentTerms, notes,
         promisedDate: promisedDate ? new Date(`${promisedDate}T18:00:00`).toISOString() : undefined,
         idempotencyKey: crypto.randomUUID(),
-        lines: serializeLines(lines, rowByKey, 'gst', 'PERCENT', 0, 'EXCLUSIVE'),
+        taxMode,
+        lines: serializeLines(lines, rowByKey, taxMode, 'PERCENT', 0, 'EXCLUSIVE'),
       } } });
       setCreated(result.data?.createDirectSalesOrder);
-      setCustomer(null); setLines([]); setAdvanceAmount(''); setNotes(''); setPaymentMode('cash'); setPaymentTerms('Cash on order'); setPromisedDate(localDate(1));
+      setCustomer(null); setLines([]); setAdvanceAmount(''); setNotes(''); setPaymentMode('cash'); setTaxMode('gst'); setPaymentTerms('Cash on order'); setPromisedDate(localDate(1));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
       setValidation(describeApolloError(error, 'CreateDirectSalesOrder').message);
@@ -132,19 +137,18 @@ export default function DirectSalesOrderPage() {
       <div>
         <Link href="/dashboard/orders" className="inline-flex items-center text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]"><ArrowLeft className="mr-1.5 h-4 w-4"/>Order book</Link>
         <h1 className="mt-3 font-display text-2xl font-bold sm:text-3xl">Direct sales order</h1>
-        <p className="mt-1 max-w-2xl text-sm text-[var(--ink-3)]">For a sale without a quote. Prices follow Product Master like a quote, with GST added on top. Stock is reserved, shortfalls go to purchase, and a dispatch job is made.</p>
+        <p className="mt-1 max-w-2xl text-sm text-[var(--ink-3)]">For a sale without a quote. Prices follow Product Master like a quote, as a GST bill (GST added on top) or without GST. Stock is reserved, shortfalls go to purchase, and a dispatch job is made.</p>
       </div>
       <div className="min-w-[15rem] rounded-r4 bg-[var(--ink)] px-5 py-4 text-[var(--surface)]">
-        <div className="flex justify-between gap-4 text-xs text-white/70"><span>Taxable</span><span className="tabular-nums">{money(totals.taxable)}</span></div>
-        <div className="mt-0.5 flex justify-between gap-4 text-xs text-white/70"><span>GST added</span><span className="tabular-nums">{money(totals.gst)}</span></div>
+        {withGst ? <>
+          <div className="flex justify-between gap-4 text-xs text-white/70"><span>Taxable</span><span className="tabular-nums">{money(totals.taxable)}</span></div>
+          <div className="mt-0.5 flex justify-between gap-4 text-xs text-white/70"><span>GST added</span><span className="tabular-nums">{money(totals.gst)}</span></div>
+        </> : <div className="text-xs text-white/70">Without GST bill</div>}
         <div className="mt-2 flex items-baseline justify-between gap-4 border-t border-white/20 pt-2"><span className="text-xs font-semibold uppercase tracking-wider text-white/70">Order total</span><span className="text-2xl font-black tabular-nums">{money(totals.total)}</span></div>
       </div>
     </section>
 
-    {created ? <section className="flex flex-wrap items-center justify-between gap-3 rounded-r5 border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
-      <div className="flex items-center gap-3"><CheckCircle2 className="h-6 w-6"/><div><p className="font-bold">{created.orderNumber} created</p><p className="text-sm">Stock is reserved and any shortfall is sent to purchase.</p></div></div>
-      <div className="flex gap-2"><Button asChild variant="outline"><a href={`/api/pdf/order/${created.id}`} target="_blank" rel="noreferrer">Open PDF</a></Button><Button asChild><Link href={`/dashboard/orders?search=${encodeURIComponent(created.orderNumber || '')}`}>Open order</Link></Button></div>
-    </section> : null}
+    {created ? <CreatedOrder order={created} /> : null}
 
     <section className="grid gap-5 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
       <div className="space-y-5">
@@ -170,8 +174,16 @@ export default function DirectSalesOrderPage() {
         </div>
 
         <div className="mp-panel space-y-4 p-5">
-          <h2 className="text-lg font-semibold">Payment and delivery</h2>
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--surface-2)] p-1">
+          <h2 className="text-lg font-semibold">Bill, payment and delivery</h2>
+          <div>
+            <span className={label}>Bill</span>
+            <div className="mt-1.5 grid grid-cols-2 gap-1 rounded-lg bg-[var(--surface-2)] p-1">
+              {([['gst', 'GST bill'], ['non_gst', 'Without GST']] as const).map(([mode, text]) => <button key={mode} type="button" aria-pressed={taxMode === mode} onClick={() => setTaxMode(mode)} className={`h-9 rounded-md text-xs font-bold uppercase tracking-wider ${taxMode === mode ? 'bg-[var(--ink)] text-[var(--surface)]' : 'text-[var(--ink-3)]'}`}>{text}</button>)}
+            </div>
+            <p className="mt-1 text-xs text-[var(--ink-4)]">{withGst ? 'GST is added on top of each rate.' : 'No GST is charged on any line.'}</p>
+          </div>
+          <span className={label}>Payment</span>
+          <div className="-mt-2.5 grid grid-cols-2 gap-1 rounded-lg bg-[var(--surface-2)] p-1">
             {(['cash', 'credit'] as const).map((mode) => <button key={mode} type="button" onClick={() => { setPaymentMode(mode); setPaymentTerms(mode === 'credit' ? 'Net 30' : 'Cash on order'); }} className={`h-9 rounded-md text-xs font-bold uppercase tracking-wider ${paymentMode === mode ? 'bg-[var(--ink)] text-[var(--surface)]' : 'text-[var(--ink-3)]'}`}>{mode}</button>)}
           </div>
           {paymentMode === 'credit' ? (
@@ -211,7 +223,7 @@ export default function DirectSalesOrderPage() {
         </div>
 
         {!lines.length ? <div className="rounded-r5 border border-dashed border-[var(--line-strong)] p-8 text-center text-sm text-[var(--ink-4)]">Search above to add products to this order.</div> : null}
-        {lines.map((line) => <OrderLine key={line._k} line={line} row={rowByKey.get(line._k)} issues={issuesByKey.get(line._k) || []} canPassFloor={canPassFloor} onChange={(patch) => update(line._k, patch)} onRemove={() => setLines((rows) => rows.filter((row) => row._k !== line._k))} />)}
+        {lines.map((line) => <OrderLine key={line._k} line={line} row={rowByKey.get(line._k)} issues={issuesByKey.get(line._k) || []} canPassFloor={canPassFloor} withGst={withGst} onChange={(patch) => update(line._k, patch)} onRemove={() => setLines((rows) => rows.filter((row) => row._k !== line._k))} />)}
 
         {belowFloor.length && canPassFloor ? <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0"/>{belowFloor.length} line{belowFloor.length === 1 ? ' is' : 's are'} below the floor rate. Creating the order records your approval.</p> : null}
         {validation ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-800">{validation}</p> : null}
@@ -222,7 +234,7 @@ export default function DirectSalesOrderPage() {
   </div>;
 }
 
-function OrderLine({ line, row, issues, canPassFloor, onChange, onRemove }: { line: Line; row: any; issues: Array<{ key: string; message: string; blocking: boolean }>; canPassFloor: boolean; onChange: (patch: Record<string, any>) => void; onRemove: () => void }) {
+function OrderLine({ line, row, issues, canPassFloor, withGst, onChange, onRemove }: { line: Line; row: any; issues: Array<{ key: string; message: string; blocking: boolean }>; canPassFloor: boolean; withGst: boolean; onChange: (patch: Record<string, any>) => void; onRemove: () => void }) {
   const stock = useQuery(STOCK, { variables: { productId: line.productId }, skip: !line.productId, fetchPolicy: 'cache-and-network' });
   const balance = stock.data?.inventoryBalances?.[0];
   const tile = isTileLine(line);
@@ -269,8 +281,10 @@ function OrderLine({ line, row, issues, canPassFloor, onChange, onRemove }: { li
         <span className="mt-1 block normal-case tracking-normal text-[var(--info,#1d4ed8)]">Rate {money(row?.specialRateInclusive || 0)} / {mrpUom(line).toLowerCase()}</span>
       </label>
       <div className="rounded-lg bg-[var(--surface-2)] p-2.5 text-right text-xs text-[var(--ink-4)]">
-        <p>Taxable <span className="tabular-nums text-[var(--ink-3)]">{money(row?.taxableValue || 0)}</span></p>
-        <p>GST <span className="tabular-nums text-[var(--ink-3)]">{money(row?.taxAmount || 0)}</span></p>
+        {withGst ? <>
+          <p>Taxable <span className="tabular-nums text-[var(--ink-3)]">{money(row?.taxableValue || 0)}</span></p>
+          <p>GST <span className="tabular-nums text-[var(--ink-3)]">{money(row?.taxAmount || 0)}</span></p>
+        </> : <p>Without GST</p>}
         <p className="mt-1 text-base font-black tabular-nums text-[var(--ink)]">{money(row?.total || 0)}</p>
       </div>
     </div>
@@ -279,4 +293,44 @@ function OrderLine({ line, row, issues, canPassFloor, onChange, onRemove }: { li
       {shown.map((issue) => <span key={issue.key} className={issue.blocking ? 'font-semibold text-[var(--danger,#b91c1c)]' : 'font-semibold text-[var(--warning)]'}>{issue.key === 'floor' && !canPassFloor ? `${issue.message.replace(' · owner approval', '')} · make a quote for owner approval` : issue.message}</span>)}
     </div>
   </article>;
+}
+
+// After creating: what was reserved from stock and what waits for inward, per item.
+function CreatedOrder({ order }: { order: any }) {
+  const detail = useQuery(ORDER_STOCK, { variables: { id: order.id }, fetchPolicy: 'network-only' });
+  const full = detail.data?.salesOrder;
+  const lines: any[] = Array.isArray(full?.lines) ? full.lines : [];
+  const held = new Map<string, { reserved: number; waiting: number }>();
+  for (const reservation of full?.reservations || []) {
+    const entry = held.get(reservation.productId) || { reserved: 0, waiting: 0 };
+    if (reservation.status === 'reserved') entry.reserved += Number(reservation.quantity || 0);
+    else entry.waiting += Number(reservation.quantity || 0);
+    held.set(reservation.productId, entry);
+  }
+  const waitingTotal = Array.from(held.values()).reduce((sum, entry) => sum + entry.waiting, 0);
+  return <section className="rounded-r5 border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-3"><CheckCircle2 className="h-6 w-6"/><div><p className="font-bold">{order.orderNumber} created · {money(Number(order.totalAmount || 0))}</p><p className="text-sm">{full?.documents?.taxMode === 'non_gst' ? 'Without GST bill. ' : 'GST bill. '}{String(order.paymentMode || '').toUpperCase() === 'CREDIT' ? 'On credit.' : 'Cash.'} A dispatch job is ready.</p></div></div>
+      <div className="flex flex-wrap gap-2">
+        <Button asChild variant="outline"><a href={`/api/pdf/order/${order.id}`} target="_blank" rel="noreferrer">Open PDF</a></Button>
+        {waitingTotal > 0 ? <Button asChild variant="outline"><Link href={`/dashboard/pending-inward?search=${encodeURIComponent(order.orderNumber || '')}`}>Pending inward</Link></Button> : null}
+        <Button asChild><Link href={`/dashboard/orders?search=${encodeURIComponent(order.orderNumber || '')}`}>Open order</Link></Button>
+      </div>
+    </div>
+    {detail.loading && !full ? <p className="mt-3 text-sm">Checking stock…</p> : lines.length ? <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-200 bg-white/70">
+      <table className="w-full min-w-[28rem] text-sm">
+        <thead><tr className="text-left text-xs uppercase tracking-wider text-emerald-900/70"><th className="px-3 py-2 font-semibold">Item</th><th className="px-3 py-2 text-right font-semibold">Ordered</th><th className="px-3 py-2 text-right font-semibold">Reserved</th><th className="px-3 py-2 text-right font-semibold">Pending inward</th></tr></thead>
+        <tbody>{lines.map((line, index) => {
+          const entry = held.get(line.productId) || { reserved: 0, waiting: 0 };
+          const unit = String(line.inventoryUom || line.unit || 'PC').toLowerCase();
+          return <tr key={`${line.lineKey || index}`} className="border-t border-emerald-100">
+            <td className="px-3 py-2"><b className="font-semibold">{line.name}</b><span className="block text-xs text-emerald-900/70">{line.internalCode || line.sku}</span></td>
+            <td className="px-3 py-2 text-right tabular-nums">{Number(line.qty || line.quantity || 0)} {unit}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{entry.reserved} {unit}</td>
+            <td className={`px-3 py-2 text-right tabular-nums ${entry.waiting ? 'font-semibold text-amber-800' : ''}`}>{entry.waiting} {unit}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div> : null}
+  </section>;
 }

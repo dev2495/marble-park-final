@@ -302,6 +302,9 @@ function buildDocument(payload, requestUrl) {
   const gst = lines.reduce((sum, line) => sum + Number(line.taxAmount || 0), 0);
   const gstOnTop = lines.some((line) => String(line.taxTreatment || '').toUpperCase() === 'EXCLUSIVE');
   const showGst = exact && taxable > 0 && gst > 0;
+  // A bill without GST: chosen on the order, or every priced line at 0%.
+  const withoutGst = order.documents?.taxMode === 'non_gst'
+    || (exact && lines.length > 0 && lines.every((line) => line.taxRate != null && Number(line.taxRate) === 0));
   const advance = Number(order.advanceAmount || 0);
   const balance = Math.max(0, Number(order.totalAmount || subtotal) - advance);
   const companyName = settings?.companyName || 'Marble Park';
@@ -373,6 +376,7 @@ function buildDocument(payload, requestUrl) {
           e(View, { style: styles.badgeRow },
             e(Text, { style: styles.badge }, String(order.paymentMode || '').toUpperCase()),
             e(Text, { style: styles.badge }, String(order.paymentStatus || '').toUpperCase()),
+            withoutGst ? e(Text, { style: styles.badge }, 'WITHOUT GST') : null,
           ),
         ),
       ),

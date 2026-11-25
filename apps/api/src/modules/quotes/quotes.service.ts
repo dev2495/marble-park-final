@@ -1096,11 +1096,17 @@ export class QuotesService {
     if (!owner || !owner.active || !['sales', 'sales_manager', 'owner', 'admin'].includes(owner.role)) {
       throw new BadRequestException('Select an active sales user.');
     }
-    // Same rules as a quote: Product Master MRP and unit, GST added on top.
+    // Same rules as a quote: Product Master MRP and unit, GST added on top,
+    // or a bill without GST (every line at 0%), chosen for the whole order.
+    const taxMode = String((input as any).taxMode || '').toLowerCase() === 'non_gst' ? 'non_gst' : 'gst';
     const asserted = this.withTaxTreatment(
       await this.persistQuoteLineImages(await this.assertQuoteLines(input.lines, 'creating a direct sales order', true)),
       'EXCLUSIVE',
-    );
+    ).map((line: any) => ({
+      ...line,
+      taxMode,
+      taxRate: taxMode === 'non_gst' ? 0 : (Number(line.taxRate) > 0 ? Number(line.taxRate) : 18),
+    }));
     const commercial = priceQuoteLines(asserted, 0, { requireMrp: true });
     // A below-floor rate needs the owner's approval on a quote. A direct order
     // has no approval step, so only the owner or an admin may place one.
@@ -1148,7 +1154,7 @@ export class QuotesService {
               quoteDiscountMode: commercial.quoteDiscountMode,
               quoteDiscountValue: commercial.quoteDiscountValue,
               pricingVersion: RETAIL_LADDER_VERSION,
-              documents: { salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`, salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request' }, pricing: commercial.totals, source: 'direct_order' },
+              documents: { salesOrderPdfUrl: `/api/pdf/order/${salesOrderId}`, salesOrderPdf: { url: `/api/pdf/order/${salesOrderId}`, status: 'generated_on_request' }, pricing: commercial.totals, source: 'direct_order', taxMode },
               updatedAt: new Date(),
             },
           });
@@ -1206,7 +1212,7 @@ export class QuotesService {
             { id: ulid(), title: 'Direct sales order created', message: `${orderNumber} is assigned to you. Track fulfilment from the order register.`, type: 'sales_order_created', entityType: 'SalesOrder', entityId: salesOrderId, targetUserId: ownerId, href: `/dashboard/orders?search=${encodeURIComponent(orderNumber)}` },
             { id: ulid(), title: 'New direct order for fulfilment', message: `${orderNumber}. Review reserved and pending-inward quantities before dispatch.`, type: 'dispatch_ready', entityType: 'SalesOrder', entityId: salesOrderId, targetRole: 'dispatch_ops', href: `/dashboard/dispatch?search=${encodeURIComponent(orderNumber)}` },
           ] });
-          await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'sales_order.direct_create', entityType: 'SalesOrder', entityId: salesOrderId, summary: `Created direct order ${orderNumber}`, metadata: { customerId, ownerId, totalAmount: commercial.totals.grandTotal, taxTreatment: 'EXCLUSIVE', ...(floorOverride ? { belowFloorApprovedBy: actorUserId, floorBreaches: commercial.floorBreaches } : {}) } } });
+          await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'sales_order.direct_create', entityType: 'SalesOrder', entityId: salesOrderId, summary: `Created direct order ${orderNumber}`, metadata: { customerId, ownerId, totalAmount: commercial.totals.grandTotal, taxTreatment: 'EXCLUSIVE', taxMode, ...(floorOverride ? { belowFloorApprovedBy: actorUserId, floorBreaches: commercial.floorBreaches } : {}) } } });
           return salesOrder;
         }, { isolationLevel: 'Serializable', timeout: 30000 });
       } catch (error: any) {

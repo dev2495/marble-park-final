@@ -114,13 +114,18 @@ export class ProcurementService {
     const where: any = {};
     if (args?.status && args.status !== 'all') where.status = args.status;
     const search = String(args?.search || '').trim();
-    if (search) where.OR = [
-      { sku: { contains: search, mode: 'insensitive' } },
-      { name: { contains: search, mode: 'insensitive' } },
-      { brand: { contains: search, mode: 'insensitive' } },
-      { vendorName: { contains: search, mode: 'insensitive' } },
-      { sourceLineKey: { contains: search, mode: 'insensitive' } },
-    ];
+    if (search) {
+      // A sales order number (e.g. SO/2026/0257) finds the demand that order raised.
+      const orders = await (this.prisma as any).salesOrder.findMany({ where: { orderNumber: { contains: search, mode: 'insensitive' } }, select: { id: true }, take: 50 });
+      where.OR = [
+        { sku: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { brand: { contains: search, mode: 'insensitive' } },
+        { vendorName: { contains: search, mode: 'insensitive' } },
+        { sourceLineKey: { contains: search, mode: 'insensitive' } },
+        ...(orders.length ? [{ sourceOrderId: { in: orders.map((order: any) => order.id) } }] : []),
+      ];
+    }
     const take = this.limit(args?.take, 40);
     const skip = Math.max(0, Number(args?.skip || 0));
     const orderBy: any = args?.sort === 'oldest' ? [{ createdAt: 'asc' }, { id: 'asc' }]

@@ -262,6 +262,7 @@ export class CreateDirectSalesOrderInput {
   @Field({ nullable: true }) notes?: string;
   @Field({ description: 'JSON array of fully priced order lines' }) lines!: string;
   @Field({ nullable: true }) idempotencyKey?: string;
+  @Field({ nullable: true, description: 'gst (default) or non_gst, as on a quote' }) taxMode?: string;
 }
 
 @Resolver(() => QuoteOutput)

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { gql, useQuery } from '@apollo/client';
 import { Boxes, CheckCircle2, ChevronLeft, ChevronRight, Search, Truck } from 'lucide-react';
 import { QueryErrorBanner } from '@/components/query-state';
@@ -12,7 +12,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 const DATA=gql`query PendingInwardQueue($search:String,$status:String,$sort:String,$skip:Int){purchaseDemandPage(search:$search,status:$status,sort:$sort,skip:$skip,take:40)}`;
 
 export default function PendingInwardPage(){
- const[search,setSearch]=useState('');const[status,setStatus]=useState('all');const[sort,setSort]=useState('priority');const[page,setPage]=useState(0);
+ const[search,setSearch]=useState('');useEffect(()=>{const value=new URLSearchParams(window.location.search).get('search');if(value)setSearch(value);},[]);const[status,setStatus]=useState('all');const[sort,setSort]=useState('priority');const[page,setPage]=useState(0);
  const{data,loading,error,refetch}=useQuery(DATA,{variables:{search:useDebouncedValue(search,250)||undefined,status,sort,skip:page*40},fetchPolicy:'cache-and-network'});
  const result=data?.purchaseDemandPage||{};const rows=result.items||[];
  return <div className="space-y-5 pb-10">{error?<QueryErrorBanner error={error} onRetry={()=>refetch()}/>:null}
