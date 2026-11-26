@@ -1115,7 +1115,16 @@ export class QuotesService {
       const breach = commercial.floorBreaches?.[0];
       throw new BadRequestException(`${breach?.sku || 'A line'} is below the owner floor rate${breach ? ` (₹${Number(breach.floorPriceInclusive).toFixed(2)})` : ''}. Raise the rate, or make a quote so the owner can approve it.`);
     }
-    const lines = this.withMrpConfirmation(commercial.lines, actorUserId);
+    // One key per line, unique within the order, written into the line itself so
+    // the order line, its stock reservation and any purchase shortfall all match.
+    const usedKeys = new Set<string>();
+    const lines = this.withMrpConfirmation(commercial.lines, actorUserId).map((line: any, index: number) => {
+      const base = String(line.lineKey || this.quoteLineKey(line, index)).trim() || `line:${index + 1}`;
+      let lineKey = base;
+      for (let n = 2; usedKeys.has(lineKey); n += 1) lineKey = `${base}#${n}`;
+      usedKeys.add(lineKey);
+      return { ...line, lineKey };
+    });
     if (commercial.totals.grandTotal <= 0) throw new BadRequestException('A direct sales order must have a positive value.');
     const paymentMode = String(input.paymentMode || '').toLowerCase() === 'credit' ? 'credit' : 'cash';
     const advanceAmount = paymentMode === 'cash' ? Number(input.advanceAmount || 0) : 0;
@@ -1160,7 +1169,7 @@ export class QuotesService {
           });
           const orderLines: any[] = [];
           for (const [index, line] of lines.entries()) {
-            const lineKey = this.quoteLineKey(line, index);
+            const lineKey = line.lineKey;
             orderLines.push(await tx.salesOrderLine.create({
               data: {
                 id: ulid(), salesOrderId, quoteId: null, quoteLineId: null, lineKey, lineNo: index + 1,
@@ -2737,7 +2746,8 @@ export class QuotesService {
       const quantity = Number(line.qty || line.quantity || 0);
       if (!productId || quantity <= 0) continue;
       const lineKey = String(line.lineKey || this.quoteLineKey(line, index));
-      const salesOrderLine = salesOrderLines.find((row: any) => row.quoteLineId === line.quoteLineId || row.lineKey === lineKey);
+      // Match on the quote line when there is one; a direct order has none, so match on the line key.
+      const salesOrderLine = salesOrderLines.find((row: any) => (line.quoteLineId && row.quoteLineId === line.quoteLineId) || row.lineKey === lineKey);
 
       const lotAvailability = await tx.inventoryLotBalance.aggregate({
         where: { lot: { productId, status: 'active' } }, _sum: { available: true },
@@ -2747,6 +2757,7 @@ export class QuotesService {
       const backorderQty = Math.max(0, quantity - reserveQty);
 
       if (reserveQty > 0) {
+        if (!salesOrderLine) throw new BadRequestException(`Could not match ${line.sku || 'a line'} to its order line to reserve stock. Nothing was saved; try again.`);
         const reservation = await tx.reservation.create({
           data: {
             id: ulid(),
