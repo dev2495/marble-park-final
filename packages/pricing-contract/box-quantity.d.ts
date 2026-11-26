@@ -13,3 +13,5 @@ export function boxReading(product: Record<string, any> | null | undefined): { p
 export function wholeBoxesUp(pieces: unknown, perBox: number): number;
 export function formatBoxQuantity(baseQty: unknown, unitInfo: BoxUnitInfo | Record<string, any>): BoxQuantity;
 export function formatSellingQuantity(sellingQty: unknown, unitInfo: BoxUnitInfo | Record<string, any>): BoxQuantity;
+/** Full-box rule per order line: true when the line's total pieces are not whole boxes and not everything the system holds for it. */
+export function refusesPartBox(totalPieces: unknown, systemPieces: unknown, unitInfo: BoxUnitInfo | Record<string, any>): boolean;

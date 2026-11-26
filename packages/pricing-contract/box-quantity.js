@@ -131,4 +131,21 @@ function formatSellingQuantity(sellingQty, unitInfo) {
   return { isBoxed: false, soldBy: null, boxes: quantity, loosePieces: 0, partBox: false, pieces: quantity, piecesPerBox: 1, label: `${quantity} ${unit}`, unitLabel: unit, piecesLabel: '', fullLabel: `${quantity} ${unit}` };
 }
 
-module.exports = { boxFactor, tileSoldBy, boxReading, wholeBoxesUp, formatBoxQuantity, formatSellingQuantity };
+/**
+ * The full-box rule for a tile sold by the box, checked per ORDER LINE (one
+ * rule for the API and the pick/pack screens). totalPieces is that order line's
+ * pieces added across its lot rows in one save; systemPieces is everything the
+ * system holds or offers for that line on the same rows (reserved, picked or
+ * packed). Refused when the total is not whole boxes and is not that whole
+ * amount, so a part box the reservation itself holds can still leave as the
+ * final remainder. A single lot row may hold any piece count. Piece-sold tiles
+ * and anything that is not a boxed tile are never refused.
+ */
+function refusesPartBox(totalPieces, systemPieces, unitInfo) {
+  const { perBox, soldBy } = resolveUnits(unitInfo);
+  const total = Math.max(0, Number(totalPieces || 0));
+  if (soldBy !== 'BOX' || perBox <= 1 || total <= 0) return false;
+  return total % perBox !== 0 && total !== Number(systemPieces || 0);
+}
+
+module.exports = { boxFactor, tileSoldBy, boxReading, wholeBoxesUp, formatBoxQuantity, formatSellingQuantity, refusesPartBox };

@@ -98,7 +98,7 @@ export const HELP_GUIDES: HelpGuide[] = [
       'A tile sold by the box (its selling unit is a box, pack or carton) always reads in whole boxes, rounded up. 344 pieces at 9 per box read 39 Box, with 344 pc shown beside it.',
       'A tile sold by the piece reads as boxes plus loose pieces, for example 38 Box + 2 pc. Under one box it reads 5 pc.',
       'On the dispatch screen, pick lines read for example 38 Box (342 pc). When you pack, the box still takes pieces, and a live line beside it shows the box equivalent, for example 37 Box + 5 pc.',
-      'If you type a part box for a tile sold by the box, it is refused with: This tile is sold in full boxes of 9 pieces. The quantity the system offers (reserved, picked or packed) is always accepted as it is.',
+      'If you type a part box for a tile sold by the box, it is refused with: This tile is sold in full boxes of 9 pieces. The check adds up each order line across its lots, so one lot row may show any piece count as long as the line total is whole boxes. The quantity the system offers for the line (reserved, picked or packed) is always accepted as it is.',
       'The dispatch slip shows Qty and Unit in boxes, with the pieces and pieces per box in small print under it, and a Total row. A challan on the dispatch screen lists each item as for example SKU 38 Box (342 pc).',
       'Orders: the order book detail shows ordered, reserved, pending, dispatched and left in boxes. The table after a direct order reads for example 38 Box + 2 pc.',
       'The sales order PDF shows Qty, Sent and Bal in boxes. The invoice PDF shows for example 38 BOX / 342 pc, with the rate per piece. The invoice amount is the same as before.',

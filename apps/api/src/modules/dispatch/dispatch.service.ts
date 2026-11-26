@@ -10,6 +10,7 @@ import { closeFinishedDemandsTx } from '../common/demand-status';
 import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 import { ulid } from 'ulid';
 import { stockFactor, tileBoxReading } from '../common/stock-units';
+import { refusesPartBox } from '@marble-park/pricing-contract/box-quantity';
 
 export interface CreateDispatchJobInput {
   quoteId?: string;
@@ -636,14 +637,20 @@ export class DispatchService {
       const pickProducts = requestedRows.length
         ? new Map(((await tx.product.findMany({ where: { id: { in: Array.from(new Set(allocations.map((row: any) => row.salesOrderLine?.productId).filter(Boolean))) as string[] } } })) as any[]).map((row) => [row.id, row]))
         : new Map<string, any>();
-      const selected = allocations.map((allocation: any) => {
+      let selected = allocations.map((allocation: any) => {
         const key = `${allocation.salesOrderLineId}:${allocation.lotId}:${allocation.locationId}`;
         const available = Math.max(0, Number(allocation.quantity || 0) - Number(openByIdentity.get(key) || 0));
         const requested = requestedRows.length ? Number(requestedByIdentity.get(key) || 0) : available;
         if (requested > available) throw new BadRequestException(`${allocation.lot.lotNumber} has only ${available} unpicked reserved units`);
-        if (requestedRows.length) this.assertFullBoxes(pickProducts.get(allocation.salesOrderLine?.productId), requested, available);
-        return { allocation, requested };
-      }).filter((row: any) => row.requested > 0);
+        return { allocation, requested, available };
+      });
+      if (requestedRows.length) {
+        this.assertFullBoxesPerOrderLine(selected.map((row: any) => ({
+          salesOrderLineId: row.allocation.salesOrderLineId, product: pickProducts.get(row.allocation.salesOrderLine?.productId),
+          quantity: row.requested, systemQuantity: row.available,
+        })));
+      }
+      selected = selected.filter((row: any) => row.requested > 0);
       if (!selected.length) {
         const elsewhere = ((await this.unpickedReservedByLocation(tx, [salesOrder.id])).get(salesOrder.id) || [])
           .filter((row) => row.locationId !== location.id)
@@ -705,12 +712,23 @@ export class DispatchService {
         await tx.pickList.update({ where: { id }, data: { status: 'picking', startedAt: new Date(), assignedTo: input?.assignedTo || pick.assignedTo || actorUserId, updatedAt: new Date() } });
       } else if (normalizedAction === 'pick') {
         if (!['ready', 'picking'].includes(pick.status)) throw new BadRequestException(`${pick.pickNumber} cannot be picked from ${pick.status}`);
+        const picked = new Map<string, number>();
         for (const line of pick.lines) {
           const row: any = inputLines.get(line.id);
           if (!row) continue;
           const quantity = this.wholeQty(row.pickedQuantity ?? row.quantity, 'Picked quantity');
           if (quantity < 0 || quantity > line.requestedQuantity) throw new BadRequestException('Picked quantity must be between zero and requested quantity');
-          this.assertFullBoxes(line.product, quantity, line.requestedQuantity);
+          picked.set(line.id, quantity);
+        }
+        // Per order line, as it stands after this save (rows not sent keep what they had).
+        this.assertFullBoxesPerOrderLine(pick.lines.filter((line: any) => line.status !== 'cancelled').map((line: any) => ({
+          salesOrderLineId: line.salesOrderLineId, product: line.product,
+          quantity: picked.has(line.id) ? picked.get(line.id) : Number(line.pickedQuantity || 0),
+          systemQuantity: line.requestedQuantity, touched: picked.has(line.id),
+        })));
+        for (const line of pick.lines) {
+          if (!picked.has(line.id)) continue;
+          const quantity = picked.get(line.id) as number;
           await tx.pickLine.update({ where: { id: line.id }, data: { pickedQuantity: quantity, status: quantity === line.requestedQuantity ? 'picked' : 'partial', pickedBy: actorUserId, pickedAt: new Date(), updatedAt: new Date() } });
         }
         const refreshed = await tx.pickLine.findMany({ where: { pickListId: id } });
@@ -718,12 +736,23 @@ export class DispatchService {
         await tx.pickList.update({ where: { id }, data: { status: fullyPicked ? 'picked' : 'picking', startedAt: pick.startedAt || new Date(), updatedAt: new Date() } });
       } else if (normalizedAction === 'pack') {
         if (!['picking', 'picked', 'partial_packed'].includes(pick.status)) throw new BadRequestException(`${pick.pickNumber} cannot be packed from ${pick.status}`);
+        const packed = new Map<string, number>();
         for (const line of pick.lines) {
           const row: any = inputLines.get(line.id);
           if (!row) continue;
           const quantity = this.wholeQty(row.packedQuantity ?? row.quantity, 'Packed quantity');
           if (quantity < 0 || quantity > line.pickedQuantity) throw new BadRequestException('Packed quantity cannot exceed picked quantity');
-          this.assertFullBoxes(line.product, quantity, line.pickedQuantity);
+          packed.set(line.id, quantity);
+        }
+        // Per order line, as it stands after this save (rows not sent keep what they had).
+        this.assertFullBoxesPerOrderLine(pick.lines.filter((line: any) => line.status !== 'cancelled').map((line: any) => ({
+          salesOrderLineId: line.salesOrderLineId, product: line.product,
+          quantity: packed.has(line.id) ? packed.get(line.id) : Number(line.packedQuantity || 0),
+          systemQuantity: line.pickedQuantity, touched: packed.has(line.id),
+        })));
+        for (const line of pick.lines) {
+          if (!packed.has(line.id)) continue;
+          const quantity = packed.get(line.id) as number;
           await tx.pickLine.update({ where: { id: line.id }, data: { packedQuantity: quantity, status: quantity === line.requestedQuantity ? 'packed' : 'partial_packed', updatedAt: new Date() } });
         }
         const refreshed = await tx.pickLine.findMany({ where: { pickListId: id } });
@@ -790,12 +819,13 @@ export class DispatchService {
     }
     const pickRequests = requestedLines.filter((line: any) => line.pickLineId);
     const requestedByPickLine = new Map(pickRequests.map((line: any) => [String(line.pickLineId || ''), this.wholeQty(line.dispatchQty ?? line.quantity, 'Challan quantity')]));
-    const pickChallanLines = (pickList?.lines || []).map((line: any) => {
+    const pickChallanRows = (pickList?.lines || []).map((line: any) => {
       const availablePacked = Math.max(0, Number(line.packedQuantity || 0) - Number(priorByPickLine.get(line.id) || 0));
       const dispatchQty = pickRequests.length ? Number(requestedByPickLine.get(line.id) || 0) : availablePacked;
       if (dispatchQty > availablePacked) throw new BadRequestException(`${line.product.sku} has only ${availablePacked} packed units left on ${pickList.pickNumber}`);
-      if (pickRequests.length) this.assertFullBoxes(line.product, dispatchQty, availablePacked);
       return {
+        availablePacked,
+        product: line.product,
         pickLineId: line.id,
         salesOrderLineId: line.salesOrderLineId,
         lineKey: line.salesOrderLine.lineKey,
@@ -814,7 +844,15 @@ export class DispatchService {
         piecesPerUnit: stockFactor(line.product),
         dispatchQty,
       };
-    }).filter((line: any) => line.dispatchQty > 0);
+    });
+    if (pickRequests.length) {
+      this.assertFullBoxesPerOrderLine(pickChallanRows.map((row: any) => ({
+        salesOrderLineId: row.salesOrderLineId, product: row.product, quantity: row.dispatchQty, systemQuantity: row.availablePacked,
+      })));
+    }
+    const pickChallanLines = pickChallanRows
+      .filter((row: any) => row.dispatchQty > 0)
+      .map(({ availablePacked: _availablePacked, product: _product, ...line }: any) => line);
     const challanLines = [...pickChallanLines, ...specialLines];
     if (!challanLines.length) throw new BadRequestException('Select at least one ready item to create a challan');
     await this.assertDispatchableLines(challanLines, job);
@@ -1768,14 +1806,30 @@ export class DispatchService {
   }
 
   /**
-   * A tile sold by the box leaves in full boxes only. A quantity typed by hand
-   * that is not whole boxes is refused; the quantity the system itself offers
-   * (what is reserved, picked or packed) is always accepted as it is.
+   * A tile sold by the box leaves in full boxes only, counted per ORDER LINE:
+   * one order line's reservation can sit on several lots that do not split on
+   * box boundaries (58 pc + 284 pc at 9 a box), so a single lot row may hold any
+   * piece count. Each order line touched by the save must add up, across its
+   * rows, to whole boxes, or to everything the system holds or offers for that
+   * line on those rows (reserved, picked or packed), so a part box the
+   * reservation itself holds can still leave as the final remainder.
+   * Same rule as the pick/pack screens (refusesPartBox in packages/pricing-contract).
    */
-  private assertFullBoxes(product: any, quantity: number, systemQuantity: number) {
-    const factor = stockFactor(product);
-    if (factor <= 1 || quantity <= 0 || quantity === Number(systemQuantity) || quantity % factor === 0) return;
-    throw new BadRequestException(`This tile is sold in full boxes of ${factor} pieces`);
+  private assertFullBoxesPerOrderLine(rows: Array<{ salesOrderLineId: string; product: any; quantity: number; systemQuantity: number; touched?: boolean }>) {
+    const lines = new Map<string, { product: any; quantity: number; systemQuantity: number; touched: boolean }>();
+    for (const row of rows) {
+      const key = String(row.salesOrderLineId || '');
+      const line = lines.get(key) || { product: row.product, quantity: 0, systemQuantity: 0, touched: false };
+      line.quantity += Math.max(0, Number(row.quantity || 0));
+      line.systemQuantity += Math.max(0, Number(row.systemQuantity || 0));
+      line.touched = line.touched || row.touched !== false;
+      if (!line.product && row.product) line.product = row.product;
+      lines.set(key, line);
+    }
+    for (const line of lines.values()) {
+      if (!line.touched || !refusesPartBox(line.quantity, line.systemQuantity, line.product)) continue;
+      throw new BadRequestException(`This tile is sold in full boxes of ${stockFactor(line.product)} pieces`);
+    }
   }
 
   /** Base units per selling unit for each product (pieces per box for boxed tiles, else 1). */

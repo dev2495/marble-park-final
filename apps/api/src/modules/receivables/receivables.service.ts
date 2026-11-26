@@ -543,6 +543,8 @@ export class ReceivablesService {
       const payment = await tx.customerPayment.findUnique({ where: { id } });
       if (!payment) throw new NotFoundException('Receipt not found.');
       if (payment.status === 'void') return payment;
+      // A refunded advance already has its money-out debit on the ledger; a void would charge the customer twice.
+      if ((payment.metadata as any)?.advanceRefund) throw new BadRequestException('This advance was already refunded. It cannot be voided.');
       changed = true;
       const allocations = await tx.customerAllocation.findMany({ where: { sourceType: 'CustomerPayment', sourceId: id, status: ACTIVE_ALLOCATION } });
       await tx.customerAllocation.updateMany({ where: { id: { in: allocations.map((row: any) => row.id) } }, data: { status: 'void', updatedAt: new Date() } });
@@ -790,7 +792,7 @@ export class ReceivablesService {
     const advanceRows = await this.prisma.customerPayment.findMany({ where: { customerId, status: 'posted', salesOrderId: { not: null }, unappliedAmount: { gt: 0 } }, orderBy: { receivedAt: 'asc' } });
     const advanceOrders = advanceRows.length ? await this.prisma.salesOrder.findMany({ where: { id: { in: advanceRows.map((row: any) => row.salesOrderId) }, status: 'cancelled' }, select: { id: true, orderNumber: true, documents: true } }) : [];
     const cancelledById = new Map((advanceOrders as any[]).map((row) => [row.id, row]));
-    const cancelledOrderAdvances = (advanceRows as any[]).filter((row) => cancelledById.has(row.salesOrderId)).map((row) => {
+    const cancelledOrderAdvances = (advanceRows as any[]).filter((row) => cancelledById.has(row.salesOrderId) && !(row.metadata as any)?.advanceRefund).map((row) => {
       const order: any = cancelledById.get(row.salesOrderId);
       return { paymentId: row.id, receiptNumber: row.receiptNumber, receivedAt: row.receivedAt, paymentMode: row.paymentMode, amount: Number(row.amount || 0), unappliedAmount: Number(row.unappliedAmount || 0), salesOrderId: order.id, orderNumber: order.orderNumber, cancelledAt: order.documents?.cancellation?.cancelledAt || null, cancelReason: order.documents?.cancellation?.reason || null };
     });

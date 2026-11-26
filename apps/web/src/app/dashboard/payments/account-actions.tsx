@@ -107,6 +107,7 @@ const MOVE_ADVANCE = gql`
  * Refund is for owner and admin only (same as voiding a receipt).
  */
 export function CancelledOrderAdvances({ account, canRefund, onDone }: { account: any; canRefund: boolean; onDone: () => Promise<unknown> | void }) {
+  // The server leaves refunded advances out of this list, so Refund and Move never show on one.
   const rows: any[] = account?.cancelledOrderAdvances || [];
   const [target, setTarget] = useState<{ kind: 'refund' | 'move'; row: any } | null>(null);
   const [reason, setReason] = useState('');

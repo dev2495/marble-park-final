@@ -64,4 +64,15 @@ describe('tile quantities read in boxes (shared formatter)', () => {
       expect(stockFactor(product)).toBe(shared.boxFactor(product));
     }
   });
+
+  it('full-box rule per order line: whole boxes or everything the system holds; piece-sold and other items never refused', () => {
+    const { refusesPartBox } = shared;
+    expect(refusesPartBox(58 + 122, 342, tile9)).toBe(false); // 20 boxes split over two lots
+    expect(refusesPartBox(58, 342, tile9)).toBe(true); // a part box that is not everything
+    expect(refusesPartBox(158, 158, tile9)).toBe(false); // the final remainder, a part box held by the reservation
+    expect(refusesPartBox(157, 158, tile9)).toBe(true);
+    expect(refusesPartBox(0, 342, tile9)).toBe(false);
+    expect(refusesPartBox(31, 342, { category: 'Tiles', baseUom: 'PC', unit: 'PC', piecesPerPack: 9 })).toBe(false);
+    expect(refusesPartBox(3, 10, { baseUom: 'PC', unit: 'PC' })).toBe(false);
+  });
 });

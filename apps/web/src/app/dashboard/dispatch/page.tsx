@@ -31,7 +31,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ChallanReasonDialog, TransportDialog, UPDATE_CHALLAN_TRANSPORT, transportFromChallan, transportSummary } from "./challan-actions";
-import { formatBoxQuantity, formatSellingQuantity } from "@marble-park/pricing-contract/box-quantity";
+import { formatBoxQuantity, formatSellingQuantity, refusesPartBox } from "@marble-park/pricing-contract/box-quantity";
 
 // Pick lines count stock in base units: pieces for a tile sold by the box.
 // They read in boxes ("37 Box + 5 pc (375 pc)"); anything else as before ("5 pc").
@@ -657,8 +657,12 @@ export default function DispatchPage() {
                                 const entered = Number(packQty[line.id] ?? line.pickedQuantity);
                                 const qty = formatBoxQuantity(entered, line.product);
                                 if (!qty.isBoxed) return null;
-                                // A tile sold by the box leaves in full boxes; the server refuses a typed part box.
-                                return qty.partBox && entered !== Number(line.pickedQuantity) ? (
+                                // A tile sold by the box leaves in full boxes, counted per order line across its lot rows
+                                // (same rule as the server): one lot row may hold any piece count.
+                                const sameLine = pick.lines.filter((other: any) => other.salesOrderLineId === line.salesOrderLineId);
+                                const lineTotal = sameLine.reduce((sum: number, other: any) => sum + Number(packQty[other.id] ?? other.pickedQuantity), 0);
+                                const linePicked = sameLine.reduce((sum: number, other: any) => sum + Number(other.pickedQuantity || 0), 0);
+                                return refusesPartBox(lineTotal, linePicked, line.product) ? (
                                   <span role="alert" className="whitespace-nowrap font-semibold text-[var(--warning)]">
                                     This tile is sold in full boxes of {qty.piecesPerBox} pieces
                                   </span>
