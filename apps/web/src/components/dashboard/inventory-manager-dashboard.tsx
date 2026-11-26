@@ -72,7 +72,7 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
   const tiles: Array<{ label: string; value: any; caption: string; icon: any; tone: Tone; href: string; numeric?: boolean; format?: (v: number) => string }> = [
     { label: 'Tracked stock SKUs', value: balances.length, caption: 'Lot-cost valuation is in Reports', icon: Warehouse, tone: 'success', href: '/dashboard/reports', numeric: true },
     { label: 'Available qty', value: totalAvailable, caption: `${reservedQty.toLocaleString('en-IN')} reserved`, icon: Boxes, tone: 'brand', href: '/dashboard/inventory', numeric: true },
-    { label: 'Low-stock SKUs', value: lowStock.length, caption: lowStock.length ? 'Below threshold — re-order' : 'All above threshold', icon: AlertTriangle, tone: lowStock.length ? 'danger' : 'success', href: '/dashboard/inventory', numeric: true },
+    { label: 'Low-stock SKUs', value: lowStock.length, caption: lowStock.length ? 'Below threshold, re-order' : 'All above threshold', icon: AlertTriangle, tone: lowStock.length ? 'danger' : 'success', href: '/dashboard/inventory', numeric: true },
     { label: 'Damaged qty', value: damagedQty, caption: 'Removed from sellable stock', icon: TrendingDown, tone: damagedQty > 0 ? 'warning' : 'neutral', href: '/dashboard/inventory', numeric: true },
   ];
 
@@ -141,7 +141,7 @@ export function InventoryManagerDashboard({ effectiveRole, user }: { effectiveRo
       <Panel title="Re-order list" subtitle={`${lowStock.length} SKU${lowStock.length === 1 ? '' : 's'} below threshold`} tone="danger" rightAction={<Link href="/dashboard/inventory" className="text-xs font-medium text-[#1d4ed8] hover:underline">Inventory tower</Link>}>
         {lowStock.length ? (
           <div className="overflow-hidden rounded-r3 border border-[#f4f4f5]">
-            <table className="w-full text-sm">
+            <table className="mp-table-skin w-full text-sm">
               <thead className="bg-[#fafafa] text-left text-[11px] font-semibold uppercase tracking-wider text-[#71717a]">
                 <tr>
                   <th className="px-3 py-2.5">Product</th>

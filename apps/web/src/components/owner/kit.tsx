@@ -88,16 +88,18 @@ export function ChartCard({ chart, onHeat }: { chart: any; onHeat?: (row: string
   const legend = chart.legend || (chart.type === 'bars' ? [...(chart.series || []).map((s: any) => ({ name: s.name, color: s.color })), ...(chart.line ? [{ name: `${chart.line.name} %`, color: 'c2' }] : [])] : null);
   const hasData = chart.type === 'bars' ? chart.series.some((s: any) => s.data.some((v: number) => v > 0)) || chart.line?.data.some((v: number) => v > 0)
     : chart.type === 'hbar' ? chart.rows.some((r: any) => r.v > 0 || r.g > 0) : chart.type === 'donut' ? chart.slices.some((s: any) => s.v > 0) : chart.type === 'scatter' ? chart.pts.length > 0 : chart.rows?.length > 0;
+  // A chart object can carry a `key` (used by the list that renders it); keep it out of the spread.
+  const { key: _chartKey, ...props } = chart;
   const head = <><h3 className="font-display text-base font-semibold text-[var(--ink)]">{chart.title}</h3>{chart.sub ? <p className="mt-0.5 text-xs text-[var(--ink-4)]">{chart.sub}</p> : null}</>;
   return (
     <section className="ox-card ox-lift min-w-0 p-4 sm:p-[18px]">
       {chart.href ? <Link href={chart.href} className="group block">{head}</Link> : head}
       {!hasData ? <div className="grid min-h-[170px] place-items-center text-center text-[13px] text-[var(--ink-4)]">Nothing to show yet</div>
-        : chart.type === 'bars' ? <><BarsChart {...chart} />{legend ? <Legend items={legend} /> : null}</>
-          : chart.type === 'hbar' ? <><HBarChart {...chart} />{legend ? <Legend items={legend} /> : null}</>
-            : chart.type === 'donut' ? <DonutChart {...chart} />
-              : chart.type === 'scatter' ? <ScatterPlot {...chart} />
-                : <Heatmap {...chart} onPick={onHeat} />}
+        : chart.type === 'bars' ? <><BarsChart {...props} />{legend ? <Legend items={legend} /> : null}</>
+          : chart.type === 'hbar' ? <><HBarChart {...props} />{legend ? <Legend items={legend} /> : null}</>
+            : chart.type === 'donut' ? <DonutChart {...props} />
+              : chart.type === 'scatter' ? <ScatterPlot {...props} />
+                : <Heatmap {...props} onPick={onHeat} />}
       {chart.foot ? <p className="mt-2 text-center text-xs text-[var(--ink-4)]">{chart.foot}</p> : null}
     </section>
   );
@@ -160,7 +162,7 @@ export function DataTable({ kind, filters, table }: { kind: string; filters: any
       </div>
       {exportError ? <p role="alert" className="px-4 pt-2 text-[13px] text-[var(--ox-bad)]">{exportError.message}</p> : null}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] border-collapse text-[13px]">
+        <table className="mp-table-skin w-full min-w-[720px] border-collapse text-[13px]">
           <thead><tr>{table.columns.map((column: any) => <th key={column.key} scope="col" className="whitespace-nowrap border-b border-[var(--line)] bg-[var(--surface-2)] p-0 text-xs font-medium text-[var(--ink-4)]"><button type="button" onClick={() => { setPage(0); setSort((s) => (s && s.key === column.key ? { key: column.key, dir: -s.dir } : { key: column.key, dir: -1 })); }} aria-sort={undefined} className={`flex min-h-10 w-full items-center gap-1 px-3.5 py-2.5 ${NUMERIC.includes(column.kind) ? 'justify-end' : ''} ${sort?.key === column.key ? 'text-[var(--ink)]' : ''}`}>{column.label}{sort && sort.key === column.key ? (sort.dir > 0 ? ' ↑' : ' ↓') : ''}</button></th>)}</tr></thead>
           <tbody>
             {slice.map((row: any, index: number) => <tr key={row.id || row.href || index} tabIndex={row.href ? 0 : undefined} onClick={() => row.href && router.push(row.href)} onKeyDown={(event) => { if (event.key === 'Enter' && row.href) router.push(row.href); }} className={`border-b border-[var(--line)] transition-colors hover:bg-[var(--surface-2)] ${row.href ? 'cursor-pointer' : ''}`}>

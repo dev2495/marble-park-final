@@ -25,6 +25,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { IntentsModule } from './modules/intents/intents.module';
 import { ReceivablesModule } from './modules/receivables/receivables.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
+import { graphqlLimitRule } from './modules/common/graphql-limits';
 import { HealthController } from './health.controller';
 
 import { SearchModule } from './modules/search/search.module';
@@ -40,6 +41,8 @@ import { AssetsModule } from './modules/assets/assets.module';
       inject: [PrismaService],
       useFactory: (prisma: PrismaService) => ({
         autoSchemaFile: true,
+        // Depth and size limit per request (see graphql-limits.ts).
+        validationRules: [graphqlLimitRule],
         // The production API is browser-cookie authenticated. Keep schema
         // discovery and the interactive IDE unavailable on the public edge.
         graphiql: process.env.NODE_ENV !== 'production',

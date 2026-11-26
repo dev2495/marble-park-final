@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { ulid } from 'ulid';
 import { PrismaService } from '../prisma/prisma.service';
@@ -66,6 +66,7 @@ const productInclude = { tileDesignMaster: true } as const;
 
 @Injectable()
 export class PublicCatalogueService {
+  private readonly logger = new Logger(PublicCatalogueService.name);
   constructor(private prisma: PrismaService) {}
 
   private async settings() {
@@ -376,6 +377,6 @@ export class PublicCatalogueService {
   }
 
   private async audit(actorUserId: string, action: string, entityId: string, summary: string, metadata: Record<string, unknown>) {
-    await this.prisma.auditEvent.create({ data: { id: ulid(), actorUserId, action, entityType: 'CatalogueShare', entityId, summary, metadata: metadata as any } }).catch(() => null);
+    await this.prisma.auditEvent.create({ data: { id: ulid(), actorUserId, action, entityType: 'CatalogueShare', entityId, summary, metadata: metadata as any } }).catch((error) => { this.logger.error(`AUDIT_WRITE_FAILED action=${action} share=${entityId}: ${error?.message}`); return null; });
   }
 }

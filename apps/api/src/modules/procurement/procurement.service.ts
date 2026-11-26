@@ -1,13 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
-import { syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
+import { assertInventoryPeriodOpenTx, isTileSelectionLine, normalizeJsonLines, quoteLineKey } from '../common/stock-posting';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
-import { reserveAvailableLotsTx } from '../common/lot-allocation';
+import { fillBackordersTx } from '../common/backorder-fill';
+import { ACTIVE_DEMAND_STATUSES, TERMINAL_DEMAND_STATUSES, closeFinishedDemandsTx } from '../common/demand-status';
 import { pricePoLines } from '../common/po-pricing';
 import { PrismaService } from '../prisma/prisma.service';
 import { indiaDay, reportRange } from '../reporting/reporting-time';
-import { stockFactor, toSellingQtyCeil, toSellingQtyFloor } from '../common/stock-units';
+import { stockFactor } from '../common/stock-units';
 
 export interface CreatePurchaseOrderInput {
   demandIds?: string[];
@@ -65,15 +66,24 @@ export class ProcurementService {
   async purchaseDemandQueue(args?: { status?: string; take?: number }) {
     await this.ensureDemandsForOpenOrders();
     const take = this.limit(args?.take, 250);
-    const statuses = args?.status && args.status !== 'all'
-      ? [args.status]
-      : ['open', 'ordered', 'partial_received', 'received', 'allocated'];
     const rows = await (this.prisma as any).purchaseDemand.findMany({
-      where: { status: { in: statuses } },
+      where: this.demandStatusWhere(args?.status),
       orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
       take,
     });
     return this.decorateDemands(rows);
+  }
+
+  /**
+   * "All active" (no status, 'all' or 'active') = still waiting on a supplier. Received,
+   * allocated, closed and cancelled rows show only when that status is picked; 'everything'
+   * lists every row ever raised.
+   */
+  private demandStatusWhere(status?: string) {
+    const value = String(status || '').trim();
+    if (!value || value === 'all' || value === 'active') return { status: { in: ACTIVE_DEMAND_STATUSES } };
+    if (value === 'everything') return {};
+    return { status: value };
   }
 
   async purchaseOrders(args?: { status?: string; take?: number }) {
@@ -112,8 +122,7 @@ export class ProcurementService {
 
   async purchaseDemandPage(args?: { search?: string; status?: string; sort?: string; skip?: number; take?: number }) {
     await this.ensureDemandsForOpenOrders();
-    const where: any = {};
-    if (args?.status && args.status !== 'all') where.status = args.status;
+    const where: any = this.demandStatusWhere(args?.status);
     const search = String(args?.search || '').trim();
     if (search) {
       // A sales order number (e.g. SO/2026/0257) finds the demand that order raised.
@@ -430,7 +439,8 @@ export class ProcurementService {
     if (!demandIds.length && !directInputs.length) throw new BadRequestException('Select purchase demand or add at least one Product Master line');
 
     const demands = demandIds.length ? await (this.prisma as any).purchaseDemand.findMany({
-      where: { id: { in: demandIds }, status: { in: ['open', 'ordered', 'partial_received'] } },
+      // Closed, cancelled, received and allocated demands are finished: never bought again.
+      where: { id: { in: demandIds }, status: { in: ACTIVE_DEMAND_STATUSES } },
       orderBy: { createdAt: 'asc' },
     }) : [];
     if (demandIds.length && demands.length !== demandIds.length) {
@@ -439,8 +449,10 @@ export class ProcurementService {
     const selectedDemandIds = new Set(demands.map((demand: any) => demand.id));
     const unknownDemandCost = demandCostInputs.find((line: any) => !selectedDemandIds.has(String(line.purchaseDemandId)));
     if (unknownDemandCost) throw new BadRequestException('A demand cost override does not belong to the selected purchase demand');
-    const invalidDemand = demands.find((demand: any) => !demand.productId);
+    // A special-order tile line has no Product Master item; it is bought by its own code and unit.
+    const invalidDemand = demands.find((demand: any) => !demand.productId && demand.sourceType !== 'tile_special_order');
     if (invalidDemand) throw new BadRequestException(`${invalidDemand.sku} must be linked to a Product Master SKU before purchase ordering`);
+    await this.assertDemandsNotOnOpenPoTx(this.prisma as any, demands);
     if (directInputs.some((line: any) => !String(line.productId || '').trim())) throw new BadRequestException('Every direct PO line must select a Product Master SKU');
     const directProductIds = directInputs.map((line: any) => String(line.productId).trim());
     const demandProductIds = demands.map((demand: any) => String(demand.productId || '').trim()).filter(Boolean);
@@ -449,7 +461,9 @@ export class ProcurementService {
     const productById = new Map(products.map((product: any) => [product.id, product]));
     const demandCostById = new Map(demandCostInputs.map((line: any) => [String(line.purchaseDemandId), line]));
     const demandLines = demands.map((demand: any) => {
-      const product: any = productById.get(String(demand.productId || ''));
+      const product: any = demand.productId
+        ? productById.get(String(demand.productId || ''))
+        : this.specialOrderUnitProduct(demand);
       if (!product) throw new BadRequestException(`${demand.sku} is not an active Product Master SKU`);
       const captured: any = demandCostById.get(demand.id) || {};
       const legacyCost = Number((demand.metadata || {})?.unitCost || 0);
@@ -557,6 +571,8 @@ export class ProcurementService {
     );
 
     const po = await this.prisma.$transaction(async (tx: any) => {
+      // Checked again inside the transaction so a double tap cannot buy the same shortfall twice.
+      await this.assertDemandsNotOnOpenPoTx(tx, demands);
       const order = await tx.purchaseOrder.create({
         data: {
           id: ulid(),
@@ -768,9 +784,28 @@ export class ProcurementService {
         },
       });
       return order;
-    }, { timeout: 15000 });
+    }, { isolationLevel: 'Serializable', timeout: 15000 });
 
     return this.purchaseOrder(po.id);
+  }
+
+  /** A demand still waiting on an open purchase order cannot be put on a second one. */
+  private async assertDemandsNotOnOpenPoTx(client: any, demands: any[]) {
+    const ids = demands.map((demand: any) => demand.id).filter(Boolean);
+    if (!ids.length) return;
+    const lines = await client.purchaseOrderLine.findMany({
+      where: {
+        purchaseDemandId: { in: ids },
+        status: { notIn: ['cancelled', 'partial_received_cancelled', 'received'] },
+        purchaseOrder: { status: { in: ['draft', 'ordered', 'partial_received'] } },
+      },
+      include: { purchaseOrder: { select: { poNumber: true } } },
+    });
+    const open = lines.find((line: any) => Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0) - Number(line.cancelledQuantity || 0) > 0);
+    if (open) {
+      const demand = demands.find((row: any) => row.id === open.purchaseDemandId);
+      throw new BadRequestException(`${demand?.sku || open.sku} is already on ${open.purchaseOrder?.poNumber || 'an open purchase order'}. Receive or cancel that order before buying it again.`);
+    }
   }
 
   async updatePurchaseOrderStatus(id: string, status: string, actorUserId: string) {
@@ -783,6 +818,21 @@ export class ProcurementService {
     if (!order) throw new NotFoundException('Purchase order not found');
     if (['cancelled', 'closed'].includes(String(order.status || '')) && order.status !== status) {
       throw new BadRequestException(`${order.poNumber} is ${order.status} and cannot be reopened through a status update.`);
+    }
+    if (order.status === status) return this.purchaseOrder(id);
+    // Received and part received come only from goods receipts, which also move
+    // stock and demand. This call may only send a draft or close a finished order.
+    if (['partial_received', 'received'].includes(status)) {
+      throw new BadRequestException('Received quantities come from a goods receipt. Post a receipt against this order instead.');
+    }
+    if (status === 'draft') throw new BadRequestException(`${order.poNumber} has already been placed and cannot go back to draft.`);
+    if (status === 'ordered' && order.status !== 'draft') {
+      throw new BadRequestException(`${order.poNumber} is ${String(order.status).replace(/_/g, ' ')}; only a draft can be marked as ordered.`);
+    }
+    if (status === 'closed') {
+      const lines = await (this.prisma as any).purchaseOrderLine.findMany({ where: { purchaseOrderId: id } });
+      const stillToCome = lines.some((line: any) => Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0) - Number(line.cancelledQuantity || 0) > 0);
+      if (stillToCome) throw new BadRequestException(`${order.poNumber} still has items to receive. Receive them, or cancel the order with a reason so the shortfall goes back to purchase demand.`);
     }
     const update: any = { status, updatedAt: new Date() };
     if (status === 'ordered') update.orderedAt = order.orderedAt || new Date();
@@ -897,9 +947,33 @@ export class ProcurementService {
     if (!selected.length) throw new BadRequestException('Enter at least one received quantity');
 
     const grnNumber = await this.generateGrnNumber();
-    const lineMap = new Map(poLines.map((line: any) => [line.id, line]));
 
     const grn = await this.prisma.$transaction(async (tx: any) => {
+      // A back-dated receipt must not land in a closed stock month.
+      await assertInventoryPeriodOpenTx(tx, receivedDate);
+      // Re-read the PO inside the transaction: a receipt posted a moment ago must count.
+      const livePo = await tx.purchaseOrder.findUnique({ where: { id: po.id } });
+      if (!livePo || livePo.status === 'cancelled' || livePo.status === 'closed') throw new BadRequestException('This purchase order is closed or cancelled');
+      const livePoLines = await tx.purchaseOrderLine.findMany({ where: { purchaseOrderId: po.id } });
+      const lineMap = new Map(livePoLines.map((line: any) => [line.id, line]));
+      // Two rows for the same PO line (two batches, or a double submit) are added
+      // together before checking what is still to come on that line.
+      const receivedByLine = new Map<string, number>();
+      for (const row of selected) {
+        const line = lineMap.get(String(row.purchaseOrderLineId || '')) as any;
+        if (!line) throw new BadRequestException('One GRN line does not belong to this purchase order');
+        const product = line.productId ? productMap.get(line.productId) as any : null;
+        const received = this.baseQuantity(row, product || this.specialOrderUnitProduct(line), `${line.sku} received quantity`);
+        receivedByLine.set(line.id, (receivedByLine.get(line.id) || 0) + received);
+      }
+      for (const [lineId, total] of receivedByLine.entries()) {
+        const line = lineMap.get(lineId) as any;
+        const remaining = Math.max(0, Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0) - Number(line.cancelledQuantity || 0));
+        if (total > remaining) {
+          throw new BadRequestException(`${line.sku}: ${total} entered on this receipt, but only ${remaining} is still to come on ${po.poNumber}`);
+        }
+      }
+      const runningReceived = new Map<string, number>(livePoLines.map((line: any) => [line.id, Number(line.receivedQuantity || 0)]));
       const capturedRateLineIds: string[] = [];
       const pendingCostLineIds: string[] = [];
       const receiptLocation = input.locationId
@@ -927,24 +1001,19 @@ export class ProcurementService {
         const line = lineMap.get(String(row.purchaseOrderLineId || '')) as any;
         if (!line) throw new BadRequestException('One GRN line does not belong to this purchase order');
         const product = line.productId ? productMap.get(line.productId) as any : null;
-        const received = this.baseQuantity(row, product, `${line.sku} received quantity`);
-        const damaged = Math.max(0, Math.trunc(Number(row.damagedQuantity || 0)));
+        const received = this.baseQuantity(row, product || this.specialOrderUnitProduct(line), `${line.sku} received quantity`);
+        const damaged = this.wholeOrZero(row.damagedQuantity, `${line.sku} damaged quantity`);
         if (damaged > received) throw new BadRequestException(`${line.sku} damaged quantity cannot exceed received quantity`);
         const accepted = received - damaged;
         if (received <= 0) continue;
 
-        const remaining = Math.max(0, Number(line.orderedQuantity || 0) - Number(line.receivedQuantity || 0));
-        if (received > remaining) {
-          throw new BadRequestException(`${line.sku} receipt ${received} exceeds remaining PO quantity ${remaining}`);
-        }
         const rawRate = row.enteredUnitCost ?? row.unitCost;
         const hasRateAmount = rawRate !== undefined && rawRate !== null && String(rawRate).trim() !== '';
         const hasRateInput = hasRateAmount || row.rateUom !== undefined;
         const rateMissing = String(line.costStatus || '') !== 'complete' || Number(line.unitCost || 0) <= 0 || Number(line.netUnitCost || 0) <= 0;
         let effectiveLine = line;
         if (rateMissing && hasRateAmount) {
-          if (!product) throw new BadRequestException(`${line.sku} must be linked to Product Master before its inward rate can be captured`);
-          const normalizedRate = this.normalizePurchaseRate(row, product, `${line.sku} inward supplier rate`);
+          const normalizedRate = this.normalizePurchaseRate(row, product || this.specialOrderUnitProduct(line), `${line.sku} inward supplier rate`);
           const pricedLine = pricePoLines(
             [{ orderedQuantity: Number(line.orderedQuantity || 0), unitCost: normalizedRate.unitCost }],
             { discountPercent: po.discountPercent, taxRate: po.taxRate },
@@ -1068,7 +1137,8 @@ export class ProcurementService {
           await tx.goodsReceiptLine.update({ where: { id: receiptLine.id }, data: { lotId: lot.id } });
         }
 
-        const lineReceived = Number(line.receivedQuantity || 0) + accepted;
+        const lineReceived = Number(runningReceived.get(line.id) || 0) + accepted;
+        runningReceived.set(line.id, lineReceived);
         const lineStatus = lineReceived >= Number(line.orderedQuantity || 0) ? 'received' : 'partial_received';
         await tx.purchaseOrderLine.update({
           where: { id: line.id },
@@ -1079,14 +1149,19 @@ export class ProcurementService {
           const demand = await tx.purchaseDemand.findUnique({ where: { id: line.purchaseDemandId } });
           if (demand) {
             const demandReceived = Number(demand.receivedQuantity || 0) + accepted;
+            // A closed or cancelled demand keeps its status: the count still records what came in.
+            const terminal = TERMINAL_DEMAND_STATUSES.includes(String(demand.status || ''));
+            const demandStatus = terminal ? demand.status : demandReceived >= Number(demand.quantity || 0) ? 'received' : 'partial_received';
             await tx.purchaseDemand.update({
               where: { id: demand.id },
               data: {
                 receivedQuantity: demandReceived,
-                status: demandReceived >= Number(demand.quantity || 0) ? 'received' : 'partial_received',
+                status: demandStatus,
                 updatedAt: new Date(),
               },
             });
+            // Goods that arrive after the order was already delivered finish the demand now.
+            if (demandStatus === 'received') await closeFinishedDemandsTx(tx, demand.sourceOrderId);
             if (!line.productId && accepted > 0) {
               await this.allocateSpecialOrderReceiptTx(tx, demand, accepted, actorUserId, note.id, grnNumber);
             }
@@ -1106,6 +1181,8 @@ export class ProcurementService {
             locationId: receiptLocation.id,
             referenceId: note.id,
             sourceDocumentNo: grnNumber,
+            // Business date of the receipt, so a back-dated receipt counts in its own stock period.
+            effectiveAt: receivedDate,
           });
         }
       }
@@ -1150,6 +1227,8 @@ export class ProcurementService {
     const grnNumber = await this.generateGrnNumber();
 
     const grn = await this.prisma.$transaction(async (tx: any) => {
+      // A back-dated receipt must not land in a closed stock month.
+      await assertInventoryPeriodOpenTx(tx, receivedDate);
       const receiptLocation = input.locationId
         ? await this.resolveStockLocationTx(tx, input.locationId)
         : await this.ensureDefaultLocationTx(tx);
@@ -1173,7 +1252,7 @@ export class ProcurementService {
         const product = productMap.get(String(row.productId || '')) as any;
         if (!product) throw new BadRequestException('Manual GRN rows must use an existing Product Master SKU');
         const received = this.baseQuantity(row, product, `${product.sku} received quantity`);
-        const damaged = Math.max(0, Math.trunc(Number(row.damagedQuantity || 0)));
+        const damaged = this.wholeOrZero(row.damagedQuantity, `${product.sku} damaged quantity`);
         if (damaged > received) throw new BadRequestException(`${product.sku} damaged quantity cannot exceed received quantity`);
         const accepted = received - damaged;
         const manualRate = this.normalizePurchaseRate(row, product, `${product.sku} manual GRN rate`);
@@ -1237,6 +1316,7 @@ export class ProcurementService {
             locationId: receiptLocation.id,
             referenceId: note.id,
             sourceDocumentNo: grnNumber,
+            effectiveAt: receivedDate,
           });
         }
       }
@@ -1253,7 +1333,8 @@ export class ProcurementService {
         },
       }).catch(() => null);
       return note;
-    }, { timeout: 20000 });
+      // Same strict mode as the PO receipt: two postings for one item cannot overwrite each other.
+    }, { isolationLevel: 'Serializable', timeout: 20000 });
 
     const [decorated] = await this.decorateGrns([grn]);
     return decorated;
@@ -1309,6 +1390,11 @@ export class ProcurementService {
       const changed = JSON.stringify({ ...before, receivedDate: new Date(before.receivedDate).toISOString() })
         !== JSON.stringify({ ...after, receivedDate: new Date(after.receivedDate).toISOString() });
       if (!changed) throw new BadRequestException('Change at least one receipt header field before saving the correction');
+      if (new Date(before.receivedDate).getTime() !== new Date(after.receivedDate).getTime()) {
+        // Moving a receipt date into, or out of, a closed stock month would change that month's books.
+        await assertInventoryPeriodOpenTx(tx, before.receivedDate);
+        await assertInventoryPeriodOpenTx(tx, after.receivedDate);
+      }
 
       const correction = {
         correctedAt: new Date().toISOString(),
@@ -1533,6 +1619,48 @@ export class ProcurementService {
       });
     }
 
+    // Special-order tile lines (no Product Master item) are bought by their own
+    // code and unit. One demand per order line, keyed the way dispatch reads it.
+    const tileOrderLines = await (this.prisma as any).salesOrderLine.findMany({
+      where: { salesOrderId: { in: orderIds }, productId: null, orderedQuantity: { gt: 0 } },
+    }).catch(() => []);
+    const tileLinesByOrder = this.groupBy(tileOrderLines, 'salesOrderId');
+    for (const order of orders as any[]) {
+      const orderLines = tileLinesByOrder.get(order.id) || [];
+      if (!orderLines.length) continue;
+      normalizeJsonLines(order.lines).forEach((line: any, index: number) => {
+        if (String(line?.productId || '').trim() || !isTileSelectionLine(line)) return;
+        const quantity = Math.trunc(Number(line.qty || line.quantity || 0));
+        if (quantity <= 0) return;
+        const lineKey = String(line.lineKey || quoteLineKey(line, index));
+        const orderLine = orderLines.find((row: any) => row.lineKey === lineKey) || orderLines.find((row: any) => Number(row.lineNo) === index + 1);
+        if (!orderLine) return;
+        const code = String(line.tileCode || line.sku || orderLine.sku || '').trim();
+        rows.push({
+          id: ulid(),
+          sourceType: 'tile_special_order',
+          sourceLineKey: this.tileDemandKey(order.id, line, index),
+          sourceOrderId: order.id,
+          sourceQuoteId: order.quoteId || null,
+          customerId: order.customerId,
+          ownerId: order.ownerId,
+          productId: null,
+          sku: code || orderLine.sku,
+          name: String(line.name || line.description || orderLine.name || code || 'Special-order tile'),
+          category: String(line.category || orderLine.category || 'Tiles'),
+          brand: String(line.brand || orderLine.brand || ''),
+          finish: line.finish || line.tileSize || orderLine.finish || null,
+          unit: String(orderLine.unit || line.unit || line.uom || 'BOX').toUpperCase(),
+          quantity,
+          status: 'open',
+          vendorName: line.brand || orderLine.brand || null,
+          notes: `${order.orderNumber || 'Sales order'} special-order tile for ${customerMap.get(order.customerId)?.name || 'customer'}`,
+          metadata: { orderNumber: order.orderNumber, customerName: customerMap.get(order.customerId)?.name, ownerName: ownerMap.get(order.ownerId)?.name, salesOrderLineId: orderLine.id, orderLineKey: orderLine.lineKey },
+          updatedAt: new Date(),
+        });
+      });
+    }
+
     if (!rows.length) return;
     await (this.prisma as any).purchaseDemand.createMany({ data: rows, skipDuplicates: true });
   }
@@ -1647,10 +1775,13 @@ export class ProcurementService {
   ) {
     if (!demand?.sourceOrderId || !demand?.sourceLineKey || acceptedQuantity <= 0) return;
     const order = await tx.salesOrder.findUnique({ where: { id: demand.sourceOrderId } }).catch(() => null);
-    if (!order) return;
-    const line = await tx.salesOrderLine.findUnique({
-      where: { salesOrderId_lineKey: { salesOrderId: demand.sourceOrderId, lineKey: demand.sourceLineKey } },
-    }).catch(() => null);
+    // A cancelled order takes nothing: the goods are received on the PO but not set aside for it.
+    if (!order || ['cancelled', 'closed'].includes(String(order.status || ''))) return;
+    const demandLineId = String((demand.metadata as any)?.salesOrderLineId || '').trim();
+    const line = (demandLineId ? await tx.salesOrderLine.findUnique({ where: { id: demandLineId } }) : null)
+      || await tx.salesOrderLine.findUnique({
+        where: { salesOrderId_lineKey: { salesOrderId: demand.sourceOrderId, lineKey: demand.sourceLineKey } },
+      });
     if (!line) return;
 
     const nextAllocated = Math.min(Number(line.orderedQuantity || 0), Number(line.allocatedQuantity || 0) + acceptedQuantity);
@@ -1750,7 +1881,7 @@ export class ProcurementService {
 
   private async addReceivedStockTx(
     tx: any,
-    args: { productId: string; lotId: string; receivedQuantity: number; damagedQuantity: number; unitCost?: number; costSource?: string; reason: string; actorUserId: string; locationId?: string; referenceId?: string; sourceDocumentNo?: string },
+    args: { productId: string; lotId: string; receivedQuantity: number; damagedQuantity: number; unitCost?: number; costSource?: string; reason: string; actorUserId: string; locationId?: string; referenceId?: string; sourceDocumentNo?: string; effectiveAt?: Date },
   ) {
     await applyLotStockPostingTx(tx, {
       productId: args.productId,
@@ -1767,113 +1898,16 @@ export class ProcurementService {
       sourceDocumentNo: args.sourceDocumentNo || null,
       createdBy: args.actorUserId,
       unitCost: Number(args.unitCost || 0),
+      effectiveAt: args.effectiveAt,
       metadata: { source: 'procurement_service', costSource: args.costSource || 'unspecified', acceptedQuantity: args.receivedQuantity - args.damagedQuantity },
     });
     if (args.receivedQuantity > args.damagedQuantity) await this.autoReserveBackordersTx(tx, args.productId, args.actorUserId);
   }
 
   private async autoReserveBackordersTx(tx: any, productId: string, actorUserId: string) {
-    const reservations = await tx.reservation.findMany({
-      where: { productId, status: 'backordered' },
-      orderBy: { createdAt: 'asc' },
-    });
-    for (const reservation of reservations) {
-      const balance = await tx.inventoryBalance.findUnique({ where: { productId }, include: { product: true } });
-      const lotAvailability = await tx.inventoryLotBalance.aggregate({
-        where: { lot: { productId, status: 'active' } }, _sum: { available: true },
-      });
-      if (!balance || Number(lotAvailability._sum.available || 0) < Number(reservation.quantity || 0)) return;
-      const quote = reservation.quoteId
-        ? await tx.quote.findUnique({ where: { id: reservation.quoteId } })
-        : null;
-      const salesOrder = reservation.salesOrderId
-        ? await tx.salesOrder.findUnique({ where: { id: reservation.salesOrderId } })
-        : null;
-      const quantity = Number(reservation.quantity || 0);
-      const allocations = await reserveAvailableLotsTx(tx, {
-        reservationId: reservation.id, salesOrderLineId: reservation.salesOrderLineId,
-        productId, quantity, actorUserId: actorUserId || 'system', quoteId: reservation.quoteId,
-        orderNumber: salesOrder?.orderNumber || quote?.quoteNumber || reservation.quoteId,
-      });
-      await tx.reservation.update({
-        where: { id: reservation.id },
-        data: {
-          status: 'reserved',
-          locationId: new Set(allocations.map((row: any) => row.locationId)).size === 1 ? allocations[0].locationId : null,
-          updatedAt: new Date(),
-        },
-      });
-      await tx.purchaseDemand.updateMany({
-        where: { sourceReservationId: reservation.id },
-        data: { status: 'allocated', updatedAt: new Date() },
-      }).catch(() => null);
-      if (reservation.quoteId) {
-        await syncSalesOrderLinesForQuoteTx(tx, reservation.quoteId);
-      } else if (reservation.salesOrderLineId) {
-        const siblingReservations = await tx.reservation.findMany({
-          where: { salesOrderLineId: reservation.salesOrderLineId },
-          select: { quantity: true, status: true },
-        });
-        // Reservations are in base units (pieces); the order line counts selling units (boxes).
-        const reservedBase = siblingReservations
-          .filter((row: any) => row.status === 'reserved')
-          .reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
-        const backorderedBase = siblingReservations
-          .filter((row: any) => row.status === 'backordered')
-          .reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
-        const orderLine = await tx.salesOrderLine.findUnique({ where: { id: reservation.salesOrderLineId }, select: { orderedQuantity: true } });
-        const ordered = Number(orderLine?.orderedQuantity || 0);
-        const reservedQuantity = Math.min(ordered, toSellingQtyFloor(balance.product, reservedBase));
-        const backorderedQuantity = Math.min(Math.max(0, ordered - reservedQuantity), toSellingQtyCeil(balance.product, backorderedBase));
-        await tx.salesOrderLine.update({
-          where: { id: reservation.salesOrderLineId },
-          data: {
-            reservedQuantity,
-            backorderedQuantity,
-            status: backorderedQuantity > 0 ? (reservedQuantity > 0 ? 'partial_ready' : 'backordered') : 'reserved',
-            updatedAt: new Date(),
-          },
-        });
-      }
-      if (quote?.leadId) {
-        await tx.activity.create({
-          data: {
-            id: ulid(),
-            leadId: quote.leadId,
-            quoteId: quote.id,
-            userId: quote.ownerId,
-            type: 'stock_ready',
-            message: `${balance.product?.sku || 'Item'} arrived through GRN, was auto-reserved, and is ready for dispatch.`,
-          },
-        }).catch(() => null);
-        await tx.notification.createMany({
-          data: [
-            {
-              id: ulid(),
-              title: 'Backorder item reserved',
-              message: `${balance.product?.sku || 'Item'} has arrived for ${quote.quoteNumber} and is reserved.`,
-              type: 'stock_ready',
-              entityType: 'Quote',
-              entityId: quote.id,
-              href: `/dashboard/leads/${quote.leadId}`,
-              targetUserId: quote.ownerId,
-              metadata: { productId, quoteId: quote.id },
-            },
-            {
-              id: ulid(),
-              title: 'Pending dispatch item ready',
-              message: `${balance.product?.sku || 'Item'} is inwarded and reserved. Dispatch can create the remaining challan.`,
-              type: 'stock_ready',
-              entityType: 'Quote',
-              entityId: quote.id,
-              href: '/dashboard/dispatch',
-              targetRole: 'dispatch_ops',
-              metadata: { productId, quoteId: quote.id },
-            },
-          ],
-        }).catch(() => null);
-      }
-    }
+    // Shared rule: skip cancelled or closed orders, oldest live backorder first,
+    // and keep going past one that is larger than the stock that came in.
+    await fillBackordersTx(tx, productId, { actorUserId, source: 'goods_receipt' });
   }
 
   private async refreshPurchaseOrderStatusTx(tx: any, purchaseOrderId: string) {
@@ -1955,9 +1989,25 @@ export class ProcurementService {
   }
 
   private whole(value: any, label: string) {
-    const number = Math.trunc(Number(value || 0));
-    if (!Number.isFinite(number) || number <= 0) throw new BadRequestException(`${label} must be a positive whole number`);
-    return number;
+    const raw = Number(value || 0);
+    if (!Number.isFinite(raw) || raw <= 0) throw new BadRequestException(`${label} must be a positive whole number`);
+    // Stock is kept in whole units: say so instead of cutting 2.5 down to 2.
+    if (!Number.isInteger(raw)) throw new BadRequestException(`${label} must be a whole number (${raw} is not). Stock is counted in whole units.`);
+    return raw;
+  }
+
+  private wholeOrZero(value: any, label: string) {
+    if (value === undefined || value === null || String(value).trim() === '') return 0;
+    const raw = Number(value);
+    if (!Number.isFinite(raw) || raw < 0) throw new BadRequestException(`${label} cannot be negative`);
+    if (!Number.isInteger(raw)) throw new BadRequestException(`${label} must be a whole number (${raw} is not). Stock is counted in whole units.`);
+    return raw;
+  }
+
+  /** Unit stand-in for a special-order tile line that has no Product Master item: its own unit, one per unit. */
+  private specialOrderUnitProduct(line: any) {
+    const unit = String(line?.unit || 'PC').trim().toUpperCase() || 'PC';
+    return { sku: line?.sku || 'Special order', baseUom: unit, purchaseUom: unit, piecesPerPack: 1, allowLoose: true };
   }
 
   private baseQuantity(row: any, product: any, label: string) {
@@ -1965,8 +2015,8 @@ export class ProcurementService {
     if (!hasPackInput) return this.whole(row?.receivedQuantity ?? row?.quantity ?? row?.orderedQuantity, label);
     // Boxes become base units: pieces for a boxed tile, one each when the base unit is the box itself.
     const piecesPerPack = product ? stockFactor(product) : Math.max(1, Math.trunc(Number(row?.piecesPerPack || 1)));
-    const boxes = Math.max(0, Math.trunc(Number(row?.boxes ?? row?.packs ?? 0)));
-    const loosePieces = Math.max(0, Math.trunc(Number(row?.loosePieces || 0)));
+    const boxes = this.wholeOrZero(row?.boxes ?? row?.packs, `${label} (boxes)`);
+    const loosePieces = this.wholeOrZero(row?.loosePieces, `${label} (loose pieces)`);
     if (loosePieces > 0 && product && product.allowLoose === false) throw new BadRequestException(`${product.sku} does not allow loose-piece inward`);
     if (loosePieces > 0 && product && piecesPerPack <= 1 && String(product.baseUom || 'PC').toUpperCase() !== 'PC') throw new BadRequestException(`${product.sku} is stocked by the ${String(product.baseUom).toUpperCase()}; enter whole boxes`);
     const quantity = boxes * piecesPerPack + loosePieces;

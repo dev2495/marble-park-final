@@ -5,8 +5,10 @@ import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory
 import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
-import { releaseReservedLotsTx, reserveAvailableLotsTx } from '../common/lot-allocation';
-import { stockFactor, toBaseQty, toSellingQtyFloor } from '../common/stock-units';
+import { fillBackordersForProductsTx } from '../common/backorder-fill';
+import { isFraction, wholeQuantity } from '../common/whole-quantity';
+import { releaseReservedLotsTx, reservableLotQuantityTx, reserveAvailableLotsTx } from '../common/lot-allocation';
+import { stockFactor, tileBoxReading, toBaseQty, toSellingQtyFloor } from '../common/stock-units';
 import { commercialTotalsFromLines, priceQuoteLines, RETAIL_LADDER_VERSION } from '../common/pricing';
 import { ProductsService } from '../products/products.service';
 import { ulid } from 'ulid';
@@ -14,6 +16,7 @@ import { randomBytes } from 'crypto';
 import { StoredImageService } from '../assets/stored-image.service';
 import { ReceivablesService } from '../receivables/receivables.service';
 import { tileCoveragePerPack, tilePricingChoice } from '../common/tile-pricing-unit';
+import { quoteLineKey as sharedQuoteLineKey } from '@marble-park/pricing-contract/quote-line-key';
 
 export interface CreateQuoteInput {
   quoteType?: string;
@@ -32,6 +35,8 @@ export interface CreateQuoteInput {
   supersedesQuoteId?: string | null;
   architectId?: string | null;
   saveAsDraft?: boolean;
+  /** Internal only (not in GraphQL): runs inside the quote's own transaction. */
+  afterCreateTx?: (tx: any, quote: any) => Promise<void>;
 }
 
 export interface UpdateQuoteInput {
@@ -121,6 +126,24 @@ const SERVER_META_KEYS = ['preparedById', 'preparedByName', 'preparedAt', 'confi
 const COMMERCIAL_LINE_KEYS = ['productId', 'area', 'qty', 'quantity', 'requestedArea', 'requestedPieces', 'nrpMode', 'nrpInput', 'specialMode', 'specialInput', 'taxRate'];
 
 const QUOTE_STATUSES = ['incomplete_pricing', 'draft', 'pending_approval', 'approved', 'sent', 'customer_followup', 'partially_ordered', 'confirmed', 'won', 'closed', 'lost', 'expired', 'superseded', 'cancelled'];
+/** GST % of a line. An empty box means the standard 18%, never 0%; a typed 0 stays 0. */
+function lineGstRate(line: any): number {
+  const raw = line?.taxRate;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return 18;
+  const rate = Number(raw);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) throw new BadRequestException(`${line?.sku || line?.name || 'A line'} has a GST rate that is not a number from 0 to 100.`);
+  return rate;
+}
+/** How the advance was paid, as the screen sent it; cash when not given. Same list the receipt desk accepts. */
+const ADVANCE_RECEIPT_MODES = ['cash', 'upi', 'neft', 'rtgs', 'card', 'cheque', 'bank_transfer', 'other'];
+function advanceReceiptMode(value: unknown): string {
+  const mode = String(value || '').trim().toLowerCase();
+  return ADVANCE_RECEIPT_MODES.includes(mode) ? mode : 'cash';
+}
+/** Statuses after which a quote is no longer an open offer. */
+const CLOSED_QUOTE_STATUSES = ['cancelled', 'superseded', 'closed', 'lost', 'expired', 'won'];
+/** Open offers that pass their valid-until date become expired (quotes with an order never expire). */
+const EXPIRABLE_QUOTE_STATUSES = ['incomplete_pricing', 'draft', 'pending_approval', 'approved', 'sent', 'customer_followup'];
 
 // Eager-include retained ONLY for endpoints that legitimately need the embedded
 // objects in a single round-trip (e.g. internal services that don't go through
@@ -398,7 +421,7 @@ export class QuotesService {
             await this.releaseReservationsTx(tx, supersedesId, 'Quote superseded by revision');
           }
 
-          const { intentId, supersedesQuoteId: _supersedesQuoteId, saveAsDraft: _saveAsDraft, architectId: _architectId, quoteType: _quoteType, ...quoteData } = data as any;
+          const { intentId, supersedesQuoteId: _supersedesQuoteId, saveAsDraft: _saveAsDraft, architectId: _architectId, quoteType: _quoteType, afterCreateTx: _afterCreateTx, ...quoteData } = data as any;
           const quote = await tx.quote.create({
             data: {
               id: ulid(),
@@ -453,6 +476,18 @@ export class QuotesService {
             });
           }
           await this.syncQuoteLinesTx(tx, quote, normalizedLines);
+          if (supersedesId) {
+            const carried = await this.carryOrderedQuantitiesTx(tx, supersedesId, quote);
+            if (carried) quote.status = carried;
+          }
+          // Callers that must change their own records with the quote (build quote from an intent)
+          // do it here, so the quote and those changes are saved together or not at all.
+          if (typeof (data as any).afterCreateTx === 'function') await (data as any).afterCreateTx(tx, quote);
+          // A quote started from a walk-in remembers that visit (same customer only).
+          const walkInVisitId = String(rawQuoteMeta.walkInVisitId || '').trim();
+          if (walkInVisitId) {
+            await (tx as any).showroomVisit.updateMany({ where: { id: walkInVisitId, customerId, quoteId: null }, data: { quoteId: quote.id, status: 'quoting', updatedAt: new Date() } });
+          }
           await this.upsertDocumentJobTx(tx, {
             entityType: 'Quote',
             entityId: quote.id,
@@ -499,11 +534,31 @@ export class QuotesService {
 
   async update(id: string, data: UpdateQuoteInput, actorUserId?: string): Promise<any> {
     const current = await this.findById(id);
+    // A finished quote is history: it is not saved back into a working state.
+    if (['cancelled', 'lost', 'closed', 'superseded', 'won'].includes(current.status) || current.supersededByQuoteId) {
+      throw new BadRequestException(current.supersededByQuoteId || current.status === 'superseded'
+        ? 'A newer version replaced this quote. Open the current version to make changes.'
+        : `This quote is ${current.status}, so it cannot be changed. Start a new quote for the customer.`);
+    }
+    // Clash check: the screen sends the save time it loaded; someone else saving in between is refused, not overwritten.
+    const expectedUpdatedAt = (data as any).expectedUpdatedAt ? new Date((data as any).expectedUpdatedAt) : null;
+    if (expectedUpdatedAt && !Number.isNaN(expectedUpdatedAt.getTime()) && Math.abs(new Date(current.updatedAt).getTime() - expectedUpdatedAt.getTime()) > 1) {
+      throw new BadRequestException({ message: 'Someone else saved this quote after you opened it. Reload to see their changes, then make yours again.', code: 'QUOTE_EDIT_CLASH' });
+    }
     if (data.discountPercent !== undefined || data.lines !== undefined || data.quoteType !== undefined) {
-      const existingOrders = await this.prisma.salesOrder.count({ where: { quoteId: id } });
-      if (existingOrders > 0) {
+      const [existingOrders, carriedLines] = await Promise.all([
+        this.prisma.salesOrder.count({ where: { quoteId: id, status: { not: 'cancelled' } } }),
+        this.prisma.quoteLine.count({ where: { quoteId: id, orderedQuantity: { gt: 0 } } }),
+      ]);
+      if (existingOrders > 0 || carriedLines > 0) {
         throw new BadRequestException('Commercial lines are frozen once an order exists. Create a quote revision for a new commercial agreement.');
       }
+    }
+    // Re-validating an expired offer: a new valid-until date from today on brings it back.
+    const nextValidUntil = data.validUntil !== undefined && data.validUntil !== null ? new Date(data.validUntil as any) : null;
+    const wasExpired = current.status === 'expired' && await this.quoteExpiryEnabled();
+    if (wasExpired && !(nextValidUntil && nextValidUntil.getTime() > Date.now())) {
+      throw new BadRequestException({ message: 'This quote has expired. Check the prices and set a new valid-until date from today on, then save.', code: 'QUOTE_EXPIRED' });
     }
     const saveAsDraft = Boolean((data as any).saveAsDraft);
     const updateData: any = { ...data };
@@ -611,7 +666,15 @@ export class QuotesService {
       };
     }
     
+    if (wasExpired && updateData.status === undefined) {
+      updateData.status = current.sentAt ? 'sent' : current.approvalStatus === 'pending' ? 'pending_approval' : current.pricingStatus === 'incomplete' ? 'incomplete_pricing' : 'draft';
+    }
+    delete updateData.expectedUpdatedAt;
     const updated = await this.prisma.$transaction(async (tx) => {
+      // Claim the row as it was read: if another save landed in between, this one stops
+      // (no silent overwrite, no second revision with the same letter).
+      const claimed = await tx.quote.updateMany({ where: { id, updatedAt: current.updatedAt }, data: { updatedAt: new Date() } });
+      if (claimed.count !== 1) throw new BadRequestException({ message: 'Someone else saved this quote at the same moment. Reload to see their changes, then make yours again.', code: 'QUOTE_EDIT_CLASH' });
       const saved = await tx.quote.update({ where: { id }, data: updateData, include: quoteInclude } as any) as any;
       if (updateData.lines) {
         await tx.quoteLine.deleteMany({ where: { quoteId: id } });
@@ -697,6 +760,7 @@ export class QuotesService {
   async createShare(quoteId: string, actorUserId: string, expiresInDays = 30, allowDownload = true) {
     const quote = await this.findById(quoteId);
     this.ensureCommercialReady(quote, 'sharing this quote');
+    await this.assertWithinValidity(quote, 'share this quote');
     const days = Math.min(Math.max(Math.trunc(Number(expiresInDays || 30)), 1), 365);
     const now = new Date();
     const reusable = await (this.prisma as any).quoteShare.findFirst({
@@ -731,6 +795,51 @@ export class QuotesService {
     return { ...share, revokedAt: share.revokedAt || new Date() };
   }
 
+  /** Cheap check for the public PDF address, before any renderer starts. Does not count a view. */
+  async publicQuoteShareStatus(tokenInput: string) {
+    const token = String(tokenInput || '').trim();
+    if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) return { ok: false };
+    const share = await (this.prisma as any).quoteShare.findUnique({ where: { token }, select: { quoteId: true, revokedAt: true, expiresAt: true, allowDownload: true } });
+    if (!share || share.revokedAt || share.expiresAt <= new Date()) return { ok: false };
+    const quote = await this.prisma.quote.findUnique({ where: { id: share.quoteId }, select: { updatedAt: true, status: true } } as any) as any;
+    if (!quote) return { ok: false };
+    return { ok: true, allowDownload: Boolean(share.allowDownload), version: new Date(quote.updatedAt).getTime(), expiresAt: share.expiresAt };
+  }
+
+  /** The fields of a quote the public PDF renderer reads, and nothing else. */
+  private publicQuoteShape(quote: any) {
+    const INTERNAL_LINE_KEY = /floor|cost|margin|vendor|supplier|purchase(price|rate|cost)|landed|confirmedbyid|approval|internalnote/i;
+    const lines = this.normalizeLines(quote.lines).map((line: any) => Object.fromEntries(Object.entries(line || {}).filter(([key]) => !INTERNAL_LINE_KEY.test(key))));
+    const meta = this.parseQuoteMeta(quote.quoteMeta);
+    // confirmedByName / confirmedAt / preparedByName stay: the PDF prints them.
+    const INTERNAL_META_KEY = /^(ownerHistory|preparedById|confirmedById|revisedById|revisedByName|revisedAt|approval.*|internal.*)$/;
+    const quoteMeta = Object.fromEntries(Object.entries(meta).filter(([key]) => !INTERNAL_META_KEY.test(key)));
+    const customer = quote.customer || {};
+    const architect = quote.architect || null;
+    const owner = quote.owner || {};
+    return {
+      id: quote.id,
+      quoteNumber: quote.quoteNumber,
+      quoteType: quote.quoteType,
+      title: quote.title,
+      projectName: quote.projectName,
+      validUntil: quote.validUntil,
+      createdAt: quote.createdAt,
+      versionNumber: quote.versionNumber,
+      displayMode: quote.displayMode,
+      discountPercent: quote.discountPercent,
+      notes: quote.notes,
+      coverImage: quote.coverImage,
+      pricingVersion: quote.pricingVersion,
+      architectName: quote.architectName,
+      lines,
+      quoteMeta,
+      customer: { name: customer.name, mobile: customer.mobile, phone: customer.phone, siteAddress: customer.siteAddress, city: customer.city, coverImage: customer.coverImage, architectName: customer.architectName, designerName: customer.designerName },
+      architect: architect ? { name: architect.name, firmName: architect.firmName } : null,
+      owner: { name: owner.name, phone: owner.phone },
+    };
+  }
+
   async publicQuoteShareDocument(tokenInput: string) {
     const token = String(tokenInput || '').trim();
     if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new NotFoundException('Quote share link not found');
@@ -749,7 +858,8 @@ export class QuotesService {
       data: { viewCount: { increment: 1 }, lastViewedAt: now },
     }).catch(() => null);
     return {
-      quote,
+      // Only what the customer's PDF prints. No floor rates, costs, approval notes, old revisions or lead record.
+      quote: this.publicQuoteShape(quote),
       settings: settings ? {
         companyName: settings.companyName,
         logoUrl: settings.logoUrl,
@@ -775,57 +885,159 @@ export class QuotesService {
     };
   }
 
-  async updateStatus(id: string, status: string): Promise<any> {
+  /**
+   * Generic status call kept for older callers. It moves a quote only where a
+   * person may move it by hand; every other status is reached by its own action
+   * (approve, order, revise, close remaining, cancel) so the rules behind it run.
+   */
+  async updateStatus(id: string, status: string, actorUserId?: string, reason?: string): Promise<any> {
     if (!QUOTE_STATUSES.includes(status)) {
       throw new BadRequestException(`Invalid status: ${status}`);
     }
-
     const current = await this.findById(id);
-    if (['sent', 'approved', 'confirmed', 'won'].includes(status)) this.ensureCommercialReady(current, `marking the quote ${status}`);
-
-    const updateData: any = { status };
-    if (status === 'sent') {
-      updateData.sentAt = new Date();
-    } else if (status === 'confirmed') {
-      updateData.confirmedAt = new Date();
+    if (current.status === status) return current;
+    if (status === 'sent') return this.sendQuote(id, actorUserId);
+    if (status === 'lost') return this.markQuoteLost(id, reason || '', actorUserId || current.ownerId);
+    if (status === 'expired') return this.expireQuote(id, actorUserId || current.ownerId);
+    if (status === 'customer_followup') {
+      if (!['draft', 'approved', 'sent'].includes(current.status)) throw new BadRequestException(`A ${current.status.replace(/_/g, ' ')} quote cannot be moved to customer follow-up.`);
+      this.ensureCommercialReady(current, 'marking the quote for customer follow-up');
+      await this.assertWithinValidity(current, 'follow up this quote');
+      const next = await this.prisma.quote.update({ where: { id }, data: { status, updatedAt: new Date() }, include: quoteInclude } as any) as any;
+      await this.audit(actorUserId || next.ownerId, 'quote.status', id, `Quote moved to customer follow-up`, { from: current.status, status });
+      return next;
     }
+    const howTo: Record<string, string> = {
+      approved: 'The owner approves it from Approvals.',
+      pending_approval: 'Saving a price below the floor rate asks for approval.',
+      draft: 'Save the quote.',
+      incomplete_pricing: 'Save the quote as a draft.',
+      confirmed: 'Create a sales order from it.',
+      partially_ordered: 'Create a sales order for part of it.',
+      won: 'Create a sales order from it.',
+      superseded: 'Save a revision.',
+      closed: 'Use Close remaining.',
+      cancelled: 'Use Cancel quote.',
+    };
+    throw new BadRequestException(`A quote cannot be set to ${status.replace(/_/g, ' ')} directly. ${howTo[status] || ''}`.trim());
+  }
 
-    // Status flip + reservation release + audit must be atomic so we never
-    // leave reservations dangling against a lost/expired quote.
+  /** The valid-until date has passed: true from the day after it. */
+  private isPastValidity(quote: any, now = new Date()) {
+    const until = quote?.validUntil ? new Date(quote.validUntil) : null;
+    return Boolean(until && !Number.isNaN(until.getTime()) && until.getTime() < now.getTime());
+  }
+
+  /** Settings switch "Expire quotes after their valid-until date". Off (default): no expiry rule runs anywhere. */
+  async quoteExpiryEnabled(tx?: any): Promise<boolean> {
+    const settings = await (tx || this.prisma).appSetting.findFirst({ orderBy: { updatedAt: 'desc' }, select: { quoteExpiryEnabled: true } });
+    return settings?.quoteExpiryEnabled === true;
+  }
+
+  private async assertWithinValidity(quote: any, action: string) {
+    if (!(await this.quoteExpiryEnabled())) return;
+    if (quote?.status === 'expired' || this.isPastValidity(quote)) {
+      const until = quote?.validUntil ? new Date(quote.validUntil).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      throw new BadRequestException({
+        message: `Cannot ${action}: this quote was valid until ${until || 'an earlier date'}.`,
+        code: 'QUOTE_EXPIRED',
+        remediation: 'Open the quote, check the prices, set a new valid-until date and save it. Then try again.',
+      });
+    }
+  }
+
+  /** Marks an open quote expired once its valid-until date has passed. Quotes with an order are left alone. */
+  private async expireQuoteTx(tx: any, quote: any, actorUserId: string) {
+    if (!EXPIRABLE_QUOTE_STATUSES.includes(quote.status) || quote.supersededByQuoteId) return null;
+    const [orders, orderedLines] = await Promise.all([
+      tx.salesOrder.count({ where: { quoteId: quote.id, status: { not: 'cancelled' } } }),
+      tx.quoteLine.count({ where: { quoteId: quote.id, orderedQuantity: { gt: 0 } } }),
+    ]);
+    if (orders || orderedLines) return null;
+    const claimed = await tx.quote.updateMany({ where: { id: quote.id, status: quote.status }, data: { status: 'expired', updatedAt: new Date() } });
+    if (claimed.count !== 1) return null;
+    await this.releaseReservationsTx(tx, quote.id, 'Quote passed its valid-until date', actorUserId);
+    await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'quote.expire', entityType: 'Quote', entityId: quote.id, summary: `${quote.quoteNumber} passed its valid-until date`, metadata: { previousStatus: quote.status, validUntil: quote.validUntil } } });
+    return true;
+  }
+
+  /** Expires one quote by hand (the old status call). */
+  async expireQuote(id: string, actorUserId: string) {
+    const quote = await this.findById(id);
+    if (!EXPIRABLE_QUOTE_STATUSES.includes(quote.status)) throw new BadRequestException(`A ${quote.status.replace(/_/g, ' ')} quote cannot be marked expired.`);
+    const done = await this.prisma.$transaction((tx) => this.expireQuoteTx(tx, quote, actorUserId), { timeout: 15000 });
+    if (!done) throw new BadRequestException('This quote has an order, so it cannot expire. Close the remaining quantity instead.');
+    return this.findById(id);
+  }
+
+  /**
+   * Read-time expiry: an open quote whose valid-until date has passed is marked
+   * expired when it is opened, so no screen offers to send or order it.
+   */
+  async expireIfPastValidity(quote: any) {
+    if (!quote || !EXPIRABLE_QUOTE_STATUSES.includes(quote.status) || !this.isPastValidity(quote)) return quote;
+    if (!(await this.quoteExpiryEnabled())) return quote;
+    const done = await this.prisma.$transaction((tx) => this.expireQuoteTx(tx, quote, 'system'), { timeout: 15000 }).catch(() => null);
+    return done ? this.findById(quote.id) : quote;
+  }
+
+  /**
+   * Sweep for the background worker: expires every open quote whose valid-until
+   * date has passed. Safe to run often; each quote is claimed once.
+   */
+  async expireOverdueQuotes(limit = 200) {
+    if (!(await this.quoteExpiryEnabled())) return { checked: 0, expired: 0, disabled: true };
+    const due = await this.prisma.quote.findMany({
+      where: { status: { in: EXPIRABLE_QUOTE_STATUSES }, supersededByQuoteId: null, validUntil: { lt: new Date() } },
+      orderBy: { validUntil: 'asc' },
+      take: Math.min(Math.max(Math.trunc(Number(limit) || 200), 1), 1000),
+    });
+    let expired = 0;
+    for (const quote of due) {
+      const done = await this.prisma.$transaction((tx) => this.expireQuoteTx(tx, quote, 'system'), { timeout: 15000 }).catch(() => null);
+      if (done) expired += 1;
+    }
+    return { checked: due.length, expired };
+  }
+
+  /** The customer said no. Needs a reason; a quote with a live order cannot be lost (cancel the order first). */
+  async markQuoteLost(id: string, reasonInput: string, actorUserId: string) {
+    const reason = String(reasonInput || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (!reason) throw new BadRequestException('Enter why the customer did not go ahead.');
+    const quote = await this.findById(id);
+    if (CLOSED_QUOTE_STATUSES.includes(quote.status) || quote.supersededByQuoteId) throw new BadRequestException(`This quote is already ${quote.supersededByQuoteId ? 'replaced by a newer version' : quote.status.replace(/_/g, ' ')}.`);
     const updated = await this.prisma.$transaction(async (tx) => {
+      const family = await this.quoteFamilyTx(tx, id);
+      const liveOrders = await tx.salesOrder.count({ where: { quoteId: { in: family.ids }, status: { not: 'cancelled' } } });
+      if (liveOrders) throw new BadRequestException('This quote has an order. Cancel the order first, or use Close remaining for what was not ordered.');
       const next = await tx.quote.update({
         where: { id },
-        data: updateData,
+        data: { status: 'lost', approval: { ...((quote.approval as any) || {}), lost: { reason, at: new Date().toISOString(), by: actorUserId } }, updatedAt: new Date() },
         include: quoteInclude,
       } as any) as any;
-      if (['lost', 'expired', 'superseded'].includes(status)) {
-        await this.releaseReservationsTx(tx, id, `Quote marked ${status}`);
-      }
-      await tx.auditEvent.create({
-        data: {
-          id: ulid(),
-          actorUserId: next.ownerId,
-          action: 'quote.status',
-          entityType: 'Quote',
-          entityId: id,
-          summary: `Quote status changed to ${status}`,
-          metadata: { status },
-        },
-      }).catch(() => null);
+      await this.releaseReservationsTx(tx, id, `Quote lost: ${reason}`, actorUserId);
+      const [otherLiveOrders, otherOpenQuotes] = await Promise.all([
+        tx.salesOrder.count({ where: { leadId: quote.leadId, status: { not: 'cancelled' } } }),
+        tx.quote.count({ where: { leadId: quote.leadId, id: { notIn: family.ids }, supersededByQuoteId: null, status: { notIn: CLOSED_QUOTE_STATUSES } } }),
+      ]);
+      if (!otherLiveOrders && !otherOpenQuotes) await tx.lead.update({ where: { id: quote.leadId }, data: { stage: 'lost', updatedAt: new Date(), lastContactAt: new Date() } });
+      await tx.activity.create({ data: { id: ulid(), leadId: quote.leadId, quoteId: id, userId: actorUserId, type: 'quote_lost', message: `${quote.quoteNumber} marked lost: ${reason}` } });
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: 'quote.lost', entityType: 'Quote', entityId: id, summary: `Marked ${quote.quoteNumber} lost`, metadata: { reason, previousStatus: quote.status } } });
       return next;
     }, { timeout: 15000 });
     return updated;
   }
 
-  async sendQuote(id: string): Promise<any> {
+  async sendQuote(id: string, actorUserId?: string): Promise<any> {
     const quote = await this.findById(id);
     this.ensureCommercialReady(quote, 'sending this quote');
+    await this.assertWithinValidity(quote, 'send this quote');
     const sent = await this.prisma.quote.update({
       where: { id },
       data: { status: 'sent', approvalStatus: quote.approvalStatus === 'pending' ? 'approved' : quote.approvalStatus, sentAt: new Date() },
       include: quoteInclude,
     } as any) as any;
-    await this.audit(sent.ownerId, 'quote.send', id, `Sent ${sent.quoteNumber}`, {});
+    await this.audit(actorUserId || sent.ownerId, 'quote.send', id, `Sent ${sent.quoteNumber}`, {});
     await this.notifications.create({
       title: 'Quote PDF ready for follow-up',
       message: `${sent.quoteNumber} has been marked sent. Continue customer follow-up from CRM.`,
@@ -920,9 +1132,11 @@ export class QuotesService {
     if (quote.approvalStatus === 'pending') {
       throw new BadRequestException('Owner approval is required because this quote contains a below-floor rate.');
     }
-    if (['closed', 'lost', 'expired', 'superseded', 'cancelled'].includes(quote.status)) {
+    if (['closed', 'lost', 'superseded', 'cancelled'].includes(quote.status)) {
       throw new BadRequestException(`This quote is ${quote.status} and cannot create another sales order.`);
     }
+    // An offer past its valid-until date is re-validated (new date saved) before it is ordered.
+    await this.assertWithinValidity(quote, 'convert this quote to a sales order');
 
     const paymentMode = String(input.paymentMode || '').toLowerCase() === 'credit' ? 'credit' : 'cash';
     const idempotencyKey = String(input.idempotencyKey || ulid()).trim();
@@ -1038,7 +1252,7 @@ export class QuotesService {
             await this.receivables.recordCustomerPaymentTx(tx, {
               customerId: salesOrder.customerId,
               salesOrderId: salesOrder.id,
-              paymentMode: 'cash',
+              paymentMode: advanceReceiptMode((input as any).advancePaymentMode),
               amount: advanceAmount,
               notes: `Advance received during ${orderNumber} conversion.`,
               autoAllocate: false,
@@ -1106,7 +1320,8 @@ export class QuotesService {
     ).map((line: any) => ({
       ...line,
       taxMode,
-      taxRate: taxMode === 'non_gst' ? 0 : (Number(line.taxRate) > 0 ? Number(line.taxRate) : 18),
+      // A typed 0% stays 0%; only an empty GST box falls back to 18%, the same as a quote.
+      taxRate: taxMode === 'non_gst' ? 0 : lineGstRate(line),
     }));
     const commercial = priceQuoteLines(asserted, 0, { requireMrp: true });
     // A below-floor rate needs the owner's approval on a quote. A direct order
@@ -1214,7 +1429,7 @@ export class QuotesService {
           });
           await this.upsertDocumentJobTx(tx, { entityType: 'SalesOrder', entityId: salesOrderId, documentType: 'sales_order_pdf', url: `/api/pdf/order/${salesOrderId}`, actorUserId, metadata: { orderNumber, source: 'direct_order' } });
           if (advanceAmount > 0) {
-            await this.receivables.recordCustomerPaymentTx(tx, { customerId, salesOrderId, paymentMode: 'cash', amount: advanceAmount, notes: `Advance received for ${orderNumber}.`, autoAllocate: false, idempotencyKey: `sales-order-advance:${salesOrderId}` }, actorUserId);
+            await this.receivables.recordCustomerPaymentTx(tx, { customerId, salesOrderId, paymentMode: advanceReceiptMode((input as any).advancePaymentMode), amount: advanceAmount, notes: `Advance received for ${orderNumber}.`, autoAllocate: false, idempotencyKey: `sales-order-advance:${salesOrderId}` }, actorUserId);
           }
           await this.createPurchaseDemandForSalesOrderTx(tx, { quote: source, salesOrder, lines });
           await tx.activity.create({ data: { id: ulid(), leadId: lead.id, quoteId: null, userId: actorUserId, type: 'sales_order_created', message: `${orderNumber} created directly and assigned to ${owner.name}.` } });
@@ -1431,10 +1646,8 @@ export class QuotesService {
   }
 
   private quoteLineKey(line: any, index: number) {
-    const productId = String(line.productId || '').trim();
-    const tileCode = String(line.tileCode || line.sku || '').trim();
-    const area = String(line.area || line.room || line.section || '').trim();
-    return productId ? `product:${productId}:${area || index}` : `tile:${tileCode || index}:${area || index}`;
+    // Shared with the quote screen, so "N ordered" finds the same line.
+    return sharedQuoteLineKey(line, index);
   }
 
   private normalizeOrderSelections(value: any) {
@@ -1446,7 +1659,9 @@ export class QuotesService {
     const selections = new Map<string, number>();
     for (const item of parsed) {
       const key = String(item?.quoteLineId || item?.lineKey || '').trim();
-      const quantity = Math.trunc(Number(item?.quantity ?? item?.qty ?? 0));
+      // A fraction is kept here and refused in selectOrderLines, where the line's unit is known (gaps lane).
+      const typed = Number(item?.quantity ?? item?.qty ?? 0);
+      const quantity = isFraction(typed) ? typed : Math.trunc(typed);
       if (!key) throw new BadRequestException('Every selected order line needs a quote line reference');
       if (!Number.isFinite(quantity) || quantity <= 0) throw new BadRequestException('Selected order quantities must be positive whole numbers');
       selections.set(key, (selections.get(key) || 0) + quantity);
@@ -1466,6 +1681,7 @@ export class QuotesService {
     for (const request of requested) {
       const quoteLine = quoteLinesById.get(request.key) || quoteLinesByKey.get(request.key);
       if (!quoteLine) throw new BadRequestException('A selected line no longer belongs to this quote. Refresh the quote and try again.');
+      wholeQuantity(request.quantity, quoteLine.unit, quoteLine.sku);
       const remaining = Math.max(0, Number(quoteLine.quantity || 0) - Number(quoteLine.orderedQuantity || 0) - Number(quoteLine.cancelledQuantity || 0) - Number(quoteLine.closedQuantity || 0));
       if (request.quantity > remaining) {
         throw new BadRequestException(`${quoteLine.sku} has only ${remaining} remaining on this quote.`);
@@ -1674,6 +1890,11 @@ export class QuotesService {
     ]);
     const lineMap = new Map<string, any[]>();
     for (const line of lines as any[]) lineMap.set(line.salesOrderId, [...(lineMap.get(line.salesOrderId) || []), line]);
+    // Pieces per box per product, so a boxed tile's order line reads in boxes on the order book.
+    const towerProductIds = Array.from(new Set((lines as any[]).map((line) => line.productId).filter(Boolean))) as string[];
+    const towerProducts = towerProductIds.length ? await this.prisma.product.findMany({ where: { id: { in: towerProductIds } }, select: { id: true, category: true, unit: true, baseUom: true, salesUom: true, purchaseUom: true, piecesPerPack: true } }) : [];
+    const towerFactor = new Map((towerProducts as any[]).map((product) => [product.id, stockFactor(product)]));
+    const towerProductById = new Map((towerProducts as any[]).map((product) => [product.id, product]));
     const quoteMap = new Map((quotes as any[]).map((quote) => [quote.id, quote]));
     const customerMap = new Map((customers as any[]).map((customer) => [customer.id, customer]));
     const ownerMap = new Map((owners as any[]).map((owner) => [owner.id, owner]));
@@ -1719,6 +1940,8 @@ export class QuotesService {
           dispatchedQuantity: line.dispatchedQuantity,
           deliveredQuantity: line.deliveredQuantity,
           remainingQuantity: Math.max(0, Number(line.orderedQuantity || 0) - Number(line.dispatchedQuantity || 0)),
+          piecesPerUnit: towerFactor.get(line.productId) || 1,
+          ...tileBoxReading(towerProductById.get(line.productId)),
           mrpInclusive: Number(line.mrpInclusive) > 0 ? Number(line.mrpInclusive) : null,
           nrpInclusive: line.nrpInclusive === null || line.nrpInclusive === undefined ? null : Number(line.nrpInclusive),
           specialRateInclusive: line.specialRateInclusive === null || line.specialRateInclusive === undefined ? null : Number(line.specialRateInclusive),
@@ -1800,6 +2023,7 @@ export class QuotesService {
   }
 
   private deriveControlTowerStatus(orderStatus: string, metrics: { ordered: number; reserved: number; allocated: number; backordered: number; dispatched: number; delivered: number }) {
+    if (orderStatus === 'cancelled') return 'cancelled';
     if (metrics.ordered <= 0) return String(orderStatus || 'open');
     if (metrics.delivered >= metrics.ordered) return 'delivered';
     if (metrics.dispatched >= metrics.ordered) return 'dispatched';
@@ -1828,13 +2052,14 @@ export class QuotesService {
     });
     const reservedProducts = await this.prisma.product.findMany({
       where: { id: { in: Array.from(new Set(rawReservations.map((row: any) => row.productId))) } },
-      select: { id: true, unit: true, baseUom: true, salesUom: true, purchaseUom: true, piecesPerPack: true },
+      select: { id: true, category: true, unit: true, baseUom: true, salesUom: true, purchaseUom: true, piecesPerPack: true },
     });
     const factorById = new Map(reservedProducts.map((product: any) => [product.id, stockFactor(product)]));
+    const reservedProductById = new Map(reservedProducts.map((product: any) => [product.id, product]));
     // quantity stays in base units (pieces); sellingQuantity is the same in the order's unit (boxes).
     const reservations = rawReservations.map((row: any) => {
       const factor = factorById.get(row.productId) || 1;
-      return { ...row, factor, sellingQuantity: Number(row.quantity || 0) / factor };
+      return { ...row, factor, sellingQuantity: Number(row.quantity || 0) / factor, ...tileBoxReading(reservedProductById.get(row.productId)) };
     });
     return { ...order, customer, owner, reservations };
   }
@@ -1857,11 +2082,18 @@ export class QuotesService {
   }
 
   async quoteFulfillment(quoteId: string) {
+    // Orders made from earlier versions count here too: a revision carries them forward.
+    const family = await this.quoteFamilyTx(this.prisma, quoteId);
     const [quote, lines, orders] = await Promise.all([
       this.findByIdWithRelations(quoteId),
       this.prisma.quoteLine.findMany({ where: { quoteId }, orderBy: { lineNo: 'asc' } }),
-      this.prisma.salesOrder.findMany({ where: { quoteId }, orderBy: { createdAt: 'asc' } }),
+      this.prisma.salesOrder.findMany({ where: { quoteId: { in: family.ids } }, orderBy: { createdAt: 'asc' } }),
     ]);
+    // Pieces per box per product, so the order drawer can show a boxed tile's pieces beside its boxes.
+    const fulfilmentProductIds = Array.from(new Set((lines as any[]).map((line) => line.productId).filter(Boolean))) as string[];
+    const fulfilmentProducts = fulfilmentProductIds.length ? await this.prisma.product.findMany({ where: { id: { in: fulfilmentProductIds } }, select: { id: true, category: true, unit: true, baseUom: true, salesUom: true, purchaseUom: true, piecesPerPack: true } }) : [];
+    const fulfilmentFactor = new Map((fulfilmentProducts as any[]).map((product) => [product.id, stockFactor(product)]));
+    const fulfilmentProductById = new Map((fulfilmentProducts as any[]).map((product) => [product.id, product]));
     return {
       quoteId: quote.id,
       quoteNumber: quote.quoteNumber,
@@ -1884,6 +2116,8 @@ export class QuotesService {
           remaining: Math.max(0, quantity - ordered - cancelled - closed),
           status: line.status,
           unit: line.unit,
+          piecesPerUnit: fulfilmentFactor.get(line.productId) || 1,
+          ...tileBoxReading(fulfilmentProductById.get(line.productId)),
           mrpInclusive: Number(line.mrpInclusive) > 0 ? Number(line.mrpInclusive) : null,
           nrpInclusive: line.nrpInclusive === null || line.nrpInclusive === undefined ? null : Number(line.nrpInclusive),
           specialRateInclusive: line.specialRateInclusive === null || line.specialRateInclusive === undefined ? null : Number(line.specialRateInclusive),
@@ -1943,12 +2177,15 @@ export class QuotesService {
       data: {
         approvalStatus: 'approved',
         status: quote.status === 'pending_approval' ? 'approved' : quote.status,
+        // Keeps the stored pricing snapshot and request reason; adds who approved.
         approval: {
+          ...((quote.approval as any) || {}),
           approvedByUserId,
           approvedAt: new Date().toISOString(),
           note: note || '',
           previousStatus: quote.status,
           displayMode: quote.displayMode,
+          rejection: undefined,
         },
         updatedAt: new Date(),
       },
@@ -1966,6 +2203,45 @@ export class QuotesService {
       metadata: { pdfUrl: `/api/pdf/quote/${approved.id}` },
     });
     return approved;
+  }
+
+  /**
+   * The owner turns down a below-floor price. The quote goes back to the sales
+   * person as a draft with the owner's note; saving a new price asks again.
+   */
+  async rejectQuote(id: string, rejectedByUserId: string, noteInput: string) {
+    const note = String(noteInput || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (!note) throw new BadRequestException('Write a note for the sales person: what price would you accept?');
+    const quote = await this.findById(id);
+    if (quote.approvalStatus !== 'pending') throw new BadRequestException('Only a quote waiting for price approval can be turned down.');
+    const rejectedAt = new Date().toISOString();
+    const rejected = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.quote.updateMany({ where: { id, approvalStatus: 'pending' }, data: { updatedAt: new Date() } });
+      if (claimed.count !== 1) throw new BadRequestException('This quote was already approved or changed. Reload Approvals.');
+      const next = await tx.quote.update({
+        where: { id },
+        data: {
+          approvalStatus: 'rejected',
+          status: quote.status === 'pending_approval' ? 'draft' : quote.status,
+          approval: { ...((quote.approval as any) || {}), rejection: { rejectedByUserId, rejectedAt, note, previousStatus: quote.status } },
+          updatedAt: new Date(),
+        },
+        include: quoteInclude,
+      } as any) as any;
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId: rejectedByUserId, action: 'quote.reject', entityType: 'Quote', entityId: id, summary: `Turned down the price on ${quote.quoteNumber}`, metadata: { note, previousStatus: quote.status } } });
+      return next;
+    });
+    await this.notifications.create({
+      title: 'Quote price not approved',
+      message: `${rejected.quoteNumber}: the owner did not approve the price. ${note}`,
+      type: 'quote_rejected',
+      entityType: 'Quote',
+      entityId: rejected.id,
+      href: `/dashboard/quotes/${rejected.id}`,
+      targetUserId: rejected.ownerId,
+      metadata: { note },
+    }).catch(() => null);
+    return rejected;
   }
 
   async createVersion(id: string): Promise<any> {
@@ -1993,99 +2269,35 @@ export class QuotesService {
     if (quote.status === 'cancelled') return quote;
     const cancellationReason = String(reason || '').trim();
     if (!cancellationReason) throw new BadRequestException('Enter a cancellation reason.');
-    const orders = await this.prisma.salesOrder.findMany({ where: { quoteId: id } });
-    const orderIds = orders.map((order: any) => order.id);
-    if (orderIds.length) {
-      const [physicalActivity, nonReversibleChallans, dispatchedPicks, invoices, postedPayments] = await Promise.all([
-        this.prisma.dispatchLine.count({ where: { salesOrderId: { in: orderIds }, OR: [{ dispatchedQuantity: { gt: 0 } }, { deliveredQuantity: { gt: 0 } }] } as any }),
-        this.prisma.dispatchChallan.count({ where: { salesOrderId: { in: orderIds }, status: { in: ['dispatched', 'delivered', 'failed_delivery'] } } }),
-        this.prisma.pickList.count({ where: { salesOrderId: { in: orderIds }, status: 'dispatched' } }),
-        this.prisma.salesInvoice.count({ where: { salesOrderId: { in: orderIds }, status: { not: 'void' } } }),
-        this.prisma.customerPayment.count({ where: { salesOrderId: { in: orderIds }, status: 'posted' } }),
-      ]);
-      if (physicalActivity || nonReversibleChallans || dispatchedPicks || invoices || postedPayments) {
-        throw new BadRequestException('This quote has dispatched goods, invoices, or posted receipts. Reverse those documents first; commercial history cannot be silently cancelled.');
-      }
-    }
+    if (quote.supersededByQuoteId) throw new BadRequestException('A newer version replaced this quote. Cancel the current version instead.');
 
-    return this.prisma.$transaction(async (tx) => {
-      const pendingChallans = orderIds.length
-        ? await tx.dispatchChallan.findMany({ where: { salesOrderId: { in: orderIds }, status: 'pending' }, select: { id: true } })
-        : [];
-      const pendingChallanIds = pendingChallans.map((challan: any) => challan.id);
-      if (pendingChallanIds.length) {
-        await tx.dispatchLine.updateMany({
-          where: { challanId: { in: pendingChallanIds }, dispatchedQuantity: 0, deliveredQuantity: 0 },
-          data: { status: 'cancelled', updatedAt: new Date() },
-        });
-        await tx.shipment.updateMany({
-          where: { challanId: { in: pendingChallanIds }, status: { notIn: ['dispatched', 'delivered'] } },
-          data: { status: 'cancelled', updatedAt: new Date() },
-        });
-        await tx.dispatchChallan.updateMany({
-          where: { id: { in: pendingChallanIds }, status: 'pending' },
-          data: { status: 'cancelled', updatedAt: new Date() },
-        });
+    return this.withSerializableRetry(() => this.prisma.$transaction(async (tx) => {
+      // Orders made from earlier versions of this quote belong to it too (a revision carries them forward).
+      const family = await this.quoteFamilyTx(tx, id);
+      // As before: a posted receipt on any order of this quote blocks the cancel. A receipt
+      // whose advance was refunded, or moved to the customer's account (it then has no order),
+      // no longer does.
+      const familyOrderIds = (await tx.salesOrder.findMany({ where: { quoteId: { in: family.ids } }, select: { id: true } })).map((row: any) => row.id);
+      const receipts = familyOrderIds.length ? await tx.customerPayment.findMany({
+        where: { status: 'posted', salesOrderId: { in: familyOrderIds } },
+        select: { id: true, metadata: true },
+      }) : [];
+      const blockingReceipts = receipts.filter((row: any) => !(row.metadata as any)?.advanceRefund && !(row.metadata as any)?.movedToAccount);
+      if (blockingReceipts.length) {
+        throw new BadRequestException('This quote has a receipt (advance) on its order. Cancel the order first, then refund the advance or move it to the customer\'s account, then cancel the quote.');
       }
-
-      const activePickLists = orderIds.length
-        ? await tx.pickList.findMany({
-            where: { salesOrderId: { in: orderIds }, status: { notIn: ['cancelled', 'dispatched'] } },
-            select: { id: true, metadata: true },
-          })
-        : [];
-      const activePickListIds = activePickLists.map((pick: any) => pick.id);
-      if (activePickListIds.length) {
-        await tx.pickLine.updateMany({
-          where: { pickListId: { in: activePickListIds }, status: { not: 'dispatched' } },
-          data: { status: 'cancelled', updatedAt: new Date() },
-        });
-        for (const pick of activePickLists) {
-          await tx.pickList.update({
-            where: { id: pick.id },
-            data: {
-              status: 'cancelled',
-              cancelledAt: new Date(),
-              metadata: { ...((pick.metadata as any) || {}), cancelReason: `Quote cancelled: ${cancellationReason}`, cancelledBy: actorUserId },
-              updatedAt: new Date(),
-            },
-          });
-        }
+      const liveOrders = await tx.salesOrder.findMany({ where: { quoteId: { in: family.ids }, status: { not: 'cancelled' } }, select: { id: true } });
+      const orderResults: any[] = [];
+      for (const order of liveOrders) {
+        // Each order goes through the same cancel as a single order; it refuses goods that left or a live invoice.
+        orderResults.push(await this.cancelSalesOrderTx(tx, order.id, `Quote cancelled: ${cancellationReason}`, actorUserId, { viaQuoteCancel: true }));
       }
-
-      const reservations = await tx.reservation.findMany({ where: { quoteId: id, status: 'reserved' } });
-      for (const reservation of reservations) {
-        const allocated = await tx.lotReservation.count({ where: { reservationId: reservation.id, status: 'reserved' } });
-        if (allocated > 0) {
-          await releaseReservedLotsTx(tx, { reservation, reason: `Quote cancelled: ${cancellationReason}`, actorUserId });
-        } else {
-          await applyStockPostingTx(tx, {
-            productId: reservation.productId, type: 'release', movementType: 'release', ledgerType: 'release',
-            quantity: Number(reservation.quantity || 0), reservedDelta: -Number(reservation.quantity || 0),
-            locationReservedDelta: -Number(reservation.quantity || 0), requireReserved: true,
-            reason: `Quote cancelled: ${cancellationReason}`, relatedQuoteId: id,
-            referenceType: 'Reservation', referenceId: reservation.id, createdBy: actorUserId,
-          });
-        }
-        await tx.reservation.update({ where: { id: reservation.id }, data: { status: 'released', updatedAt: new Date() } });
-      }
-      if (orderIds.length) {
-        await tx.salesOrderLine.updateMany({ where: { salesOrderId: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
-        await tx.salesOrder.updateMany({ where: { id: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
-        await tx.dispatchJob.updateMany({ where: { salesOrderId: { in: orderIds } }, data: { status: 'cancelled', updatedAt: new Date() } });
-        const activeDemands = await tx.purchaseDemand.findMany({
-          where: { sourceOrderId: { in: orderIds }, status: { in: ['open', 'ordered', 'partial_received'] } },
-        });
-        for (const demand of activeDemands) {
-          await tx.purchaseDemand.update({
-            where: { id: demand.id },
-            data: {
-              status: Number(demand.receivedQuantity || 0) > 0 ? 'partial_received_cancelled' : 'cancelled',
-              updatedAt: new Date(),
-            },
-          });
-        }
-      }
+      const orderIds = orderResults.map((row) => row.id);
+      const activePickListIds = orderResults.flatMap((row) => row.pickListIds || []);
+      const pendingChallanIds = orderResults.flatMap((row) => row.challanIds || []);
+      const advanceHeld = Number(orderResults.reduce((sum, row) => sum + Number(row.advance?.amount || 0), 0).toFixed(2));
+      // Holds made before reservations carried an order.
+      await this.releaseReservationsTx(tx, id, `Quote cancelled: ${cancellationReason}`, actorUserId);
       const lines = await tx.quoteLine.findMany({ where: { quoteId: id } });
       for (const line of lines) {
         const remaining = Math.max(
@@ -2101,13 +2313,19 @@ export class QuotesService {
         });
       }
       await tx.quoteShare.updateMany({ where: { quoteId: id, revokedAt: null }, data: { revokedAt: new Date() } });
-      await tx.lead.update({ where: { id: quote.leadId }, data: { stage: 'lost', updatedAt: new Date(), lastContactAt: new Date() } }).catch(() => null);
+      // The lead is lost only when nothing else is alive on it: another order or another open quote keeps it.
+      const [otherLiveOrders, otherOpenQuotes] = await Promise.all([
+        tx.salesOrder.count({ where: { leadId: quote.leadId, status: { not: 'cancelled' } } }),
+        tx.quote.count({ where: { leadId: quote.leadId, id: { notIn: family.ids }, supersededByQuoteId: null, status: { notIn: CLOSED_QUOTE_STATUSES } } }),
+      ]);
+      const leadStage = otherLiveOrders > 0 ? 'won' : otherOpenQuotes > 0 ? null : 'lost';
+      if (leadStage) await tx.lead.update({ where: { id: quote.leadId }, data: { stage: leadStage, updatedAt: new Date(), lastContactAt: new Date() } });
       const updated = await tx.quote.update({
         where: { id },
         data: {
           status: 'cancelled',
           approvalStatus: 'cancelled',
-          approval: { ...((quote.approval as any) || {}), cancellation: { reason: cancellationReason, cancelledAt: new Date().toISOString(), cancelledBy: actorUserId, orderIds } },
+          approval: { ...((quote.approval as any) || {}), cancellation: { reason: cancellationReason, cancelledAt: new Date().toISOString(), cancelledBy: actorUserId, orderIds, advanceHeld } },
           updatedAt: new Date(),
         },
         include: quoteInclude,
@@ -2116,11 +2334,267 @@ export class QuotesService {
         data: {
           id: ulid(), actorUserId, action: 'quote.cancel', entityType: 'Quote', entityId: id,
           summary: `Cancelled ${quote.quoteNumber}`,
-          metadata: { reason: cancellationReason, orderIds, pickListIds: activePickListIds, challanIds: pendingChallanIds },
+          metadata: { reason: cancellationReason, orderIds, pickListIds: activePickListIds, challanIds: pendingChallanIds, advanceHeld, leadStage },
         },
       });
-      return updated;
-    }, { isolationLevel: 'Serializable', timeout: 30000 });
+      return { ...updated, cancelledOrders: orderResults, advanceHeld };
+    }, { isolationLevel: 'Serializable', timeout: 30000 }));
+  }
+
+  /**
+   * Cancels one sales order, from a quote or made directly. Refused while any goods
+   * are out of the warehouse and not returned, or while a live invoice exists.
+   * Releases held stock, closes waiting (backordered) quantities and the purchase
+   * shortfall not yet on a purchase order, cancels the pick list, pending challans
+   * and the dispatch job. Receipts are left as they are; the advance is reported
+   * so it can be refunded or used on another order.
+   */
+  async cancelSalesOrder(id: string, reason: string, actorUserId: string) {
+    const cancellationReason = String(reason || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (!cancellationReason) throw new BadRequestException('Enter why the order is cancelled.');
+    const result = await this.withSerializableRetry(() => this.prisma.$transaction(
+      (tx) => this.cancelSalesOrderTx(tx, id, cancellationReason, actorUserId, { viaQuoteCancel: false }),
+      { isolationLevel: 'Serializable', timeout: 30000 },
+    ));
+    if (!result.alreadyCancelled) {
+      await this.notifications.createMany([
+        { title: 'Sales order cancelled', message: `${result.orderNumber} was cancelled: ${cancellationReason}.${result.advance.amount > 0 ? ` Advance of ₹${result.advance.amount.toFixed(2)} stays on the customer's account to refund or use on another order.` : ''}`, type: 'sales_order_cancelled', entityType: 'SalesOrder', entityId: result.id, href: `/dashboard/orders?search=${encodeURIComponent(result.orderNumber)}`, targetUserId: result.ownerId, metadata: { reason: cancellationReason, advance: result.advance } },
+        { title: 'Order cancelled: stop picking', message: `${result.orderNumber} was cancelled. Its pick list and pending challans are cancelled and the held stock is free again.`, type: 'sales_order_cancelled', entityType: 'SalesOrder', entityId: result.id, href: '/dashboard/dispatch', targetRole: 'dispatch_ops', metadata: { pickListIds: result.pickListIds, challanIds: result.challanIds } },
+        ...((result as any).specialOrderReleased?.length ? [{ title: 'Special-order goods no longer needed', message: `${result.orderNumber} was cancelled. Special-order goods already received for it are no longer set aside: ${(result as any).specialOrderReleased.map((row: any) => `${row.quantity} of ${row.sku}`).join(', ')}. Sell them on another order or return them to the supplier.`, type: 'sales_order_cancelled', entityType: 'SalesOrder', entityId: result.id, href: '/dashboard/inventory', targetRole: 'inventory_manager', metadata: { specialOrderReleased: (result as any).specialOrderReleased } }] : []),
+      ]).catch(() => null);
+    }
+    return result;
+  }
+
+  private async withSerializableRetry<T>(run: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await run();
+      } catch (error: any) {
+        if (error?.code === 'P2034' && attempt < 2) continue;
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * A revision of an ordered quote starts with what is already ordered, so
+   * converting the revision orders only the difference. Ordered lines must stay,
+   * in the same room, with at least the ordered quantity. Returns the new status
+   * when anything was carried.
+   */
+  private async carryOrderedQuantitiesTx(tx: any, parentId: string, revision: any): Promise<string | null> {
+    const parentLines = await tx.quoteLine.findMany({ where: { quoteId: parentId, orderedQuantity: { gt: 0 } } });
+    if (!parentLines.length) return null;
+    const revisionLines = await tx.quoteLine.findMany({ where: { quoteId: revision.id } });
+    const byKey = new Map(revisionLines.map((line: any) => [line.lineKey, line]));
+    const now = new Date();
+    for (const parentLine of parentLines) {
+      const ordered = Number(parentLine.orderedQuantity || 0);
+      const target: any = byKey.get(parentLine.lineKey);
+      const unit = String(parentLine.unit || '').toLowerCase();
+      if (!target) throw new BadRequestException(`${parentLine.sku} in ${parentLine.area || 'General Selection'} has ${ordered} ${unit} on a sales order. Keep it in that room in the revision, or cancel the order first.`);
+      if (Number(target.quantity || 0) < ordered) throw new BadRequestException(`${parentLine.sku} in ${parentLine.area || 'General Selection'} has ${ordered} ${unit} already ordered. The revision cannot have less than that.`);
+      await tx.quoteLine.update({
+        where: { id: target.id },
+        data: { orderedQuantity: ordered, status: ordered >= Number(target.quantity || 0) ? 'fully_ordered' : 'partially_ordered', updatedAt: now },
+      });
+    }
+    // Approval still decides first: a below-floor revision waits for the owner.
+    if (['pending_approval', 'incomplete_pricing'].includes(revision.status)) return null;
+    const lines = await tx.quoteLine.findMany({ where: { quoteId: revision.id } });
+    const fullyOrdered = lines.every((line: any) => Number(line.orderedQuantity || 0) + Number(line.closedQuantity || 0) >= Number(line.quantity || 0));
+    const status = fullyOrdered ? 'confirmed' : 'partially_ordered';
+    await tx.quote.update({ where: { id: revision.id }, data: { status, confirmedAt: now, updatedAt: now } });
+    return status;
+  }
+
+  /** Every version of a quote: the earlier ones it replaced, itself, and the current one. */
+  private async quoteFamilyTx(tx: any, quoteId: string) {
+    const ids: string[] = [quoteId];
+    let cursor = await tx.quote.findUnique({ where: { id: quoteId }, select: { id: true, supersedesQuoteId: true, supersededByQuoteId: true } });
+    let headId = quoteId;
+    let back = cursor?.supersedesQuoteId || null;
+    for (let guard = 0; back && guard < 50; guard += 1) {
+      if (ids.includes(back)) break;
+      ids.push(back);
+      const row = await tx.quote.findUnique({ where: { id: back }, select: { supersedesQuoteId: true } });
+      back = row?.supersedesQuoteId || null;
+    }
+    for (let guard = 0; cursor?.supersededByQuoteId && guard < 50; guard += 1) {
+      if (ids.includes(cursor.supersededByQuoteId)) break;
+      ids.push(cursor.supersededByQuoteId);
+      headId = cursor.supersededByQuoteId;
+      cursor = await tx.quote.findUnique({ where: { id: headId }, select: { id: true, supersedesQuoteId: true, supersededByQuoteId: true } });
+    }
+    return { ids, headId };
+  }
+
+  private async releaseReservationRowTx(tx: any, reservation: any, reason: string, actorUserId: string) {
+    if (reservation.status === 'reserved') {
+      const allocated = await tx.lotReservation.count({ where: { reservationId: reservation.id, status: 'reserved' } });
+      if (allocated > 0) {
+        await releaseReservedLotsTx(tx, { reservation, reason, actorUserId });
+      } else {
+        await applyStockPostingTx(tx, {
+          productId: reservation.productId, type: 'release', movementType: 'release', ledgerType: 'release',
+          quantity: Number(reservation.quantity || 0), reservedDelta: -Number(reservation.quantity || 0),
+          locationReservedDelta: -Number(reservation.quantity || 0), requireReserved: true,
+          reason, relatedQuoteId: reservation.quoteId || null,
+          referenceType: 'Reservation', referenceId: reservation.id, createdBy: actorUserId,
+        });
+      }
+    }
+    // A backordered row holds no stock; marking it released stops the next goods receipt from filling it.
+    await tx.reservation.update({ where: { id: reservation.id }, data: { status: 'released', updatedAt: new Date() } });
+  }
+
+  private async cancelSalesOrderTx(tx: any, orderId: string, reason: string, actorUserId: string, options: { viaQuoteCancel: boolean }) {
+    const order = await tx.salesOrder.findUnique({ where: { id: orderId } });
+    if (!order) throw new NotFoundException('Sales order not found');
+    const emptyAdvance = { amount: 0, receipts: [] as any[] };
+    if (order.status === 'cancelled') {
+      return { id: order.id, orderNumber: order.orderNumber, ownerId: order.ownerId, status: 'cancelled', alreadyCancelled: true, advance: emptyAdvance, pickListIds: [], challanIds: [] };
+    }
+    const [orderLines, invoices] = await Promise.all([
+      tx.salesOrderLine.findMany({ where: { salesOrderId: orderId } }),
+      tx.salesInvoice.findMany({ where: { salesOrderId: orderId, status: { not: 'void' } }, select: { invoiceNumber: true } }),
+    ]);
+    const stillOut = orderLines.find((line: any) => Math.max(Number(line.dispatchedQuantity || 0), Number(line.deliveredQuantity || 0)) - Number(line.returnedQuantity || 0) > 0);
+    if (stillOut) {
+      const out = Math.max(Number(stillOut.dispatchedQuantity || 0), Number(stillOut.deliveredQuantity || 0)) - Number(stillOut.returnedQuantity || 0);
+      throw new BadRequestException(`${order.orderNumber} cannot be cancelled: ${out} ${String(stillOut.unit || '').toLowerCase()} of ${stillOut.sku} left the warehouse and have not come back. Record the return first, then cancel.`);
+    }
+    if (invoices.length) {
+      throw new BadRequestException(`${order.orderNumber} cannot be cancelled while invoice ${invoices[0].invoiceNumber} is open on it. Void or credit the invoice first.`);
+    }
+    const now = new Date();
+
+    // Challans that have not left.
+    const pendingChallans = await tx.dispatchChallan.findMany({ where: { salesOrderId: orderId, status: 'pending' }, select: { id: true } });
+    const challanIds = pendingChallans.map((challan: any) => challan.id);
+    if (challanIds.length) {
+      await tx.dispatchLine.updateMany({ where: { challanId: { in: challanIds }, dispatchedQuantity: 0, deliveredQuantity: 0 }, data: { status: 'cancelled', updatedAt: now } });
+      await tx.shipment.updateMany({ where: { challanId: { in: challanIds }, status: { notIn: ['dispatched', 'delivered'] } }, data: { status: 'cancelled', updatedAt: now } });
+      await tx.dispatchChallan.updateMany({ where: { id: { in: challanIds }, status: 'pending' }, data: { status: 'cancelled', updatedAt: now } });
+    }
+
+    // Pick lists still on the floor; their stock is released with the reservations below.
+    const activePicks = await tx.pickList.findMany({ where: { salesOrderId: orderId, status: { notIn: ['cancelled', 'dispatched'] } }, select: { id: true, metadata: true } });
+    const pickListIds = activePicks.map((pick: any) => pick.id);
+    if (pickListIds.length) {
+      await tx.pickLine.updateMany({ where: { pickListId: { in: pickListIds }, status: { not: 'dispatched' } }, data: { status: 'cancelled', updatedAt: now } });
+      for (const pick of activePicks) {
+        await tx.pickList.update({
+          where: { id: pick.id },
+          data: { status: 'cancelled', cancelledAt: now, metadata: { ...((pick.metadata as any) || {}), cancelReason: `Order cancelled: ${reason}`, cancelledBy: actorUserId }, updatedAt: now },
+        });
+      }
+    }
+
+    // Held stock and waiting (backordered) quantities.
+    const reservations = await tx.reservation.findMany({ where: { salesOrderId: orderId, status: { in: ['reserved', 'backordered'] } } });
+    let releasedReserved = 0;
+    let closedBackordered = 0;
+    for (const reservation of reservations) {
+      if (reservation.status === 'reserved') releasedReserved += Number(reservation.quantity || 0);
+      else closedBackordered += Number(reservation.quantity || 0);
+      await this.releaseReservationRowTx(tx, reservation, `Order ${order.orderNumber} cancelled: ${reason}`, actorUserId);
+    }
+
+    // Purchase shortfall: not yet on a purchase order is cancelled; already ordered from a supplier is left
+    // on that purchase order (the goods arrive as free stock) and marked so the buyer can see why.
+    const demands = await tx.purchaseDemand.findMany({ where: { sourceOrderId: orderId, status: { in: ['open', 'ordered', 'partial_received'] } } });
+    let demandsCancelled = 0;
+    const demandsOnPurchaseOrder: any[] = [];
+    for (const demand of demands) {
+      if (demand.status === 'open' && Number(demand.orderedQuantity || 0) <= 0) {
+        await tx.purchaseDemand.update({ where: { id: demand.id }, data: { status: 'cancelled', updatedAt: now } });
+        demandsCancelled += 1;
+      } else {
+        await tx.purchaseDemand.update({
+          where: { id: demand.id },
+          data: { metadata: { ...((demand.metadata as any) || {}), sourceOrderCancelled: { at: now.toISOString(), by: actorUserId, reason } }, notes: `${demand.notes || ''}${demand.notes ? ' · ' : ''}Customer order ${order.orderNumber} cancelled; this stock will arrive unreserved.`.slice(0, 1000), updatedAt: now },
+        });
+        demandsOnPurchaseOrder.push({ id: demand.id, sku: demand.sku, quantity: Number(demand.quantity || 0) });
+      }
+    }
+
+    // Special-order tiles (no product record) already received and set aside for this order (gaps lane):
+    // the set-aside count is cleared and the release is written to the stock ledger, the same way the
+    // receipt and dispatch of these goods are recorded, so the goods show as free in the warehouse.
+    const specialOrderReleased: Array<{ salesOrderLineId: string; sku: string; quantity: number }> = [];
+    for (const line of orderLines) {
+      const setAside = Number(line.allocatedQuantity || 0);
+      if (line.productId || setAside <= 0) continue;
+      await tx.stockLedgerEntry.create({
+        data: {
+          id: ulid(), productId: null, locationId: null, type: 'special_order_release', quantity: setAside, direction: 'out',
+          referenceType: 'SalesOrder', referenceId: orderId, sourceDocumentNo: order.orderNumber,
+          reason: `Special-order goods no longer set aside: order ${order.orderNumber} cancelled (${reason})`.slice(0, 500), createdBy: actorUserId,
+          metadata: { salesOrderLineId: line.id, lineKey: line.lineKey, sku: line.sku, unit: line.unit, freeInWarehouse: true },
+        },
+      });
+      specialOrderReleased.push({ salesOrderLineId: line.id, sku: line.sku, quantity: setAside });
+    }
+
+    await tx.salesOrderLine.updateMany({ where: { salesOrderId: orderId }, data: { status: 'cancelled', reservedQuantity: 0, backorderedQuantity: 0, allocatedQuantity: 0, updatedAt: now } });
+    const documents = order.documents && typeof order.documents === 'object' ? order.documents as any : {};
+    await tx.salesOrder.update({
+      where: { id: orderId },
+      data: { status: 'cancelled', documents: { ...documents, cancellation: { reason, cancelledAt: now.toISOString(), cancelledBy: actorUserId } }, updatedAt: now },
+    });
+    await tx.dispatchJob.updateMany({ where: { salesOrderId: orderId }, data: { status: 'cancelled', updatedAt: now } });
+
+    // Stock this order held is free again: other orders waiting for the same items get it now (gaps lane).
+    const freedProductIds = reservations.filter((row: any) => row.status === 'reserved' && row.productId).map((row: any) => String(row.productId));
+    if (freedProductIds.length) await fillBackordersForProductsTx(tx, freedProductIds, { actorUserId, source: 'order_cancelled' });
+
+    // Money already received stays posted; it is reported so it can be refunded or used elsewhere.
+    const receipts = await tx.customerPayment.findMany({ where: { salesOrderId: orderId, status: 'posted' }, select: { id: true, receiptNumber: true, amount: true, unappliedAmount: true } });
+    const advance = {
+      amount: Number(receipts.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0).toFixed(2)),
+      unapplied: Number(receipts.reduce((sum: number, row: any) => sum + Number(row.unappliedAmount || 0), 0).toFixed(2)),
+      receipts: receipts.map((row: any) => ({ id: row.id, receiptNumber: row.receiptNumber, amount: Number(row.amount || 0), unappliedAmount: Number(row.unappliedAmount || 0) })),
+    };
+
+    let quoteStatus: string | null = null;
+    if (!options.viaQuoteCancel && order.quoteId) {
+      // The ordered quantity goes back onto the current version of the quote, so it can be ordered again or closed.
+      const family = await this.quoteFamilyTx(tx, order.quoteId);
+      const head = await tx.quote.findUnique({ where: { id: family.headId } });
+      if (head && !['cancelled', 'closed'].includes(head.status)) {
+        const headLines = await tx.quoteLine.findMany({ where: { quoteId: head.id } });
+        const byKey = new Map(headLines.map((line: any) => [line.lineKey, line]));
+        for (const line of orderLines) {
+          const quoteLine: any = byKey.get(line.lineKey);
+          if (!quoteLine) continue;
+          const ordered = Math.max(0, Number(quoteLine.orderedQuantity || 0) - Number(line.orderedQuantity || 0));
+          await tx.quoteLine.update({ where: { id: quoteLine.id }, data: { orderedQuantity: ordered, status: ordered > 0 ? 'partially_ordered' : 'quoted', updatedAt: now } });
+        }
+        if (['partially_ordered', 'confirmed'].includes(head.status)) {
+          const liveOrders = await tx.salesOrder.count({ where: { quoteId: { in: family.ids }, status: { not: 'cancelled' } } });
+          quoteStatus = liveOrders > 0 ? 'partially_ordered' : head.sentAt ? 'sent' : 'draft';
+          await tx.quote.update({ where: { id: head.id }, data: { status: quoteStatus, updatedAt: now } });
+        }
+      }
+    }
+    if (!options.viaQuoteCancel) {
+      const liveOnLead = await tx.salesOrder.count({ where: { leadId: order.leadId, status: { not: 'cancelled' } } });
+      if (!liveOnLead) {
+        const lead = await tx.lead.findUnique({ where: { id: order.leadId }, select: { stage: true } });
+        if (lead?.stage === 'won') await tx.lead.update({ where: { id: order.leadId }, data: { stage: order.quoteId ? 'quoted' : 'lost', updatedAt: now } });
+      }
+    }
+
+    await tx.activity.create({
+      data: { id: ulid(), leadId: order.leadId, quoteId: order.quoteId || null, userId: actorUserId, type: 'sales_order_cancelled', message: `${order.orderNumber} cancelled: ${reason}` },
+    });
+    const summary = { releasedReserved, closedBackordered, demandsCancelled, demandsOnPurchaseOrder, pickListIds, challanIds, advance, quoteStatus, specialOrderReleased, customerId: order.customerId };
+    await tx.auditEvent.create({
+      data: { id: ulid(), actorUserId, action: 'sales_order.cancel', entityType: 'SalesOrder', entityId: orderId, summary: `Cancelled ${order.orderNumber}`, metadata: JSON.parse(JSON.stringify({ reason, quoteId: order.quoteId || null, viaQuoteCancel: options.viaQuoteCancel, ...summary })) },
+    });
+    return { id: order.id, orderNumber: order.orderNumber, ownerId: order.ownerId, status: 'cancelled', alreadyCancelled: false, quoteId: order.quoteId || null, ...summary };
   }
 
   private async generateQuoteNumber(customerName?: string | null): Promise<string> {
@@ -2303,7 +2777,7 @@ export class QuotesService {
     return uom === 'PC' ? 'PIECE' : 'BOX';
   }
 
-  private normalizeTileLine(line: any, index: number) {
+  private normalizeTileLine(line: any, index: number, strictQuantity = false) {
     const tileCode = String(line.tileCode || line.sku || '').trim();
     const tileSize = String(line.tileSize || line.size || line.dimensions || '').trim();
     const coveragePerPack = Number(line.coveragePerPack || 0);
@@ -2338,8 +2812,10 @@ export class QuotesService {
       : rateBasis === 'PIECE' && requestedPieces > 0
         ? Math.ceil(requestedPieces / piecesPerPack)
         : 0;
-    const qty = calculatedPacks || Math.trunc(Number(line.qty || line.quantity || 0));
     const inventoryUom = String(line.inventoryUom || line.purchaseUom || line.unit || 'BOX').trim().toUpperCase();
+    const qty = calculatedPacks || (strictQuantity
+      ? wholeQuantity(line.qty || line.quantity || 0, inventoryUom, `Tile ${tileCode || index + 1}`)
+      : Math.trunc(Number(line.qty || line.quantity || 0)));
     if (!tileCode) throw new BadRequestException(`Tile row ${index + 1} needs a tile code`);
     if (!tileSize) throw new BadRequestException(`Tile ${tileCode} needs a tile size`);
     if (!Number.isFinite(qty) || qty <= 0) throw new BadRequestException(`Tile ${tileCode} needs a positive whole-number quantity`);
@@ -2381,7 +2857,7 @@ export class QuotesService {
       nrpInput: line.nrpInput ?? 0,
       specialMode: line.specialMode || 'NONE',
       specialInput: line.specialInput ?? 0,
-      taxRate: Number(line.taxRate ?? 18),
+      taxRate: lineGstRate(line),
       area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
       quoteImage: line.quoteImage || line.customImageUrl || '',
       source: 'product-master-tile',
@@ -2464,9 +2940,12 @@ export class QuotesService {
           mrpSource: useProductPricing ? 'PRODUCT_MASTER' : line.mrpSource || (fallbackMrp != null ? product.mrpSource || 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
           piecesPerPack: useProductPricing ? stockPiecesPerUnit : line.piecesPerPack ?? stockPiecesPerUnit,
           coveragePerPack: useProductPricing ? stockCoverageSqFt : line.coveragePerPack ?? stockCoverageSqFt,
-        }, index);
+        }, index, useProductPricing);
       }
-      const qty = Math.trunc(Number(line.qty || line.quantity || 0));
+      // Fresh input (useProductPricing) refuses a fraction; lines already saved keep the old whole-number reading.
+      const qty = useProductPricing
+        ? wholeQuantity(line.qty || line.quantity || 0, product.salesUom || product.unit || line.unit, product.sku)
+        : Math.trunc(Number(line.qty || line.quantity || 0));
       if (!Number.isFinite(qty) || qty <= 0) {
         throw new BadRequestException(`${product.sku} needs a positive whole-number quantity`);
       }
@@ -2511,7 +2990,7 @@ export class QuotesService {
         specialMode: mrpMissing ? 'NONE' : line.specialMode || 'NONE',
         specialInput: mrpMissing ? 0 : line.specialInput ?? 0,
         mrpSource: useProductPricing ? 'PRODUCT_MASTER' : line.mrpSource || product.mrpSource || (defaultMrp != null ? 'PRODUCT_DEFAULT' : 'QUOTE_ENTRY'),
-        taxRate: Number(line.taxRate ?? 18),
+        taxRate: lineGstRate(line),
         media,
         area: String(line.area || line.room || line.section || 'General Selection').trim() || 'General Selection',
         quoteImage: line.quoteImage || line.customImageUrl || '',
@@ -2741,8 +3220,13 @@ export class QuotesService {
         remediation: 'Open the quote and press Confirm quote. Then try again.',
       });
     }
-    if (quote?.approvalStatus === 'pending' && !/approv/i.test(action)) {
+    // Only the approval action itself may pass a pending approval (the old wording test also let "marking the quote approved" through).
+    if (quote?.approvalStatus === 'pending' && action !== 'approving this quote') {
       throw new BadRequestException(`Cannot ${action}: owner approval is still required for a below-floor rate.`);
+    }
+    if (quote?.approvalStatus === 'rejected') {
+      const note = (quote?.approval as any)?.rejection?.note;
+      throw new BadRequestException(`Cannot ${action}: the owner did not approve this price${note ? ` (${note})` : ''}. Change the price and save the quote.`);
     }
     return pricing;
   }
@@ -2767,10 +3251,8 @@ export class QuotesService {
       // Match on the quote line when there is one; a direct order has none, so match on the line key.
       const salesOrderLine = salesOrderLines.find((row: any) => (line.quoteLineId && row.quoteLineId === line.quoteLineId) || row.lineKey === lineKey);
 
-      const lotAvailability = await tx.inventoryLotBalance.aggregate({
-        where: { lot: { productId, status: 'active' } }, _sum: { available: true },
-      });
-      const available = Math.max(0, Number(lotAvailability._sum.available || 0));
+      // In-transit and excluded locations cannot be promised (stock lane, B2).
+      const available = await reservableLotQuantityTx(tx, productId);
       const reserveQty = Math.min(quantity, available);
       const backorderQty = Math.max(0, quantity - reserveQty);
 
@@ -2880,28 +3362,30 @@ export class QuotesService {
     return `tile:${orderId}:${String(line.tileCode || line.sku || index).trim()}:${index}`;
   }
 
-  private async releaseReservationsTx(tx: any, quoteId: string, reason: string) {
-    const reservations = await tx.reservation.findMany({ where: { quoteId, salesOrderId: null, status: 'reserved' } });
+  /**
+   * Frees what a quote still holds without a live order behind it: holds made before
+   * reservations carried an order, and anything left on an order that is already
+   * cancelled. Holds of live orders are never touched here; cancel the order for that.
+   */
+  private async releaseReservationsTx(tx: any, quoteId: string, reason: string, actorUserId = 'system') {
+    const cancelledOrders = await tx.salesOrder.findMany({ where: { quoteId, status: 'cancelled' }, select: { id: true } });
+    const reservations = await tx.reservation.findMany({
+      where: {
+        quoteId,
+        status: { in: ['reserved', 'backordered'] },
+        OR: [{ salesOrderId: null }, ...(cancelledOrders.length ? [{ salesOrderId: { in: cancelledOrders.map((row: any) => row.id) } }] : [])],
+      },
+    });
     for (const reservation of reservations) {
-      const balance = await tx.inventoryBalance.findUnique({ where: { productId: reservation.productId } });
-      if (balance) {
-        const allocations = await tx.lotReservation.count({ where: { reservationId: reservation.id, status: 'reserved' } });
-        if (allocations > 0) {
-          await releaseReservedLotsTx(tx, { reservation, reason, actorUserId: 'system' });
-        } else {
-          await applyStockPostingTx(tx, {
-            productId: reservation.productId, type: 'release', movementType: 'release', ledgerType: 'release',
-            quantity: Number(reservation.quantity || 0), reservedDelta: -Number(reservation.quantity || 0),
-            locationReservedDelta: -Number(reservation.quantity || 0), requireReserved: true, reason,
-            relatedQuoteId: quoteId, referenceType: 'Reservation', referenceId: reservation.id,
-            createdBy: 'system', metadata: { source: 'legacy_quote_release' },
-          });
-        }
+      const balance = reservation.status === 'reserved' ? await tx.inventoryBalance.findUnique({ where: { productId: reservation.productId } }) : null;
+      if (reservation.status === 'reserved' && !balance) {
+        await tx.reservation.update({ where: { id: reservation.id }, data: { status: 'released', updatedAt: new Date() } });
+        continue;
       }
-      await tx.reservation.update({
-        where: { id: reservation.id },
-        data: { status: 'released', updatedAt: new Date() },
-      });
+      await this.releaseReservationRowTx(tx, reservation, reason, actorUserId);
+    }
+    if (cancelledOrders.length) {
+      await tx.purchaseDemand.updateMany({ where: { sourceOrderId: { in: cancelledOrders.map((row: any) => row.id) }, status: 'open', orderedQuantity: 0 }, data: { status: 'cancelled', updatedAt: new Date() } });
     }
     await syncSalesOrderLinesForQuoteTx(tx, quoteId);
   }
@@ -2909,20 +3393,32 @@ export class QuotesService {
   private async getAvailabilityIssues(lines: any[]) {
     const issues: any[] = [];
     const normalized = this.normalizeLines(lines);
-    const truth = await inventoryTruthByProduct(this.prisma, normalized.map((line: any) => String(line.productId || '')).filter(Boolean));
+    const productIds = Array.from(new Set(normalized.map((line: any) => String(line.productId || '')).filter(Boolean))) as string[];
+    const [truth, products] = await Promise.all([
+      inventoryTruthByProduct(this.prisma, productIds),
+      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } } }) : Promise.resolve([] as any[]),
+    ]);
+    const productById = new Map((products as any[]).map((product) => [product.id, product]));
     for (const line of normalized) {
       const productId = line.productId;
       const quantity = Number(line.qty || line.quantity || 0);
       if (!productId || quantity <= 0) continue;
-      const available = (truth.get(productId) || zeroInventoryTruth(productId)).available;
-      if (available < quantity) {
+      // Stock is counted in base units (pieces); the quote line in selling units (boxes).
+      const product = productById.get(productId);
+      const requestedBase = toBaseQty(product, quantity);
+      const availableBase = (truth.get(productId) || zeroInventoryTruth(productId)).available;
+      if (availableBase < requestedBase) {
+        const available = toSellingQtyFloor(product, availableBase);
         issues.push({
           productId,
           sku: line.sku,
           name: line.name,
           requested: quantity,
           available,
-          shortage: quantity - available,
+          shortage: Math.max(0, quantity - available),
+          requestedBase,
+          availableBase,
+          factor: stockFactor(product),
           approvalReason: 'availability_shortage',
         });
       }

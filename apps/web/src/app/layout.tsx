@@ -1,9 +1,17 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import './kit.css';
+import './theme-status.css';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
-  title: 'Marble Park | Premium Bath Solutions',
+  // Server pages can export `metadata.title = 'Quotes'` and get
+  // "Quotes | Marble Park". Dashboard pages are client pages: the dashboard
+  // layout sets document.title from the menu entry (useDocumentTitle).
+  title: {
+    default: 'Marble Park | Premium Bath Solutions',
+    template: '%s | Marble Park',
+  },
   description: 'Marble Park - Premium Bath Solutions CRM & Inventory Management',
   icons: {
     icon: '/brand/marble-park-logo-square.png',

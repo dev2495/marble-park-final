@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import * as bcrypt from 'bcrypt';
@@ -34,6 +34,7 @@ export interface UpdateMyProfileInput {
   email?: string;
   avatarUrl?: string | null;
   bio?: string | null;
+  currentPassword?: string;
 }
 
 export interface ChangeMyPasswordInput {
@@ -43,6 +44,7 @@ export interface ChangeMyPasswordInput {
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   private readonly allowedRoles = new Set(['admin', 'owner', 'sales_manager', 'sales', 'inventory_manager', 'dispatch_ops', 'office_staff']);
@@ -53,7 +55,23 @@ export class UsersService {
         email: { not: { contains: '.deleted' } },
       },
       orderBy: { name: 'asc' },
+      take: 500,
     });
+  }
+
+  /**
+   * The system must always keep one active owner or admin, otherwise nobody
+   * can manage users or settings. Refuses to disable, remove or demote the last one.
+   */
+  private async assertNotLastPrivileged(target: { id: string; role: string; active: boolean }, change: { active?: boolean; role?: string }) {
+    const privileged = new Set(['admin', 'owner']);
+    if (!target.active || !privileged.has(target.role)) return;
+    const losesAccess = change.active === false || (change.role !== undefined && !privileged.has(change.role));
+    if (!losesAccess) return;
+    const others = await this.prisma.user.count({
+      where: { id: { not: target.id }, active: true, role: { in: ['admin', 'owner'] }, email: { not: { contains: '.deleted' } } },
+    });
+    if (others < 1) throw new BadRequestException('This is the last active owner or admin. Make someone else an owner or admin first.');
   }
 
   async findById(id: string) {
@@ -66,7 +84,7 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { email } });
   }
 
-  async create(data: CreateUserInput): Promise<any> {
+  async create(data: CreateUserInput, actorUserId = 'system'): Promise<any> {
     if (!data.name?.trim()) throw new BadRequestException('Name is required');
     if (!data.email?.trim()) throw new BadRequestException('Email is required');
     if (!data.password || data.password.length < 12) throw new BadRequestException('Password must be at least 12 characters');
@@ -90,7 +108,7 @@ export class UsersService {
       },
     } as any) as any;
     await this.audit.record({
-      actorUserId: 'system',
+      actorUserId,
       action: 'user.create',
       entityType: 'User',
       entityId: created.id,
@@ -100,7 +118,7 @@ export class UsersService {
     return created;
   }
 
-  async update(id: string, data: UpdateUserInput) {
+  async update(id: string, data: UpdateUserInput, actorUserId = 'system') {
     const before = await this.findById(id);
     const patch: any = {};
     if (typeof data.name === 'string' && data.name.trim()) patch.name = data.name.trim().slice(0, 80);
@@ -110,6 +128,7 @@ export class UsersService {
       patch.role = data.role.trim();
     }
     if (typeof data.active === 'boolean') patch.active = data.active;
+    await this.assertNotLastPrivileged(before, { active: patch.active, role: patch.role });
     if (typeof data.bio === 'string') patch.bio = data.bio.slice(0, 280);
     if (data.avatarUrl !== undefined) patch.avatarUrl = data.avatarUrl || null;
     if (data.permissionOverrides !== undefined) patch.permissionOverrides = sanitizePermissionOverrides(data.permissionOverrides) as any;
@@ -138,7 +157,7 @@ export class UsersService {
     const permissionsChanged = data.permissionOverrides !== undefined;
     if (roleChanged || permissionsChanged) {
       await this.audit.record({
-        actorUserId: 'system',
+        actorUserId,
         action: permissionsChanged && !roleChanged ? 'user.permissions.change' : 'user.role.change',
         entityType: 'User',
         entityId: id,
@@ -149,7 +168,7 @@ export class UsersService {
       });
     } else if (activeChanged) {
       await this.audit.record({
-        actorUserId: 'system',
+        actorUserId,
         action: data.active ? 'user.enable' : 'user.disable',
         entityType: 'User',
         entityId: id,
@@ -157,7 +176,7 @@ export class UsersService {
       });
     } else if (patch.passwordHash) {
       await this.audit.record({
-        actorUserId: 'system',
+        actorUserId,
         action: 'password.reset',
         entityType: 'User',
         entityId: id,
@@ -165,7 +184,7 @@ export class UsersService {
       });
     } else {
       await this.audit.record({
-        actorUserId: 'system',
+        actorUserId,
         action: 'user.update',
         entityType: 'User',
         entityId: id,
@@ -175,8 +194,9 @@ export class UsersService {
     return updated;
   }
 
-  async delete(id: string) {
+  async delete(id: string, actorUserId = 'system') {
     const user = await this.findById(id);
+    await this.assertNotLastPrivileged(user, { active: false });
     const result = await this.prisma.user.update({
       where: { id },
       data: {
@@ -189,7 +209,7 @@ export class UsersService {
     });
     await this.prisma.session.deleteMany({ where: { userId: id } });
     await this.audit.record({
-      actorUserId: 'system',
+      actorUserId,
       action: 'user.delete',
       entityType: 'User',
       entityId: id,
@@ -214,7 +234,9 @@ export class UsersService {
     if (typeof input.phone === 'string') patch.phone = input.phone.trim().slice(0, 24);
     if (typeof input.bio === 'string') patch.bio = input.bio.slice(0, 280);
     if (input.avatarUrl !== undefined) patch.avatarUrl = input.avatarUrl || null;
-    if (typeof input.email === 'string' && input.email.trim() && input.email !== user.email) {
+    if (typeof input.email === 'string' && input.email.trim() && input.email.trim().toLowerCase() !== user.email.toLowerCase()) {
+      if (!input.currentPassword) throw new BadRequestException('Enter your current password to change your login email');
+      if (!(await this.verifyPassword(user, input.currentPassword))) throw new UnauthorizedException('Current password is incorrect');
       const trimmedEmail = input.email.trim().toLowerCase();
       const existing = await this.prisma.user.findUnique({ where: { email: trimmedEmail } });
       if (existing && existing.id !== userId) {
@@ -223,7 +245,16 @@ export class UsersService {
       patch.email = trimmedEmail;
     }
     if (Object.keys(patch).length === 0) return user;
-    return this.prisma.user.update({ where: { id: userId }, data: patch });
+    const updatedSelf = await this.prisma.user.update({ where: { id: userId }, data: patch });
+    await this.audit.record({
+      actorUserId: userId,
+      action: patch.email ? 'user.email.change' : 'user.profile.update',
+      entityType: 'User',
+      entityId: userId,
+      summary: patch.email ? `${user.name || user.email} changed their login email` : `${user.name || user.email} updated their profile`,
+      metadata: patch.email ? { from: user.email, to: patch.email } : {},
+    });
+    return updatedSelf;
   }
 
   /**
@@ -261,7 +292,7 @@ export class UsersService {
     // by the 15-minute idle policy.
     await this.prisma.session.deleteMany({
       where: { userId, ...(currentSessionToken ? { token: { not: currentSessionToken } } : {}) },
-    }).catch(() => null);
+    }).catch((error) => { this.logger.error(`Could not sign out other devices after password change for ${userId}: ${error?.message}`); return null; });
     return { ok: true, passwordChangedAt: new Date() };
   }
 }

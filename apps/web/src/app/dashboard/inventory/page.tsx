@@ -1,4 +1,5 @@
 'use client';
+import { statusLabel } from '@/lib/utils';
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -7,6 +8,10 @@ import { AlertTriangle, Bookmark, Boxes, ChevronDown, CircleDollarSign, Download
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { ProductImageFrame } from '@/components/product-image-frame';
+import { useBusyAction } from '@/hooks/use-busy-action';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatusPill } from '@/components/ui/status-pill';
 
 const ME = gql`
   query InventoryPageMe {
@@ -102,6 +107,8 @@ export default function InventoryPage() {
     setSearch(params.get('search') || ''); setCostEditorLotId(params.get('lotId') || '');
   }, []);
   const [costCorrection, setCostCorrection] = useState({ unitCost: '', reason: '' });
+  const { isBusy, run: runBusy } = useBusyAction();
+  useUnsavedChanges(Boolean(costCorrection.unitCost || costCorrection.reason), 'A lot cost is typed but not saved. Leave without saving?');
   const deferredSearch = useDeferredValue(search.trim());
 
   const { data: meData } = useQuery(ME);
@@ -197,7 +204,7 @@ export default function InventoryPage() {
 
   const stats = [
     [CircleDollarSign, 'Stock at cost', canViewCost ? money(summary.onHandValue) : 'Owner only', Number(summary.missingCostUnits || 0) ? `${qty(summary.costedUnits)} costed units · ${qty(summary.missingCostUnits)} units in ${qty(summary.zeroCostOnHand)} items have no cost` : 'every on-hand unit is costed', Number(summary.missingCostUnits || 0) ? 'text-amber-700' : 'text-emerald-700', Number(summary.missingCostUnits || 0) ? 'missing_cost' : ''],
-    [PackageCheck, 'Stock at MRP', money(summary.mrpValue), Number(summary.mrpMissingUnits || 0) ? `before GST · ${qty(summary.mrpMissingUnits)} units in ${qty(summary.mrpMissingProducts)} items have no MRP` : 'before GST · all stocked items priced', 'text-indigo-700', ''],
+    [PackageCheck, 'Stock at MRP', money(summary.mrpValue), Number(summary.mrpMissingUnits || 0) ? `GST included · ${qty(summary.mrpMissingUnits)} units in ${qty(summary.mrpMissingProducts)} items have no MRP` : 'GST included · all stocked items priced', 'text-indigo-700', ''],
     [Boxes, 'Available units', qty(summary.available), 'ready to reserve or sell', 'text-emerald-700', 'available'],
     [Warehouse, 'Reserved units', qty(summary.reserved), 'held for open orders', 'text-blue-700', 'reserved'],
     [PackagePlus, 'Inbound units', qty(summary.inbound), 'ordered and not received', 'text-cyan-700', ''],
@@ -211,16 +218,16 @@ export default function InventoryPage() {
     <div className="space-y-6 pb-10">
       {compositeError ? <QueryErrorBanner error={compositeError} onRetry={() => refetch()} /> : null}
 
-      <section className="mp-card rounded-r6 border border-[var(--line)] p-6 text-[var(--ink)] shadow-md-soft">
-        <div className="flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
-          <div className="max-w-4xl">
-            <p className="text-xs font-medium uppercase tracking-[0.16em] text-[var(--brand-700)]">Inventory control tower</p>
-            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em]">One view for on-hand truth, reservations and what still needs inward.</h1>
-            <p className="mt-3 text-sm font-semibold leading-6 text-[var(--ink-4)]">Product Master records remain visible at zero stock. Physical availability changes only through opening stock, GRN, reservation, dispatch, return, or approved adjustment.</p>
+      <section className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0 max-w-4xl">
+            <p className="mp-eyebrow">Inventory control tower</p>
+            <h1 className="mp-page-title">One view for on-hand truth, reservations and what still needs inward.</h1>
+            <p className="mp-page-sub">Product Master records remain visible at zero stock. Physical availability changes only through opening stock, GRN, reservation, dispatch, return, or approved adjustment.</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild size="lg" className="bg-[var(--brand-600)] text-white hover:bg-[var(--brand-700)]"><Link href="/dashboard/procurement"><PackagePlus className="mr-2 h-5 w-5" /> Procurement desk</Link></Button>
-            <Button asChild size="lg" variant="outline"><Link href="/dashboard/inventory/inwards">Manual GRN</Link></Button>
+          <div className="mp-page-actions">
+            <Button asChild><Link href="/dashboard/procurement"><PackagePlus className="mr-2 h-4 w-4" /> Procurement desk</Link></Button>
+            <Button asChild variant="outline"><Link href="/dashboard/inventory/inwards">Manual GRN</Link></Button>
           </div>
         </div>
       </section>
@@ -251,11 +258,11 @@ export default function InventoryPage() {
               <Link href="/dashboard/procurement" className="rounded-xl bg-red-700 px-4 py-2 text-xs font-black uppercase tracking-wider text-white">Open procurement</Link>
             </div>
           </div>
-          <div className="mt-4 overflow-x-auto custom-scrollbar">
-            <table className="w-full min-w-[760px] text-left">
+          <div className="mt-4 overflow-x-auto custom-scrollbar" role="region" aria-label="Low stock table" tabIndex={0}>
+            <table className="mp-table-skin w-full min-w-[760px] text-left">
               <thead className="text-xs font-medium uppercase tracking-widest text-red-800/80"><tr><th className="px-3 py-2">Product</th><th className="px-3 py-2 text-center">Available</th><th className="px-3 py-2 text-center">Threshold</th><th className="px-3 py-2 text-center">Reorder point</th><th className="px-3 py-2 text-right">Updated</th></tr></thead>
               <tbody className="divide-y divide-red-200/60">
-                {lowStockRows.map((row: any) => <tr key={row.id} className="text-sm"><td className="px-3 py-2"><div className="font-semibold text-[var(--ink)]">{row.product?.name}</div><div className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">{row.product?.sku} · {row.product?.brand}</div></td><td className="px-3 py-2 text-center"><span className="rounded-full bg-red-200/80 px-3 py-1 text-sm font-black text-red-900">{qty(row.available)}</span></td><td className="px-3 py-2 text-center font-black text-blue-800">{qty(row.lowStockThreshold)}</td><td className="px-3 py-2 text-center font-black text-blue-800">{row.reorderPoint == null ? '—' : qty(row.reorderPoint)}</td><td className="px-3 py-2 text-right text-xs font-bold text-[var(--ink-4)]">{row.updatedAt ? new Date(row.updatedAt).toLocaleDateString('en-IN') : '—'}</td></tr>)}
+                {lowStockRows.map((row: any) => <tr key={row.id} className="text-sm"><td className="px-3 py-2"><div className="font-semibold text-[var(--ink)]">{row.product?.name}</div><div className="text-xs font-medium uppercase tracking-wider text-[var(--ink-4)]">{row.product?.sku} · {row.product?.brand}</div></td><td className="px-3 py-2 text-center"><span className="rounded-full bg-red-200/80 px-3 py-1 text-sm font-black text-red-900 dark:bg-red-500/25 dark:text-red-200">{qty(row.available)}</span></td><td className="px-3 py-2 text-center font-black text-blue-800">{qty(row.lowStockThreshold)}</td><td className="px-3 py-2 text-center font-black text-blue-800">{row.reorderPoint == null ? '—' : qty(row.reorderPoint)}</td><td className="px-3 py-2 text-right text-xs font-bold text-[var(--ink-4)]">{row.updatedAt ? new Date(row.updatedAt).toLocaleDateString('en-IN') : '—'}</td></tr>)}
               </tbody>
             </table>
           </div>
@@ -289,12 +296,12 @@ export default function InventoryPage() {
       <section className="overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] shadow-md-soft">
         <div className="hidden grid-cols-[1.5fr_0.85fr_0.65fr_0.65fr_0.65fr_0.9fr_0.9fr] gap-4 border-b border-[var(--line)] bg-[var(--muted)] px-5 py-4 text-xs font-black uppercase tracking-[0.16em] text-[var(--ink-4)] lg:grid"><div>Product master</div><div>State</div><div className="text-center">On hand</div><div className="text-center">Available</div><div className="text-center">Reserved</div><div className="text-right">Cost value</div><div className="text-right">Retail value</div></div>
         <div className="divide-y divide-[var(--line)]">
-          {loading && !rows.length ? <div className="p-12 text-center text-sm font-bold text-[var(--ink-4)]">Loading inventory balances...</div> : null}
-          {!loading && !rows.length ? <div className="p-12 text-center"><Boxes className="mx-auto h-8 w-8 text-[var(--brand-600)]" /><p className="mt-3 font-black text-[var(--ink)]">No inventory balances match this view.</p><p className="mt-1 text-sm font-semibold text-[var(--ink-4)]">Clear a filter or add the first Product Master SKU.</p></div> : null}
+          {loading && !rows.length ? <div className="space-y-3 p-5" aria-busy="true" aria-label="Loading inventory balances"><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div> : null}
+          {!loading && !compositeError && !rows.length ? <div className="p-12 text-center"><Boxes className="mx-auto h-8 w-8 text-[var(--brand-600)]" /><p className="mt-3 font-black text-[var(--ink)]">No inventory balances match this view.</p><p className="mt-1 text-sm font-semibold text-[var(--ink-4)]">Clear a filter or add the first Product Master SKU.</p></div> : null}
           {rows.map((row: any) => <article key={row.id} className="p-5">
             <div className="grid gap-4 lg:grid-cols-[1.5fr_0.85fr_0.65fr_0.65fr_0.65fr_0.9fr_0.9fr] lg:items-center">
             <div className="flex min-w-0 items-center gap-3"><ProductImageFrame src={productImage(row.product)} alt={row.product?.name || 'Product'} className="h-14 w-14 shrink-0 rounded-2xl" imageClassName="p-1" /><div className="min-w-0"><p className="truncate text-sm font-black text-[var(--ink)]">{row.product?.name || 'Unnamed product'}</p><p className="truncate text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">{row.product?.sku || 'No SKU'} · {row.product?.brand || 'Unbranded'}</p><p className="mt-1 text-xs font-semibold text-[var(--ink-5)]">{row.product?.category || 'Uncategorised'} · {row.product?.unit || 'PC'}</p></div></div>
-            <div><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black uppercase tracking-wider ring-1 ${tone(row.stockState)}`}>{label(row.stockState)}</span><p className="mt-2 text-xs font-bold uppercase tracking-wider text-[var(--ink-5)]">Updated {row.updatedAt ? new Date(row.updatedAt).toLocaleDateString('en-IN') : '—'}</p></div>
+            <div><StatusPill tone={row.stockState === 'available' ? 'success' : row.stockState === 'reserved' ? 'info' : row.stockState === 'low_stock' ? 'warning' : 'danger'}>{label(row.stockState)}</StatusPill><p className="mt-2 text-xs font-bold uppercase tracking-wider text-[var(--ink-5)]">Updated {row.updatedAt ? new Date(row.updatedAt).toLocaleDateString('en-IN') : '—'}</p></div>
             <div className="text-left lg:text-center"><span className="text-lg font-black text-[var(--ink)]">{qty(row.onHand)}</span><p className="text-xs font-bold uppercase text-[var(--ink-5)]">units</p></div>
             <div className="text-left lg:text-center"><span className="text-lg font-black text-emerald-700">{qty(row.available)}</span><p className="text-xs font-bold uppercase text-[var(--ink-5)]">ready</p></div>
             <div className="text-left lg:text-center"><span className="text-lg font-black text-blue-700">{qty(row.reserved)}</span><p className="text-xs font-bold uppercase text-[var(--ink-5)]">held</p></div>
@@ -305,7 +312,7 @@ export default function InventoryPage() {
               <div className="flex flex-wrap gap-2">{(row.completenessCodes || []).map((code: string) => <span key={code} className="rounded-lg bg-amber-50 px-2 py-1 text-xs font-black text-amber-900">{label(code)}</span>)}</div>
               <button type="button" aria-expanded={Boolean(expanded[row.id])} onClick={() => setExpanded((current) => ({ ...current, [row.id]: !current[row.id] }))} className="inline-flex items-center text-xs font-black uppercase text-[var(--brand-700)]">{row.lots?.length || 0} lot(s)<ChevronDown className={`ml-1 h-4 w-4 transition ${expanded[row.id] ? 'rotate-180' : ''}`} /></button>
             </div>
-            {expanded[row.id] ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{(row.lots || []).map((lot: any) => <div key={lot.id} className="rounded-xl border border-[var(--line)] bg-[var(--muted)] p-3"><div className="flex justify-between gap-2"><p className="text-xs font-black text-[var(--ink)]">{lot.lotNumber}</p><span className="text-xs font-black uppercase text-[var(--ink-4)]">{lot.qualityStatus}</span></div><p className="mt-1 text-xs font-semibold text-[var(--ink-5)]">Received {lot.receivedAt ? new Date(lot.receivedAt).toLocaleDateString('en-IN') : '—'}{canViewCost ? ` · Cost ${money(lot.unitCost)}` : ''}</p>{(lot.locations || []).map((place: any) => <div key={place.id} className="mt-2 flex justify-between border-t border-[var(--line)] pt-2 text-xs"><span className="font-bold">{place.locationName || place.locationCode}</span><span className="font-black">{qty(place.available)} available · {qty(place.reserved)} reserved</span></div>)}{Number(lot.unitCost || 0) <= 0 && canCorrectCost ? (costEditorLotId === lot.id ? <div className="mt-3 space-y-2 border-t border-amber-200 pt-3"><input aria-label="Corrected unit cost" type="number" min="0.01" step="0.01" value={costCorrection.unitCost} onChange={(event) => setCostCorrection({ ...costCorrection, unitCost: event.target.value })} placeholder="Verified unit cost ₹" data-needs-value className="h-9 w-full rounded-lg border border-amber-300 bg-white px-3 text-xs"/><input aria-label="Cost correction reason" value={costCorrection.reason} onChange={(event) => setCostCorrection({ ...costCorrection, reason: event.target.value })} placeholder="Source document / correction reason" className="h-9 w-full rounded-lg border border-amber-300 bg-white px-3 text-xs"/><div className="flex gap-2"><button type="button" disabled={costCorrectionState.loading || Number(costCorrection.unitCost) <= 0 || costCorrection.reason.trim().length < 8} onClick={() => correctMissingCost({ variables: { id: lot.id, unitCost: Number(costCorrection.unitCost), reason: costCorrection.reason.trim() } })} className="rounded-lg bg-amber-800 px-3 py-2 text-xs font-black uppercase text-white disabled:opacity-40">Save verified cost</button><button type="button" onClick={() => setCostEditorLotId('')} className="text-xs font-black uppercase text-[var(--ink-4)]">Cancel</button></div></div> : <button type="button" onClick={() => { setCostEditorLotId(lot.id); setCostCorrection({ unitCost: '', reason: '' }); }} className="mt-3 text-xs font-black uppercase text-amber-800 underline">Record missing cost</button>) : null}</div>)}</div> : null}
+            {expanded[row.id] ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{(row.lots || []).map((lot: any) => <div key={lot.id} className="rounded-xl border border-[var(--line)] bg-[var(--muted)] p-3"><div className="flex justify-between gap-2"><p className="text-xs font-black text-[var(--ink)]">{lot.lotNumber}</p><span className="text-xs font-black uppercase text-[var(--ink-4)]">{statusLabel(lot.qualityStatus)}</span></div><p className="mt-1 text-xs font-semibold text-[var(--ink-5)]">Received {lot.receivedAt ? new Date(lot.receivedAt).toLocaleDateString('en-IN') : '—'}{canViewCost ? ` · Cost ${money(lot.unitCost)}` : ''}</p>{(lot.locations || []).map((place: any) => <div key={place.id} className="mt-2 flex justify-between border-t border-[var(--line)] pt-2 text-xs"><span className="font-bold">{place.locationName || place.locationCode}</span><span className="font-black">{qty(place.available)} available · {qty(place.reserved)} reserved</span></div>)}{Number(lot.unitCost || 0) <= 0 && canCorrectCost ? (costEditorLotId === lot.id ? <div className="mt-3 space-y-2 border-t border-amber-200 pt-3"><input aria-label="Corrected unit cost" type="number" min="0.01" step="0.01" value={costCorrection.unitCost} onChange={(event) => setCostCorrection({ ...costCorrection, unitCost: event.target.value })} placeholder="Verified unit cost ₹" data-needs-value className="h-9 w-full rounded-lg border border-amber-300 bg-white px-3 text-xs"/><input aria-label="Cost correction reason" value={costCorrection.reason} onChange={(event) => setCostCorrection({ ...costCorrection, reason: event.target.value })} placeholder="Source document / correction reason" className="h-9 w-full rounded-lg border border-amber-300 bg-white px-3 text-xs"/><div className="flex gap-2"><button type="button" disabled={costCorrectionState.loading || isBusy('lot-cost') || Number(costCorrection.unitCost) <= 0 || costCorrection.reason.trim().length < 8} onClick={() => void runBusy('lot-cost', () => correctMissingCost({ variables: { id: lot.id, unitCost: Number(costCorrection.unitCost), reason: costCorrection.reason.trim() } }))} className="rounded-lg bg-amber-800 px-3 py-2 text-xs font-black uppercase text-white disabled:opacity-40">Save verified cost</button><button type="button" onClick={() => setCostEditorLotId('')} className="text-xs font-black uppercase text-[var(--ink-4)]">Cancel</button></div></div> : <button type="button" onClick={() => { setCostEditorLotId(lot.id); setCostCorrection({ unitCost: '', reason: '' }); }} className="mt-3 text-xs font-black uppercase text-amber-800 underline">Record missing cost</button>) : null}</div>)}</div> : null}
           </article>)}
         </div>
         {tower.nextCursor ? <div className="border-t border-[var(--line)] p-4 text-center"><button type="button" disabled={loading} onClick={loadMore} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)] disabled:opacity-50">{loading ? 'Loading...' : 'Load more balances'}</button></div> : null}

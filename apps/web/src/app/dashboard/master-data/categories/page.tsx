@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { Layers3, RotateCcw, Save, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 import { MasterQuickAdd } from '@/components/quick-add/quick-add';
@@ -15,6 +16,7 @@ const empty = { id: '', name: '', code: '', description: '', status: 'active', s
 export default function CategoryMasterPage() {
   const { data, loading, error, refetch } = useQuery(DATA, { fetchPolicy: 'cache-and-network' });
   const [form, setForm] = useState<any>(empty);
+  useUnsavedChanges(!form.id && JSON.stringify(form) !== JSON.stringify(empty), 'This form has details that are not saved yet. Leave without saving?');
   const [search, setSearch] = useState('');
   const [save, { loading: saving, error: saveError }] = useMutation(SAVE_CATEGORY, { onCompleted: () => { void refetch(); setForm(empty); } });
   const rows = useMemo<any[]>(() => data?.masterProductCategories || [], [data?.masterProductCategories]);
@@ -54,7 +56,7 @@ export default function CategoryMasterPage() {
         </div>
 
         <div className="mp-panel p-5">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="text-2xl font-semibold text-[var(--ink)]">Categories</h2><p className="mt-1 text-sm text-[var(--ink-4)]">Click any row to edit.</p></div><div className="flex h-10 min-w-72 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search categories" className="w-full bg-transparent text-sm outline-none" /></div></div>
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="text-2xl font-semibold text-[var(--ink)]">Categories</h2><p className="mt-1 text-sm text-[var(--ink-4)]">Click any row to edit.</p></div><div className="flex h-10 min-w-72 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" /><input aria-label="Search categories" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search categories" className="w-full bg-transparent text-sm outline-none" /></div></div>
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             {filtered.map((row) => <button key={row.id} onClick={() => setForm(row)} className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 text-left transition hover:border-[var(--brand-300)] hover:shadow-sm-soft"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-[var(--ink)]">{row.name}</p><p className="mt-1 text-xs font-semibold uppercase tracking-wider text-[var(--ink-5)]">{row.code || 'No code'}</p></div><span className="rounded-full bg-[var(--brand-50)] px-2 py-1 text-xs font-semibold text-[var(--brand-700)]">{row.status}</span></div>{row.description ? <p className="mt-3 text-sm text-[var(--ink-4)]">{row.description}</p> : null}</button>)}
           </div>

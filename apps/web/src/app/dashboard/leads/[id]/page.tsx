@@ -12,6 +12,16 @@ import {
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { UserAvatar } from '@/components/user-avatar';
+import { useBusyAction } from '@/hooks/use-busy-action';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Field } from '@/components/ui/field';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatusPill, type StatusTone } from '@/components/ui/status-pill';
+import { Textarea } from '@/components/ui/textarea';
+
+// Maps the old colour classes of the status helpers below to the shared status pill.
+const toneOf = (bg: string): StatusTone => (bg.includes('emerald') ? 'success' : bg.includes('amber') ? 'warning' : bg.includes('rose') ? 'danger' : bg.includes('blue') ? 'info' : 'neutral');
 
 const LEAD_TIMELINE = gql`
   query LeadTimeline($id: ID!) {
@@ -19,7 +29,7 @@ const LEAD_TIMELINE = gql`
   }
 `;
 
-const COMPLETE_FOLLOWUP = gql`mutation CompleteFollowUp($id: ID!, $outcome: String!) { completeFollowUp(id: $id, outcome: $outcome) }`;
+const COMPLETE_FOLLOWUP = gql`mutation CompleteLeadFollowUp($id: ID!, $outcome: String!) { completeLeadFollowUp(id: $id, outcome: $outcome) }`;
 function FollowUpAction({ task, refresh }: { task: any; refresh: () => void }) {
   const [outcome, setOutcome] = useState('');
   const [complete, { loading, error }] = useMutation(COMPLETE_FOLLOWUP);
@@ -167,11 +177,18 @@ export default function LeadDetailPage() {
       if (intent?.id) router.push(`/dashboard/intents/${intent.id}`);
     },
   });
-  const [submitIntent] = useMutation(SUBMIT_INTENT, { onCompleted: () => refetch() });
-  const [cancelIntent] = useMutation(CANCEL_INTENT, { onCompleted: () => refetch() });
-  const [requestChanges] = useMutation(REQUEST_CHANGES);
-  const [pickUpIntent] = useMutation(PICK_UP_INTENT, { onCompleted: () => refetch() });
-  const [releaseIntent] = useMutation(RELEASE_INTENT, { onCompleted: () => refetch() });
+  const [submitIntent, { error: submitError }] = useMutation(SUBMIT_INTENT, { onCompleted: () => refetch() });
+  const [cancelIntent, { error: cancelError }] = useMutation(CANCEL_INTENT, { onCompleted: () => refetch() });
+  const [requestChanges, { error: requestError }] = useMutation(REQUEST_CHANGES);
+  const [pickUpIntent, { error: pickUpError }] = useMutation(PICK_UP_INTENT, { onCompleted: () => refetch() });
+  const [releaseIntent, { error: releaseError }] = useMutation(RELEASE_INTENT, { onCompleted: () => refetch() });
+  // One action at a time; a second tap while one runs does nothing. Cancel and release ask first.
+  const busyAction = useBusyAction();
+  const guarded = (key: string, task: () => Promise<unknown>) => { void busyAction.run(key, task).catch(() => undefined); };
+  const [cancelTarget, setCancelTarget] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [releaseTarget, setReleaseTarget] = useState<{ id: string; force: boolean } | null>(null);
+  const [notice, setNotice] = useState('');
   const [generateQuote, { loading: generating, error: generateError }] = useMutation(GENERATE_QUOTE, { onCompleted: () => refetch() });
 
   const [me, setMe] = useState<any>(null);
@@ -189,17 +206,17 @@ export default function LeadDetailPage() {
   const chains: any[] = timeline?.chains || [];
   const inFlight = timeline?.inFlight || { activeIntents: [], activeQuotes: [] };
 
-  const mutationError = createError || reviseError || generateError;
+  const mutationError = createError || reviseError || generateError || submitError || cancelError || requestError || pickUpError || releaseError;
 
-  if (loading && !lead) return <div className="p-10 text-sm font-bold text-[var(--ink-3)]">Loading lead…</div>;
+  if (loading && !lead) return <div role="status" aria-label="Loading lead" className="space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-40 w-full" /><Skeleton className="h-64 w-full" /></div>;
   if (error && !lead) return <div className="p-6"><QueryErrorBanner error={error} onRetry={() => refetch()} /></div>;
-  if (!lead) return <div className="p-10 text-sm font-bold text-[var(--ink-3)]">Lead not found.</div>;
+  if (!lead) return <EmptyState title="This lead was not found" description="It may have been removed, or the link is old." action={<Button asChild variant="outline"><Link href="/dashboard/leads">Back to leads</Link></Button>} />;
 
   const role = me?.role || '';
   const isOfficeOrManager = ['admin', 'owner', 'sales_manager', 'office_staff'].includes(role);
   const isManager = ['admin', 'owner', 'sales_manager'].includes(role);
 
-  const handleNewRound = async (intentType: 'followup' | 'initial' = 'followup') => {
+  const handleNewRound = (intentType: 'followup' | 'initial' = 'followup') => guarded('new-round', async () => {
     const r = await createIntent({
       variables: {
         input: {
@@ -213,29 +230,26 @@ export default function LeadDetailPage() {
       },
     });
     if (!r.data?.createIntent?.id) refetch();
-  };
+  });
 
   return (
     <div className="space-y-5 pb-12">
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {mutationError ? <QueryErrorBanner error={mutationError} /> : null}
+      {notice ? <div role="status" className="rounded-r4 border border-[var(--info)]/25 bg-[var(--info-bg)] px-4 py-2.5 text-sm font-medium text-[var(--info)]">{notice}</div> : null}
 
       {/* Sticky hero — customer + project + state + actions */}
       <section className="sticky top-[64px] z-10 -mx-4 lg:-mx-8 border-b border-[var(--line)] bg-[var(--surface)]/95 px-4 py-4 backdrop-blur lg:px-8">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
-            <Link href="/dashboard/leads" className="mt-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-3)] hover:bg-[var(--bg-soft)]">
+            <Link href="/dashboard/leads" aria-label="Back to leads" className="mt-1 inline-flex h-11 w-11 shrink-0 sm:h-9 sm:w-9 items-center justify-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-3)] hover:bg-[var(--bg-soft)]">
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-5)]">Project</p>
-                <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest capitalize ${lead.stage === 'won' ? 'bg-emerald-100 text-emerald-800' : lead.stage === 'lost' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-800'}`}>
-                  {lead.stage}
-                </span>
-                {lead.reopenedAt ? (
-                  <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-violet-800">Reopened</span>
-                ) : null}
+                <StatusPill tone={lead.stage === 'won' ? 'success' : lead.stage === 'lost' ? 'danger' : 'info'} className="capitalize">{lead.stage}</StatusPill>
+                {lead.reopenedAt ? <StatusPill tone="info" dot={false}>Reopened</StatusPill> : null}
               </div>
               <h1 className="mt-1 truncate text-xl font-bold tracking-tight text-[var(--ink)] sm:text-2xl">{lead.title}</h1>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--ink-3)]">
@@ -250,7 +264,7 @@ export default function LeadDetailPage() {
             </div>
           </div>
           <div className="hidden lg:flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => handleNewRound('followup')} disabled={creating}>
+            <Button size="sm" variant="outline" onClick={() => handleNewRound('followup')} disabled={creating || busyAction.isBusy()} loading={busyAction.isBusy('new-round')}>
               <Plus className="mr-1.5 h-3.5 w-3.5" /> New round
             </Button>
           </div>
@@ -258,7 +272,7 @@ export default function LeadDetailPage() {
 
         {/* Mobile bar */}
         <div className="mt-3 flex gap-2 lg:hidden">
-          <Button size="sm" variant="outline" className="flex-1" onClick={() => handleNewRound('followup')} disabled={creating}>
+          <Button size="sm" variant="outline" className="h-11 flex-1" onClick={() => handleNewRound('followup')} disabled={creating || busyAction.isBusy()} loading={busyAction.isBusy('new-round')}>
             <Plus className="mr-1.5 h-3.5 w-3.5" /> New round
           </Button>
         </div>
@@ -286,7 +300,7 @@ export default function LeadDetailPage() {
                       <p className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">{intentTypeLabel(intent.intentType)}</p>
                       <p className="mt-0.5 text-sm font-bold text-[var(--ink)]">{Array.isArray(intent.rows) ? intent.rows.length : 0} rows · {money(quoteTotal(intent.rows))}</p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
+                    <StatusPill tone={toneOf(badge.bg)} className="shrink-0">{badge.label}</StatusPill>
                   </div>
                   {intent.lockedBy ? (
                     <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-blue-800"><Lock className="h-3 w-3" /> Locked by staff</p>
@@ -307,7 +321,7 @@ export default function LeadDetailPage() {
                       <p className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">{quote.quoteNumber} <span className="text-[var(--brand-700)]">v{quote.versionNumber || 1}</span></p>
                       <p className="mt-0.5 text-sm font-bold text-[var(--ink)]">{money(quoteTotal(quote.lines))}</p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
+                    <StatusPill tone={toneOf(badge.bg)} className="shrink-0">{badge.label}</StatusPill>
                   </div>
                 </Link>
               );
@@ -352,12 +366,13 @@ export default function LeadDetailPage() {
                   me={me}
                   isOfficeOrManager={isOfficeOrManager}
                   isManager={isManager}
-                  onSubmit={(id) => submitIntent({ variables: { id } })}
-                  onCancel={(id) => cancelIntent({ variables: { id, reason: 'Cancelled from timeline' } })}
-                  onPickUp={(id) => pickUpIntent({ variables: { id } })}
-                  onRelease={(id, force) => releaseIntent({ variables: { id, force: !!force } })}
-                  onRequestChanges={(id, msg) => requestChanges({ variables: { id, message: msg } })}
-                  onGenerate={(id) => generateQuote({ variables: { intentId: id, note: 'Generated from timeline' } })}
+                  busyKey={busyAction.busyKey}
+                  onSubmit={(id) => guarded(`submit-${id}`, async () => { await submitIntent({ variables: { id } }); })}
+                  onCancel={(id) => { setCancelReason(''); setCancelTarget(id); }}
+                  onPickUp={(id) => guarded(`pick-${id}`, async () => { await pickUpIntent({ variables: { id } }); })}
+                  onRelease={(id, force) => setReleaseTarget({ id, force: !!force })}
+                  onRequestChanges={(id, msg) => guarded(`request-${id}`, async () => { await requestChanges({ variables: { id, message: msg } }); setNotice('The office was asked to release this intent for edits.'); })}
+                  onGenerate={(id) => guarded(`build-${id}`, async () => { await generateQuote({ variables: { intentId: id, note: 'Generated from timeline' } }); })}
                   generating={generating}
                   onRevise={(qid) => router.push(`/dashboard/quotes/${qid}`)}
                   revising={revising}
@@ -367,6 +382,34 @@ export default function LeadDetailPage() {
           </ul>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={Boolean(cancelTarget)}
+        onOpenChange={(open) => { if (!open) { setCancelTarget(null); setCancelReason(''); } }}
+        title="Cancel this intent?"
+        description="The intent is frozen for audit and cannot be edited or turned into a quote afterwards."
+        confirmLabel="Cancel intent"
+        cancelLabel="Keep intent"
+        tone="danger"
+        busy={cancelTarget ? busyAction.isBusy(`cancel-${cancelTarget}`) : false}
+        confirmDisabled={!cancelReason.trim()}
+        onConfirm={() => cancelTarget ? guarded(`cancel-${cancelTarget}`, async () => { await cancelIntent({ variables: { id: cancelTarget, reason: cancelReason.trim() } }); setCancelTarget(null); setCancelReason(''); }) : undefined}
+      >
+        <Field label="Reason for cancelling" htmlFor="lead-intent-cancel-reason" required hint="Kept in the intent history.">
+          <Textarea id="lead-intent-cancel-reason" rows={3} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Why is this intent being cancelled?" />
+        </Field>
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={Boolean(releaseTarget)}
+        onOpenChange={(open) => { if (!open) setReleaseTarget(null); }}
+        title="Release the lock?"
+        description={releaseTarget?.force ? 'You take the lock away from the office staff who is building this quote. The intent goes back to the waiting list.' : 'You stop building this quote and the intent goes back to the waiting list.'}
+        confirmLabel="Release lock"
+        cancelLabel="Keep lock"
+        tone="danger"
+        busy={releaseTarget ? busyAction.isBusy(`release-${releaseTarget.id}`) : false}
+        onConfirm={() => releaseTarget ? guarded(`release-${releaseTarget.id}`, async () => { await releaseIntent({ variables: { id: releaseTarget.id, force: releaseTarget.force } }); setReleaseTarget(null); }) : undefined}
+      />
     </div>
   );
 }
@@ -407,9 +450,7 @@ function QuoteChainCard({ chain, onRevise, revising }: { chain: any; onRevise: (
           <Link href={`/dashboard/quotes/${head.id}`} className="font-bold text-[var(--ink)] hover:text-[var(--brand-700)]">
             {head.quoteNumber} <span className="text-[var(--brand-700)]">v{head.versionNumber || 1}</span>
           </Link>
-          <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${quoteStatusBadge(head.status).bg}`}>
-            {quoteStatusBadge(head.status).label}
-          </span>
+          <StatusPill tone={toneOf(quoteStatusBadge(head.status).bg)}>{quoteStatusBadge(head.status).label}</StatusPill>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold text-[var(--ink)]">{money(quoteTotal(head.lines))}</span>
@@ -463,6 +504,7 @@ function TimelineCard(props: {
   onRevise: (id: string) => void;
   generating: boolean;
   revising: boolean;
+  busyKey: string | null;
 }) {
   const { entry } = props;
   const at = new Date(entry.at).toLocaleString();
@@ -480,7 +522,7 @@ function TimelineCard(props: {
     case 'challan':
       return <BasicCard at={at} title={`Challan ${entry.payload.challanNumber}`} body={`Status: ${entry.payload.status}`} />;
     case 'order':
-      return <BasicCard at={at} title={`Sales order ${entry.payload.orderNumber}`} body={`${money(entry.payload.totalAmount)} · ${entry.payload.paymentStatus}`} link={`/dashboard/sales/${entry.payload.id}`} />;
+      return <BasicCard at={at} title={`Sales order ${entry.payload.orderNumber}`} body={`${money(entry.payload.totalAmount)} · ${entry.payload.paymentStatus}`} link={`/dashboard/orders?search=${encodeURIComponent(entry.payload.orderNumber || '')}`} />;
     case 'payment_receipt':
       return <BasicCard at={at} title={`Payment receipt ${money(entry.payload.amount)}`} body={`${entry.payload.paymentMode}${entry.payload.reference ? ` · ${entry.payload.reference}` : ''}`} />;
     case 'return_order':
@@ -516,8 +558,10 @@ function IntentTimelineCard({
   onRequestChanges,
   onGenerate,
   generating,
+  busyKey,
   at,
 }: any) {
+  const anyBusy = busyKey !== null;
   const intent = entry.payload;
   const badge = intentStatusBadge(intent.status);
   const isOwner = me?.id && (intent.ownerId === me.id || intent.createdBy === me.id);
@@ -532,7 +576,7 @@ function IntentTimelineCard({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
+            <StatusPill tone={toneOf(badge.bg)}>{badge.label}</StatusPill>
             <span className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
               {intentTypeLabel(intent.intentType)}{revRef}
             </span>
@@ -547,12 +591,12 @@ function IntentTimelineCard({
         <div className="mt-3 flex items-center gap-2 rounded-r3 border border-blue-200 bg-blue-50 p-2 text-xs font-semibold text-blue-900">
           <Lock className="h-3.5 w-3.5" /> Office staff is building the quote{intent.locker ? `: ${intent.locker.name}` : ''}.
           {(isOwner || isManager) && !myLock ? (
-            <button type="button" onClick={() => onRequestChanges(intent.id, 'Need to adjust selection')} className="ml-auto inline-flex items-center gap-1 rounded-full bg-blue-700 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-blue-800">
+            <button type="button" disabled={anyBusy} onClick={() => onRequestChanges(intent.id, 'Need to adjust selection')} className="ml-auto inline-flex min-h-11 items-center gap-1 rounded-full bg-blue-700 px-3 py-0.5 disabled:opacity-60 sm:min-h-0 sm:px-2.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-blue-800">
               Request edit
             </button>
           ) : null}
           {(myLock || isManager) ? (
-            <button type="button" onClick={() => onRelease(intent.id, !myLock)} className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-blue-800 ring-1 ring-blue-200 hover:bg-blue-50">
+            <button type="button" disabled={anyBusy} onClick={() => onRelease(intent.id, !myLock)} className="inline-flex min-h-11 items-center gap-1 rounded-full bg-white px-3 py-0.5 disabled:opacity-60 sm:min-h-0 sm:px-2.5 text-xs font-bold uppercase tracking-widest text-blue-800 ring-1 ring-blue-200 hover:bg-blue-50">
               <Unlock className="h-3 w-3" /> Release
             </button>
           ) : null}
@@ -572,22 +616,22 @@ function IntentTimelineCard({
         {editable ? (
           <>
             {isDraft ? (
-              <button type="button" onClick={() => onSubmit(intent.id)} className="inline-flex items-center gap-1 rounded-full bg-[var(--brand-600)] px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-[var(--brand-700)]">
+              <button type="button" disabled={anyBusy} onClick={() => onSubmit(intent.id)} className="inline-flex min-h-11 items-center gap-1 rounded-full bg-[var(--brand-600)] px-3 py-0.5 disabled:opacity-60 sm:min-h-0 sm:px-2.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-[var(--brand-700)]">
                 <Send className="h-3 w-3" /> Submit to office
               </button>
             ) : null}
-            <button type="button" onClick={() => onCancel(intent.id)} className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-rose-700 hover:bg-rose-100">
+            <button type="button" disabled={anyBusy} onClick={() => onCancel(intent.id)} className="inline-flex min-h-11 items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-3 py-0.5 disabled:opacity-60 sm:min-h-0 sm:px-2.5 text-xs font-bold uppercase tracking-widest text-rose-700 hover:bg-rose-100">
               Cancel
             </button>
           </>
         ) : null}
         {isOfficeOrManager && isPending ? (
-          <button type="button" onClick={() => onPickUp(intent.id)} className="inline-flex items-center gap-1 rounded-full bg-[var(--ink)] px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-[var(--surface)] hover:opacity-90">
+          <button type="button" disabled={anyBusy} onClick={() => onPickUp(intent.id)} className="inline-flex min-h-11 items-center gap-1 rounded-full bg-[var(--ink)] px-3 py-0.5 disabled:opacity-60 sm:min-h-0 sm:px-2.5 text-xs font-bold uppercase tracking-widest text-[var(--surface)] hover:opacity-90">
             <Hammer className="h-3 w-3" /> Pick up
           </button>
         ) : null}
         {isOfficeOrManager && (isLocked && (myLock || isManager)) ? (
-          <button type="button" onClick={() => onGenerate(intent.id)} disabled={generating} className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-emerald-700 disabled:opacity-50">
+          <button type="button" onClick={() => onGenerate(intent.id)} disabled={generating || anyBusy} className="inline-flex min-h-11 items-center gap-1 rounded-full bg-emerald-600 px-3 py-0.5 sm:min-h-0 sm:px-2.5 text-xs font-bold uppercase tracking-widest text-white hover:bg-emerald-700 disabled:opacity-50">
             <Check className="h-3 w-3" /> {generating ? 'Generating…' : 'Build quote'}
           </button>
         ) : null}
@@ -614,8 +658,8 @@ function QuoteTimelineCard({ entry, onRevise, revising, at }: any) {
             <Link href={`/dashboard/quotes/${quote.id}`} className="font-bold text-[var(--ink)] hover:text-[var(--brand-700)]">
               {quote.quoteNumber} <span className="text-emerald-700">v{quote.versionNumber || 1}</span>
             </Link>
-            <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}>{badge.label}</span>
-            {quote.supersedesQuoteId ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-blue-800">Replaces prior</span> : null}
+            <StatusPill tone={toneOf(badge.bg)}>{badge.label}</StatusPill>
+            {quote.supersedesQuoteId ? <StatusPill tone="info" dot={false}>Replaces prior</StatusPill> : null}
           </div>
           <p className="mt-1 text-sm font-bold text-[var(--ink)]">{money(quoteTotal(quote.lines))}</p>
           {quote.notes ? <p className="mt-1 text-xs leading-5 text-[var(--ink-3)] line-clamp-2">{quote.notes}</p> : null}

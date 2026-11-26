@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
@@ -10,7 +10,7 @@ import {
   Truck, UserCircle2, Users, UserCog, UserCheck, BadgeCheck, CreditCard, FileText, RotateCcw,
   Menu, X,
   ArrowLeftRight, QrCode, Scale, BarChart3, HelpCircle, BellRing, Store,
-  DoorOpen,
+  DoorOpen, Target, CalendarClock, Database, PanelLeftOpen, PanelLeftClose,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -24,6 +24,9 @@ import { guideForRoute } from '@/lib/help-content';
 import { CompanyLogo } from '@/components/company-logo';
 import { SessionTimeoutGuard } from '@/components/session-timeout-guard';
 import { GlobalSearch } from '@/components/global-search';
+import { useFocusTrap } from '@/hooks/use-focus-trap';
+import { useShellDocumentTitle } from '@/hooks/use-document-title';
+import { useTableHeaderScope } from '@/hooks/use-table-header-scope';
 
 const ME_QUERY = gql`
   query LayoutMe {
@@ -62,7 +65,7 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
     title: 'Pipeline',
     items: [
       { name: 'Walk-ins', href: '/dashboard/walk-ins', icon: DoorOpen, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
-      { name: 'Leads', href: '/dashboard/leads', icon: PackageSearch, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
+      { name: 'Leads', href: '/dashboard/leads', icon: Target, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'] },
       { name: 'Intents', href: '/dashboard/intents', icon: ListChecks, roles: ['admin', 'owner', 'sales_manager', 'office_staff'], permission: 'quotes.manage' },
       { name: 'Quotes', href: '/dashboard/quotes', icon: FileSpreadsheet, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff'], permission: 'quotes.manage' },
       { name: 'Orders', href: '/dashboard/orders', icon: Receipt, roles: ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops'] },
@@ -90,10 +93,10 @@ const navSections: Array<{ title: string; items: Array<{ name: string; href: str
     title: 'People & Data',
     items: [
       { name: 'Customers', href: '/dashboard/customers', icon: Users, roles: ['admin', 'owner', 'sales_manager', 'sales', 'dispatch_ops', 'office_staff'] },
-      { name: 'Follow-ups', href: '/dashboard/follow-ups', icon: ListChecks, roles: [], permission: 'follow_ups.manage' },
+      { name: 'Follow-ups', href: '/dashboard/follow-ups', icon: CalendarClock, roles: [], permission: 'follow_ups.manage' },
       { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: ['admin', 'owner'], permission: 'users.manage' },
       { name: 'System Audit', href: '/dashboard/audit', icon: BadgeCheck, roles: ['admin', 'owner'], permission: 'audit.view' },
-      { name: 'Master Data', href: '/dashboard/master-data', icon: Settings, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'master_data.manage' },
+      { name: 'Master Data', href: '/dashboard/master-data', icon: Database, roles: ['admin', 'owner', 'inventory_manager', 'office_staff'], permission: 'master_data.manage' },
       { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'owner'], permission: 'settings.manage' },
     ],
   },
@@ -136,6 +139,8 @@ const pageTitles: Record<string, string> = {
   '/dashboard/approvals': 'Approval Desk',
   '/dashboard/intents': 'Intent Desk',
   '/dashboard/orders': 'Sales Orders',
+  '/dashboard/orders/new': 'Direct Order',
+  '/dashboard/procurement/cost-readiness': 'Cost Readiness',
   '/dashboard/payments': 'Customer Accounts',
   '/dashboard/documents': 'File Vault',
   '/dashboard/quotes': 'Quote Register',
@@ -190,6 +195,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [user, setUser] = useState<any>(null);
   const [roleOverride, setRoleOverride] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Side menu: opens by its toggle button (click, tap, Enter/Space), stays
+  // open until closed, and the choice is remembered. Hover still peeks on a
+  // mouse; keyboard focus inside the rail shows the labels too.
+  const [railOpen, setRailOpen] = useState(false);
+  const railRef = useRef<HTMLElement>(null);
+  const railToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileNavRef = useRef<HTMLDivElement>(null);
+  const mobileNavButtonRef = useRef<HTMLButtonElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    setRailOpen(localStorage.getItem('mp_rail_open') === '1');
+  }, []);
+  const setRail = useCallback((open: boolean) => {
+    setRailOpen(open);
+    try { localStorage.setItem('mp_rail_open', open ? '1' : '0'); } catch { /* ignore */ }
+  }, []);
+  const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
+  useFocusTrap(mobileNavRef, mobileNavOpen, { onEscape: closeMobileNav });
+  useEffect(() => { setMobileNavOpen(false); }, [pathname]);
+  useTableHeaderScope(mainRef);
   const { data: meData, loading: meLoading, error: meError } = useQuery(ME_QUERY, { fetchPolicy: 'network-only', errorPolicy: 'all' });
   const [logout] = useMutation(LOGOUT_MUTATION);
 
@@ -248,35 +273,74 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     window.location.href = '/login';
   };
 
-  const railOpenClasses = 'hover:w-[16rem] hover:shadow-[0_24px_60px_-20px_rgba(24,24,27,0.22)]';
-  const labelReveal = 'opacity-0 -translate-x-2 pointer-events-none transition-[opacity,transform] duration-200 ease-out group-hover/rail:pointer-events-auto group-hover/rail:translate-x-0 group-hover/rail:opacity-100 group-hover/rail:delay-75';
+  // Labels show when the rail is opened, hovered with a mouse, or holds keyboard focus (kit.css).
+  const labelReveal = 'mp-rail-label';
 
   const unreadCount = Number(notificationData?.unreadNotificationCount || 0);
 
+  // Page title for the top bar and the browser tab ("Quotes | Marble Park").
+  const menuMatch = navSections.flatMap((section) => section.items).filter((item) => isNavActive(item.href)).sort((a, b) => b.href.length - a.href.length)[0];
+  const currentTitle = pageTitles[pathname] || pageTitles[pathname.replace(/\/[^/]+$/, '')] || menuMatch?.name || 'Workspace';
+  useShellDocumentTitle(currentTitle === 'Workspace' ? (pathname === '/dashboard' ? 'Dashboard' : null) : currentTitle, pathname);
+
+  // Escape closes the opened side menu and puts focus back on its button.
+  const onRailKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Escape') return;
+    if (railOpen) {
+      event.stopPropagation();
+      setRail(false);
+      railToggleRef.current?.focus();
+    } else if (railRef.current?.contains(document.activeElement)) {
+      event.stopPropagation();
+      (document.activeElement as HTMLElement | null)?.blur();
+      mainRef.current?.focus();
+    }
+  };
+
   return (
     <div className="mp-app-shell min-h-screen w-full text-[var(--ink-2)]">
+      <a href="#main-content" className="mp-skip-link" onClick={() => window.setTimeout(() => mainRef.current?.focus(), 0)}>Skip to main content</a>
       <SessionTimeoutGuard />
-      {/* ─── Sidebar — auto-hiding icon rail, opens on hover/focus ───────── */}
+      {/* ─── Sidebar — icon rail; the toggle opens it, hover peeks on a mouse ── */}
       <aside
-        aria-label="Primary workspace navigation"
+        ref={railRef}
+        id="primary-navigation"
+        aria-label="Main menu"
+        data-open={railOpen ? 'true' : 'false'}
+        data-pinned={railOpen ? 'true' : 'false'}
+        onKeyDown={onRailKeyDown}
         className={cn(
-          'mp-sidebar peer/rail group/rail fixed inset-y-0 left-0 z-40 hidden w-[4.5rem] flex-col overflow-hidden border-r lg:flex',
+          'mp-sidebar fixed inset-y-0 left-0 z-40 hidden w-[4.5rem] flex-col overflow-hidden border-r lg:flex',
           'will-change-[width] transition-[width,box-shadow] duration-300 [transition-timing-function:var(--eo)]',
-          railOpenClasses,
         )}
       >
         <div className="flex h-full w-[16rem] flex-col overflow-hidden">
           <div className="flex h-16 items-center gap-3 border-b border-[var(--line)] px-4">
-            <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
+            <Link href="/dashboard" className="flex min-w-0 items-center gap-3 rounded-md" aria-label={`${companyName} home`}>
               <CompanyLogo src={companyLogo} name={companyName} className="h-10 w-10" imageClassName="p-0.5" />
-              <div className={cn('min-w-0 whitespace-nowrap', labelReveal)}>
+              <div className={cn('min-w-0 whitespace-nowrap', labelReveal)} aria-hidden="true">
                 <p className="text-base font-bold leading-tight text-[var(--ink)]">{companyName}</p>
                 <p className="text-xs font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
               </div>
             </Link>
           </div>
 
-          <nav className="flex-1 overflow-y-auto py-3 custom-scrollbar">
+          <div className="px-3 pt-3">
+            <button
+              ref={railToggleRef}
+              type="button"
+              onClick={() => setRail(!railOpen)}
+              aria-expanded={railOpen}
+              aria-controls="primary-navigation-links"
+              title={railOpen ? 'Collapse menu' : 'Expand menu'}
+              className="mp-nav-inactive flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-sm font-medium transition-colors"
+            >
+              {railOpen ? <PanelLeftClose className="h-[18px] w-[18px] shrink-0 text-[var(--ink-4)]" strokeWidth={1.6} aria-hidden="true" /> : <PanelLeftOpen className="h-[18px] w-[18px] shrink-0 text-[var(--ink-4)]" strokeWidth={1.6} aria-hidden="true" />}
+              <span className={cn('truncate whitespace-nowrap', labelReveal)}>{railOpen ? 'Collapse menu' : 'Expand menu'}</span>
+            </button>
+          </div>
+
+          <nav id="primary-navigation-links" aria-label="Main menu links" className="flex-1 overflow-y-auto py-3 custom-scrollbar">
             {visibleSections.map((section) => (
               <div key={section.title} className="px-3 pb-4">
                 <p
@@ -297,7 +361,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           href={item.href}
                           prefetch={false}
                           title={item.name}
-                          onClick={(event) => event.currentTarget.blur()}
+                          aria-current={active ? 'page' : undefined}
+                          onClick={(event) => { if (event.detail > 0) event.currentTarget.blur(); }}
                           className={cn(
                             'flex h-9 items-center gap-3 rounded-md text-sm font-medium transition-colors',
                             'px-2.5',
@@ -307,6 +372,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           <item.icon
                             className={cn('h-[18px] w-[18px] shrink-0 transition-colors', active ? 'text-current' : 'text-[var(--ink-4)]')}
                             strokeWidth={1.6}
+                            aria-hidden="true"
                           />
                           <span className={cn('truncate whitespace-nowrap', labelReveal)}>{item.name}</span>
                         </Link>
@@ -328,39 +394,43 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
             </Link>
             <button
+              type="button"
               onClick={handleLogout}
               title="Sign out"
               className="mt-3 flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-sm font-medium text-[var(--ink-3)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]"
             >
-              <LogOut className="h-4 w-4 shrink-0" />
+              <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className={cn('truncate whitespace-nowrap', labelReveal)}>Sign out</span>
             </button>
           </div>
         </div>
       </aside>
 
-      <main className="min-w-0 lg:pl-[4.5rem]">
-        {/* ─── Topbar ───────────────────────────────────────────────────── */}
+      <div className={cn('mp-main-shell min-w-0 transition-[padding] duration-300 [transition-timing-function:var(--eo)]', railOpen ? 'lg:pl-[16rem]' : 'lg:pl-[4.5rem]')}>
+        {/* ─── Topbar (a banner landmark, outside main) ──────────────────── */}
         <header className="mp-topbar sticky top-0 z-20 border-b backdrop-blur-xl supports-[backdrop-filter]:bg-white/75">
-          <div className="flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+          <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 <button
+                  ref={mobileNavButtonRef}
                   type="button"
                   onClick={() => setMobileNavOpen(true)}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] shadow-sm-soft lg:hidden"
-                  aria-label="Open navigation"
+                  className="mp-topbar-btn shrink-0 lg:hidden"
+                  aria-label="Open menu"
+                  aria-expanded={mobileNavOpen}
+                  aria-controls="mobile-navigation"
                 >
-                  <Menu className="h-4 w-4" />
+                  <Menu className="h-4 w-4" aria-hidden="true" />
                 </button>
                 <div className="min-w-0">
                 {/* Page title in the bar; each page owns its single <h1>. */}
-                <p className="truncate text-base font-semibold text-[var(--ink)] lg:text-lg">
-                  {pageTitles[pathname] || pageTitles[pathname.replace(/\/[^/]+$/, '')] || 'Workspace'}
+                <p className="truncate text-base font-semibold tracking-[-0.01em] text-[var(--ink)] lg:text-lg">
+                  {currentTitle}
                 </p>
                 </div>
               </div>
-              <Link href="/dashboard" className="lg:hidden"><CompanyLogo src={companyLogo} name={companyName} className="h-9 w-9" /></Link>
+              <Link href="/dashboard" className="rounded-md lg:hidden" aria-label={`${companyName} home`}><CompanyLogo src={companyLogo} name={companyName} className="h-9 w-9" /></Link>
             </div>
 
             <div className="flex items-center gap-2">
@@ -374,9 +444,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 href={`/dashboard/help#${guideForRoute(pathname)}`}
                 title="Help for this page"
                 aria-label="Help for this page"
-                className="grid h-9 w-9 place-items-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)] shadow-sm-soft transition-colors hover:bg-[var(--bg-soft)]"
+                className="mp-topbar-btn"
               >
-                <HelpCircle className="h-4 w-4" />
+                <HelpCircle className="h-4 w-4" aria-hidden="true" />
               </Link>
 
               {/* ─── Notifications dropdown (Radix — close on outside click) ─── */}
@@ -384,12 +454,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="relative grid h-9 w-9 place-items-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)] shadow-sm-soft transition-colors hover:bg-[var(--bg-soft)]"
-                    aria-label="Notifications"
+                    className="mp-topbar-btn relative"
+                    aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} new` : 'Notifications'}
                   >
-                    <Bell className="h-4 w-4" />
+                    <Bell className="h-4 w-4" aria-hidden="true" />
                     {unreadCount > 0 ? (
-                      <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#dc2626] px-1 text-xs font-semibold text-white">
+                      <span aria-hidden="true" className="absolute -right-1.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[var(--danger-solid)] px-1 text-[11px] font-semibold leading-none text-white ring-2 ring-[var(--surface)]">
                         {unreadCount > 99 ? '99+' : unreadCount}
                       </span>
                     ) : null}
@@ -434,7 +504,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex h-9 items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--surface)] pl-1 pr-2 shadow-sm-soft transition-colors hover:bg-[var(--bg-soft)]"
+                    className="mp-topbar-btn flex items-center gap-2 pl-1 pr-2"
                     aria-label="Profile menu"
                   >
                     <UserAvatar user={me} size="sm" />
@@ -518,9 +588,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
 
         {mobileNavOpen ? (
-          <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true">
-            <button className="absolute inset-0 bg-black/35" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />
-            <aside className="relative flex h-full w-[86vw] max-w-[22rem] flex-col overflow-hidden border-r border-[var(--line)] bg-[var(--surface)] shadow-[0_24px_70px_-24px_rgba(24,24,27,0.35)]">
+          <div ref={mobileNavRef} id="mobile-navigation" className="mp-mobile-nav fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Menu">
+            <div aria-hidden="true" className="mp-overlay absolute inset-0 bg-[rgba(15,16,22,0.48)] backdrop-blur-[2px]" onClick={() => setMobileNavOpen(false)} />
+            <aside className="mp-sheet-in-left relative flex h-full w-[86vw] max-w-[22rem] flex-col overflow-hidden border-r border-[var(--line)] bg-[var(--surface)] shadow-[var(--sh-xl)]">
               <div className="flex h-16 items-center justify-between border-b border-[var(--line)] px-4">
                 <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} className="flex items-center gap-3">
                   <CompanyLogo src={companyLogo} name={companyName} className="h-10 w-10" />
@@ -529,11 +599,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <p className="text-xs font-medium uppercase tracking-[0.16em] text-[var(--ink-4)]">Retail Ops</p>
                   </div>
                 </Link>
-                <button type="button" onClick={() => setMobileNavOpen(false)} className="grid h-9 w-9 place-items-center rounded-md border border-[var(--line)] bg-[var(--bg-soft)] text-[var(--ink)]" aria-label="Close navigation">
-                  <X className="h-4 w-4" />
+                <button type="button" onClick={() => setMobileNavOpen(false)} className="mp-icon-btn grid h-10 w-10 place-items-center rounded-md border border-[var(--line)] bg-[var(--bg-soft)] text-[var(--ink)]" aria-label="Close menu">
+                  <X className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
-              <nav className="flex-1 overflow-y-auto p-3 custom-scrollbar">
+              <nav aria-label="Main menu" className="flex-1 overflow-y-auto p-3 custom-scrollbar">
                 {visibleSections.map((section) => (
                   <div key={section.title} className="pb-4">
                     <p className="px-2 pb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-5)]">{section.title}</p>
@@ -546,12 +616,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                               href={item.href}
                               prefetch={false}
                               onClick={() => setMobileNavOpen(false)}
+                              aria-current={active ? 'page' : undefined}
                               className={cn(
                                 'flex h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors',
                                 active ? 'mp-nav-active' : 'mp-nav-inactive',
                               )}
                             >
-                              <item.icon className="h-[18px] w-[18px]" strokeWidth={1.7} />
+                              <item.icon className="h-[18px] w-[18px]" strokeWidth={1.7} aria-hidden="true" />
                               {item.name}
                             </Link>
                           </li>
@@ -574,8 +645,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         ) : null}
 
-        <div className="px-4 py-6 lg:px-8 lg:py-8">{children}</div>
-      </main>
+        <main id="main-content" ref={mainRef} tabIndex={-1} className="mp-main min-w-0">
+          <div className="mp-page px-4 py-6 lg:px-8 lg:py-8">{children}</div>
+        </main>
+      </div>
     </div>
   );
 }

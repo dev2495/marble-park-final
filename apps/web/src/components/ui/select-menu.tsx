@@ -30,16 +30,16 @@ const SelectMenuTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      'flex h-9 w-full items-center justify-between gap-2 rounded-md border border-[#e4e4e7] bg-white px-3 py-1.5 text-sm text-[#18181b] outline-none transition-colors',
-      'focus:border-[#60a5fa] focus:ring-2 focus:ring-[rgba(37,99,235,0.35)]',
-      'data-[placeholder]:text-[#a1a1aa] disabled:cursor-not-allowed disabled:opacity-50',
+      'mp-control flex h-9 w-full items-center justify-between gap-2 rounded-md border border-[var(--input-border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--ink)] shadow-sm-soft outline-none transition-[border-color,box-shadow] duration-150',
+      'focus:border-[var(--brand-500)] focus:ring-[3px] focus:ring-[var(--ring)] data-[state=open]:border-[var(--brand-500)] data-[state=open]:ring-[3px] data-[state=open]:ring-[var(--ring)]',
+      'data-[placeholder]:text-[var(--ink-5)] disabled:cursor-not-allowed disabled:bg-[var(--bg-soft)] disabled:opacity-60 [&[data-state=open]>svg]:rotate-180',
       className,
     )}
     {...props}
   >
     <span className="truncate text-left">{children ?? <SelectPrimitive.Value placeholder={placeholder} />}</span>
     <SelectPrimitive.Icon asChild>
-      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#71717a]" />
+      <ChevronDown className="h-4 w-4 shrink-0 text-[var(--ink-4)] transition-transform duration-200" aria-hidden="true" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ));
@@ -55,8 +55,7 @@ const SelectMenuContent = React.forwardRef<
       position={position}
       sideOffset={6}
       className={cn(
-        'z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-[#e4e4e7] bg-white p-1 text-[#27272a] shadow-[0_12px_32px_-12px_rgba(24,24,27,0.18)]',
-        'data-[state=open]:animate-fade-in data-[state=open]:animate-slide-in',
+        'mp-pop z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--ink-2)] shadow-[var(--sh-pop)]',
         className,
       )}
       {...props}
@@ -74,8 +73,8 @@ const SelectMenuItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      'relative flex cursor-pointer select-none items-center gap-2 rounded-md py-1.5 pl-7 pr-2.5 text-sm outline-none',
-      'focus:bg-[#f4f4f5] focus:text-[#18181b] data-[highlighted]:bg-[#f4f4f5] data-[highlighted]:text-[#18181b]',
+      'relative flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-md py-1.5 pl-7 pr-2.5 text-sm outline-none transition-colors',
+      'focus:bg-[var(--bg-soft)] focus:text-[var(--ink)] data-[highlighted]:bg-[var(--bg-soft)] data-[highlighted]:text-[var(--ink)] data-[state=checked]:font-medium data-[state=checked]:text-[var(--ink)]',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       className,
     )}
@@ -83,7 +82,7 @@ const SelectMenuItem = React.forwardRef<
   >
     <span className="absolute left-1.5 flex h-4 w-4 items-center justify-center">
       <SelectPrimitive.ItemIndicator>
-        <Check className="h-3.5 w-3.5 text-[#2563eb]" />
+        <Check className="h-3.5 w-3.5 text-[var(--brand-600)]" aria-hidden="true" />
       </SelectPrimitive.ItemIndicator>
     </span>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -95,7 +94,7 @@ const SelectMenuLabel = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Label>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Label>
 >(({ className, ...props }, ref) => (
-  <SelectPrimitive.Label ref={ref} className={cn('px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#71717a]', className)} {...props} />
+  <SelectPrimitive.Label ref={ref} className={cn('px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]', className)} {...props} />
 ));
 SelectMenuLabel.displayName = 'SelectMenuLabel';
 
@@ -103,7 +102,7 @@ const SelectMenuSeparator = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Separator>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Separator>
 >(({ className, ...props }, ref) => (
-  <SelectPrimitive.Separator ref={ref} className={cn('mx-1 my-1 h-px bg-[#e4e4e7]', className)} {...props} />
+  <SelectPrimitive.Separator ref={ref} className={cn('mx-1 my-1 h-px bg-[var(--line)]', className)} {...props} />
 ));
 SelectMenuSeparator.displayName = 'SelectMenuSeparator';
 

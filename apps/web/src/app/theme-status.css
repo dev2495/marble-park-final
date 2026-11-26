@@ -1,0 +1,354 @@
+/*
+ * Dark mode for hard-coded Tailwind status colours (uisystem lane, E4).
+ * Generated once from the Tailwind palette; pages keep writing
+ * text-emerald-700 / bg-amber-50 / border-red-200 and dark mode follows:
+ *   text 400-800 -> shade 300, text 900/950 -> shade 200,
+ *   bg 50/100/200/300 -> shade 500 at 12/18/26/34% over the surface,
+ *   border 50-200 -> shade 400 at 22-32%, 300/400 -> shade 400 at 50-60%,
+ *   slate/gray/zinc/neutral/stone -> the theme ink, surface and line tokens.
+ * Solid fills (bg 500-950) are left alone so white text on them still passes.
+ * :where(.dark) keeps specificity at one class, so explicit dark: classes
+ * written in pages still win. Minimum text contrast after the remap: 5.98:1.
+ */
+/* emerald */
+:where(.dark) .text-emerald-900,:where(.dark) .hover\:text-emerald-900:hover,:where(.dark) .text-emerald-950,:where(.dark) .hover\:text-emerald-950:hover{color:#a7f3d0}
+:where(.dark) .text-emerald-400,:where(.dark) .hover\:text-emerald-400:hover,:where(.dark) .text-emerald-500,:where(.dark) .hover\:text-emerald-500:hover,:where(.dark) .text-emerald-600,:where(.dark) .hover\:text-emerald-600:hover,:where(.dark) .text-emerald-700,:where(.dark) .hover\:text-emerald-700:hover,:where(.dark) .text-emerald-800,:where(.dark) .hover\:text-emerald-800:hover{color:#6ee7b7}
+:where(.dark) [class*="text-emerald-400/"]{color:rgb(110 231 183 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-emerald-500/"]{color:rgb(110 231 183 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-emerald-600/"]{color:rgb(110 231 183 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-emerald-700/"]{color:rgb(110 231 183 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-emerald-800/"]{color:rgb(110 231 183 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-emerald-900/"]{color:rgb(167 243 208 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-emerald-950/"]{color:rgb(167 243 208 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-emerald-50,:where(.dark) .hover\:bg-emerald-50:hover{background-color:rgb(16 185 129 / 0.12)}
+:where(.dark) .bg-emerald-100,:where(.dark) .hover\:bg-emerald-100:hover{background-color:rgb(16 185 129 / 0.18)}
+:where(.dark) .bg-emerald-200,:where(.dark) .hover\:bg-emerald-200:hover{background-color:rgb(16 185 129 / 0.26)}
+:where(.dark) .bg-emerald-300,:where(.dark) .hover\:bg-emerald-300:hover{background-color:rgb(16 185 129 / 0.34)}
+:where(.dark) .border-emerald-50,:where(.dark) .hover\:border-emerald-50:hover{border-color:rgb(52 211 153 / 0.22)}
+:where(.dark) .border-emerald-100,:where(.dark) .hover\:border-emerald-100:hover{border-color:rgb(52 211 153 / 0.28)}
+:where(.dark) .border-emerald-200,:where(.dark) .hover\:border-emerald-200:hover{border-color:rgb(52 211 153 / 0.32)}
+:where(.dark) .border-emerald-300,:where(.dark) .hover\:border-emerald-300:hover{border-color:rgb(52 211 153 / 0.5)}
+:where(.dark) .border-emerald-400,:where(.dark) .hover\:border-emerald-400:hover{border-color:rgb(52 211 153 / 0.6)}
+/* green */
+:where(.dark) .text-green-900,:where(.dark) .hover\:text-green-900:hover,:where(.dark) .text-green-950,:where(.dark) .hover\:text-green-950:hover{color:#bbf7d0}
+:where(.dark) .text-green-400,:where(.dark) .hover\:text-green-400:hover,:where(.dark) .text-green-500,:where(.dark) .hover\:text-green-500:hover,:where(.dark) .text-green-600,:where(.dark) .hover\:text-green-600:hover,:where(.dark) .text-green-700,:where(.dark) .hover\:text-green-700:hover,:where(.dark) .text-green-800,:where(.dark) .hover\:text-green-800:hover{color:#86efac}
+:where(.dark) [class*="text-green-400/"]{color:rgb(134 239 172 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-green-500/"]{color:rgb(134 239 172 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-green-600/"]{color:rgb(134 239 172 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-green-700/"]{color:rgb(134 239 172 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-green-800/"]{color:rgb(134 239 172 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-green-900/"]{color:rgb(187 247 208 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-green-950/"]{color:rgb(187 247 208 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-green-50,:where(.dark) .hover\:bg-green-50:hover{background-color:rgb(34 197 94 / 0.12)}
+:where(.dark) .bg-green-100,:where(.dark) .hover\:bg-green-100:hover{background-color:rgb(34 197 94 / 0.18)}
+:where(.dark) .bg-green-200,:where(.dark) .hover\:bg-green-200:hover{background-color:rgb(34 197 94 / 0.26)}
+:where(.dark) .bg-green-300,:where(.dark) .hover\:bg-green-300:hover{background-color:rgb(34 197 94 / 0.34)}
+:where(.dark) .border-green-50,:where(.dark) .hover\:border-green-50:hover{border-color:rgb(74 222 128 / 0.22)}
+:where(.dark) .border-green-100,:where(.dark) .hover\:border-green-100:hover{border-color:rgb(74 222 128 / 0.28)}
+:where(.dark) .border-green-200,:where(.dark) .hover\:border-green-200:hover{border-color:rgb(74 222 128 / 0.32)}
+:where(.dark) .border-green-300,:where(.dark) .hover\:border-green-300:hover{border-color:rgb(74 222 128 / 0.5)}
+:where(.dark) .border-green-400,:where(.dark) .hover\:border-green-400:hover{border-color:rgb(74 222 128 / 0.6)}
+/* teal */
+:where(.dark) .text-teal-900,:where(.dark) .hover\:text-teal-900:hover,:where(.dark) .text-teal-950,:where(.dark) .hover\:text-teal-950:hover{color:#99f6e4}
+:where(.dark) .text-teal-400,:where(.dark) .hover\:text-teal-400:hover,:where(.dark) .text-teal-500,:where(.dark) .hover\:text-teal-500:hover,:where(.dark) .text-teal-600,:where(.dark) .hover\:text-teal-600:hover,:where(.dark) .text-teal-700,:where(.dark) .hover\:text-teal-700:hover,:where(.dark) .text-teal-800,:where(.dark) .hover\:text-teal-800:hover{color:#5eead4}
+:where(.dark) [class*="text-teal-400/"]{color:rgb(94 234 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-teal-500/"]{color:rgb(94 234 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-teal-600/"]{color:rgb(94 234 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-teal-700/"]{color:rgb(94 234 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-teal-800/"]{color:rgb(94 234 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-teal-900/"]{color:rgb(153 246 228 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-teal-950/"]{color:rgb(153 246 228 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-teal-50,:where(.dark) .hover\:bg-teal-50:hover{background-color:rgb(20 184 166 / 0.12)}
+:where(.dark) .bg-teal-100,:where(.dark) .hover\:bg-teal-100:hover{background-color:rgb(20 184 166 / 0.18)}
+:where(.dark) .bg-teal-200,:where(.dark) .hover\:bg-teal-200:hover{background-color:rgb(20 184 166 / 0.26)}
+:where(.dark) .bg-teal-300,:where(.dark) .hover\:bg-teal-300:hover{background-color:rgb(20 184 166 / 0.34)}
+:where(.dark) .border-teal-50,:where(.dark) .hover\:border-teal-50:hover{border-color:rgb(45 212 191 / 0.22)}
+:where(.dark) .border-teal-100,:where(.dark) .hover\:border-teal-100:hover{border-color:rgb(45 212 191 / 0.28)}
+:where(.dark) .border-teal-200,:where(.dark) .hover\:border-teal-200:hover{border-color:rgb(45 212 191 / 0.32)}
+:where(.dark) .border-teal-300,:where(.dark) .hover\:border-teal-300:hover{border-color:rgb(45 212 191 / 0.5)}
+:where(.dark) .border-teal-400,:where(.dark) .hover\:border-teal-400:hover{border-color:rgb(45 212 191 / 0.6)}
+/* amber */
+:where(.dark) .text-amber-900,:where(.dark) .hover\:text-amber-900:hover,:where(.dark) .text-amber-950,:where(.dark) .hover\:text-amber-950:hover{color:#fde68a}
+:where(.dark) .text-amber-400,:where(.dark) .hover\:text-amber-400:hover,:where(.dark) .text-amber-500,:where(.dark) .hover\:text-amber-500:hover,:where(.dark) .text-amber-600,:where(.dark) .hover\:text-amber-600:hover,:where(.dark) .text-amber-700,:where(.dark) .hover\:text-amber-700:hover,:where(.dark) .text-amber-800,:where(.dark) .hover\:text-amber-800:hover{color:#fcd34d}
+:where(.dark) [class*="text-amber-400/"]{color:rgb(252 211 77 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-amber-500/"]{color:rgb(252 211 77 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-amber-600/"]{color:rgb(252 211 77 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-amber-700/"]{color:rgb(252 211 77 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-amber-800/"]{color:rgb(252 211 77 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-amber-900/"]{color:rgb(253 230 138 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-amber-950/"]{color:rgb(253 230 138 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-amber-50,:where(.dark) .hover\:bg-amber-50:hover{background-color:rgb(245 158 11 / 0.12)}
+:where(.dark) .bg-amber-100,:where(.dark) .hover\:bg-amber-100:hover{background-color:rgb(245 158 11 / 0.18)}
+:where(.dark) .bg-amber-200,:where(.dark) .hover\:bg-amber-200:hover{background-color:rgb(245 158 11 / 0.26)}
+:where(.dark) .bg-amber-300,:where(.dark) .hover\:bg-amber-300:hover{background-color:rgb(245 158 11 / 0.34)}
+:where(.dark) .border-amber-50,:where(.dark) .hover\:border-amber-50:hover{border-color:rgb(251 191 36 / 0.22)}
+:where(.dark) .border-amber-100,:where(.dark) .hover\:border-amber-100:hover{border-color:rgb(251 191 36 / 0.28)}
+:where(.dark) .border-amber-200,:where(.dark) .hover\:border-amber-200:hover{border-color:rgb(251 191 36 / 0.32)}
+:where(.dark) .border-amber-300,:where(.dark) .hover\:border-amber-300:hover{border-color:rgb(251 191 36 / 0.5)}
+:where(.dark) .border-amber-400,:where(.dark) .hover\:border-amber-400:hover{border-color:rgb(251 191 36 / 0.6)}
+/* yellow */
+:where(.dark) .text-yellow-900,:where(.dark) .hover\:text-yellow-900:hover,:where(.dark) .text-yellow-950,:where(.dark) .hover\:text-yellow-950:hover{color:#fef08a}
+:where(.dark) .text-yellow-400,:where(.dark) .hover\:text-yellow-400:hover,:where(.dark) .text-yellow-500,:where(.dark) .hover\:text-yellow-500:hover,:where(.dark) .text-yellow-600,:where(.dark) .hover\:text-yellow-600:hover,:where(.dark) .text-yellow-700,:where(.dark) .hover\:text-yellow-700:hover,:where(.dark) .text-yellow-800,:where(.dark) .hover\:text-yellow-800:hover{color:#fde047}
+:where(.dark) [class*="text-yellow-400/"]{color:rgb(253 224 71 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-yellow-500/"]{color:rgb(253 224 71 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-yellow-600/"]{color:rgb(253 224 71 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-yellow-700/"]{color:rgb(253 224 71 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-yellow-800/"]{color:rgb(253 224 71 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-yellow-900/"]{color:rgb(254 240 138 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-yellow-950/"]{color:rgb(254 240 138 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-yellow-50,:where(.dark) .hover\:bg-yellow-50:hover{background-color:rgb(234 179 8 / 0.12)}
+:where(.dark) .bg-yellow-100,:where(.dark) .hover\:bg-yellow-100:hover{background-color:rgb(234 179 8 / 0.18)}
+:where(.dark) .bg-yellow-200,:where(.dark) .hover\:bg-yellow-200:hover{background-color:rgb(234 179 8 / 0.26)}
+:where(.dark) .bg-yellow-300,:where(.dark) .hover\:bg-yellow-300:hover{background-color:rgb(234 179 8 / 0.34)}
+:where(.dark) .border-yellow-50,:where(.dark) .hover\:border-yellow-50:hover{border-color:rgb(250 204 21 / 0.22)}
+:where(.dark) .border-yellow-100,:where(.dark) .hover\:border-yellow-100:hover{border-color:rgb(250 204 21 / 0.28)}
+:where(.dark) .border-yellow-200,:where(.dark) .hover\:border-yellow-200:hover{border-color:rgb(250 204 21 / 0.32)}
+:where(.dark) .border-yellow-300,:where(.dark) .hover\:border-yellow-300:hover{border-color:rgb(250 204 21 / 0.5)}
+:where(.dark) .border-yellow-400,:where(.dark) .hover\:border-yellow-400:hover{border-color:rgb(250 204 21 / 0.6)}
+/* orange */
+:where(.dark) .text-orange-900,:where(.dark) .hover\:text-orange-900:hover,:where(.dark) .text-orange-950,:where(.dark) .hover\:text-orange-950:hover{color:#fed7aa}
+:where(.dark) .text-orange-400,:where(.dark) .hover\:text-orange-400:hover,:where(.dark) .text-orange-500,:where(.dark) .hover\:text-orange-500:hover,:where(.dark) .text-orange-600,:where(.dark) .hover\:text-orange-600:hover,:where(.dark) .text-orange-700,:where(.dark) .hover\:text-orange-700:hover,:where(.dark) .text-orange-800,:where(.dark) .hover\:text-orange-800:hover{color:#fdba74}
+:where(.dark) [class*="text-orange-400/"]{color:rgb(253 186 116 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-orange-500/"]{color:rgb(253 186 116 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-orange-600/"]{color:rgb(253 186 116 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-orange-700/"]{color:rgb(253 186 116 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-orange-800/"]{color:rgb(253 186 116 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-orange-900/"]{color:rgb(254 215 170 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-orange-950/"]{color:rgb(254 215 170 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-orange-50,:where(.dark) .hover\:bg-orange-50:hover{background-color:rgb(249 115 22 / 0.12)}
+:where(.dark) .bg-orange-100,:where(.dark) .hover\:bg-orange-100:hover{background-color:rgb(249 115 22 / 0.18)}
+:where(.dark) .bg-orange-200,:where(.dark) .hover\:bg-orange-200:hover{background-color:rgb(249 115 22 / 0.26)}
+:where(.dark) .bg-orange-300,:where(.dark) .hover\:bg-orange-300:hover{background-color:rgb(249 115 22 / 0.34)}
+:where(.dark) .border-orange-50,:where(.dark) .hover\:border-orange-50:hover{border-color:rgb(251 146 60 / 0.22)}
+:where(.dark) .border-orange-100,:where(.dark) .hover\:border-orange-100:hover{border-color:rgb(251 146 60 / 0.28)}
+:where(.dark) .border-orange-200,:where(.dark) .hover\:border-orange-200:hover{border-color:rgb(251 146 60 / 0.32)}
+:where(.dark) .border-orange-300,:where(.dark) .hover\:border-orange-300:hover{border-color:rgb(251 146 60 / 0.5)}
+:where(.dark) .border-orange-400,:where(.dark) .hover\:border-orange-400:hover{border-color:rgb(251 146 60 / 0.6)}
+/* red */
+:where(.dark) .text-red-900,:where(.dark) .hover\:text-red-900:hover,:where(.dark) .text-red-950,:where(.dark) .hover\:text-red-950:hover{color:#fecaca}
+:where(.dark) .text-red-400,:where(.dark) .hover\:text-red-400:hover,:where(.dark) .text-red-500,:where(.dark) .hover\:text-red-500:hover,:where(.dark) .text-red-600,:where(.dark) .hover\:text-red-600:hover,:where(.dark) .text-red-700,:where(.dark) .hover\:text-red-700:hover,:where(.dark) .text-red-800,:where(.dark) .hover\:text-red-800:hover{color:#fca5a5}
+:where(.dark) [class*="text-red-400/"]{color:rgb(252 165 165 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-red-500/"]{color:rgb(252 165 165 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-red-600/"]{color:rgb(252 165 165 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-red-700/"]{color:rgb(252 165 165 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-red-800/"]{color:rgb(252 165 165 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-red-900/"]{color:rgb(254 202 202 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-red-950/"]{color:rgb(254 202 202 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-red-50,:where(.dark) .hover\:bg-red-50:hover{background-color:rgb(239 68 68 / 0.12)}
+:where(.dark) .bg-red-100,:where(.dark) .hover\:bg-red-100:hover{background-color:rgb(239 68 68 / 0.18)}
+:where(.dark) .bg-red-200,:where(.dark) .hover\:bg-red-200:hover{background-color:rgb(239 68 68 / 0.26)}
+:where(.dark) .bg-red-300,:where(.dark) .hover\:bg-red-300:hover{background-color:rgb(239 68 68 / 0.34)}
+:where(.dark) .border-red-50,:where(.dark) .hover\:border-red-50:hover{border-color:rgb(248 113 113 / 0.22)}
+:where(.dark) .border-red-100,:where(.dark) .hover\:border-red-100:hover{border-color:rgb(248 113 113 / 0.28)}
+:where(.dark) .border-red-200,:where(.dark) .hover\:border-red-200:hover{border-color:rgb(248 113 113 / 0.32)}
+:where(.dark) .border-red-300,:where(.dark) .hover\:border-red-300:hover{border-color:rgb(248 113 113 / 0.5)}
+:where(.dark) .border-red-400,:where(.dark) .hover\:border-red-400:hover{border-color:rgb(248 113 113 / 0.6)}
+/* rose */
+:where(.dark) .text-rose-900,:where(.dark) .hover\:text-rose-900:hover,:where(.dark) .text-rose-950,:where(.dark) .hover\:text-rose-950:hover{color:#fecdd3}
+:where(.dark) .text-rose-400,:where(.dark) .hover\:text-rose-400:hover,:where(.dark) .text-rose-500,:where(.dark) .hover\:text-rose-500:hover,:where(.dark) .text-rose-600,:where(.dark) .hover\:text-rose-600:hover,:where(.dark) .text-rose-700,:where(.dark) .hover\:text-rose-700:hover,:where(.dark) .text-rose-800,:where(.dark) .hover\:text-rose-800:hover{color:#fda4af}
+:where(.dark) [class*="text-rose-400/"]{color:rgb(253 164 175 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-rose-500/"]{color:rgb(253 164 175 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-rose-600/"]{color:rgb(253 164 175 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-rose-700/"]{color:rgb(253 164 175 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-rose-800/"]{color:rgb(253 164 175 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-rose-900/"]{color:rgb(254 205 211 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-rose-950/"]{color:rgb(254 205 211 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-rose-50,:where(.dark) .hover\:bg-rose-50:hover{background-color:rgb(244 63 94 / 0.12)}
+:where(.dark) .bg-rose-100,:where(.dark) .hover\:bg-rose-100:hover{background-color:rgb(244 63 94 / 0.18)}
+:where(.dark) .bg-rose-200,:where(.dark) .hover\:bg-rose-200:hover{background-color:rgb(244 63 94 / 0.26)}
+:where(.dark) .bg-rose-300,:where(.dark) .hover\:bg-rose-300:hover{background-color:rgb(244 63 94 / 0.34)}
+:where(.dark) .border-rose-50,:where(.dark) .hover\:border-rose-50:hover{border-color:rgb(251 113 133 / 0.22)}
+:where(.dark) .border-rose-100,:where(.dark) .hover\:border-rose-100:hover{border-color:rgb(251 113 133 / 0.28)}
+:where(.dark) .border-rose-200,:where(.dark) .hover\:border-rose-200:hover{border-color:rgb(251 113 133 / 0.32)}
+:where(.dark) .border-rose-300,:where(.dark) .hover\:border-rose-300:hover{border-color:rgb(251 113 133 / 0.5)}
+:where(.dark) .border-rose-400,:where(.dark) .hover\:border-rose-400:hover{border-color:rgb(251 113 133 / 0.6)}
+/* sky */
+:where(.dark) .text-sky-900,:where(.dark) .hover\:text-sky-900:hover,:where(.dark) .text-sky-950,:where(.dark) .hover\:text-sky-950:hover{color:#bae6fd}
+:where(.dark) .text-sky-400,:where(.dark) .hover\:text-sky-400:hover,:where(.dark) .text-sky-500,:where(.dark) .hover\:text-sky-500:hover,:where(.dark) .text-sky-600,:where(.dark) .hover\:text-sky-600:hover,:where(.dark) .text-sky-700,:where(.dark) .hover\:text-sky-700:hover,:where(.dark) .text-sky-800,:where(.dark) .hover\:text-sky-800:hover{color:#7dd3fc}
+:where(.dark) [class*="text-sky-400/"]{color:rgb(125 211 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-sky-500/"]{color:rgb(125 211 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-sky-600/"]{color:rgb(125 211 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-sky-700/"]{color:rgb(125 211 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-sky-800/"]{color:rgb(125 211 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-sky-900/"]{color:rgb(186 230 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-sky-950/"]{color:rgb(186 230 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-sky-50,:where(.dark) .hover\:bg-sky-50:hover{background-color:rgb(14 165 233 / 0.12)}
+:where(.dark) .bg-sky-100,:where(.dark) .hover\:bg-sky-100:hover{background-color:rgb(14 165 233 / 0.18)}
+:where(.dark) .bg-sky-200,:where(.dark) .hover\:bg-sky-200:hover{background-color:rgb(14 165 233 / 0.26)}
+:where(.dark) .bg-sky-300,:where(.dark) .hover\:bg-sky-300:hover{background-color:rgb(14 165 233 / 0.34)}
+:where(.dark) .border-sky-50,:where(.dark) .hover\:border-sky-50:hover{border-color:rgb(56 189 248 / 0.22)}
+:where(.dark) .border-sky-100,:where(.dark) .hover\:border-sky-100:hover{border-color:rgb(56 189 248 / 0.28)}
+:where(.dark) .border-sky-200,:where(.dark) .hover\:border-sky-200:hover{border-color:rgb(56 189 248 / 0.32)}
+:where(.dark) .border-sky-300,:where(.dark) .hover\:border-sky-300:hover{border-color:rgb(56 189 248 / 0.5)}
+:where(.dark) .border-sky-400,:where(.dark) .hover\:border-sky-400:hover{border-color:rgb(56 189 248 / 0.6)}
+/* blue */
+:where(.dark) .text-blue-900,:where(.dark) .hover\:text-blue-900:hover,:where(.dark) .text-blue-950,:where(.dark) .hover\:text-blue-950:hover{color:#bfdbfe}
+:where(.dark) .text-blue-400,:where(.dark) .hover\:text-blue-400:hover,:where(.dark) .text-blue-500,:where(.dark) .hover\:text-blue-500:hover,:where(.dark) .text-blue-600,:where(.dark) .hover\:text-blue-600:hover,:where(.dark) .text-blue-700,:where(.dark) .hover\:text-blue-700:hover,:where(.dark) .text-blue-800,:where(.dark) .hover\:text-blue-800:hover{color:#93c5fd}
+:where(.dark) [class*="text-blue-400/"]{color:rgb(147 197 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-blue-500/"]{color:rgb(147 197 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-blue-600/"]{color:rgb(147 197 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-blue-700/"]{color:rgb(147 197 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-blue-800/"]{color:rgb(147 197 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-blue-900/"]{color:rgb(191 219 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-blue-950/"]{color:rgb(191 219 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-blue-50,:where(.dark) .hover\:bg-blue-50:hover{background-color:rgb(59 130 246 / 0.12)}
+:where(.dark) .bg-blue-100,:where(.dark) .hover\:bg-blue-100:hover{background-color:rgb(59 130 246 / 0.18)}
+:where(.dark) .bg-blue-200,:where(.dark) .hover\:bg-blue-200:hover{background-color:rgb(59 130 246 / 0.26)}
+:where(.dark) .bg-blue-300,:where(.dark) .hover\:bg-blue-300:hover{background-color:rgb(59 130 246 / 0.34)}
+:where(.dark) .border-blue-50,:where(.dark) .hover\:border-blue-50:hover{border-color:rgb(96 165 250 / 0.22)}
+:where(.dark) .border-blue-100,:where(.dark) .hover\:border-blue-100:hover{border-color:rgb(96 165 250 / 0.28)}
+:where(.dark) .border-blue-200,:where(.dark) .hover\:border-blue-200:hover{border-color:rgb(96 165 250 / 0.32)}
+:where(.dark) .border-blue-300,:where(.dark) .hover\:border-blue-300:hover{border-color:rgb(96 165 250 / 0.5)}
+:where(.dark) .border-blue-400,:where(.dark) .hover\:border-blue-400:hover{border-color:rgb(96 165 250 / 0.6)}
+/* cyan */
+:where(.dark) .text-cyan-900,:where(.dark) .hover\:text-cyan-900:hover,:where(.dark) .text-cyan-950,:where(.dark) .hover\:text-cyan-950:hover{color:#a5f3fc}
+:where(.dark) .text-cyan-400,:where(.dark) .hover\:text-cyan-400:hover,:where(.dark) .text-cyan-500,:where(.dark) .hover\:text-cyan-500:hover,:where(.dark) .text-cyan-600,:where(.dark) .hover\:text-cyan-600:hover,:where(.dark) .text-cyan-700,:where(.dark) .hover\:text-cyan-700:hover,:where(.dark) .text-cyan-800,:where(.dark) .hover\:text-cyan-800:hover{color:#67e8f9}
+:where(.dark) [class*="text-cyan-400/"]{color:rgb(103 232 249 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-cyan-500/"]{color:rgb(103 232 249 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-cyan-600/"]{color:rgb(103 232 249 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-cyan-700/"]{color:rgb(103 232 249 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-cyan-800/"]{color:rgb(103 232 249 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-cyan-900/"]{color:rgb(165 243 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-cyan-950/"]{color:rgb(165 243 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-cyan-50,:where(.dark) .hover\:bg-cyan-50:hover{background-color:rgb(6 182 212 / 0.12)}
+:where(.dark) .bg-cyan-100,:where(.dark) .hover\:bg-cyan-100:hover{background-color:rgb(6 182 212 / 0.18)}
+:where(.dark) .bg-cyan-200,:where(.dark) .hover\:bg-cyan-200:hover{background-color:rgb(6 182 212 / 0.26)}
+:where(.dark) .bg-cyan-300,:where(.dark) .hover\:bg-cyan-300:hover{background-color:rgb(6 182 212 / 0.34)}
+:where(.dark) .border-cyan-50,:where(.dark) .hover\:border-cyan-50:hover{border-color:rgb(34 211 238 / 0.22)}
+:where(.dark) .border-cyan-100,:where(.dark) .hover\:border-cyan-100:hover{border-color:rgb(34 211 238 / 0.28)}
+:where(.dark) .border-cyan-200,:where(.dark) .hover\:border-cyan-200:hover{border-color:rgb(34 211 238 / 0.32)}
+:where(.dark) .border-cyan-300,:where(.dark) .hover\:border-cyan-300:hover{border-color:rgb(34 211 238 / 0.5)}
+:where(.dark) .border-cyan-400,:where(.dark) .hover\:border-cyan-400:hover{border-color:rgb(34 211 238 / 0.6)}
+/* indigo */
+:where(.dark) .text-indigo-900,:where(.dark) .hover\:text-indigo-900:hover,:where(.dark) .text-indigo-950,:where(.dark) .hover\:text-indigo-950:hover{color:#c7d2fe}
+:where(.dark) .text-indigo-400,:where(.dark) .hover\:text-indigo-400:hover,:where(.dark) .text-indigo-500,:where(.dark) .hover\:text-indigo-500:hover,:where(.dark) .text-indigo-600,:where(.dark) .hover\:text-indigo-600:hover,:where(.dark) .text-indigo-700,:where(.dark) .hover\:text-indigo-700:hover,:where(.dark) .text-indigo-800,:where(.dark) .hover\:text-indigo-800:hover{color:#a5b4fc}
+:where(.dark) [class*="text-indigo-400/"]{color:rgb(165 180 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-indigo-500/"]{color:rgb(165 180 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-indigo-600/"]{color:rgb(165 180 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-indigo-700/"]{color:rgb(165 180 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-indigo-800/"]{color:rgb(165 180 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-indigo-900/"]{color:rgb(199 210 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-indigo-950/"]{color:rgb(199 210 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-indigo-50,:where(.dark) .hover\:bg-indigo-50:hover{background-color:rgb(99 102 241 / 0.12)}
+:where(.dark) .bg-indigo-100,:where(.dark) .hover\:bg-indigo-100:hover{background-color:rgb(99 102 241 / 0.18)}
+:where(.dark) .bg-indigo-200,:where(.dark) .hover\:bg-indigo-200:hover{background-color:rgb(99 102 241 / 0.26)}
+:where(.dark) .bg-indigo-300,:where(.dark) .hover\:bg-indigo-300:hover{background-color:rgb(99 102 241 / 0.34)}
+:where(.dark) .border-indigo-50,:where(.dark) .hover\:border-indigo-50:hover{border-color:rgb(129 140 248 / 0.22)}
+:where(.dark) .border-indigo-100,:where(.dark) .hover\:border-indigo-100:hover{border-color:rgb(129 140 248 / 0.28)}
+:where(.dark) .border-indigo-200,:where(.dark) .hover\:border-indigo-200:hover{border-color:rgb(129 140 248 / 0.32)}
+:where(.dark) .border-indigo-300,:where(.dark) .hover\:border-indigo-300:hover{border-color:rgb(129 140 248 / 0.5)}
+:where(.dark) .border-indigo-400,:where(.dark) .hover\:border-indigo-400:hover{border-color:rgb(129 140 248 / 0.6)}
+/* violet */
+:where(.dark) .text-violet-900,:where(.dark) .hover\:text-violet-900:hover,:where(.dark) .text-violet-950,:where(.dark) .hover\:text-violet-950:hover{color:#ddd6fe}
+:where(.dark) .text-violet-400,:where(.dark) .hover\:text-violet-400:hover,:where(.dark) .text-violet-500,:where(.dark) .hover\:text-violet-500:hover,:where(.dark) .text-violet-600,:where(.dark) .hover\:text-violet-600:hover,:where(.dark) .text-violet-700,:where(.dark) .hover\:text-violet-700:hover,:where(.dark) .text-violet-800,:where(.dark) .hover\:text-violet-800:hover{color:#c4b5fd}
+:where(.dark) [class*="text-violet-400/"]{color:rgb(196 181 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-violet-500/"]{color:rgb(196 181 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-violet-600/"]{color:rgb(196 181 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-violet-700/"]{color:rgb(196 181 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-violet-800/"]{color:rgb(196 181 253 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-violet-900/"]{color:rgb(221 214 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-violet-950/"]{color:rgb(221 214 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-violet-50,:where(.dark) .hover\:bg-violet-50:hover{background-color:rgb(139 92 246 / 0.12)}
+:where(.dark) .bg-violet-100,:where(.dark) .hover\:bg-violet-100:hover{background-color:rgb(139 92 246 / 0.18)}
+:where(.dark) .bg-violet-200,:where(.dark) .hover\:bg-violet-200:hover{background-color:rgb(139 92 246 / 0.26)}
+:where(.dark) .bg-violet-300,:where(.dark) .hover\:bg-violet-300:hover{background-color:rgb(139 92 246 / 0.34)}
+:where(.dark) .border-violet-50,:where(.dark) .hover\:border-violet-50:hover{border-color:rgb(167 139 250 / 0.22)}
+:where(.dark) .border-violet-100,:where(.dark) .hover\:border-violet-100:hover{border-color:rgb(167 139 250 / 0.28)}
+:where(.dark) .border-violet-200,:where(.dark) .hover\:border-violet-200:hover{border-color:rgb(167 139 250 / 0.32)}
+:where(.dark) .border-violet-300,:where(.dark) .hover\:border-violet-300:hover{border-color:rgb(167 139 250 / 0.5)}
+:where(.dark) .border-violet-400,:where(.dark) .hover\:border-violet-400:hover{border-color:rgb(167 139 250 / 0.6)}
+/* purple */
+:where(.dark) .text-purple-900,:where(.dark) .hover\:text-purple-900:hover,:where(.dark) .text-purple-950,:where(.dark) .hover\:text-purple-950:hover{color:#e9d5ff}
+:where(.dark) .text-purple-400,:where(.dark) .hover\:text-purple-400:hover,:where(.dark) .text-purple-500,:where(.dark) .hover\:text-purple-500:hover,:where(.dark) .text-purple-600,:where(.dark) .hover\:text-purple-600:hover,:where(.dark) .text-purple-700,:where(.dark) .hover\:text-purple-700:hover,:where(.dark) .text-purple-800,:where(.dark) .hover\:text-purple-800:hover{color:#d8b4fe}
+:where(.dark) [class*="text-purple-400/"]{color:rgb(216 180 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-purple-500/"]{color:rgb(216 180 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-purple-600/"]{color:rgb(216 180 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-purple-700/"]{color:rgb(216 180 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-purple-800/"]{color:rgb(216 180 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-purple-900/"]{color:rgb(233 213 255 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-purple-950/"]{color:rgb(233 213 255 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-purple-50,:where(.dark) .hover\:bg-purple-50:hover{background-color:rgb(168 85 247 / 0.12)}
+:where(.dark) .bg-purple-100,:where(.dark) .hover\:bg-purple-100:hover{background-color:rgb(168 85 247 / 0.18)}
+:where(.dark) .bg-purple-200,:where(.dark) .hover\:bg-purple-200:hover{background-color:rgb(168 85 247 / 0.26)}
+:where(.dark) .bg-purple-300,:where(.dark) .hover\:bg-purple-300:hover{background-color:rgb(168 85 247 / 0.34)}
+:where(.dark) .border-purple-50,:where(.dark) .hover\:border-purple-50:hover{border-color:rgb(192 132 252 / 0.22)}
+:where(.dark) .border-purple-100,:where(.dark) .hover\:border-purple-100:hover{border-color:rgb(192 132 252 / 0.28)}
+:where(.dark) .border-purple-200,:where(.dark) .hover\:border-purple-200:hover{border-color:rgb(192 132 252 / 0.32)}
+:where(.dark) .border-purple-300,:where(.dark) .hover\:border-purple-300:hover{border-color:rgb(192 132 252 / 0.5)}
+:where(.dark) .border-purple-400,:where(.dark) .hover\:border-purple-400:hover{border-color:rgb(192 132 252 / 0.6)}
+/* pink */
+:where(.dark) .text-pink-900,:where(.dark) .hover\:text-pink-900:hover,:where(.dark) .text-pink-950,:where(.dark) .hover\:text-pink-950:hover{color:#fbcfe8}
+:where(.dark) .text-pink-400,:where(.dark) .hover\:text-pink-400:hover,:where(.dark) .text-pink-500,:where(.dark) .hover\:text-pink-500:hover,:where(.dark) .text-pink-600,:where(.dark) .hover\:text-pink-600:hover,:where(.dark) .text-pink-700,:where(.dark) .hover\:text-pink-700:hover,:where(.dark) .text-pink-800,:where(.dark) .hover\:text-pink-800:hover{color:#f9a8d4}
+:where(.dark) [class*="text-pink-400/"]{color:rgb(249 168 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-pink-500/"]{color:rgb(249 168 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-pink-600/"]{color:rgb(249 168 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-pink-700/"]{color:rgb(249 168 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-pink-800/"]{color:rgb(249 168 212 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-pink-900/"]{color:rgb(251 207 232 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-pink-950/"]{color:rgb(251 207 232 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-pink-50,:where(.dark) .hover\:bg-pink-50:hover{background-color:rgb(236 72 153 / 0.12)}
+:where(.dark) .bg-pink-100,:where(.dark) .hover\:bg-pink-100:hover{background-color:rgb(236 72 153 / 0.18)}
+:where(.dark) .bg-pink-200,:where(.dark) .hover\:bg-pink-200:hover{background-color:rgb(236 72 153 / 0.26)}
+:where(.dark) .bg-pink-300,:where(.dark) .hover\:bg-pink-300:hover{background-color:rgb(236 72 153 / 0.34)}
+:where(.dark) .border-pink-50,:where(.dark) .hover\:border-pink-50:hover{border-color:rgb(244 114 182 / 0.22)}
+:where(.dark) .border-pink-100,:where(.dark) .hover\:border-pink-100:hover{border-color:rgb(244 114 182 / 0.28)}
+:where(.dark) .border-pink-200,:where(.dark) .hover\:border-pink-200:hover{border-color:rgb(244 114 182 / 0.32)}
+:where(.dark) .border-pink-300,:where(.dark) .hover\:border-pink-300:hover{border-color:rgb(244 114 182 / 0.5)}
+:where(.dark) .border-pink-400,:where(.dark) .hover\:border-pink-400:hover{border-color:rgb(244 114 182 / 0.6)}
+/* fuchsia */
+:where(.dark) .text-fuchsia-900,:where(.dark) .hover\:text-fuchsia-900:hover,:where(.dark) .text-fuchsia-950,:where(.dark) .hover\:text-fuchsia-950:hover{color:#f5d0fe}
+:where(.dark) .text-fuchsia-400,:where(.dark) .hover\:text-fuchsia-400:hover,:where(.dark) .text-fuchsia-500,:where(.dark) .hover\:text-fuchsia-500:hover,:where(.dark) .text-fuchsia-600,:where(.dark) .hover\:text-fuchsia-600:hover,:where(.dark) .text-fuchsia-700,:where(.dark) .hover\:text-fuchsia-700:hover,:where(.dark) .text-fuchsia-800,:where(.dark) .hover\:text-fuchsia-800:hover{color:#f0abfc}
+:where(.dark) [class*="text-fuchsia-400/"]{color:rgb(240 171 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-fuchsia-500/"]{color:rgb(240 171 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-fuchsia-600/"]{color:rgb(240 171 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-fuchsia-700/"]{color:rgb(240 171 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-fuchsia-800/"]{color:rgb(240 171 252 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-fuchsia-900/"]{color:rgb(245 208 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-fuchsia-950/"]{color:rgb(245 208 254 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-fuchsia-50,:where(.dark) .hover\:bg-fuchsia-50:hover{background-color:rgb(217 70 239 / 0.12)}
+:where(.dark) .bg-fuchsia-100,:where(.dark) .hover\:bg-fuchsia-100:hover{background-color:rgb(217 70 239 / 0.18)}
+:where(.dark) .bg-fuchsia-200,:where(.dark) .hover\:bg-fuchsia-200:hover{background-color:rgb(217 70 239 / 0.26)}
+:where(.dark) .bg-fuchsia-300,:where(.dark) .hover\:bg-fuchsia-300:hover{background-color:rgb(217 70 239 / 0.34)}
+:where(.dark) .border-fuchsia-50,:where(.dark) .hover\:border-fuchsia-50:hover{border-color:rgb(232 121 249 / 0.22)}
+:where(.dark) .border-fuchsia-100,:where(.dark) .hover\:border-fuchsia-100:hover{border-color:rgb(232 121 249 / 0.28)}
+:where(.dark) .border-fuchsia-200,:where(.dark) .hover\:border-fuchsia-200:hover{border-color:rgb(232 121 249 / 0.32)}
+:where(.dark) .border-fuchsia-300,:where(.dark) .hover\:border-fuchsia-300:hover{border-color:rgb(232 121 249 / 0.5)}
+:where(.dark) .border-fuchsia-400,:where(.dark) .hover\:border-fuchsia-400:hover{border-color:rgb(232 121 249 / 0.6)}
+/* lime */
+:where(.dark) .text-lime-900,:where(.dark) .hover\:text-lime-900:hover,:where(.dark) .text-lime-950,:where(.dark) .hover\:text-lime-950:hover{color:#d9f99d}
+:where(.dark) .text-lime-400,:where(.dark) .hover\:text-lime-400:hover,:where(.dark) .text-lime-500,:where(.dark) .hover\:text-lime-500:hover,:where(.dark) .text-lime-600,:where(.dark) .hover\:text-lime-600:hover,:where(.dark) .text-lime-700,:where(.dark) .hover\:text-lime-700:hover,:where(.dark) .text-lime-800,:where(.dark) .hover\:text-lime-800:hover{color:#bef264}
+:where(.dark) [class*="text-lime-400/"]{color:rgb(190 242 100 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-lime-500/"]{color:rgb(190 242 100 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-lime-600/"]{color:rgb(190 242 100 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-lime-700/"]{color:rgb(190 242 100 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-lime-800/"]{color:rgb(190 242 100 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-lime-900/"]{color:rgb(217 249 157 / var(--tw-text-opacity,0.85))}
+:where(.dark) [class*="text-lime-950/"]{color:rgb(217 249 157 / var(--tw-text-opacity,0.85))}
+:where(.dark) .bg-lime-50,:where(.dark) .hover\:bg-lime-50:hover{background-color:rgb(132 204 22 / 0.12)}
+:where(.dark) .bg-lime-100,:where(.dark) .hover\:bg-lime-100:hover{background-color:rgb(132 204 22 / 0.18)}
+:where(.dark) .bg-lime-200,:where(.dark) .hover\:bg-lime-200:hover{background-color:rgb(132 204 22 / 0.26)}
+:where(.dark) .bg-lime-300,:where(.dark) .hover\:bg-lime-300:hover{background-color:rgb(132 204 22 / 0.34)}
+:where(.dark) .border-lime-50,:where(.dark) .hover\:border-lime-50:hover{border-color:rgb(163 230 53 / 0.22)}
+:where(.dark) .border-lime-100,:where(.dark) .hover\:border-lime-100:hover{border-color:rgb(163 230 53 / 0.28)}
+:where(.dark) .border-lime-200,:where(.dark) .hover\:border-lime-200:hover{border-color:rgb(163 230 53 / 0.32)}
+:where(.dark) .border-lime-300,:where(.dark) .hover\:border-lime-300:hover{border-color:rgb(163 230 53 / 0.5)}
+:where(.dark) .border-lime-400,:where(.dark) .hover\:border-lime-400:hover{border-color:rgb(163 230 53 / 0.6)}
+/* neutrals follow the theme tokens */
+:where(.dark) .text-slate-400,:where(.dark) .hover\:text-slate-400:hover,:where(.dark) .text-gray-400,:where(.dark) .hover\:text-gray-400:hover,:where(.dark) .text-zinc-400,:where(.dark) .hover\:text-zinc-400:hover,:where(.dark) .text-neutral-400,:where(.dark) .hover\:text-neutral-400:hover,:where(.dark) .text-stone-400,:where(.dark) .hover\:text-stone-400:hover{color:var(--ink-5)}
+:where(.dark) .text-slate-500,:where(.dark) .hover\:text-slate-500:hover,:where(.dark) .text-gray-500,:where(.dark) .hover\:text-gray-500:hover,:where(.dark) .text-zinc-500,:where(.dark) .hover\:text-zinc-500:hover,:where(.dark) .text-neutral-500,:where(.dark) .hover\:text-neutral-500:hover,:where(.dark) .text-stone-500,:where(.dark) .hover\:text-stone-500:hover{color:var(--ink-4)}
+:where(.dark) .text-slate-600,:where(.dark) .hover\:text-slate-600:hover,:where(.dark) .text-slate-700,:where(.dark) .hover\:text-slate-700:hover,:where(.dark) .text-gray-600,:where(.dark) .hover\:text-gray-600:hover,:where(.dark) .text-gray-700,:where(.dark) .hover\:text-gray-700:hover,:where(.dark) .text-zinc-600,:where(.dark) .hover\:text-zinc-600:hover,:where(.dark) .text-zinc-700,:where(.dark) .hover\:text-zinc-700:hover,:where(.dark) .text-neutral-600,:where(.dark) .hover\:text-neutral-600:hover,:where(.dark) .text-neutral-700,:where(.dark) .hover\:text-neutral-700:hover,:where(.dark) .text-stone-600,:where(.dark) .hover\:text-stone-600:hover,:where(.dark) .text-stone-700,:where(.dark) .hover\:text-stone-700:hover{color:var(--ink-3)}
+:where(.dark) .text-slate-800,:where(.dark) .hover\:text-slate-800:hover,:where(.dark) .text-gray-800,:where(.dark) .hover\:text-gray-800:hover,:where(.dark) .text-zinc-800,:where(.dark) .hover\:text-zinc-800:hover,:where(.dark) .text-neutral-800,:where(.dark) .hover\:text-neutral-800:hover,:where(.dark) .text-stone-800,:where(.dark) .hover\:text-stone-800:hover{color:var(--ink-2)}
+:where(.dark) .text-slate-900,:where(.dark) .hover\:text-slate-900:hover,:where(.dark) .text-slate-950,:where(.dark) .hover\:text-slate-950:hover,:where(.dark) .text-gray-900,:where(.dark) .hover\:text-gray-900:hover,:where(.dark) .text-gray-950,:where(.dark) .hover\:text-gray-950:hover,:where(.dark) .text-zinc-900,:where(.dark) .hover\:text-zinc-900:hover,:where(.dark) .text-zinc-950,:where(.dark) .hover\:text-zinc-950:hover,:where(.dark) .text-neutral-900,:where(.dark) .hover\:text-neutral-900:hover,:where(.dark) .text-neutral-950,:where(.dark) .hover\:text-neutral-950:hover,:where(.dark) .text-stone-900,:where(.dark) .hover\:text-stone-900:hover,:where(.dark) .text-stone-950,:where(.dark) .hover\:text-stone-950:hover{color:var(--ink)}
+:where(.dark) .bg-slate-50,:where(.dark) .hover\:bg-slate-50:hover,:where(.dark) .bg-gray-50,:where(.dark) .hover\:bg-gray-50:hover,:where(.dark) .bg-zinc-50,:where(.dark) .hover\:bg-zinc-50:hover,:where(.dark) .bg-neutral-50,:where(.dark) .hover\:bg-neutral-50:hover,:where(.dark) .bg-stone-50,:where(.dark) .hover\:bg-stone-50:hover{background-color:var(--surface-2)}
+:where(.dark) .bg-slate-100,:where(.dark) .hover\:bg-slate-100:hover,:where(.dark) .bg-gray-100,:where(.dark) .hover\:bg-gray-100:hover,:where(.dark) .bg-zinc-100,:where(.dark) .hover\:bg-zinc-100:hover,:where(.dark) .bg-neutral-100,:where(.dark) .hover\:bg-neutral-100:hover,:where(.dark) .bg-stone-100,:where(.dark) .hover\:bg-stone-100:hover{background-color:var(--bg-soft)}
+:where(.dark) .bg-slate-200,:where(.dark) .hover\:bg-slate-200:hover,:where(.dark) .bg-gray-200,:where(.dark) .hover\:bg-gray-200:hover,:where(.dark) .bg-zinc-200,:where(.dark) .hover\:bg-zinc-200:hover,:where(.dark) .bg-neutral-200,:where(.dark) .hover\:bg-neutral-200:hover,:where(.dark) .bg-stone-200,:where(.dark) .hover\:bg-stone-200:hover{background-color:var(--line)}
+:where(.dark) .border-slate-100,:where(.dark) .hover\:border-slate-100:hover,:where(.dark) .border-gray-100,:where(.dark) .hover\:border-gray-100:hover,:where(.dark) .border-zinc-100,:where(.dark) .hover\:border-zinc-100:hover,:where(.dark) .border-neutral-100,:where(.dark) .hover\:border-neutral-100:hover,:where(.dark) .border-stone-100,:where(.dark) .hover\:border-stone-100:hover{border-color:var(--line-soft)}
+:where(.dark) .border-slate-200,:where(.dark) .hover\:border-slate-200:hover,:where(.dark) .border-gray-200,:where(.dark) .hover\:border-gray-200:hover,:where(.dark) .border-zinc-200,:where(.dark) .hover\:border-zinc-200:hover,:where(.dark) .border-neutral-200,:where(.dark) .hover\:border-neutral-200:hover,:where(.dark) .border-stone-200,:where(.dark) .hover\:border-stone-200:hover{border-color:var(--line)}
+:where(.dark) .border-slate-300,:where(.dark) .hover\:border-slate-300:hover,:where(.dark) .border-gray-300,:where(.dark) .hover\:border-gray-300:hover,:where(.dark) .border-zinc-300,:where(.dark) .hover\:border-zinc-300:hover,:where(.dark) .border-neutral-300,:where(.dark) .hover\:border-neutral-300:hover,:where(.dark) .border-stone-300,:where(.dark) .hover\:border-stone-300:hover{border-color:var(--line-strong)}
+
+/* Both themes: white text on light status fills fails (emerald-600 3.77,
+   amber-500/600 2.1-3.2, sky-500/600 2.8-4.1). Where a page writes that
+   pair, use the 700 shade (5.0:1 or better). */
+:where(.bg-emerald-500, .bg-emerald-600, .bg-green-500, .bg-green-600).text-white { background-color: #047857; }
+:where(.bg-amber-400, .bg-amber-500, .bg-amber-600, .bg-orange-500, .bg-yellow-500).text-white { background-color: #9a4a07; }
+:where(.bg-sky-500, .bg-sky-600, .bg-teal-500, .bg-teal-600).text-white { background-color: #0369a1; }

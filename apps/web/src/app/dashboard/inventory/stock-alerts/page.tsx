@@ -8,6 +8,9 @@ import { BellRing, CheckCircle2, Download, Loader2, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { cn } from '@/lib/utils';
+import { useBusyAction } from '@/hooks/use-busy-action';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
+import { ScrollTable } from '@/components/dashboard/scroll-table';
 
 const ME = gql`
   query StockAlertPolicyMe {
@@ -148,10 +151,12 @@ export default function StockAlertPolicyPage() {
     notifyOnNetworkStatusChange: true,
   });
   const { data: filterData } = useQuery(FILTERS, { skip: !allowed });
+  const { run: runBusy } = useBusyAction();
   const [updateOne] = useMutation(UPDATE_ONE);
   const [bulkUpdate, { loading: bulkSaving }] = useMutation(BULK_UPDATE);
 
   const payload = data?.stockAlertPolicies || { items: [], summary: {}, nextCursor: null };
+  useUnsavedChanges(rows.some((row: any) => isDirty(row, drafts[row.id])), 'Some alert levels are changed but not saved. Leave without saving?');
   const summary = payload.summary || {};
   const categories = useMemo<string[]>(() => (filterData?.productCategories || []).filter(Boolean).sort(), [filterData?.productCategories]);
   const brands = useMemo<string[]>(() => (filterData?.productBrands || []).filter(Boolean).sort(), [filterData?.productBrands]);
@@ -209,7 +214,8 @@ export default function StockAlertPolicyPage() {
     setCursor(payload.nextCursor);
   };
 
-  const saveRow = async (row: any) => {
+  const saveRow = (row: any) => runBusy(`row:${row.id}`, () => saveRowInner(row));
+  const saveRowInner = async (row: any) => {
     const draft = drafts[row.id] || draftFromRow(row);
     const validation = rowError(draft);
     if (validation) {
@@ -243,7 +249,8 @@ export default function StockAlertPolicyPage() {
     }
   };
 
-  const saveSelected = async () => {
+  const saveSelected = () => runBusy('save-selected', saveSelectedInner);
+  const saveSelectedInner = async () => {
     if (!selectedIds.length) return;
     for (const id of selectedIds) {
       const err = rowError(drafts[id]);
@@ -275,7 +282,8 @@ export default function StockAlertPolicyPage() {
     }
   };
 
-  const applyBulk = async () => {
+  const applyBulk = () => runBusy('apply-bulk', applyBulkInner);
+  const applyBulkInner = async () => {
     if (!selectedIds.length) return;
     const warning = parseThreshold(bulkWarning);
     const critical = parseThreshold(bulkCritical);
@@ -354,11 +362,11 @@ export default function StockAlertPolicyPage() {
         </div>
       ) : null}
 
-      <section className="mp-card rounded-r6 border border-[var(--line)] bg-[var(--surface)] p-7 shadow-md-soft">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Stock · Alert policy</p>
-            <h1 className="mt-2 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">
+      <section className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0">
+            <p className="mp-eyebrow">Stock · Alert policy</p>
+            <h1 className="mp-page-title">
               Set warning &amp; critical levels for every SKU.
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
@@ -398,7 +406,7 @@ export default function StockAlertPolicyPage() {
         </div>
 
         <div className="mt-5 flex flex-wrap items-center gap-2.5">
-          <input
+          <input aria-label="Search SKU, name, brand…"
             type="search"
             value={search}
             onChange={(e) => resetPage(() => setSearch(e.target.value))}
@@ -486,8 +494,8 @@ export default function StockAlertPolicyPage() {
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] border-collapse text-sm">
+        <ScrollTable label="Stock alert thresholds" maxHeight="75vh">
+          <table className="mp-table-skin w-full min-w-[860px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-[var(--line)] bg-[#fafafa] text-left text-[11px] uppercase tracking-[0.12em] text-[var(--ink-4)]">
                 <th className="px-4 py-3.5">
@@ -558,7 +566,7 @@ export default function StockAlertPolicyPage() {
                       <div className="text-lg font-extrabold text-[var(--ink)]">{qty(row.available)}</div>
                     </td>
                     <td className="px-4 py-3.5 align-middle">
-                      <input
+                      <input aria-label="0 = off"
                         type="number"
                         min={0}
                         value={draft.warning === '0' ? '' : draft.warning}
@@ -568,7 +576,7 @@ export default function StockAlertPolicyPage() {
                       />
                     </td>
                     <td className="px-4 py-3.5 align-middle">
-                      <input
+                      <input aria-label="0 = off"
                         type="number"
                         min={0}
                         value={draft.critical === '0' ? '' : draft.critical}
@@ -598,7 +606,7 @@ export default function StockAlertPolicyPage() {
               })}
             </tbody>
           </table>
-        </div>
+        </ScrollTable>
 
         {payload.nextCursor ? (
           <div className="border-t border-[var(--line)] p-4 text-center">

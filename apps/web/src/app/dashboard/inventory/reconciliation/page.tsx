@@ -7,7 +7,7 @@ import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, RefreshCw, Search
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
 import { StockControlWorkspace } from '@/components/inventory/stock-control-workspace';
-import { cn } from '@/lib/utils';
+import { cn, statusLabel } from '@/lib/utils';
 
 const RECONCILIATION = gql`
   query StockReconciliation($take: Int) {
@@ -56,7 +56,7 @@ export default function StockReconciliationPage() {
   return (
     <StockControlWorkspace
       title="Stock reconciliation"
-      description="An exception-first proof desk that compares aggregate, location, lot, reservation, order and ledger truth—then gives the operator a direct investigation trail for every mismatch."
+      description="An exception-first proof desk that compares aggregate, location, lot, reservation, order and ledger truth, then gives the operator a direct investigation trail for every mismatch."
       action={<Button onClick={() => refetch()} variant="outline"><RefreshCw className="mr-2 h-4 w-4"/>Refresh check</Button>}
       metrics={[
         { label: 'Checked', value: number(summary.productsChecked), note: report.generatedAt ? new Date(report.generatedAt).toLocaleString('en-IN') : 'Checking now' },
@@ -86,12 +86,12 @@ export default function StockReconciliationPage() {
           </span>
         </div>
         <div className="grid gap-2 border-b border-[var(--line)] bg-[var(--bg-soft)] p-3 sm:grid-cols-[minmax(16rem,1fr)_11rem_auto]">
-          <label className="flex h-10 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]"/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search SKU, product or issue" className="w-full bg-transparent text-sm outline-none"/></label>
+          <label className="flex h-10 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]"/><input aria-label="Search SKU, product or issue" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search SKU, product or issue" className="w-full bg-transparent text-sm outline-none"/></label>
           <select value={status} onChange={(event) => setStatus(event.target.value)} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-semibold"><option value="all">All statuses</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="ok">OK</option></select>
           {(search || status !== 'all') ? <Button type="button" variant="outline" onClick={() => { setSearch(''); setStatus('all'); }}>Clear filters</Button> : <span className="hidden sm:block"/>}
         </div>
-        <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full min-w-[1020px] text-left">
+        <p className="px-4 pt-2 text-xs font-semibold text-[var(--ink-4)] lg:hidden">Swipe sideways to see every column</p><div className="overflow-x-auto custom-scrollbar" role="region" aria-label="Scrollable table" tabIndex={0}>
+          <table className="mp-table-skin w-full min-w-[1020px] text-left">
             <thead className="text-xs font-black uppercase tracking-widest text-[var(--ink-4)]">
               <tr>
                 <th className="px-5 py-4">SKU</th>
@@ -132,7 +132,7 @@ export default function StockReconciliationPage() {
                   </td>
                   <td className="px-5 py-4 font-black text-[var(--ink-1)]">{number(row.ledgerEntries)}</td>
                   <td className="px-5 py-4">
-                    <div className="flex items-center justify-between gap-2"><span className={`inline-flex rounded-full border px-3 py-1 text-xs font-black uppercase tracking-widest ${statusTone(row.status)}`}>{row.status}</span><button type="button" aria-label={`${expandedId === row.productId ? 'Collapse' : 'Inspect'} ${row.sku || row.name}`} aria-expanded={expandedId === row.productId} onClick={() => setExpandedId(expandedId === row.productId ? '' : row.productId)} className="rounded-md p-1 outline-none hover:bg-[var(--surface)] focus-visible:ring-2 focus-visible:ring-[var(--brand-500)]"><ChevronDown className={cn('h-4 w-4 text-[var(--ink-4)] transition-transform', expandedId === row.productId && 'rotate-180')}/></button></div>
+                    <div className="flex items-center justify-between gap-2"><span className={`inline-flex rounded-full border px-3 py-1 text-xs font-black uppercase tracking-widest ${statusTone(row.status)}`}>{statusLabel(row.status)}</span><button type="button" aria-label={`${expandedId === row.productId ? 'Collapse' : 'Inspect'} ${row.sku || row.name}`} aria-expanded={expandedId === row.productId} onClick={() => setExpandedId(expandedId === row.productId ? '' : row.productId)} className="rounded-md p-1 outline-none hover:bg-[var(--surface)] focus-visible:ring-2 focus-visible:ring-[var(--brand-500)]"><ChevronDown className={cn('h-4 w-4 text-[var(--ink-4)] transition-transform', expandedId === row.productId && 'rotate-180')}/></button></div>
                     {row.issues?.length ? (
                       <div className="mt-3 space-y-2">
                         {row.issues.map((issue: any) => (

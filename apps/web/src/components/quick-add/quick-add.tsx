@@ -9,6 +9,7 @@ import { Loader2, Plus, Search, X } from 'lucide-react';
 import { describeApolloError } from '@/lib/apollo-errors';
 import { cn } from '@/lib/utils';
 import { maskedMobile, mobileKey } from '@/lib/customer-display';
+import { useFocusTrap } from '@/hooks/use-focus-trap';
 
 const SEARCH_CUSTOMERS = gql`query QuickCustomerSearch($search: String, $take: Float) { customers(search: $search, take: $take) { id name mobile city siteAddress email tags } }`;
 const CUSTOMER_CHECK = gql`query QuickCustomerCheck($phone: String, $name: String, $city: String) { customerDuplicateCandidates(phone: $phone, name: $name, city: $city) }`;
@@ -31,23 +32,18 @@ function errorText(error: unknown, operation: string) {
 
 export function Modal({ open, title, subtitle, onClose, children, footer, width = 'max-w-lg' }: { open: boolean; title: string; subtitle?: string; onClose: () => void; children: ReactNode; footer?: ReactNode; width?: string }) {
   const panel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    const timer = window.setTimeout(() => panel.current?.querySelector<HTMLElement>('input,select,textarea,button')?.focus(), 30);
-    return () => { window.removeEventListener('keydown', onKey); window.clearTimeout(timer); };
-  }, [open, onClose]);
+  // Focus stays inside, first field gets focus, Escape closes, focus returns to the opener.
+  useFocusTrap(panel, open, { onEscape: onClose });
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/45 sm:items-start sm:pt-[10vh]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 sm:items-start sm:pt-[10vh]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div ref={panel} role="dialog" aria-modal="true" aria-label={title} className={cn('flex max-h-[88vh] w-full flex-col overflow-hidden rounded-t-2xl border border-[var(--line)] bg-[var(--surface)] shadow-lg-soft sm:rounded-2xl', width)}>
         <div className="flex items-start gap-3 border-b border-[var(--line)] px-5 py-4">
           <div className="min-w-0 flex-1">
             <h2 className="font-display text-lg font-bold text-[var(--ink)]">{title}</h2>
             {subtitle ? <p className="mt-0.5 text-xs text-[var(--ink-4)]">{subtitle}</p> : null}
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="rounded-md p-1.5 text-[var(--ink-4)] hover:bg-[var(--bg-soft)]"><X className="h-4 w-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="mp-tap-icon grid place-items-center rounded-md p-1.5 text-[var(--ink-4)] hover:bg-[var(--bg-soft)]"><X className="h-4 w-4" /></button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer ? <div className="flex items-center justify-end gap-2 border-t border-[var(--line)] px-5 py-3">{footer}</div> : null}

@@ -183,7 +183,21 @@ export class FollowUpsService {
         data.mobile = digits;
       }
       if (data.name !== undefined && data.name.length < 2) throw new BadRequestException('Enter the customer name.');
-      await this.prisma.customer.update({ where: { id }, data });
+      // Same duplicate rule as the Customers screen: a GSTIN or email that belongs to someone else is refused.
+      if (data.gstNo || data.email) {
+        const blocking = (await this.customers.findDuplicateCandidates({ excludeId: id, gstNo: data.gstNo || null, email: data.email || null } as any)).find((row: any) => row.blocking && row.matchedOn.some((m: string) => m === 'gstNo' || m === 'email'));
+        if (blocking) throw new ConflictException(`This ${blocking.matchedOn.includes('gstNo') ? 'GSTIN' : 'email'} already belongs to ${blocking.name}${blocking.city ? ` (${blocking.city})` : ''}. Check it.`);
+      }
+      // Same phone lock as the Customers screen (gaps lane): a same-moment save of this number elsewhere waits, then is refused.
+      const lockKey = data.mobile ? mobileKey(data.mobile) : '';
+      await this.prisma.$transaction(async (tx) => {
+        if (lockKey) {
+          await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `customer-mobile:${lockKey}`);
+          const [clash] = await customersByMobileKey(tx, lockKey, { excludeId: id, take: 10 });
+          if (clash) throw new ConflictException(`This mobile already belongs to ${clash.name}${clash.city ? ` (${clash.city})` : ''}. Check the number.`);
+        }
+        await tx.customer.update({ where: { id }, data });
+      });
     } else if (entityType === 'Product') {
       const input: any = {};
       for (const key of ['name', 'brand', 'finish', 'hsnCode', 'description']) if (text(key) !== undefined) input[key] = text(key);

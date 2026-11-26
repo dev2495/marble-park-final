@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("mp-card rounded-r5 transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-[var(--line-strong)] hover:shadow-lg-soft", className)}
+    className={cn("mp-card rounded-r5 text-[var(--ink-2)] transition-[border-color,box-shadow,transform] duration-200 [transition-timing-function:var(--eo)] hover:border-[var(--line-strong)] hover:shadow-lg-soft", className)}
     {...props}
   />
 ))
@@ -16,12 +16,12 @@ const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
 CardHeader.displayName = "CardHeader"
 
 const CardTitle = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLHeadingElement>>(({ className, ...props }, ref) => (
-  <h3 ref={ref} className={cn("text-base font-semibold leading-tight text-[var(--ink)]", className)} {...props} />
+  <h3 ref={ref} className={cn("text-base font-semibold leading-tight tracking-[-0.01em] text-[var(--ink)]", className)} {...props} />
 ))
 CardTitle.displayName = "CardTitle"
 
 const CardDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(({ className, ...props }, ref) => (
-  <p ref={ref} className={cn("text-xs text-[var(--ink-4)]", className)} {...props} />
+  <p ref={ref} className={cn("text-[13px] leading-snug text-[var(--ink-4)]", className)} {...props} />
 ))
 CardDescription.displayName = "CardDescription"
 

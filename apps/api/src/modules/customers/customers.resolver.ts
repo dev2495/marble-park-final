@@ -3,6 +3,7 @@ import { CustomersService } from './customers.service';
 import { GraphqlRequestContext, requireRoles, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { GraphQLJSON } from 'graphql-scalars';
+import { OptionalEmail, OptionalPhone, TextLimit } from '../common/input-rules';
 
 @ObjectType()
 export class CustomerOutput {
@@ -55,21 +56,25 @@ export class CustomerOutput {
 @InputType()
 export class CreateCustomerInput {
   @Field(() => String, { nullable: true })
+  @TextLimit(160)
   name?: string;
 
   @Field(() => String, { nullable: true })
   companyName?: string;
 
   @Field(() => String, { nullable: true })
+  @OptionalEmail()
   email?: string;
 
   @Field(() => String, { nullable: true })
+  @OptionalPhone()
   phone?: string;
 
   @Field(() => String, { nullable: true })
   gstNo?: string;
 
   @Field(() => String, { nullable: true })
+  @TextLimit(500)
   address?: string;
 
   @Field(() => String, { nullable: true })
@@ -85,6 +90,7 @@ export class CreateCustomerInput {
   designer?: string;
 
   @Field(() => String, { nullable: true })
+  @TextLimit(2000)
   notes?: string;
 
   @Field(() => String, { nullable: true })
@@ -100,15 +106,18 @@ export class CreateCustomerInput {
 @InputType()
 export class UpdateCustomerInput {
   @Field(() => String, { nullable: true })
+  @TextLimit(160)
   name?: string;
 
   @Field(() => String, { nullable: true })
   companyName?: string;
 
   @Field(() => String, { nullable: true })
+  @OptionalEmail()
   email?: string;
 
   @Field(() => String, { nullable: true })
+  @OptionalPhone()
   phone?: string;
 
   @Field(() => String, { nullable: true })
@@ -130,6 +139,7 @@ export class UpdateCustomerInput {
   designer?: string;
 
   @Field(() => String, { nullable: true })
+  @TextLimit(2000)
   notes?: string;
 
   @Field(() => String, { nullable: true })
@@ -168,7 +178,7 @@ export class CustomersResolver {
     if (sanitized.forceCreate && !user.effectivePermissions.includes('customers.force_create')) {
       sanitized.forceCreate = false;
     }
-    return this.customers.create(sanitized as any);
+    return this.customers.create(sanitized as any, user.id);
   }
 
   @Query(() => [GraphQLJSON], { name: 'customerDuplicateCandidates', description: 'Probe for existing customers that look like duplicates of the provided fields.' })
@@ -191,13 +201,13 @@ export class CustomersResolver {
     @Args('input') input: UpdateCustomerInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
-    return this.customers.update(id, input as any);
+    const actor = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
+    return this.customers.update(id, input as any, actor.id);
   }
 
   @Mutation(() => CustomerOutput)
   async deleteCustomer(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
-    return this.customers.delete(id);
+    const actor = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.customers.delete(id, actor.id);
   }
 }

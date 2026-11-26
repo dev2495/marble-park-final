@@ -1,7 +1,9 @@
 import { Args, Context, Field, ID, InputType, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireRoles } from '../auth/session-context';
+import { ForbiddenException } from '@nestjs/common';
+import { GraphqlRequestContext, isPrivileged, requirePermission, requireRoles } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { MoneyAmount, TextLimit } from '../common/input-rules';
 import { ReceivablesService } from './receivables.service';
 
 @InputType()
@@ -20,11 +22,11 @@ class CustomerPaymentInput {
   @Field(() => ID, { nullable: true }) salesInvoiceId?: string;
   @Field() paymentMode!: string;
   @Field({ nullable: true }) moneyAccount?: string;
-  @Field() amount!: number;
+  @MoneyAmount() @Field() amount!: number;
   @Field({ nullable: true }) receivedAt?: string;
   @Field({ nullable: true }) valueDate?: string;
-  @Field({ nullable: true }) reference?: string;
-  @Field({ nullable: true }) notes?: string;
+  @TextLimit(120) @Field({ nullable: true }) reference?: string;
+  @TextLimit(2000) @Field({ nullable: true }) notes?: string;
   @Field(() => [String], { nullable: true }) attachmentUrls?: string[];
   @Field({ nullable: true }) autoAllocate?: boolean;
   @Field({ nullable: true }) idempotencyKey?: string;
@@ -32,7 +34,7 @@ class CustomerPaymentInput {
 
 @InputType()
 class CustomerCreditProfileInput {
-  @Field({ nullable: true }) creditLimit?: number;
+  @MoneyAmount() @Field({ nullable: true }) creditLimit?: number;
   @Field({ nullable: true }) defaultPaymentTerms?: string;
   @Field({ nullable: true }) creditHold?: boolean;
   @Field({ nullable: true }) holdReason?: string;
@@ -58,9 +60,10 @@ export class ReceivablesResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('search', { nullable: true }) search?: string,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
   ) {
     await requirePermission(this.prisma, ctx, 'payments.manage');
-    return this.receivables.dashboard({ search, take });
+    return this.receivables.dashboard({ search, take, skip });
   }
 
   @Query(() => GraphQLJSON)
@@ -111,9 +114,71 @@ export class ReceivablesResolver {
   }
 
   @Mutation(() => GraphQLJSON)
-  async voidCustomerPayment(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
+  async voidCustomerPayment(
+    @Args('id', { type: () => ID }) id: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('reason', { type: () => String, nullable: true }) reason?: string,
+  ) {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
-    return this.receivables.voidCustomerPayment(id, user.id);
+    return this.receivables.voidCustomerPayment(id, user.id, reason);
+  }
+
+  /** Money going out, so the same roles as voiding a receipt. */
+  @Mutation(() => GraphQLJSON)
+  async refundOrderAdvance(
+    @Args('paymentId', { type: () => ID }) paymentId: string,
+    @Args('reason', { type: () => String }) reason: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('refundMode', { type: () => String, nullable: true }) refundMode?: string,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.receivables.refundOrderAdvance(paymentId, reason, user.id, refundMode);
+  }
+
+  /** Re-applies a receipt, so the same right as allocating one. */
+  @Mutation(() => GraphQLJSON)
+  async moveAdvanceToAccount(
+    @Args('paymentId', { type: () => ID }) paymentId: string,
+    @Args('reason', { type: () => String }) reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'payments.manage');
+    return this.receivables.moveAdvanceToAccount(paymentId, reason, user.id);
+  }
+
+  /** Same roles as voiding a receipt (its closest sibling). */
+  @Mutation(() => GraphQLJSON)
+  async voidSalesInvoice(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason', { type: () => String }) reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.receivables.voidSalesInvoice(id, reason, user.id);
+  }
+
+  @Query(() => GraphQLJSON)
+  async customerStatement(
+    @Args('customerId', { type: () => ID }) customerId: string,
+    @Context() ctx: GraphqlRequestContext,
+    @Args('from', { type: () => String, nullable: true }) from?: string,
+    @Args('to', { type: () => String, nullable: true }) to?: string,
+    @Args('skip', { type: () => Int, nullable: true }) skip?: number,
+    @Args('take', { type: () => Int, nullable: true }) take?: number,
+  ) {
+    await requirePermission(this.prisma, ctx, 'payments.manage');
+    return this.receivables.customerStatement(customerId, { from, to, skip, take });
+  }
+
+  /** For the sales order PDF "Sent" and "Bal" columns: same access as reading the order. */
+  @Query(() => [GraphQLJSON])
+  async salesOrderDispatchedQuantities(@Args('salesOrderId', { type: () => ID }) salesOrderId: string, @Context() ctx: GraphqlRequestContext) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff', 'dispatch_ops']);
+    if (!isPrivileged(user) && user.role !== 'office_staff' && user.role !== 'dispatch_ops') {
+      const order = await this.prisma.salesOrder.findUnique({ where: { id: salesOrderId }, select: { ownerId: true } });
+      if (!order || order.ownerId !== user.id) throw new ForbiddenException('This sales order is restricted');
+    }
+    return this.receivables.salesOrderDispatchedQuantities(salesOrderId);
   }
 
   @Mutation(() => GraphQLJSON)

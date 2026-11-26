@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '@prisma/client';
 import { ulid } from 'ulid';
+import { assert } from './lib/api-client.mjs';
 
 const prisma = new PrismaClient();
 const API_URL = process.env.API_URL || 'http://127.0.0.1:4011/graphql';
@@ -10,9 +11,6 @@ const EMAIL = process.env.TEST_LOGIN_EMAIL || '';
 const ORIGINAL_PASSWORD = process.env.TEST_LOGIN_PASSWORD || '';
 const RESET_PASSWORD = process.env.TEST_RESET_PASSWORD || 'SessionReset-2026!';
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 async function request(query, variables = {}, cookie = '') {
   const response = await fetch(API_URL, {

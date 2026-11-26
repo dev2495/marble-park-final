@@ -149,34 +149,49 @@ export class LeadsService {
           },
         }).catch(() => null);
       }
+      await tx.auditEvent.create({ data: { id: ulid(), actorUserId: createdBy, action: 'lead.create', entityType: 'Lead', entityId: lead.id, summary: `Lead "${lead.title}" created`, metadata: { customerId: lead.customerId, source: lead.source } } as any });
       return lead;
     });
   }
 
-  async update(id: string, data: UpdateLeadInput): Promise<any> {
-    await this.findById(id);
-    return this.prisma.lead.update({
+  private async recordLeadAudit(actorUserId: string | undefined, action: string, leadId: string, summary: string, metadata: Record<string, any> = {}) {
+    try {
+      await this.prisma.auditEvent.create({ data: { id: ulid(), actorUserId: actorUserId || 'system', action, entityType: 'Lead', entityId: leadId, summary, metadata } as any });
+    } catch (error) {
+      console.error(`AUDIT_WRITE_FAILED action=${action} lead=${leadId}`, (error as Error).message);
+    }
+  }
+
+  async update(id: string, data: UpdateLeadInput, actorUserId?: string): Promise<any> {
+    const before = await this.findById(id);
+    const updated = await this.prisma.lead.update({
       where: { id },
       data,
       include: { customer: true, owner: true },
     } as any) as any;
+    await this.recordLeadAudit(actorUserId, 'lead.update', id, `Lead "${before.title}" updated`, { fields: Object.keys(data || {}) });
+    return updated;
   }
 
-  async updateStage(id: string, stage: string): Promise<any> {
+  async updateStage(id: string, stage: string, actorUserId?: string): Promise<any> {
     if (!LEAD_STAGES.includes(stage)) {
       throw new Error(`Invalid stage: ${stage}`);
     }
-    await this.findById(id);
-    return this.prisma.lead.update({
+    const before = await this.findById(id);
+    const updated = await this.prisma.lead.update({
       where: { id },
       data: { stage, lastContactAt: new Date() },
       include: { customer: true, owner: true },
     } as any) as any;
+    await this.recordLeadAudit(actorUserId, 'lead.stage.change', id, `Lead "${before.title}" moved from ${before.stage} to ${stage}`, { from: before.stage, to: stage });
+    return updated;
   }
 
-  async delete(id: string) {
-    await this.findById(id);
-    return this.prisma.lead.delete({ where: { id } });
+  async delete(id: string, actorUserId?: string) {
+    const before = await this.findById(id);
+    const removed = await this.prisma.lead.delete({ where: { id } });
+    await this.recordLeadAudit(actorUserId, 'lead.delete', id, `Lead "${before.title}" deleted`, { title: before.title, stage: before.stage, customerId: before.customerId });
+    return removed;
   }
 
   async timeline(leadId: string) {
@@ -359,28 +374,32 @@ export class LeadsService {
       supersedesQuoteId: referencesQuoteId,
       architectId: (parentQuote as any)?.architectId || undefined,
       saveAsDraft: true,
-    } as any, createdBy);
-    const incompletePricing = (quote.lines || []).some((line: any) => line.mrpMissing || !line.mrpValid);
-    const pdfUrl = `/api/pdf/quote/${quote.id}`;
-    await this.prisma.leadIntent.update({
-      where: { id: intent.id },
-      data: { status: 'converted', quoteId: quote.id, lockedBy: null, lockedAt: null, updatedAt: new Date() } as any,
-    });
-    await this.prisma.lead.update({
-      where: { id: intent.leadId },
-      data: { stage: 'quoted', nextActionAt: new Date(Date.now() + 86400000), updatedAt: new Date() },
-    });
-    await this.prisma.followUpTask.create({
-      data: {
-        id: ulid(),
-        leadId: intent.leadId,
-        ownerId: intent.ownerId,
-        dueAt: new Date(Date.now() + 86400000),
-        status: 'pending',
-        notes: incompletePricing ? `Complete missing pricing for ${quote.quoteNumber} before sharing.` : quote.approvalStatus === 'pending' ? `Follow up on price approval for ${quote.quoteNumber} before confirmation.` : `Follow up with the customer on ${quote.quoteNumber}.`,
-        updatedAt: new Date(),
+      // One step: the intent is claimed, the lead moved and the follow-up made in the quote's own
+      // transaction. A double tap finds the intent already claimed and makes no second quote.
+      afterCreateTx: async (tx: any, created: any) => {
+        const claimed = await tx.leadIntent.updateMany({
+          where: { id: intent.id, quoteId: null, status: { notIn: ['cancelled', 'converted', 'quoted'] } },
+          data: { status: 'converted', quoteId: created.id, lockedBy: null, lockedAt: null, updatedAt: new Date() },
+        });
+        if (claimed.count !== 1) throw new BadRequestException('A quote was already built from this intent. Open it from the intent.');
+        await tx.lead.update({ where: { id: intent.leadId }, data: { stage: 'quoted', nextActionAt: new Date(Date.now() + 86400000), updatedAt: new Date() } });
+        const draftPricing = created.pricingStatus === 'incomplete' || created.status === 'incomplete_pricing';
+        await tx.followUpTask.create({
+          data: {
+            id: ulid(),
+            leadId: intent.leadId,
+            ownerId: intent.ownerId,
+            dueAt: new Date(Date.now() + 86400000),
+            status: 'pending',
+            notes: draftPricing ? `Complete missing pricing for ${created.quoteNumber} before sharing.` : created.approvalStatus === 'pending' ? `Follow up on price approval for ${created.quoteNumber} before confirmation.` : `Follow up with the customer on ${created.quoteNumber}.`,
+            updatedAt: new Date(),
+          },
+        });
       },
-    }).catch(() => null);
+    } as any, createdBy);
+    // The quote's own pricing status says whether pricing is missing (the old line flags were never set).
+    const incompletePricing = quote.pricingStatus === 'incomplete' || quote.status === 'incomplete_pricing';
+    const pdfUrl = `/api/pdf/quote/${quote.id}`;
     await this.prisma.activity.create({
       data: {
         id: ulid(),
@@ -437,7 +456,8 @@ export class LeadsService {
       this.prisma.lead.count({ where: { stage: 'new' } }),
       this.prisma.lead.count({ where: { stage: 'contacted' } }),
       this.prisma.lead.count({ where: { stage: 'qualified' } }),
-      this.prisma.lead.count({ where: { stage: 'proposal' } }),
+      // "Quoted" leads are shown as Proposal everywhere (list filter does the same), so they count here too.
+      this.prisma.lead.count({ where: { stage: { in: ['proposal', 'quoted'] } } }),
       this.prisma.lead.count({ where: { stage: 'negotiation' } }),
       this.prisma.lead.count({ where: { stage: 'won' } }),
       this.prisma.lead.count({ where: { stage: 'lost' } }),

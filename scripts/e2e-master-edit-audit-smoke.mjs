@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
+import { createApiClient } from './lib/api-client.mjs';
 
 if (process.env.ALLOW_MUTATING_ACCEPTANCE !== 'true') throw new Error('Run only against an isolated acceptance database with ALLOW_MUTATING_ACCEPTANCE=true.');
 
@@ -10,14 +11,7 @@ const prisma = new PrismaClient();
 const cleanup = { productIds: [], brandIds: [] };
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
-async function gql(query, variables = {}, token, expectError = false) {
-  const response = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ query, variables }) });
-  const payload = await response.json();
-  const message = payload.errors?.map((row) => row.message).join('; ') || '';
-  if (expectError) return message;
-  if (!response.ok || message) throw new Error(message || `GraphQL ${response.status}`);
-  return payload.data;
-}
+const { gql } = createApiClient(API);
 
 try {
   assert(EMAIL && PASSWORD, 'TEST_EMAIL and TEST_PASSWORD are required');

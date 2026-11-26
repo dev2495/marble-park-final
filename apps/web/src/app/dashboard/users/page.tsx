@@ -151,7 +151,7 @@ function RoleMatrix({ catalog, users }: { catalog?: Catalog; users: any[] }) {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[56rem] border-separate border-spacing-0 text-sm">
+        <table className="mp-table-skin w-full min-w-[56rem] border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 bg-[var(--surface)]">
             <tr>
               <th className="border-b border-[var(--line)] px-4 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--ink-4)]">Right</th>
@@ -268,11 +268,11 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-4 pb-10">
-      <header className="flex flex-wrap items-end gap-4">
+      <header className="mp-page-header">
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Admin and owner only</p>
-          <h1 className="mt-1 font-display text-3xl font-bold text-[var(--ink)]">Users and rights</h1>
-          <p className="mt-1 text-sm text-[var(--ink-3)]">{activeCount} active · {users.length - activeCount} disabled · {overrideUsers} with personal overrides</p>
+          <p className="mp-eyebrow">Admin and owner only</p>
+          <h1 className="mp-page-title">Users and rights</h1>
+          <p className="mp-page-sub">{activeCount} active · {users.length - activeCount} disabled · {overrideUsers} with personal overrides</p>
         </div>
         <div className="flex gap-1 rounded-lg bg-[var(--bg-soft)] p-1">
           {([['team', 'Team'], ['matrix', 'Role matrix']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setTab(value)} aria-pressed={tab === value} className={cn('rounded-md px-3 py-1.5 text-sm font-semibold', tab === value ? 'bg-[var(--surface)] text-[var(--ink)] shadow-sm' : 'text-[var(--ink-3)]')}>{label}</button>)}

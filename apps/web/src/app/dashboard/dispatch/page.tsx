@@ -24,17 +24,33 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
+import { NoAccessState, isAccessRefused } from "@/components/no-access-state";
+import { useBusyAction } from "@/hooks/use-busy-action";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill } from "@/components/ui/status-pill";
+import { ChallanReasonDialog, TransportDialog, UPDATE_CHALLAN_TRANSPORT, transportFromChallan, transportSummary } from "./challan-actions";
+import { formatBoxQuantity, formatSellingQuantity } from "@marble-park/pricing-contract/box-quantity";
 
 // Pick lines count stock in base units: pieces for a tile sold by the box.
+// They read in boxes ("37 Box + 5 pc (375 pc)"); anything else as before ("5 pc").
 function stockQtyLabel(quantity: unknown, product: any) {
-  const qty = Number(quantity || 0);
-  const base = String(product?.baseUom || "PC").toUpperCase();
-  const selling = String(product?.unit || base).toUpperCase();
-  const perBox = Math.max(1, Math.trunc(Number(product?.piecesPerPack || 1)));
-  if (base !== "PC" || !["BOX", "PACK", "CARTON"].includes(selling) || perBox <= 1) return `${qty} ${base.toLowerCase()}`;
-  const boxes = Math.floor(qty / perBox);
-  const loose = qty - boxes * perBox;
-  return `${qty} pc (${boxes} ${selling.toLowerCase()}${loose ? ` + ${loose} pc` : ""})`;
+  const qty = formatBoxQuantity(quantity, product);
+  return qty.isBoxed ? qty.fullLabel : `${qty.boxes} ${qty.unitLabel.toLowerCase()}`;
+}
+// Order and dispatch lines count selling units (boxes) and carry pieces per box.
+function lineUnits(line: any) {
+  return { piecesPerUnit: Number(line?.piecesPerUnit || 1), orderUnit: line?.unit, unit: line?.unit || "PC", piecesPerBox: line?.piecesPerBox, soldBy: line?.soldBy };
+}
+function sellingQtyLabel(quantity: unknown, line: any) {
+  const qty = formatSellingQuantity(quantity, lineUnits(line));
+  return qty.isBoxed ? qty.label : String(qty.boxes);
+}
+// Base-unit quantity on an order line (lot reservations): boxes for a boxed tile.
+function lineStockLabel(quantity: unknown, line: any) {
+  const qty = formatBoxQuantity(quantity, lineUnits(line));
+  return qty.isBoxed ? qty.fullLabel : String(qty.boxes);
 }
 
 const DATA = gql`
@@ -118,7 +134,16 @@ export default function DispatchPage() {
     notes: "",
   });
   const [uploadingProof, setUploadingProof] = useState(false);
-  const { data, error, refetch } = useQuery(DATA, {
+  const [jobsShown, setJobsShown] = useState(10);
+  const { isBusy: actionBusy, run: runAction } = useBusyAction();
+  // Blocks a second tap on any floor action until the first one finishes.
+  // The error itself is shown by the shared error notice; the catch only stops an "uncaught promise" in the console.
+  const guard = (key: string, fn: (...args: any[]) => Promise<any>) => (...args: any[]) => runAction(key, () => fn(...args)).catch(() => undefined);
+  // Transport form for a new challan ({ job, pick, specialLines }) or for correcting one ({ challan }).
+  const [transportFor, setTransportFor] = useState<{ job: any; pick?: any; specialLines?: any[]; challan?: any } | null>(null);
+  const [reasonFor, setReasonFor] = useState<{ challan: any; kind: "cancel" | "failed" } | null>(null);
+  const [updateTransport, transportState] = useMutation(UPDATE_CHALLAN_TRANSPORT, { onCompleted: () => refetch() });
+  const { data, error, loading, refetch } = useQuery(DATA, {
     variables: {
       search: deferredRegisterSearch || undefined,
       status: registerStatus || undefined,
@@ -188,7 +213,10 @@ export default function DispatchPage() {
     pickState.loading ||
     challanState.loading ||
     updateState.loading ||
-    deliveryState.loading;
+    deliveryState.loading ||
+    actionBusy();
+  const firstLoad = loading && !data;
+  useUnsavedChanges(Boolean(deliveryId && (delivery.receivedByName.trim() || delivery.receivedByPhone.trim() || delivery.notes.trim() || delivery.proofUrl)), "A delivery proof is half filled in. Leave without saving?");
   useEffect(() => {
     const saved = localStorage.getItem('mp.dispatch.view'); if (!saved) return;
     try { const view = JSON.parse(saved); setRegisterStatus(view.status || ''); setRegisterBrand(view.brand || ''); setRegisterCategory(view.category || ''); setRegisterLocation(view.locationId || ''); setRegisterSort(view.sort || 'inward_first'); } catch { localStorage.removeItem('mp.dispatch.view'); }
@@ -247,11 +275,59 @@ export default function DispatchPage() {
           })),
         ),
       };
-    await transitionPick({ variables: { id: pick.id, action, input } });
+    await runAction(`pick:${pick.id}`, () => transitionPick({ variables: { id: pick.id, action, input } }));
   }
+
+  // The menu shows this page to some roles whose rights do not cover dispatch: say so calmly.
+  if (error && isAccessRefused(error) && !data) return <NoAccessState area="dispatch" pageTitle="Dispatch" />;
 
   return (
     <div className="space-y-5 pb-10">
+      <TransportDialog
+        open={Boolean(transportFor)}
+        onOpenChange={(open) => { if (!open) setTransportFor(null); }}
+        title={transportFor?.challan ? `Transport for ${transportFor.challan.challanNumber}` : "Create challan"}
+        confirmLabel={transportFor?.challan ? "Save transport" : "Create challan"}
+        initial={transportFor?.challan ? transportFromChallan(transportFor.challan) : undefined}
+        busy={challanState.loading || transportState.loading}
+        onSubmit={async (values) => {
+          const target = transportFor;
+          if (!target) return;
+          try {
+            if (target.challan) {
+              await updateTransport({ variables: { id: target.challan.id, input: values } });
+            } else {
+              await runAction("create-challan", () => createChallan({
+                variables: {
+                  input: {
+                    jobId: target.job.id,
+                    pickListId: target.pick?.id,
+                    ...values,
+                    driverPhone: values.driverPhone || undefined,
+                    packages: 1,
+                    lines: target.specialLines?.length
+                      ? JSON.stringify(target.specialLines.map((line: any) => ({ salesOrderLineId: line.salesOrderLineId, dispatchQty: Number(line.dispatchableQty) })))
+                      : undefined,
+                  },
+                },
+              }));
+            }
+            setTransportFor(null);
+          } catch {
+            // Shown in the error banner at the top of the page.
+          }
+        }}
+      >
+        {transportState.error || challanState.error ? (
+          <p role="alert" className="text-sm font-semibold text-[var(--danger-fg)]">{(transportState.error || challanState.error)?.message}</p>
+        ) : null}
+      </TransportDialog>
+      <ChallanReasonDialog
+        challan={reasonFor?.challan || null}
+        kind={reasonFor?.kind || "cancel"}
+        onClose={() => setReasonFor(null)}
+        onDone={() => refetch()}
+      />
       {[
         error,
         createPickState.error,
@@ -262,23 +338,23 @@ export default function DispatchPage() {
       ]
         .filter(Boolean)
         .map((item: any, index) => (
-          <QueryErrorBanner key={index} error={item} />
+          <QueryErrorBanner key={index} error={item} onRetry={index === 0 ? () => refetch() : undefined} />
         ))}
-      <header className="flex flex-col justify-between gap-4 border-b border-[var(--line)] pb-5 pt-2 lg:flex-row lg:items-end">
-        <div>
-          <p className="text-xs font-semibold uppercase text-[var(--ink-4)]">
+      <header className="mp-page-header">
+        <div className="min-w-0">
+          <p className="mp-eyebrow">
             Warehouse fulfilment
           </p>
-          <h1 className="mt-1 font-display text-3xl font-bold text-[var(--ink)]">
+          <h1 className="mp-page-title">
             Pick, pack and partial dispatch
           </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
+          <p className="mp-page-sub">
             Each batch starts from reserved stock and names the exact inward lot
             and location. Pack less than requested to dispatch a partial batch;
             the balance stays reserved for the next pick.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="mp-page-actions">
           <Button asChild variant="outline">
             <Link href="/dashboard/pending-inward">
               <PackageSearch className="mr-2 h-4 w-4" />
@@ -332,14 +408,19 @@ export default function DispatchPage() {
           <button type="button" onClick={exportRegister} className="inline-flex h-10 items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--surface)] text-xs font-black uppercase"><Download className="mr-2 h-4 w-4" />CSV</button>
         </div>
         <div className="divide-y divide-[var(--line)]">
-          {reservedRows.length ? reservedRows.map((row: any) => <article key={row.id} className="p-4 lg:p-5"><div className="grid gap-4 lg:grid-cols-[1fr_1.3fr_1fr_1.2fr_auto] lg:items-center"><div><p className="font-black text-[var(--ink)]">{row.order?.orderNumber || row.salesOrderId}</p><p className="text-xs font-semibold text-[var(--ink-4)]">{row.customer?.name || 'Customer'}{row.customer?.city ? ` · ${row.customer.city}` : ''}</p></div><div><p className="truncate font-bold text-[var(--ink)]">{row.name}</p><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">{row.sku} · {row.brand || 'Unbranded'}</p></div><div className="grid grid-cols-3 gap-2 text-center"><div><p className="font-black">{row.orderedQuantity}</p><p className="text-xs font-black uppercase text-[var(--ink-5)]">Ordered</p></div><div><p className="font-black text-blue-700">{row.reservedQuantity}</p><p className="text-xs font-black uppercase text-[var(--ink-5)]">Reserved</p></div><div><p className="font-black text-amber-800">{row.leftToDispatch}</p><p className="text-xs font-black uppercase text-[var(--ink-5)]">Left</p></div></div><div><span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase tracking-wider ${row.status === 'ready_to_pick' ? 'bg-emerald-50 text-emerald-800' : row.status === 'pending_inward' ? 'bg-amber-50 text-amber-900' : 'bg-[var(--muted)] text-[var(--ink-3)]'}`}>{String(row.nextAction || row.status).replaceAll('_', ' ')}</span></div><div className="flex gap-2"><Button asChild size="sm"><Link href={row.nextActionHref || '/dashboard/dispatch'}><ExternalLink className="mr-2 h-3.5 w-3.5" />Act</Link></Button><button type="button" aria-expanded={Boolean(expandedLine[row.id])} onClick={() => setExpandedLine((current) => ({ ...current, [row.id]: !current[row.id] }))} className="rounded-lg border border-[var(--line)] px-2"><ChevronDown className={`h-4 w-4 ${expandedLine[row.id] ? 'rotate-180' : ''}`} /></button></div></div>{expandedLine[row.id] ? <div className="mt-4 grid gap-3 border-t border-[var(--line)] pt-4 md:grid-cols-3"><div><p className="text-xs font-black uppercase text-[var(--ink-5)]">Lot reservations</p>{(row.lotAllocations || []).map((lot: any) => <p key={lot.id} className="mt-1 text-xs font-bold">{lot.lot?.lotNumber || lot.lotId} · {lot.location?.name || lot.locationId} · {lot.quantity}</p>)}</div><div><p className="text-xs font-black uppercase text-[var(--ink-5)]">Open picks</p><p className="mt-1 text-xs font-bold">{(row.openPickLines || []).length} active pick line(s)</p></div><div><p className="text-xs font-black uppercase text-[var(--ink-5)]">Dispatch history</p><p className="mt-1 text-xs font-bold">{(row.dispatchLines || []).length} dispatch line(s) · {row.dispatchedQuantity} sent</p></div></div> : null}</article>) : <div className="px-5 py-12 text-center text-sm font-semibold text-[var(--ink-4)]">No reserved or outstanding lines match this view.</div>}
+          {reservedRows.length ? reservedRows.map((row: any) => <article key={row.id} className="p-4 lg:p-5"><div className="grid gap-4 lg:grid-cols-[1fr_1.3fr_1fr_1.2fr_auto] lg:items-center"><div><p className="font-black text-[var(--ink)]">{row.order?.orderNumber || row.salesOrderId}</p><p className="text-xs font-semibold text-[var(--ink-4)]">{row.customer?.name || 'Customer'}{row.customer?.city ? ` · ${row.customer.city}` : ''}</p></div><div><p className="truncate font-bold text-[var(--ink)]">{row.name}</p><p className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]">{row.sku} · {row.brand || 'Unbranded'}</p></div><div className="grid grid-cols-3 gap-2 text-center"><div><p className="font-black">{sellingQtyLabel(row.orderedQuantity, row)}</p><p className="text-xs font-black uppercase text-[var(--ink-5)]">Ordered</p></div><div><p className="font-black text-blue-700">{sellingQtyLabel(row.reservedQuantity, row)}</p><p className="text-xs font-black uppercase text-[var(--ink-5)]">Reserved</p></div><div><p className="font-black text-amber-800">{sellingQtyLabel(row.leftToDispatch, row)}</p><p className="text-xs font-black uppercase text-[var(--ink-5)]">Left</p></div></div><div><StatusPill tone={row.status === 'ready_to_pick' ? 'success' : row.status === 'pending_inward' ? 'warning' : 'neutral'}>{String(row.nextAction || row.status).replaceAll('_', ' ')}</StatusPill></div><div className="flex gap-2"><Button asChild size="sm"><Link href={row.nextActionHref || '/dashboard/dispatch'}><ExternalLink className="mr-2 h-3.5 w-3.5" />Act</Link></Button><button type="button" aria-expanded={Boolean(expandedLine[row.id])} onClick={() => setExpandedLine((current) => ({ ...current, [row.id]: !current[row.id] }))} aria-label="Show line details" className="min-h-11 min-w-11 rounded-lg border border-[var(--line)] px-2"><ChevronDown className={`h-4 w-4 ${expandedLine[row.id] ? 'rotate-180' : ''}`} /></button></div></div>{expandedLine[row.id] ? <div className="mt-4 grid gap-3 border-t border-[var(--line)] pt-4 md:grid-cols-3"><div><p className="text-xs font-black uppercase text-[var(--ink-5)]">Lot reservations</p>{(row.lotAllocations || []).map((lot: any) => <p key={lot.id} className="mt-1 text-xs font-bold">{lot.lot?.lotNumber || lot.lotId} · {lot.location?.name || lot.locationId} · {lineStockLabel(lot.quantity, row)}</p>)}</div><div><p className="text-xs font-black uppercase text-[var(--ink-5)]">Open picks</p><p className="mt-1 text-xs font-bold">{(row.openPickLines || []).length} active pick line(s)</p></div><div><p className="text-xs font-black uppercase text-[var(--ink-5)]">Dispatch history</p><p className="mt-1 text-xs font-bold">{(row.dispatchLines || []).length} dispatch line(s) · {sellingQtyLabel(row.dispatchedQuantity, row)} sent</p></div></div> : null}</article>) : firstLoad ? <div className="space-y-3 p-5" aria-busy="true"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : error ? <EmptyState title="Could not load the dispatch register" description="Check your connection and try again." action={<Button size="sm" variant="outline" onClick={() => refetch()}>Try again</Button>} /> : <div className="px-5 py-12 text-center text-sm font-semibold text-[var(--ink-4)]">No reserved or outstanding lines match this view.</div>}
         </div>
         {reservedRegister.nextCursor ? <div className="border-t border-[var(--line)] p-3 text-center"><button type="button" onClick={() => setRegisterCursor(reservedRegister.nextCursor)} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-xs font-black uppercase tracking-wider text-[var(--brand-700)]">Load more lines</button></div> : null}
       </section>
       <div className="grid gap-4 xl:grid-cols-2">
-        {activeJobs.map((job: any) => {
+        {firstLoad ? <div className="col-span-full space-y-3" aria-busy="true"><Skeleton className="h-40 w-full" /><Skeleton className="h-40 w-full" /></div> : null}
+        {activeJobs.slice(0, jobsShown).map((job: any) => {
           const pick = pickFor(job);
-          const locationId = locationByJob[job.id] || defaultLocation;
+          // Default to the active location holding most of this order's unpicked reserved stock.
+          const pickableDefault = (job.pickableLocations || []).find((row: any) =>
+            locations.some((location: any) => location.id === row.locationId),
+          )?.locationId;
+          const locationId = locationByJob[job.id] || pickableDefault || defaultLocation;
           const remaining =
             job.lines?.filter((line: any) => Number(line.remainingQty) > 0) ||
             [];
@@ -381,7 +462,7 @@ export default function DispatchPage() {
                     return (
                       <div key={stage} className="flex min-w-fit items-center">
                         <span
-                          className={`grid h-6 w-6 place-items-center rounded-full text-xs font-bold ${current >= index ? "bg-[var(--brand-700)] text-white" : "bg-[var(--bg-soft)] text-[var(--ink-4)]"}`}
+                          className={`grid h-6 w-6 place-items-center rounded-full text-xs font-bold ${current >= index ? "bg-[var(--brand-700)] text-[var(--surface)]" : "bg-[var(--bg-soft)] text-[var(--ink-4)]"}`}
                         >
                           {index + 1}
                         </span>
@@ -412,8 +493,8 @@ export default function DispatchPage() {
                               {line.name}
                             </p>
                             <p className="text-xs text-[var(--ink-4)]">
-                              Ordered {line.orderedQty} · remaining{" "}
-                              {line.remainingQty}
+                              Ordered {sellingQtyLabel(line.orderedQty, line)} · remaining{" "}
+                              {sellingQtyLabel(line.remainingQty, line)}
                             </p>
                           </div>
                           <span
@@ -431,6 +512,7 @@ export default function DispatchPage() {
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <select
                         value={locationId}
+                        aria-label="Pick from location"
                         onChange={(event) =>
                           setLocationByJob({
                             ...locationByJob,
@@ -448,7 +530,7 @@ export default function DispatchPage() {
                       <Button
                         disabled={busy || !ready.length || !job.salesOrderId}
                         onClick={() =>
-                          createPick({
+                          guard("create-pick", createPick)({
                             variables: {
                               input: {
                                 salesOrderId: job.salesOrderId,
@@ -526,22 +608,7 @@ export default function DispatchPage() {
                           <Button
                             size="sm"
                             disabled={busy}
-                            onClick={() =>
-                              createChallan({
-                                variables: {
-                                  input: {
-                                    jobId: job.id,
-                                    pickListId: pick.id,
-                                    transporter: "Store vehicle",
-                                    vehicleNo: "PENDING",
-                                    driverName: "Dispatch desk",
-                                    driverPhone:
-                                      job.customer?.mobile || "0000000000",
-                                    packages: 1,
-                                  },
-                                },
-                              })
-                            }
+                            onClick={() => setTransportFor({ job, pick })}
                           >
                             <Package className="mr-2 h-4 w-4" />
                             Create challan
@@ -573,9 +640,11 @@ export default function DispatchPage() {
                                 className="h-9 w-20"
                                 type="number"
                                 min={0}
+                                step={1}
                                 max={line.pickedQuantity}
                                 value={(packQty[line.id] ?? line.pickedQuantity) || ''}
                                 placeholder="0"
+                                aria-label={`Pieces to pack for ${line.product?.internalCode || line.product?.sku || "this line"}`}
                                 onChange={(event) =>
                                   setPackQty({
                                     ...packQty,
@@ -583,6 +652,20 @@ export default function DispatchPage() {
                                   })
                                 }
                               />
+                              {/* Entry stays in pieces, the unit stock is posted in; the box count reads beside it. */}
+                              {(() => {
+                                const entered = Number(packQty[line.id] ?? line.pickedQuantity);
+                                const qty = formatBoxQuantity(entered, line.product);
+                                if (!qty.isBoxed) return null;
+                                // A tile sold by the box leaves in full boxes; the server refuses a typed part box.
+                                return qty.partBox && entered !== Number(line.pickedQuantity) ? (
+                                  <span role="alert" className="whitespace-nowrap font-semibold text-[var(--warning)]">
+                                    This tile is sold in full boxes of {qty.piecesPerBox} pieces
+                                  </span>
+                                ) : (
+                                  <span className="whitespace-nowrap font-semibold text-[var(--ink-3)]">pc = {qty.label}</span>
+                                );
+                              })()}
                             </label>
                           ) : (
                             <span className="text-xs text-[var(--ink-4)]">
@@ -597,6 +680,22 @@ export default function DispatchPage() {
                     </div>
                   </div>
                 )}
+                {(() => {
+                  // Special-order tiles have no stock lot and no pick list: once received they go straight on a challan.
+                  const specialReady = (job.lines || []).filter((line: any) => line.specialOrder && line.salesOrderLineId && Number(line.dispatchableQty) > 0);
+                  if (!specialReady.length) return null;
+                  return (
+                    <div className="mt-3 flex flex-col justify-between gap-2 rounded-md border border-[var(--line)] p-3 text-sm sm:flex-row sm:items-center">
+                      <p className="text-[var(--ink-3)]">
+                        Special-order items received: {specialReady.map((line: any) => `${line.name || line.sku} (${line.dispatchableQty})`).join(", ")}
+                      </p>
+                      <Button size="sm" disabled={busy} onClick={() => setTransportFor({ job, specialLines: specialReady })}>
+                        <Package className="mr-2 h-4 w-4" />
+                        Challan for these
+                      </Button>
+                    </div>
+                  );
+                })()}
               </div>
               {job.challans?.length ? (
                 <div className="border-t border-[var(--line)] bg-[var(--bg-soft)] p-3">
@@ -607,17 +706,52 @@ export default function DispatchPage() {
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-xs font-semibold text-[var(--ink)]">
-                          {challan.challanNumber} · {challan.status}
+                          {challan.challanNumber} · {String(challan.status).replaceAll("_", " ")}
+                          <span className="block font-normal text-[var(--ink-4)]">{transportSummary(challan)}</span>
+                          {Array.isArray(challan.lines) && challan.lines.length ? (
+                            <span className="block font-normal text-[var(--ink-4)]">
+                              {challan.lines.map((line: any) => {
+                                const qty = formatBoxQuantity(line.dispatchQty, { unit: line.unit || "PC", orderUnit: line.orderUnit, piecesPerUnit: line.piecesPerUnit ?? 1, piecesPerBox: line.piecesPerBox, soldBy: line.soldBy });
+                                return `${line.sku} ${qty.isBoxed ? qty.fullLabel : qty.label}`;
+                              }).join(" · ")}
+                            </span>
+                          ) : null}
                         </span>
                         <div className="flex flex-wrap gap-2">
                         <Button asChild size="sm" variant="outline"><a href={`/api/pdf/dispatch/${challan.id}`} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-4 w-4" />Open slip</a></Button>
                         <Button asChild size="sm" variant="ghost"><a href={`/api/pdf/dispatch/${challan.id}`} download><Download className="mr-2 h-4 w-4" />PDF</a></Button>
                         {challan.status === "pending" ? (
+                          <>
+                            <Button size="sm" variant="outline" disabled={busy} onClick={() => setTransportFor({ job, challan })}>
+                              Transport details
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setReasonFor({ challan, kind: "cancel" })}>
+                              Cancel challan
+                            </Button>
+                          </>
+                        ) : null}
+                        {challan.status === "dispatched" ? (
+                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setReasonFor({ challan, kind: "failed" })}>
+                            Delivery failed
+                          </Button>
+                        ) : null}
+                        {challan.status === "failed_delivery" ? (
+                          <>
+                            <Button size="sm" disabled={busy} onClick={() => guard("update-challan", updateChallan)({ variables: { id: challan.id, status: "dispatched" } })}>
+                              <Truck className="mr-2 h-4 w-4" />
+                              Send again
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setReasonFor({ challan, kind: "cancel" })}>
+                              Goods back, cancel
+                            </Button>
+                          </>
+                        ) : null}
+                        {challan.status === "pending" ? (
                           <Button
                             size="sm"
                             disabled={busy}
                             onClick={() =>
-                              updateChallan({
+                              guard("update-challan", updateChallan)({
                                 variables: {
                                   id: challan.id,
                                   status: "dispatched",
@@ -641,11 +775,11 @@ export default function DispatchPage() {
                             <UserCheck className="mr-2 h-4 w-4" />
                             Confirm delivery
                           </Button>
-                        ) : (
+                        ) : challan.status === "delivered" ? (
                           <span className="text-xs font-semibold text-emerald-700">
                             Delivered
                           </span>
-                        )}
+                        ) : null}
                         </div>
                       </div>
                       {deliveryId === challan.id ? (
@@ -656,6 +790,8 @@ export default function DispatchPage() {
                             </p>
                             <button
                               title="Close delivery form"
+                              aria-label="Close delivery form"
+                              type="button"
                               onClick={() => setDeliveryId("")}
                               className="grid h-8 w-8 place-items-center rounded-md text-[var(--ink-4)] hover:bg-[var(--bg-soft)]"
                             >
@@ -671,6 +807,7 @@ export default function DispatchPage() {
                                   receivedByName: event.target.value,
                                 })
                               }
+                              aria-label="Recipient name"
                               placeholder="Recipient name"
                             />
                             <Input
@@ -681,9 +818,11 @@ export default function DispatchPage() {
                                   receivedByPhone: event.target.value,
                                 })
                               }
+                              aria-label="Recipient phone"
                               placeholder="Recipient phone"
                             />
                             <select
+                              aria-label="Proof type"
                               value={delivery.proofType}
                               onChange={(event) =>
                                 setDelivery({
@@ -730,6 +869,7 @@ export default function DispatchPage() {
                                     notes: event.target.value,
                                   })
                                 }
+                                aria-label="Delivery note"
                                 placeholder="Delivery note"
                               />
                             )}
@@ -747,7 +887,7 @@ export default function DispatchPage() {
                                   !delivery.proofUrl.trim())
                               }
                               onClick={() =>
-                                confirmDelivery({
+                                guard("confirm-delivery", confirmDelivery)({
                                   variables: {
                                     id: challan.id,
                                     input: delivery,
@@ -768,7 +908,14 @@ export default function DispatchPage() {
             </article>
           );
         })}
-        {!activeJobs.length ? (
+        {activeJobs.length > jobsShown ? (
+          <div className="col-span-full text-center">
+            <Button variant="outline" onClick={() => setJobsShown((n) => n + 10)}>
+              Show more orders ({activeJobs.length - jobsShown} more)
+            </Button>
+          </div>
+        ) : null}
+        {!activeJobs.length && !firstLoad && !error ? (
           <div className="mp-panel col-span-full grid min-h-64 place-items-center text-center">
             <div>
               <PackageCheck className="mx-auto h-8 w-8 text-emerald-700" />

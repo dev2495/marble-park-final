@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { QueryErrorBanner, QueryLoading } from "@/components/query-state";
+import { useBusyAction } from "@/hooks/use-busy-action";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
 
 const BEGIN_UPLOAD = gql`
   mutation ($filename: String!) {
@@ -319,7 +321,9 @@ export default function ImportCenterPage() {
 
   const active = result || preview;
   const options = preview?.masterOptions || readiness?.options || {};
-  const isBusy = previewState.loading || applyState.loading;
+  const { isBusy: guardBusy, run: runGuard } = useBusyAction();
+  const isBusy = previewState.loading || applyState.loading || guardBusy();
+  useUnsavedChanges(Boolean(preview && !result) || reviewDirty, "A product import is in progress and nothing is saved yet. Leave without finishing?");
   const canApply = Boolean(
     upload &&
       preview?.confirmationToken &&
@@ -464,6 +468,9 @@ export default function ImportCenterPage() {
   }
 
   async function revalidateReview() {
+    await runGuard("revalidate", revalidateReviewInner);
+  }
+  async function revalidateReviewInner() {
     if (!upload || !reviewRows.length) return;
     setStatus("Revalidating edited rows against live master data...");
     const reviewPatches = Object.keys(dirtyReviewRows).length
@@ -483,6 +490,9 @@ export default function ImportCenterPage() {
   }
 
   async function applyPreview() {
+    await runGuard("apply", applyPreviewInner);
+  }
+  async function applyPreviewInner() {
     if (!canApply || !upload) return;
     setStatus("Creating confirmed SKUs atomically...");
     await applyUpload({
@@ -529,16 +539,16 @@ export default function ImportCenterPage() {
         <QueryErrorBanner error={applyState.error} onRetry={applyPreview} />
       ) : null}
 
-      <section className="mp-card rounded-r6 border border-[var(--line)] p-6">
-        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">
+      <section className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0">
+            <p className="mp-eyebrow">
               Governed Product Master import
             </p>
-            <h1 className="mt-3 font-display text-4xl font-bold text-[var(--ink)]">
+            <h1 className="mp-page-title">
               Bulk-create saleable SKUs, review every value first.
             </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
+            <p className="mp-page-sub">
               Complete master data, download the latest live workbook, upload
               once, correct rows in review, revalidate, and create. Every SKU
               starts with zero stock; physical inward creates traceable lots and

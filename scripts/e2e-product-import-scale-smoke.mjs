@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { PrismaClient } from '@prisma/client';
+import { assert, createApiClient } from './lib/api-client.mjs';
 
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
@@ -8,20 +9,8 @@ const ROW_COUNT = Number(process.env.IMPORT_SCALE_ROWS || 600);
 const prisma = new PrismaClient();
 const createdSkus = [];
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
-async function gql(query, variables = {}, token) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const payload = await response.json();
-  if (!response.ok || payload.errors?.length) throw new Error(payload.errors?.map((error) => error.message).join('; ') || `GraphQL request failed (${response.status})`);
-  return payload.data;
-}
+const { gql } = createApiClient(API);
 
 async function uploadWorkbook(buffer, filename, token) {
   const begin = await gql(`mutation($filename: String!) { beginImportUpload(filename: $filename) { result } }`, { filename }, token);

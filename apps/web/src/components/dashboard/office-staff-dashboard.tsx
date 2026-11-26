@@ -112,7 +112,7 @@ export function OfficeStaffDashboard({ effectiveRole, user }: { effectiveRole: s
       </Panel>
 
       <section className="grid gap-3 xl:grid-cols-2">
-        <Panel title="Quotes ready to convert" subtitle="Approved quotes — turn into sales orders" tone="success" rightAction={<Link href="/dashboard/quotes" className="text-xs font-medium text-[#1d4ed8] hover:underline">Quote register</Link>}>
+        <Panel title="Quotes ready to convert" subtitle="Approved quotes, ready to turn into sales orders" tone="success" rightAction={<Link href="/dashboard/quotes" className="text-xs font-medium text-[#1d4ed8] hover:underline">Quote register</Link>}>
           {approvedQuotes.length ? (
             <ul className="divide-y divide-[#f4f4f5]">
               {approvedQuotes.slice(0, 6).map((q: any) => (

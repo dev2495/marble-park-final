@@ -34,20 +34,20 @@ export function ApolloErrorNotifier() {
 
   if (!error) return null;
   return (
-    <aside role="alert" aria-live="assertive" className="fixed right-4 top-4 z-[100] w-[min(28rem,calc(100vw-2rem))] border border-red-300 bg-white p-4 text-red-950 shadow-xl dark:bg-zinc-950">
+    <aside role="alert" aria-live="assertive" className="mp-toast-enter fixed right-4 top-4 z-[100] w-[min(28rem,calc(100vw-2rem))] rounded-r5 border border-[var(--danger-border)] border-l-4 bg-[var(--surface)] p-4 text-[var(--ink)] shadow-[var(--sh-pop)]">
       <div className="flex items-start gap-3">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-700" aria-hidden="true" />
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--danger-fg)]" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold">{error.title}</p>
-          <p className="mt-1 text-xs leading-5 text-red-800 dark:text-red-200">{error.message}</p>
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold text-red-700 dark:text-red-300">
+          <p className="text-sm font-semibold text-[var(--ink)]">{error.title}</p>
+          <p className="mt-1 text-[13px] leading-5 text-[var(--ink-3)]">{error.message}</p>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs font-medium text-[var(--danger-fg)]">
             {error.operation ? <span>Action: {error.operation}</span> : null}
             {error.code ? <span>Code: {error.code}</span> : null}
             {error.path ? <span>Field: {error.path}</span> : null}
             {error.requestId ? <span>Ref: {error.requestId}</span> : null}
           </div>
         </div>
-        <button type="button" className="grid h-8 w-8 shrink-0 place-items-center border border-red-200" onClick={() => setError(null)} aria-label="Dismiss error"><X className="h-4 w-4" /></button>
+        <button type="button" className="mp-icon-btn mp-tap-icon grid h-8 w-8 shrink-0 place-items-center rounded-md text-[var(--ink-4)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]" onClick={() => setError(null)} aria-label="Dismiss error"><X className="h-4 w-4" /></button>
       </div>
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-red-100 pt-3">
         <p className="text-[11px] text-red-700 dark:text-red-300">{error.hint}</p>

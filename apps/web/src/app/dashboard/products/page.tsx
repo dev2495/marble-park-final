@@ -364,10 +364,10 @@ export default function ProductsPage() {
     <div className="space-y-5 pb-10">
       {compositeError ? <QueryErrorBanner error={compositeError} onRetry={() => refetch()} /> : null}
 
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <header className="mp-page-header">
         <div className="min-w-0">
-          <h1 className="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">Catalogue</h1>
-          <p className="mt-1 text-sm text-[var(--ink-3)]">
+          <h1 className="mp-page-title">Catalogue</h1>
+          <p className="mp-page-sub">
             {stats?.totalProducts != null ? `${Number(stats.totalProducts).toLocaleString('en-IN')} products` : 'Products'}
             {categories.length ? ` in ${categories.length} categories` : ''}. Open any product for photos, specs and similar items, or tap + to send a set to a customer.
           </p>

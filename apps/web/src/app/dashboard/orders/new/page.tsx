@@ -3,7 +3,7 @@
 // Direct sales order: an order without a quote. Lines are priced exactly like
 // a quote (Product Master MRP and unit, NRP, optional special, GST on top or a
 // bill without GST), so what is shown here is what the server saves.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { gql, useLazyQuery, useMutation, useQuery } from '@apollo/client';
 import type { TaxMode } from '../../quotes/_workspace/model';
@@ -14,6 +14,11 @@ import { QueryErrorBanner } from '@/components/query-state';
 import { CustomerPicker } from '@/components/quick-add/quick-add';
 import { maskedMobile } from '@/lib/customer-display';
 import { describeApolloError } from '@/lib/apollo-errors';
+import { useBusyAction } from '@/hooks/use-busy-action';
+import { useLocalDraft } from '@/hooks/use-local-draft';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
+import { EmptyState } from '@/components/ui/empty-state';
+import { formatSellingQuantity } from '@marble-park/pricing-contract/box-quantity';
 import {
   DEFAULT_AREA, isTileLine, lineFromProduct, lineIssues, money, mrpUom, patchLine, priceLines, pricingBasis,
   quoteTypeForProduct, serializeLines, tilePriceUom, type Line,
@@ -28,6 +33,8 @@ const ORDER_STOCK = gql`query DirectOrderCreated($id: ID!) { salesOrder(id: $id)
 const CREATE = gql`mutation CreateDirectSalesOrder($input: CreateDirectSalesOrderInput!) { createDirectSalesOrder(input: $input) }`;
 
 const FLOOR_ROLES = ['owner', 'admin'];
+// How the advance was paid; the receipt is recorded with this mode.
+const ADVANCE_MODES: Array<[string, string]> = [['cash', 'Paid in cash'], ['upi', 'Paid by UPI'], ['card', 'Paid by card'], ['bank_transfer', 'Bank transfer'], ['neft', 'NEFT'], ['rtgs', 'RTGS'], ['cheque', 'Cheque'], ['other', 'Other']];
 const label = 'block text-xs font-semibold uppercase tracking-wider text-[var(--ink-4)]';
 const field = 'mt-1.5 h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] outline-none focus:border-[var(--brand-400)]';
 
@@ -51,18 +58,21 @@ export default function DirectSalesOrderPage() {
   const [taxMode, setTaxMode] = useState<TaxMode>('gst');
   const [paymentMode, setPaymentMode] = useState<'cash' | 'credit'>('cash');
   const [advanceAmount, setAdvanceAmount] = useState('');
+  const [advanceMode, setAdvanceMode] = useState('cash');
   const [paymentTerms, setPaymentTerms] = useState('Cash on order');
   const [promisedDate, setPromisedDate] = useState(() => localDate(1));
   const [notes, setNotes] = useState('');
   const [created, setCreated] = useState<any>(null);
   const [validation, setValidation] = useState('');
   const [adding, setAdding] = useState('');
+  const orderKey = useRef<{ signature: string; key: string } | null>(null);
 
   const setup = useQuery(SETUP);
   const search = useQuery(SEARCH_PRODUCTS, { variables: { query: query.trim() }, skip: query.trim().length < 2 });
   const [loadProducts] = useLazyQuery(PRODUCTS_BY_IDS, { fetchPolicy: 'network-only' });
   const credit = useQuery(CREDIT, { variables: { customerId: customer?.id || '' }, skip: !customer?.id, fetchPolicy: 'network-only' });
   const [create, state] = useMutation(CREATE);
+  const busyAction = useBusyAction();
 
   const me = setup.data?.me;
   const salesUsers: any[] = useMemo(() => setup.data?.salesAssignees || [], [setup.data?.salesAssignees]);
@@ -89,6 +99,21 @@ export default function DirectSalesOrderPage() {
   const advance = Number(advanceAmount || 0);
   const advanceInvalid = paymentMode === 'cash' && (advance < 0 || advance > totals.total + 0.01);
 
+  // Unsaved work: warn before leaving, and keep a copy on this device in case the page is lost.
+  const hasWork = lines.length > 0 || Boolean(customer) || notes.trim() !== '' || advanceAmount !== '';
+  useUnsavedChanges(hasWork, 'This order has not been created yet. Leave and lose what you entered?');
+  const draftValue = useMemo(() => ({ customer, ownerId, lines, taxMode, paymentMode, advanceAmount, paymentTerms, promisedDate, notes }), [advanceAmount, customer, lines, notes, ownerId, paymentMode, paymentTerms, promisedDate, taxMode]);
+  const draft = useLocalDraft('direct-order:new', draftValue, { enabled: hasWork });
+  const applyDraft = () => {
+    const saved = draft.restored;
+    if (!saved) return;
+    setCustomer(saved.customer ?? null); if (saved.ownerId) setOwnerId(saved.ownerId);
+    setLines(Array.isArray(saved.lines) ? saved.lines : []);
+    setTaxMode(saved.taxMode === 'non_gst' ? 'non_gst' : 'gst'); setPaymentMode(saved.paymentMode === 'credit' ? 'credit' : 'cash');
+    setAdvanceAmount(saved.advanceAmount || ''); setPaymentTerms(saved.paymentTerms || 'Cash on order'); if (saved.promisedDate) setPromisedDate(saved.promisedDate); setNotes(saved.notes || '');
+    draft.dismissRestored();
+  };
+
   const add = async (product: any) => {
     setAdding(product.id);
     try {
@@ -102,7 +127,8 @@ export default function DirectSalesOrderPage() {
   };
   const update = (key: string, patch: Record<string, any>) => setLines((current) => current.map((line) => line._k === key ? patchLine(line, patch) : line));
 
-  const submit = async () => {
+  const submit = () => { void busyAction.run('create-order', createOrder).catch(() => undefined); };
+  const createOrder = async () => {
     setValidation('');
     if (!customer?.id) return setValidation('Choose the customer.');
     if (!ownerId) return setValidation('Choose the sales person responsible for this order.');
@@ -112,15 +138,22 @@ export default function DirectSalesOrderPage() {
     if (creditShort) return setValidation(creditPosition.creditHold ? (creditPosition.holdReason || 'This customer is on credit hold.') : `This order is more than the customer's credit room of ${money(creditPosition.available)}.`);
     if (advanceInvalid) return setValidation('Advance must be between zero and the order total.');
     try {
-      const result = await create({ variables: { input: {
+      const input = {
         customerId: customer.id, ownerId, paymentMode,
         advanceAmount: paymentMode === 'cash' ? advance : 0,
+        advancePaymentMode: paymentMode === 'cash' && advance > 0 ? advanceMode : undefined,
         paymentTerms, notes,
         promisedDate: promisedDate ? new Date(`${promisedDate}T18:00:00`).toISOString() : undefined,
-        idempotencyKey: crypto.randomUUID(),
         taxMode,
         lines: serializeLines(lines, rowByKey, taxMode, 'PERCENT', 0, 'EXCLUSIVE'),
-      } } });
+      };
+      // One safety key per filled-in form: pressing Create again after a slow or lost reply
+      // returns the same order instead of making a second one. A changed form gets a new key.
+      const signature = JSON.stringify(input);
+      if (!orderKey.current || orderKey.current.signature !== signature) orderKey.current = { signature, key: crypto.randomUUID() };
+      const result = await create({ variables: { input: { ...input, idempotencyKey: orderKey.current.key } } });
+      orderKey.current = null;
+      draft.clear();
       setCreated(result.data?.createDirectSalesOrder);
       setCustomer(null); setLines([]); setAdvanceAmount(''); setNotes(''); setPaymentMode('cash'); setTaxMode('gst'); setPaymentTerms('Cash on order'); setPromisedDate(localDate(1));
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -133,20 +166,28 @@ export default function DirectSalesOrderPage() {
 
   return <div className="space-y-5 pb-12">
     {setup.error || search.error ? <QueryErrorBanner error={(setup.error || search.error)!} /> : null}
-    <section className="mp-card flex flex-col justify-between gap-4 rounded-r6 border border-[var(--line)] p-5 lg:flex-row lg:items-end">
-      <div>
-        <Link href="/dashboard/orders" className="inline-flex items-center text-xs font-semibold uppercase tracking-wider text-[var(--brand-700)]"><ArrowLeft className="mr-1.5 h-4 w-4"/>Order book</Link>
-        <h1 className="mt-3 font-display text-2xl font-bold sm:text-3xl">Direct sales order</h1>
-        <p className="mt-1 max-w-2xl text-sm text-[var(--ink-3)]">For a sale without a quote. Prices follow Product Master like a quote, as a GST bill (GST added on top) or without GST. Stock is reserved, shortfalls go to purchase, and a dispatch job is made.</p>
+    <section className="mp-page-header">
+      <div className="min-w-0">
+        <Link href="/dashboard/orders" className="mp-eyebrow inline-flex items-center hover:underline"><ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden="true"/>Order book</Link>
+        <h1 className="mp-page-title">Direct sales order</h1>
+        <p className="mp-page-sub">For a sale without a quote. Prices follow Product Master like a quote, as a GST bill (GST added on top) or without GST. Stock is reserved, shortfalls go to purchase, and a dispatch job is made.</p>
       </div>
       <div className="min-w-[15rem] rounded-r4 bg-[var(--ink)] px-5 py-4 text-[var(--surface)]">
         {withGst ? <>
-          <div className="flex justify-between gap-4 text-xs text-white/70"><span>Taxable</span><span className="tabular-nums">{money(totals.taxable)}</span></div>
-          <div className="mt-0.5 flex justify-between gap-4 text-xs text-white/70"><span>GST added</span><span className="tabular-nums">{money(totals.gst)}</span></div>
-        </> : <div className="text-xs text-white/70">Without GST bill</div>}
-        <div className="mt-2 flex items-baseline justify-between gap-4 border-t border-white/20 pt-2"><span className="text-xs font-semibold uppercase tracking-wider text-white/70">Order total</span><span className="text-2xl font-black tabular-nums">{money(totals.total)}</span></div>
+          <div className="flex justify-between gap-4 text-xs opacity-70"><span>Taxable</span><span className="tabular-nums">{money(totals.taxable)}</span></div>
+          <div className="mt-0.5 flex justify-between gap-4 text-xs opacity-70"><span>GST added</span><span className="tabular-nums">{money(totals.gst)}</span></div>
+        </> : <div className="text-xs opacity-70">Without GST bill</div>}
+        <div className="mt-2 flex items-baseline justify-between gap-4 border-t border-[color:color-mix(in_srgb,var(--surface)_22%,transparent)] pt-2"><span className="text-xs font-semibold uppercase tracking-wider opacity-70">Order total</span><span className="text-2xl font-black tabular-nums">{money(totals.total)}</span></div>
       </div>
     </section>
+
+    {draft.restored && !created ? (
+      <div role="status" className="flex flex-wrap items-center gap-3 rounded-r4 border border-[var(--info)]/25 bg-[var(--info-bg)] px-4 py-2.5 text-sm text-[var(--info)]">
+        <span className="min-w-0 flex-1"><b className="font-semibold">An order you did not finish was found on this device{draft.savedAt ? ` from ${new Date(draft.savedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ''}.</b> Restore it to carry on. Prices are checked again when you create the order.</span>
+        <Button type="button" size="sm" className="h-11 sm:h-9" onClick={applyDraft}>Restore</Button>
+        <Button type="button" size="sm" variant="outline" className="h-11 sm:h-9" onClick={() => draft.clear()}>Discard it</Button>
+      </div>
+    ) : null}
 
     {created ? <CreatedOrder order={created} /> : null}
 
@@ -197,6 +238,7 @@ export default function DirectSalesOrderPage() {
           ) : (
             <label className={label}>Advance received<Input className="mt-1.5" type="number" min={0} max={totals.total} value={advanceAmount} onChange={(event) => setAdvanceAmount(event.target.value)} placeholder="₹ 0 (optional)"/>
               {advanceInvalid ? <span className="mt-1 block normal-case tracking-normal text-[var(--danger,#b91c1c)]">Cannot be more than the order total.</span> : null}
+              {advance > 0 ? <select aria-label="How the advance was paid" value={advanceMode} onChange={(event) => setAdvanceMode(event.target.value)} className={field}>{ADVANCE_MODES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select> : null}
             </label>
           )}
           <label className={label}>Payment terms<Input className="mt-1.5" value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)}/></label>
@@ -207,7 +249,7 @@ export default function DirectSalesOrderPage() {
 
       <div className="min-w-0 space-y-4">
         <div className="mp-panel p-4">
-          <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-5)]"/><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Add product: code, name or brand" className="pl-10"/></div>
+          <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-5)]"/><Input aria-label="Add a product by code, name or brand" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Add product: code, name or brand" className="pl-10"/></div>
           {query.trim().length >= 2 ? <div className="mt-2 max-h-72 divide-y divide-[var(--line)] overflow-y-auto rounded-lg border border-[var(--line)]">
             {search.loading ? <p className="p-3 text-sm text-[var(--ink-4)]">Searching…</p>
               : !results.length ? <p className="p-3 text-sm text-[var(--ink-4)]">No product matches “{query.trim()}”.</p>
@@ -222,12 +264,12 @@ export default function DirectSalesOrderPage() {
           </div> : null}
         </div>
 
-        {!lines.length ? <div className="rounded-r5 border border-dashed border-[var(--line-strong)] p-8 text-center text-sm text-[var(--ink-4)]">Search above to add products to this order.</div> : null}
+        {!lines.length ? <EmptyState icon={PackagePlus} className="rounded-r5 border border-dashed border-[var(--line-strong)]" title="No products on this order yet" description="Search above to add products to this order." /> : null}
         {lines.map((line) => <OrderLine key={line._k} line={line} row={rowByKey.get(line._k)} issues={issuesByKey.get(line._k) || []} canPassFloor={canPassFloor} withGst={withGst} onChange={(patch) => update(line._k, patch)} onRemove={() => setLines((rows) => rows.filter((row) => row._k !== line._k))} />)}
 
         {belowFloor.length && canPassFloor ? <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0"/>{belowFloor.length} line{belowFloor.length === 1 ? ' is' : 's are'} below the floor rate. Creating the order records your approval.</p> : null}
         {validation ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-800">{validation}</p> : null}
-        <Button className="w-full" size="lg" disabled={state.loading || !lines.length} onClick={submit}><IndianRupee className="mr-2 h-5 w-5"/>{state.loading ? 'Creating order…' : `Create order · ${money(totals.total)}`}</Button>
+        <Button className="w-full" size="lg" disabled={state.loading || busyAction.isBusy() || !lines.length} loading={busyAction.isBusy('create-order')} onClick={submit}><IndianRupee className="mr-2 h-5 w-5"/>{state.loading ? 'Creating order…' : `Create order · ${money(totals.total)}`}</Button>
       </div>
     </section>
     <CustomerPicker open={pickerOpen} onClose={() => setPickerOpen(false)} onPick={(picked) => { setCustomer(picked); setPickerOpen(false); setValidation(''); }} />
@@ -248,22 +290,23 @@ function OrderLine({ line, row, issues, canPassFloor, withGst, onChange, onRemov
   const available = balance ? Math.floor(Math.max(0, Number(balance.available || 0)) / perUnit) : null;
   const short = available != null && qty > available ? qty - available : 0;
   const mrp = Number(row?.mrpInclusive || line.mrpInclusive || 0);
-  const shown = issues.filter((issue) => issue.key !== 'family');
+  const reason = (key: string) => issues.find((issue) => issue.blocking && issue.key === key)?.message;
+  const shown = issues.filter((issue) => issue.key !== 'family' && !(issue.blocking && ['nrpInput', 'special'].includes(issue.key)));
   return <article className="mp-panel p-4">
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
         <p className="font-bold text-[var(--ink)]">{line.internalCode || line.sku} · {line.name}</p>
         <p className="mt-0.5 text-xs text-[var(--ink-4)]">{[line.brand, line.finish, line.tileSize && tile ? line.tileSize : ''].filter(Boolean).join(' · ')}</p>
       </div>
-      <button type="button" title="Remove line" aria-label={`Remove ${line.name}`} onClick={onRemove} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4"/></button>
+      <button type="button" title="Remove line" aria-label={`Remove ${line.name}`} onClick={onRemove} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4"/></button>
     </div>
     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,8rem)_minmax(0,9rem)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,9rem)]">
       {tile && tileUnit !== 'PC' ? (
         <label className={label}>Area ({tileUnit.toLowerCase()})<Input className="mt-1.5" type="number" min={0} value={line.requestedArea || ''} onChange={(e) => onChange({ requestedArea: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Enter area"/><span className="mt-1 block normal-case tracking-normal text-[var(--ink-4)]">{qty} {stockUnit.toLowerCase()}</span></label>
       ) : tile ? (
-        <label className={label}>Pieces<Input className="mt-1.5" type="number" min={0} value={line.requestedPieces || ''} onChange={(e) => onChange({ requestedPieces: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Enter pieces"/><span className="mt-1 block normal-case tracking-normal text-[var(--ink-4)]">{qty} {stockUnit.toLowerCase()}</span></label>
+        <label className={label}>Pieces<Input className="mt-1.5" type="number" inputMode="numeric" min={0} step={1} value={line.requestedPieces || ''} onChange={(e) => onChange({ requestedPieces: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Enter pieces"/><span className="mt-1 block normal-case tracking-normal text-[var(--ink-4)]">{qty} {stockUnit.toLowerCase()}</span></label>
       ) : (
-        <label className={label}>Qty ({stockUnit.toLowerCase()})<Input className="mt-1.5" type="number" min={1} step={1} value={line.qty || ''} onChange={(e) => onChange({ qty: e.target.value === '' ? '' : Math.max(0, Math.trunc(Number(e.target.value))) })} placeholder="Qty"/></label>
+        <label className={label}>Qty ({stockUnit.toLowerCase()})<Input className="mt-1.5" type="number" inputMode="numeric" min={1} step={1} value={line.qty || ''} onChange={(e) => onChange({ qty: e.target.value === '' ? '' : Math.max(0, Number(e.target.value)) })} placeholder="Qty"/></label>
       )}
       <div className={label}>MRP / {mrpUom(line).toLowerCase()}
         <p className="mt-1.5 flex h-10 items-center rounded-lg bg-[var(--surface-2)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--ink)]">{mrp > 0 ? money(mrp) : <span className="text-[var(--warning)]">Missing</span>}</p>
@@ -271,17 +314,17 @@ function OrderLine({ line, row, issues, canPassFloor, withGst, onChange, onRemov
       </div>
       <label className={label}>NRP
         <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_7.5rem] gap-1">
-          <Input type="number" min={0} max={line.nrpMode === 'PERCENT_OFF_MRP' ? 100 : undefined} value={line.nrpInput === 0 || line.nrpInput == null ? '' : line.nrpInput} onChange={(e) => onChange({ nrpInput: e.target.value })} placeholder={line.nrpMode === 'FIXED_NRP' ? 'NRP ₹' : '% off'}/>
-          <select className="h-10 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold normal-case tracking-normal" value={line.nrpMode} onChange={(e) => onChange({ nrpMode: e.target.value, nrpInput: '' })}><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select>
+          <Input aria-label={`NRP for ${line.name}`} aria-invalid={reason('nrpInput') ? true : undefined} aria-describedby={reason('nrpInput') ? `nrp-reason-${line._k}` : undefined} type="number" min={0} value={line.nrpInput === 0 || line.nrpInput == null ? '' : line.nrpInput} onChange={(e) => onChange({ nrpInput: e.target.value })} placeholder={line.nrpMode === 'FIXED_NRP' ? 'NRP ₹' : '% off'}/>
+          <select aria-label={`NRP type for ${line.name}`} className="h-10 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold normal-case tracking-normal" value={line.nrpMode} onChange={(e) => onChange({ nrpMode: e.target.value, nrpInput: '' })}><option value="PERCENT_OFF_MRP">% off MRP</option><option value="FIXED_NRP">Set NRP ₹</option></select>
         </div>
-        <span className="mt-1 block normal-case tracking-normal text-[var(--brand-700)]">NRP {money(row?.nrpInclusive || 0)}</span>
+        {reason('nrpInput') ? <span id={`nrp-reason-${line._k}`} role="alert" className="mt-1 block normal-case tracking-normal font-semibold text-[var(--danger,#b91c1c)]">{reason('nrpInput')}</span> : <span className="mt-1 block normal-case tracking-normal text-[var(--brand-700)]">{row?.inputRejection ? 'NRP not priced yet' : `NRP ${money(row?.nrpInclusive || 0)}`}</span>}
       </label>
       <label className={label}>Special (optional)
         <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_7.5rem] gap-1">
-          <Input disabled={line.specialMode === 'NONE'} type="number" min={0} max={line.specialMode === 'PERCENT_OFF_NRP' ? 100 : undefined} value={line.specialInput === 0 || line.specialInput == null ? '' : line.specialInput} onChange={(e) => onChange({ specialInput: e.target.value })} placeholder={line.specialMode === 'FIXED_SPECIAL_RATE' ? 'Rate ₹' : line.specialMode === 'PERCENT_OFF_NRP' ? '% off' : '—'}/>
-          <select className="h-10 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold normal-case tracking-normal" value={line.specialMode} onChange={(e) => onChange({ specialMode: e.target.value, specialInput: '' })}><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select>
+          <Input aria-label={`Special rate or percent for ${line.name}`} aria-invalid={reason('special') ? true : undefined} aria-describedby={reason('special') ? `special-reason-${line._k}` : undefined} disabled={line.specialMode === 'NONE'} type="number" min={0} value={line.specialInput === 0 || line.specialInput == null ? '' : line.specialInput} onChange={(e) => onChange({ specialInput: e.target.value })} placeholder={line.specialMode === 'FIXED_SPECIAL_RATE' ? 'Rate ₹' : line.specialMode === 'PERCENT_OFF_NRP' ? '% off' : '—'}/>
+          <select aria-label={`Special pricing type for ${line.name}`} className="h-10 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold normal-case tracking-normal" value={line.specialMode} onChange={(e) => onChange({ specialMode: e.target.value, specialInput: '' })}><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select>
         </div>
-        <span className="mt-1 block normal-case tracking-normal text-[var(--info,#1d4ed8)]">Rate {money(row?.specialRateInclusive || 0)} / {mrpUom(line).toLowerCase()}</span>
+        {reason('special') ? <span id={`special-reason-${line._k}`} role="alert" className="mt-1 block normal-case tracking-normal font-semibold text-[var(--danger,#b91c1c)]">{reason('special')}</span> : <span className="mt-1 block normal-case tracking-normal text-[var(--info,#1d4ed8)]">{row?.inputRejection ? 'Rate not priced yet' : `Rate ${money(row?.specialRateInclusive || 0)} / ${mrpUom(line).toLowerCase()}`}</span>}
       </label>
       <div className="rounded-lg bg-[var(--surface-2)] p-2.5 text-right text-xs text-[var(--ink-4)]">
         {withGst ? <>
@@ -292,7 +335,7 @@ function OrderLine({ line, row, issues, canPassFloor, withGst, onChange, onRemov
       </div>
     </div>
     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-      {available != null ? <span className={short ? 'font-semibold text-[var(--warning)]' : 'text-[var(--ink-4)]'}>{available} {stockUnit.toLowerCase()} in stock{short ? ` · ${short} to order from supplier` : ''}</span> : stock.loading ? <span className="text-[var(--ink-4)]">Checking stock…</span> : <span className="text-[var(--ink-4)]">No stock record · all {qty} to order</span>}
+      {available != null ? <span className={short ? 'font-semibold text-[var(--warning)]' : 'text-[var(--ink-4)]'}>{available} {stockUnit.toLowerCase()} in stock{short ? ` · ${short} to order from supplier` : ''}</span> : stock.loading ? <span className="text-[var(--ink-4)]">Checking stock…</span> : stock.error ? <span className="font-semibold text-[var(--warning)]">Could not check stock. <button type="button" onClick={() => void stock.refetch()} className="underline">Try again</button></span> : <span className="text-[var(--ink-4)]">No stock record · all {qty} to order</span>}
       {shown.map((issue) => <span key={issue.key} className={issue.blocking ? 'font-semibold text-[var(--danger,#b91c1c)]' : 'font-semibold text-[var(--warning)]'}>{issue.key === 'floor' && !canPassFloor ? `${issue.message.replace(' · owner approval', '')} · make a quote for owner approval` : issue.message}</span>)}
     </div>
   </article>;
@@ -303,9 +346,9 @@ function CreatedOrder({ order }: { order: any }) {
   const detail = useQuery(ORDER_STOCK, { variables: { id: order.id }, fetchPolicy: 'network-only' });
   const full = detail.data?.salesOrder;
   const lines: any[] = Array.isArray(full?.lines) ? full.lines : [];
-  const held = new Map<string, { reserved: number; waiting: number }>();
+  const held = new Map<string, { reserved: number; waiting: number; factor?: number; piecesPerBox?: number; soldBy?: string | null }>();
   for (const reservation of full?.reservations || []) {
-    const entry = held.get(reservation.productId) || { reserved: 0, waiting: 0 };
+    const entry = held.get(reservation.productId) || { reserved: 0, waiting: 0, factor: Number(reservation.factor || 1), piecesPerBox: reservation.piecesPerBox, soldBy: reservation.soldBy };
     const quantity = Number(reservation.sellingQuantity ?? reservation.quantity ?? 0);
     if (reservation.status === 'reserved') entry.reserved += quantity;
     else entry.waiting += quantity;
@@ -327,11 +370,17 @@ function CreatedOrder({ order }: { order: any }) {
         <tbody>{lines.map((line, index) => {
           const entry = held.get(line.productId) || { reserved: 0, waiting: 0 };
           const unit = String(line.inventoryUom || line.unit || 'PC').toLowerCase();
+          // A boxed tile reads in boxes, a broken box as "+ N pc"; everything else as before.
+          const units = { piecesPerUnit: Number(entry.factor || 1), orderUnit: line.inventoryUom || line.unit, unit: line.inventoryUom || line.unit || 'PC', piecesPerBox: entry.piecesPerBox, soldBy: entry.soldBy };
+          const show = (value: number) => {
+            const formatted = formatSellingQuantity(value, units);
+            return formatted.isBoxed ? formatted.label : `${Number(value.toFixed(2))} ${unit}`;
+          };
           return <tr key={`${line.lineKey || index}`} className="border-t border-emerald-100">
             <td className="px-3 py-2"><b className="font-semibold">{line.name}</b><span className="block text-xs text-emerald-900/70">{line.internalCode || line.sku}</span></td>
-            <td className="px-3 py-2 text-right tabular-nums">{Number(line.qty || line.quantity || 0)} {unit}</td>
-            <td className="px-3 py-2 text-right tabular-nums">{Number(entry.reserved.toFixed(2))} {unit}</td>
-            <td className={`px-3 py-2 text-right tabular-nums ${entry.waiting ? 'font-semibold text-amber-800' : ''}`}>{Number(entry.waiting.toFixed(2))} {unit}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{show(Number(line.qty || line.quantity || 0))}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{show(entry.reserved)}</td>
+            <td className={`px-3 py-2 text-right tabular-nums ${entry.waiting ? 'font-semibold text-amber-800' : ''}`}>{show(entry.waiting)}</td>
           </tr>;
         })}</tbody>
       </table>

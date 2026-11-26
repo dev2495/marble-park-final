@@ -127,7 +127,7 @@ export class CustomersService {
     return this.toApiCustomer(customer);
   }
 
-  async create(data: CreateCustomerInput): Promise<any> {
+  async create(data: CreateCustomerInput, actorUserId = 'system'): Promise<any> {
     // Phone, GST and email identify a customer. A same name (even in the same
     // city) is a different person until the number says otherwise, so it never blocks.
     const duplicates = (await this.findDuplicateCandidates({
@@ -150,11 +150,21 @@ export class CustomersService {
         matched: matchedPayload(duplicates),
       });
     }
-    const customer = await this.prisma.customer.create({
-      data: this.toDbCustomer(data, true) as any,
+    // Two people adding the same number at the same moment: the second waits for the
+    // first on a lock for that number, then sees it and is refused (there is no unique rule in the database yet).
+    const lockKey = mobileKey(data.phone);
+    const customer = await this.prisma.$transaction(async (tx) => {
+      if (lockKey) {
+        await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `customer-mobile:${lockKey}`);
+        const [clash] = await customersByMobileKey(tx, lockKey, { take: 1 });
+        if (clash && !(data.forceCreate && duplicates.some((row) => row.id === clash.id))) {
+          throw new ConflictException({ message: `This mobile already belongs to ${clash.name}${clash.city ? ` (${clash.city})` : ''}.`, code: 'CUSTOMER_DUPLICATE', matched: [{ id: clash.id, name: clash.name, city: clash.city, mobile: clash.mobile, maskedMobile: maskedMobile(clash.mobile), matchedOn: ['mobile'], blocking: true }] });
+        }
+      }
+      return tx.customer.create({ data: this.toDbCustomer(data, true) as any });
     });
     await this.audit.record({
-      actorUserId: 'system',
+      actorUserId,
       action: 'customer.create',
       entityType: 'Customer',
       entityId: customer.id,
@@ -237,7 +247,7 @@ export class CustomersService {
     return ranked.slice(0, 5);
   }
 
-  async update(id: string, data: UpdateCustomerInput): Promise<any> {
+  async update(id: string, data: UpdateCustomerInput, actorUserId = 'system'): Promise<any> {
     await this.findById(id);
     // On update, also check that the new GST/email/mobile doesn't clash with a
     // *different* existing customer (mostly to catch operator typos).
@@ -255,12 +265,24 @@ export class CustomersService {
         matched: matchedPayload(duplicates.filter((d) => d.blocking)),
       });
     }
-    const customer = await this.prisma.customer.update({
-      where: { id },
-      data: this.toDbCustomer(data, false) as any,
+    // Same lock as create (gaps lane): two people saving the same number at once on
+    // different customers, or one adding and one editing, wait for each other and the second is refused.
+    const lockKey = mobileKey(data.phone ?? (data as any).mobile);
+    const customer = await this.prisma.$transaction(async (tx) => {
+      if (lockKey) {
+        await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `customer-mobile:${lockKey}`);
+        const [clash] = await customersByMobileKey(tx, lockKey, { excludeId: id, take: 10 });
+        if (clash) {
+          throw new ConflictException({ message: `This mobile already belongs to another customer, ${clash.name}${clash.city ? ` (${clash.city})` : ''}.`, code: 'CUSTOMER_DUPLICATE', matched: [{ id: clash.id, name: clash.name, city: clash.city, mobile: clash.mobile, maskedMobile: maskedMobile(clash.mobile), matchedOn: ['mobile'], blocking: true }] });
+        }
+      }
+      return tx.customer.update({
+        where: { id },
+        data: this.toDbCustomer(data, false) as any,
+      });
     });
     await this.audit.record({
-      actorUserId: 'system',
+      actorUserId,
       action: 'customer.update',
       entityType: 'Customer',
       entityId: id,
@@ -270,11 +292,11 @@ export class CustomersService {
     return this.toApiCustomer(customer);
   }
 
-  async delete(id: string) {
+  async delete(id: string, actorUserId = 'system') {
     const customer = await this.findById(id);
     const result = await this.prisma.customer.delete({ where: { id } });
     await this.audit.record({
-      actorUserId: 'system',
+      actorUserId,
       action: 'customer.delete',
       entityType: 'Customer',
       entityId: id,

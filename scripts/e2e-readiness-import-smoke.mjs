@@ -2,24 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import ExcelJS from 'exceljs';
+import { assert, createApiClient } from './lib/api-client.mjs';
 
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const WEB = process.env.WEB_URL || 'http://localhost:3000';
 
-async function gql(query, variables = {}, token) {
-  const res = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const json = await res.json();
-  if (json.errors?.length) throw new Error(json.errors.map((e) => e.message).join('; '));
-  return json.data;
-}
+const { gql } = createApiClient(API);
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 function unique(prefix) {
   return `${prefix}-${Date.now().toString(36).toUpperCase()}`;

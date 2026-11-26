@@ -1,4 +1,5 @@
 'use client';
+import { statusLabel } from '@/lib/utils';
 
 import { useMemo } from 'react';
 import { gql, useQuery } from '@apollo/client';
@@ -16,14 +17,14 @@ import { QueryErrorBanner } from '@/components/query-state';
 import { UserAvatar } from '@/components/user-avatar';
 import {
   KpiTile, MotionGrid, MotionItem, Panel, EmptyState, GreetingStrip,
-  moneyShort, moneyExact, quoteTotal, type Tone,
+  moneyShort, moneyExact, quoteTotal, isQuoteConfirmed, type Tone,
 } from './primitives';
 
 const SALES_DASH = gql`
   query SalesRepDash($ownerId: String!) {
     salesDashboard(ownerId: $ownerId) { stats pendingFollowups recentQuotes }
     leads(ownerId: $ownerId) { id title stage expectedValue nextActionAt customer }
-    quotes(ownerId: $ownerId) { id quoteNumber status approvalStatus lines customer createdAt }
+    quotes(ownerId: $ownerId) { id quoteNumber status approvalStatus lines customer createdAt confirmedAt supersededByQuoteId }
   }
 `;
 
@@ -44,7 +45,7 @@ export function SalesRepDashboard({ effectiveRole, user }: { effectiveRole: stri
   const myQuotes = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
 
   const pipelineValue = useMemo(() => leads.reduce((s, l) => s + Number(l.expectedValue || 0), 0), [leads]);
-  const wonQuotes = useMemo(() => myQuotes.filter((q) => q.status === 'confirmed'), [myQuotes]);
+  const wonQuotes = useMemo(() => myQuotes.filter((q) => !q.supersededByQuoteId && isQuoteConfirmed(q)), [myQuotes]);
   const wonRevenue = useMemo(() => wonQuotes.reduce((s, q) => s + quoteTotal(q.lines), 0), [wonQuotes]);
   const quotesSent = useMemo(() => myQuotes.filter((q) => q.status === 'sent' || q.status === 'confirmed').length, [myQuotes]);
   const conversion = quotesSent ? (wonQuotes.length / quotesSent) * 100 : 0;
@@ -183,14 +184,14 @@ export function SalesRepDashboard({ effectiveRole, user }: { effectiveRole: stri
                 </li>
               ))}
             </ul>
-          ) : <EmptyState>No leads yet — create one.</EmptyState>}
+          ) : <EmptyState>No leads yet. Create one.</EmptyState>}
         </Panel>
       </section>
 
       <Panel title="My recent quotes" subtitle="Last 6 quotes you authored" tone="sky" rightAction={<Link href="/dashboard/quotes" className="text-xs font-medium text-[#1d4ed8] hover:underline">All quotes</Link>}>
         {myQuotes.length ? (
           <div className="overflow-hidden rounded-r3 border border-[#f4f4f5]">
-            <table className="w-full text-sm">
+            <table className="mp-table-skin w-full text-sm">
               <thead className="bg-[#fafafa] text-left text-[11px] font-semibold uppercase tracking-wider text-[#71717a]">
                 <tr>
                   <th className="px-3 py-2.5">Quote</th>
@@ -204,14 +205,14 @@ export function SalesRepDashboard({ effectiveRole, user }: { effectiveRole: stri
                   <tr key={q.id} className="text-[#27272a]">
                     <td className="px-3 py-2.5"><Link href={`/dashboard/quotes/${q.id}`} className="font-semibold text-[#18181b] hover:underline">{q.quoteNumber}</Link></td>
                     <td className="px-3 py-2.5 text-[#52525b]">{q.customer?.name || '—'}</td>
-                    <td className="px-3 py-2.5"><span className="rounded-full bg-[#eff6ff] px-2 py-0.5 text-xs font-semibold uppercase text-[#1d4ed8]">{q.status}</span></td>
+                    <td className="px-3 py-2.5"><span className="rounded-full bg-[#eff6ff] px-2 py-0.5 text-xs font-semibold uppercase text-[#1d4ed8]">{statusLabel(q.status)}</span></td>
                     <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-[#18181b]">{moneyShort(quoteTotal(q.lines))}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        ) : <EmptyState>No quotes yet — start one.</EmptyState>}
+        ) : <EmptyState>No quotes yet. Start one.</EmptyState>}
       </Panel>
     </div>
   );

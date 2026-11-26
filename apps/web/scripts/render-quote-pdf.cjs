@@ -24,6 +24,21 @@ const React = require('react');
 const { groupQuoteLines, requestedQuantityLabel } = require('@marble-park/pricing-contract/quote-display');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
 const { PRICING_VERSION, priceQuoteLines } = require('@marble-park/pricing-contract');
+const { formatBoxQuantity } = require('@marble-park/pricing-contract/box-quantity');
+
+// A tile quote line counts boxes; for a boxed tile (N pieces a box) it reads
+// "38 BOX" with "380 pc" beneath. Priced quantity and rate are untouched.
+function boxedLineQty(line) {
+  if (String(line.category || '').trim().toLowerCase() !== 'tiles') return null;
+  const unit = String(line.inventoryUom || line.unit || 'BOX').toUpperCase();
+  const perBox = Math.trunc(Number(line.piecesPerPack || line.pcsPerBox || 0));
+  if (!['BOX', 'PACK', 'CARTON'].includes(unit) || perBox <= 1) return null;
+  const qty = Number(line.qty || line.quantity || 0);
+  return formatBoxQuantity(Math.round(qty * perBox), { piecesPerUnit: perBox, orderUnit: unit, unit: 'PC' });
+}
+function boxedHeadline(boxed) {
+  return `${boxed.boxes}${boxed.loosePieces ? ` + ${boxed.loosePieces} pc` : ''} ${boxed.unitLabel}`;
+}
 const ARCHITECT_BUNDLE = process.env.PDF_ARCHITECT_BUNDLE === '1';
 
 const colors = {
@@ -792,7 +807,9 @@ function PricedAreaTable({ group, showPrices, requestUrl, taxMode, brands, compa
           finishFor(line) ? e(Text, { style: styles.meta }, `Finish: ${finishFor(line)}`) : null,
           identityCodes ? e(Text, { style: styles.meta, hyphenationCallback: codeBreaks }, identityCodes) : null,
         ),
-        e(Text, { style: [styles.td, styles.qtyCol] }, `${rate.pricingQuantity} ${rate.pricingUom}`),
+        e(Text, { style: [styles.td, styles.qtyCol] }, boxedLineQty(line)
+          ? `${boxedHeadline(boxedLineQty(line))}\n${rate.pricingQuantity} ${rate.pricingUom}`
+          : `${rate.pricingQuantity} ${rate.pricingUom}`),
         showPrices ? e(Text, { style: [styles.td, styles.rateCol] }, `${money(rate.mrp)}\nper ${rate.mrpUom}`) : null,
         showPrices ? e(Text, { style: [styles.td, styles.discCol] }, discountPercent(rate)) : null,
         showPrices ? e(Text, { style: [styles.td, styles.finalRateCol] }, `${money(rate.finalUnitPayable)}\nper ${rate.pricingUom}`) : null,
@@ -826,7 +843,10 @@ function TileAreaTable({ group, requestUrl, brands, compact = false }) {
       const isTile = String(line.category || '').trim().toLowerCase() === 'tiles';
       const piecesPerPack = Number(line.piecesPerPack || line.pcsPerBox || 0);
       const inventoryUom = String(line.inventoryUom || line.unit || line.uom || (isTile ? 'BOX' : 'KG')).toUpperCase();
-      const fulfilment = isTile
+      const boxed = boxedLineQty(line);
+      const fulfilment = boxed
+        ? `${boxedHeadline(boxed)}\n${boxed.piecesLabel}`
+        : isTile
         ? `${rate.qty} ${inventoryUom}${inventoryUom !== 'PC' && piecesPerPack > 0 ? `\n${rate.qty * piecesPerPack} PC` : ''}`
         : `${rate.qty} KG`;
       const size = String(line.tileSize || line.size || line.dimensions || '').trim();

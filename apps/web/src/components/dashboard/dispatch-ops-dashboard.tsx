@@ -96,7 +96,7 @@ export function DispatchOpsDashboard({ effectiveRole, user }: { effectiveRole: s
     { label: "Today's loads", value: todaysJobs.length, caption: todaysJobs.length ? 'Due today' : 'Nothing scheduled', icon: Calendar, tone: todaysJobs.length ? 'brand' : 'neutral', href: '/dashboard/dispatch', numeric: true },
     { label: 'Pending allocation', value: jobsByStatus[0]?.count || 0, caption: 'Quotes confirmed, await packing', icon: Clock, tone: 'warning', href: '/dashboard/dispatch', numeric: true },
     { label: 'In transit', value: jobsByStatus[2]?.count || 0, caption: 'Out for delivery now', icon: Truck, tone: 'brand', href: '/dashboard/dispatch', numeric: true },
-    { label: 'Overdue', value: overdue.length, caption: overdue.length ? 'Past due — escalate' : 'No overdue jobs', icon: AlertCircle, tone: overdue.length ? 'danger' : 'success', href: '/dashboard/dispatch', numeric: true },
+    { label: 'Overdue', value: overdue.length, caption: overdue.length ? 'Past due, escalate' : 'No overdue jobs', icon: AlertCircle, tone: overdue.length ? 'danger' : 'success', href: '/dashboard/dispatch', numeric: true },
   ];
 
   return (
@@ -192,7 +192,7 @@ export function DispatchOpsDashboard({ effectiveRole, user }: { effectiveRole: s
       </Panel>
 
       {overdue.length ? (
-        <Panel title="Overdue deliveries" subtitle="Past due, not yet delivered — escalate" tone="danger" rightAction={<Link href="/dashboard/dispatch" className="text-xs font-medium text-[#1d4ed8] hover:underline">Dispatch desk</Link>}>
+        <Panel title="Overdue deliveries" subtitle="Past due and not yet delivered. Escalate." tone="danger" rightAction={<Link href="/dashboard/dispatch" className="text-xs font-medium text-[#1d4ed8] hover:underline">Dispatch desk</Link>}>
           <ul className="space-y-1.5">
             {overdue.slice(0, 6).map((j: any) => (
               <li key={j.id} className="flex items-center justify-between gap-3 rounded-r3 border border-[#fecaca] bg-[#fff5f5] px-3 py-2">

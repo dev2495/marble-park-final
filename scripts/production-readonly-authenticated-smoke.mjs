@@ -1,11 +1,9 @@
+import { assert } from './lib/api-client.mjs';
 const API_URL = process.env.API_URL || '';
 const APP_ORIGIN = process.env.APP_ORIGIN || '';
 const EMAIL = process.env.TEST_LOGIN_EMAIL || '';
 const PASSWORD = process.env.TEST_LOGIN_PASSWORD || '';
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 async function request(query, variables = {}, cookie = '') {
   const controller = new AbortController();

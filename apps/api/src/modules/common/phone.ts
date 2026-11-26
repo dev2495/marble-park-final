@@ -48,5 +48,7 @@ export async function customersByMobileKey(prisma: any, input: unknown, options:
   const ids = rows.map((row) => row.id).filter((id) => id !== options.excludeId);
   if (!ids.length) return [];
   const customers = await prisma.customer.findMany({ where: { id: { in: ids } } });
-  return ids.map((id) => customers.find((row: any) => row.id === id)).filter(Boolean);
+  // The index takes the last 10 digits; the cleaner refuses to guess on an 11-digit typo.
+  // Keep only rows whose saved number reads as this same key, so both agree (sales lane, A15).
+  return ids.map((id) => customers.find((row: any) => row.id === id)).filter((row: any) => row && mobileKey(row.mobile) === key);
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { gql, useMutation, useQuery } from "@apollo/client";
 import { ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, Clock3, Search, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,9 @@ import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { QueryErrorBanner } from "@/components/query-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
+import { useBusyAction } from "@/hooks/use-busy-action";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const DATA = gql`
   query PurchaseOrderCostReadiness($search: String, $skip: Int) {
@@ -36,6 +39,18 @@ export default function PurchaseOrderCostReadinessPage() {
   const [reason, setReason] = useState("Supplier rate received after inward");
   const [notice, setNotice] = useState("");
   const debounced = useDebouncedValue(search, 250);
+  const formRef = useRef<HTMLDivElement>(null);
+  const { isBusy, run } = useBusyAction();
+  function pickOrder(id: string) {
+    setSelectedId(id);
+    // On a phone or tablet the form sits below the list, so bring it into view and focus its first field.
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches) {
+      window.setTimeout(() => {
+        formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        formRef.current?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+      }, 60);
+    }
+  }
   const { data, loading, error, refetch } = useQuery(DATA, {
     variables: { search: debounced || undefined, skip: page * 20 },
     fetchPolicy: "cache-and-network",
@@ -58,7 +73,11 @@ export default function PurchaseOrderCostReadinessPage() {
       rateUom: line.product?.purchaseUom || line.product?.baseUom || line.rateUom || line.unit || "PC",
     }])));
     setNotice("");
-  }, [selected]);
+    // Reset only when a different PO is chosen, so a background refresh never wipes typed rates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
+  const dirtyRates = Object.values(rates).some((row) => Number(row?.enteredUnitCost || 0) > 0);
+  useUnsavedChanges(dirtyRates, "You have supplier rates typed but not saved. Leave without saving?");
 
   const ready = useMemo(() => {
     if (!selected) return false;
@@ -66,6 +85,9 @@ export default function PurchaseOrderCostReadinessPage() {
   }, [rates, selected]);
 
   async function submit() {
+    await run("complete-costs", submitInner);
+  }
+  async function submitInner() {
     if (!selected || !ready) return;
     const response = await complete({
       variables: {
@@ -88,22 +110,22 @@ export default function PurchaseOrderCostReadinessPage() {
 
   return (
     <div className="space-y-5 pb-10">
-      {error ? <QueryErrorBanner error={error} /> : null}
+      {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {completeState.error ? <QueryErrorBanner error={completeState.error} /> : null}
-      <header className="overflow-hidden rounded-[1.4rem] bg-[linear-gradient(128deg,#251f1e_0%,#522925_55%,#a9332d_100%)] p-6 text-white shadow-[0_24px_70px_-38px_rgba(91,30,26,.8)] sm:p-8">
-        <Button asChild variant="outline" size="sm" className="border-white/25 bg-white/10 text-white hover:bg-white/20">
-          <Link href="/dashboard/procurement?view=orders"><ArrowLeft className="mr-2 h-4 w-4" />Procurement</Link>
-        </Button>
-        <div className="mt-5 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[.2em] text-rose-100/80">Permanent delayed-cost queue</p>
-            <h1 className="mt-2 font-display text-3xl font-bold sm:text-4xl">Complete supplier costs when they arrive.</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-rose-50/75">Stock may be inwarded before the supplier confirms a rate. Those GRN and lot rows remain cost-pending here—across days or weeks—until an owner records the verified rate.</p>
+      <header className="mp-page-header">
+        <div className="min-w-0">
+          <p className="mp-eyebrow">Permanent delayed-cost queue</p>
+          <h1 className="mp-page-title">Complete supplier costs when they arrive.</h1>
+          <p className="mp-page-sub">Stock may be inwarded before the supplier confirms a rate. Those GRN and lot rows remain cost-pending here, across days or weeks, until an owner records the verified rate.</p>
+        </div>
+        <div className="mp-page-actions">
+          <div className="mp-card px-4 py-2">
+            <b className="text-2xl tabular-nums text-[var(--ink)]">{loading && !data ? "…" : Number(data?.purchaseOrderCostReadinessPage?.total || 0).toLocaleString("en-IN")}</b>
+            <p className="text-xs text-[var(--ink-4)]">PO(s) have cost pending</p>
           </div>
-          <div className="rounded-2xl border border-white/15 bg-white/10 px-5 py-4">
-            <b className="text-3xl">{Number(data?.purchaseOrderCostReadinessPage?.total || 0).toLocaleString("en-IN")}</b>
-            <p className="text-xs text-rose-100/75">PO(s) have cost pending</p>
-          </div>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/dashboard/procurement?view=orders"><ArrowLeft className="mr-2 h-4 w-4" />Procurement</Link>
+          </Button>
         </div>
       </header>
 
@@ -114,12 +136,12 @@ export default function PurchaseOrderCostReadinessPage() {
           <div className="border-b border-[var(--line)] p-4">
             <label className="relative block">
               <Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
-              <Input className="pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search PO, supplier, SKU or item" />
+              <Input className="pl-9" aria-label="Search cost-pending purchase orders" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search PO, supplier, SKU or item" />
             </label>
           </div>
           <div className="divide-y divide-[var(--line)]">
             {items.map((order: any) => (
-              <button key={order.id} type="button" onClick={() => setSelectedId(order.id)} className={`w-full p-4 text-left transition ${selected?.id === order.id ? "bg-[#fff0eb]" : "hover:bg-[var(--bg-soft)]"}`}>
+              <button key={order.id} type="button" onClick={() => pickOrder(order.id)} className={`w-full p-4 text-left transition ${selected?.id === order.id ? "bg-[#fff0eb]" : "hover:bg-[var(--bg-soft)]"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <span><b className="block">{order.poNumber}</b><small className="text-[var(--ink-4)]">{order.vendorName}</small></span>
                   <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-800">{order.missingLineCount} line(s)</span>
@@ -127,15 +149,16 @@ export default function PurchaseOrderCostReadinessPage() {
                 <p className="mt-2 text-xs text-[var(--ink-4)]">{Number(order.receivedMissingLineCount || 0)} received · {Number(order.awaitingInwardMissingLineCount || 0)} awaiting inward · {Number(order.taxRate || 0) > 0 ? `GST ${Number(order.taxRate)}%` : "Without GST"}</p>
               </button>
             ))}
-            {!loading && !items.length ? <div className="p-10 text-center"><CheckCircle2 className="mx-auto h-8 w-8 text-emerald-600" /><b className="mt-3 block">Every PO and received lot has cost</b><p className="mt-1 text-sm text-[var(--ink-4)]">Nothing is waiting for a supplier rate.</p></div> : null}
+            {loading && !data ? <div className="space-y-2 p-4" aria-busy="true"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
+            {!loading && !error && !items.length ? <div className="p-10 text-center"><CheckCircle2 className="mx-auto h-8 w-8 text-emerald-600" /><b className="mt-3 block">Every PO and received lot has cost</b><p className="mt-1 text-sm text-[var(--ink-4)]">Nothing is waiting for a supplier rate.</p></div> : null}
           </div>
           <div className="flex items-center justify-between border-t border-[var(--line)] p-3">
             <span className="text-xs text-[var(--ink-4)]">Page {page + 1}</span>
-            <div className="flex gap-2"><Button size="icon" variant="outline" disabled={!page} onClick={() => setPage(page - 1)}><ChevronLeft className="h-4 w-4" /></Button><Button size="icon" variant="outline" disabled={!data?.purchaseOrderCostReadinessPage?.hasNext} onClick={() => setPage(page + 1)}><ChevronRight className="h-4 w-4" /></Button></div>
+            <div className="flex gap-2"><Button size="icon" variant="outline" aria-label="Previous page" disabled={!page} onClick={() => setPage(page - 1)}><ChevronLeft className="h-4 w-4" /></Button><Button size="icon" variant="outline" aria-label="Next page" disabled={!data?.purchaseOrderCostReadinessPage?.hasNext} onClick={() => setPage(page + 1)}><ChevronRight className="h-4 w-4" /></Button></div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-sm">
+        <div ref={formRef} className="scroll-mt-24 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-sm">
           {selected ? (
             <>
               <div className="flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-4 sm:flex-row sm:items-start">
@@ -153,8 +176,8 @@ export default function PurchaseOrderCostReadinessPage() {
                   </div>;
                 })}
               </div>
-              <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Audit reason<Input className="mt-1" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
-              <Button className="mt-4 w-full" disabled={!ready || reason.trim().length < 3 || completeState.loading} onClick={submit}><ShieldCheck className="mr-2 h-4 w-4" />{completeState.loading ? "Saving verified cost snapshots…" : "Save selected verified costs"}</Button>
+              <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Audit reason<Input className="mt-1" aria-required="true" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+              <Button className="mt-4 w-full" disabled={!ready || reason.trim().length < 3 || completeState.loading || isBusy("complete-costs")} onClick={submit}><ShieldCheck className="mr-2 h-4 w-4" />{completeState.loading ? "Saving verified cost snapshots…" : "Save selected verified costs"}</Button>
               <p className="mt-3 text-xs leading-5 text-[var(--ink-4)]">Supplier rate is entered before GST. The saved PO discount is applied automatically; the resulting pre-tax net base-unit cost completes any linked GRN and lot without changing stock quantities.</p>
             </>
           ) : <div className="grid min-h-[28rem] place-items-center text-center"><div><CircleDollarSign className="mx-auto h-9 w-9 text-[var(--ink-4)]" /><b className="mt-3 block">Choose a cost-pending PO</b><p className="mt-1 text-sm text-[var(--ink-4)]">Its received and not-yet-received missing-cost lines will load here.</p></div></div>}

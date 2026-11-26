@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { assert, createApiClient } from './lib/api-client.mjs';
 
 if (process.env.ALLOW_MUTATING_ACCEPTANCE !== 'true') {
   throw new Error('Refusing to mutate data. Run only against an isolated acceptance database with ALLOW_MUTATING_ACCEPTANCE=true.');
@@ -10,22 +11,8 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
 const createdIds = [];
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
-async function gql(query, variables = {}, token, expectError = false) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const json = await response.json();
-  const error = json.errors?.map((row) => row.message).join('; ') || '';
-  if (expectError) return error;
-  if (!response.ok || error) throw new Error(error || `GraphQL request failed (${response.status})`);
-  return json.data;
-}
+const { gql } = createApiClient(API);
 
 async function createProduct(input, token) {
   const product = (await gql(

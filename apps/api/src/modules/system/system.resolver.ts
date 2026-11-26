@@ -36,6 +36,9 @@ class UpdateSettingsInput {
   @Field({ nullable: true }) supportEmail?: string;
   @Field({ nullable: true }) publicCatalogueEnabled?: boolean;
   @Field({ nullable: true }) publicPriceMode?: string;
+  @Field({ nullable: true }) documentNumberingPeriod?: string;
+  @Field({ nullable: true }) invoiceGstSplitEnabled?: boolean;
+  @Field({ nullable: true }) quoteExpiryEnabled?: boolean;
 }
 
 @InputType()

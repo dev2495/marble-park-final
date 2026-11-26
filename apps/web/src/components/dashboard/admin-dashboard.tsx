@@ -153,7 +153,7 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
                 </BarChart>
               </ResponsiveContainer>
             </div>
-          ) : <EmptyState>No users yet — create one.</EmptyState>}
+          ) : <EmptyState>No users yet. Create one.</EmptyState>}
         </Panel>
 
         <Panel title="Approval load" subtitle={`${totalApprovals} item${totalApprovals === 1 ? '' : 's'} across queues`} tone="warning">
@@ -185,7 +185,7 @@ export function AdminDashboard({ effectiveRole, user }: { effectiveRole: string;
       <section className="grid gap-3 xl:grid-cols-[1.2fr_1fr]">
         <Panel title="Team directory" subtitle={`${activeUsers.length} active member${activeUsers.length === 1 ? '' : 's'}`} tone="success" rightAction={<Link href="/dashboard/users" className="text-xs font-medium text-[#1d4ed8] hover:underline">Manage</Link>}>
           <div className="overflow-hidden rounded-r3 border border-[#f4f4f5]">
-            <table className="w-full text-sm">
+            <table className="mp-table-skin w-full text-sm">
               <thead className="bg-[#fafafa] text-left text-[11px] font-semibold uppercase tracking-wider text-[#71717a]">
                 <tr>
                   <th className="px-3 py-2.5">Person</th>

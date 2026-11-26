@@ -99,6 +99,24 @@ export async function requirePermission(
   throw new ForbiddenException('This action is restricted');
 }
 
+// For rights whose default holders in the permission table are wider than who
+// may act today (price approvals): the listed roles keep acting unless the
+// owner explicitly switched the right off for that user, and anyone the owner
+// explicitly switched it on for may act too. Role defaults alone grant nothing new.
+export async function requireRolesOrExplicitPermission(
+  prisma: PrismaService,
+  ctx: GraphqlRequestContext,
+  permission: PermissionKey,
+  roles: string[],
+): Promise<SessionUser> {
+  const user = await getSessionUser(prisma, ctx);
+  if (!user) throw new UnauthorizedException('Login required');
+  const override = user.permissionOverrides?.[permission];
+  if (override === true) return user;
+  if (override !== false && roles.includes(user.role)) return user;
+  throw new ForbiddenException('This action is restricted');
+}
+
 export async function requireAnyPermission(
   prisma: PrismaService,
   ctx: GraphqlRequestContext,

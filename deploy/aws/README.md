@@ -76,6 +76,16 @@ Local backups are included in the initial server-only deployment. An S3 target
 can be added later by setting `BACKUP_S3_URI` and attaching a narrowly scoped IAM
 instance profile, but that is intentionally not created without client approval.
 
+**Backups must leave the server.** `backup.sh` still makes the local backup, but
+when `BACKUP_S3_URI` is empty (or the copy to it fails) it now prints a
+`BACKUP NOT SAFE` / `BACKUP FAILED TO LEAVE THE SERVER` line, exits non-zero (so
+`systemctl status marble-park-backup` shows failed), and puts a high-priority
+message in the owner's work inbox. The one setting needed is `BACKUP_S3_URI`
+in `deploy/aws/.env` (for example `s3://your-bucket/marble-park/`) plus an
+instance profile that allows `s3:PutObject`. If the owner knowingly accepts
+server-only backups, set `BACKUP_ALLOW_LOCAL_ONLY=1` to turn the failure into a
+warning line.
+
 ### Bounded local backup retention
 
 The existing nightly timer runs at 02:15 UTC plus up to 15 minutes of jitter

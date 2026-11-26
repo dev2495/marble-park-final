@@ -1,7 +1,7 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Int, Context, GraphQLISODateTime } from '@nestjs/graphql';
 import { ProductsService } from './products.service';
 import { GraphQLJSON } from 'graphql-scalars';
-import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProductMrpBulkService } from './product-mrp-bulk.service';
 

@@ -3,6 +3,7 @@ import { DispatchService } from './dispatch.service';
 import { GraphQLJSON } from 'graphql-scalars';
 import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
+import { OptionalPhone, Quantity, TextLimit } from '../common/input-rules';
 
 @ObjectType()
 export class DispatchOutput {
@@ -41,6 +42,10 @@ export class DispatchOutput {
 
   @Field({ nullable: true })
   challanNumber?: string;
+
+  // Read only: when the job or challan was made (the dispatch dashboard's 7-day chart).
+  @Field(() => Date, { nullable: true })
+  createdAt?: Date;
 }
 
 @InputType()
@@ -69,18 +74,32 @@ export class CreateChallanInput {
   @Field(() => String, { nullable: true })
   salesOrderId?: string;
 
+  @TextLimit(80)
   @Field(() => String, { nullable: true })
   transporter?: string;
 
+  @TextLimit(20)
   @Field(() => String, { nullable: true })
   vehicleNo?: string;
 
+  @TextLimit(80)
   @Field(() => String, { nullable: true })
   driverName?: string;
 
+  @OptionalPhone()
   @Field(() => String, { nullable: true })
   driverPhone?: string;
 
+  /** 'vehicle' (details required) or 'self_pickup' (customer collects; no vehicle details). */
+  @TextLimit(20)
+  @Field(() => String, { nullable: true })
+  transportMode?: string;
+
+  @TextLimit(500)
+  @Field(() => String, { nullable: true })
+  notes?: string;
+
+  @Quantity()
   @Field(() => Number, { nullable: true })
   packages?: number;
 
@@ -89,6 +108,16 @@ export class CreateChallanInput {
 
   @Field(() => String, { nullable: true })
   pickListId?: string;
+}
+
+@InputType()
+export class ChallanTransportUpdateInput {
+  @TextLimit(20) @Field(() => String, { nullable: true }) transportMode?: string;
+  @TextLimit(20) @Field(() => String, { nullable: true }) vehicleNo?: string;
+  @TextLimit(80) @Field(() => String, { nullable: true }) driverName?: string;
+  @OptionalPhone() @Field(() => String, { nullable: true }) driverPhone?: string;
+  @TextLimit(80) @Field(() => String, { nullable: true }) transporter?: string;
+  @TextLimit(500) @Field(() => String, { nullable: true }) notes?: string;
 }
 
 @InputType()
@@ -204,8 +233,39 @@ export class DispatchResolver {
 
   @Mutation(() => DispatchOutput)
   async createChallan(@Args('input') input: CreateChallanInput, @Context() ctx: GraphqlRequestContext) {
-    await requirePermission(this.prisma, ctx, 'dispatch.manage');
-    return this.dispatch.createChallan(input as any);
+    const user = await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.createChallan(input as any, user.id);
+  }
+
+  // Same access as creating and moving challans.
+  @Mutation(() => GraphQLJSON)
+  async updateChallanTransport(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: ChallanTransportUpdateInput,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.updateChallanTransport(id, input as any, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async cancelChallan(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.cancelChallan(id, reason, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async reportFailedDelivery(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'dispatch.manage');
+    return this.dispatch.reportFailedDelivery(id, reason, user.id);
   }
 
   @Mutation(() => GraphQLJSON)

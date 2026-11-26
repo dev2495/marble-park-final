@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { BadgeCheck, Check, ImagePlus, Loader2, Plus, Save, Search, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 import { cn } from '@/lib/utils';
@@ -29,6 +30,7 @@ function Field({ label, children, className = '' }: { label: string; children: R
 export default function BrandMasterPage() {
   const { data, loading, error, refetch } = useQuery(DATA, { fetchPolicy: 'cache-and-network' });
   const [form, setForm] = useState<any>(empty);
+  useUnsavedChanges(!form.id && JSON.stringify(form) !== JSON.stringify(empty), 'This form has details that are not saved yet. Leave without saving?');
   const [search, setSearch] = useState('');
   const [message, setMessage] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -125,7 +127,7 @@ export default function BrandMasterPage() {
       </form>
 
       <div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold text-[var(--ink)]">Served brands</h2><p className="mt-1 text-sm text-[var(--ink-4)]">Select a row to edit its name, logo or quotation availability.</p></div><div className="flex h-10 min-w-64 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search brands" className="w-full bg-transparent text-sm text-[var(--ink)] outline-none" /></div></div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold text-[var(--ink)]">Served brands</h2><p className="mt-1 text-sm text-[var(--ink-4)]">Select a row to edit its name, logo or quotation availability.</p></div><div className="flex h-10 min-w-64 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" /><input aria-label="Search brands" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search brands" className="w-full bg-transparent text-sm text-[var(--ink)] outline-none" /></div></div>
         {loading && !rows.length ? <div className="mt-5 h-40 animate-pulse rounded-md bg-[var(--bg-soft)]" /> : null}
         <div className="mt-5 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {filtered.map((row) => <button key={row.id} onClick={() => selectRow(row)} className={cn('group flex min-h-28 items-center gap-4 rounded-md border bg-[var(--surface)] p-4 text-left transition hover:border-[var(--brand-400)] hover:shadow-md-soft', form.id === row.id ? 'border-[var(--brand-500)] ring-2 ring-[var(--ring)]' : 'border-[var(--line)]')}>

@@ -117,6 +117,11 @@ export class AuthResolver {
     return status;
   }
 
+  @Query(() => Boolean, { description: 'True when "forgot password" can really mail a link. When false, tell the person to contact the owner.' })
+  passwordResetByEmailAvailable() {
+    return this.auth.passwordResetDeliveryAvailable();
+  }
+
   @Mutation(() => Boolean)
   async requestPasswordReset(@Args('email') email: string) {
     await this.auth.requestPasswordReset(email);

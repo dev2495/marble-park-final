@@ -3,7 +3,7 @@
 import { gql, useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { tileStockUnitGeometry } from "@/lib/tile-rate";
 import {
   ArrowLeft,
@@ -26,6 +26,14 @@ import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
 import { PhysicalQrScanner } from "@/components/physical-qr-scanner";
 import { ScanProductSelector } from "@/components/scan-product-selector";
+import { useBusyAction } from "@/hooks/use-busy-action";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Field } from "@/components/ui/field";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill } from "@/components/ui/status-pill";
+import { Textarea } from "@/components/ui/textarea";
 
 const INTENT = gql`
   query Intent($id: ID!) {
@@ -136,7 +144,7 @@ function emptyWhenZero(value: unknown) {
 
 // Rows are grouped by area, so committing on every keystroke would move the
 // row (and drop focus) after one letter. Edit locally, commit on blur/Enter.
-function AreaInput({ value, disabled, onCommit }: { value: string; disabled: boolean; onCommit: (area: string) => void }) {
+function AreaInput({ id, value, disabled, onCommit }: { id?: string; value: string; disabled: boolean; onCommit: (area: string) => void }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const commit = () => {
@@ -146,6 +154,7 @@ function AreaInput({ value, disabled, onCommit }: { value: string; disabled: boo
   };
   return (
     <Input
+      id={id}
       list="intent-area-list"
       value={draft}
       placeholder="Type or pick an area"
@@ -182,25 +191,22 @@ function rowPricingQuantity(row: Row) {
   return Number(row.qty || 0);
 }
 
-function intentStatusBadge(status: string) {
+function intentStatusBadge(status: string): { tone: "success" | "warning" | "danger" | "info" | "neutral"; label: string } {
   switch (status) {
     case "draft":
-      return { bg: "bg-slate-100 text-slate-700", label: "Draft" };
+      return { tone: "neutral", label: "Draft" };
     case "pending_quote":
-      return { bg: "bg-amber-100 text-amber-800", label: "Pending quote" };
+      return { tone: "warning", label: "Pending quote" };
     case "in_quote":
-      return {
-        bg: "bg-blue-100 text-blue-800",
-        label: "Office building quote",
-      };
+      return { tone: "info", label: "Office building quote" };
     case "converted":
-      return { bg: "bg-emerald-100 text-emerald-800", label: "Converted" };
+      return { tone: "success", label: "Converted" };
     case "cancelled":
-      return { bg: "bg-rose-100 text-rose-700", label: "Cancelled" };
+      return { tone: "danger", label: "Cancelled" };
     case "quoted":
-      return { bg: "bg-emerald-100 text-emerald-800", label: "Quote built" };
+      return { tone: "success", label: "Quote built" };
     default:
-      return { bg: "bg-slate-100 text-slate-700", label: status };
+      return { tone: "neutral", label: status };
   }
 }
 
@@ -228,8 +234,15 @@ export default function IntentDetailPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
+  // A refresh in the background (pick up, release, another tab) must never replace rows the user is typing.
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
+  const forceReload = useRef(false);
+  useUnsavedChanges(dirty, "This intent has changes that are not saved. Leave and lose them?");
   useEffect(() => {
     if (!intent) return;
+    if (dirtyRef.current && !forceReload.current) return;
+    forceReload.current = false;
     const incoming = (Array.isArray(intent.rows) ? intent.rows : []).map(
       (r: any) => ({
         productId: r.productId,
@@ -269,6 +282,7 @@ export default function IntentDetailPage() {
     UPDATE_INTENT,
     {
       onCompleted: () => {
+        forceReload.current = true;
         setDirty(false);
         refetch();
       },
@@ -276,12 +290,17 @@ export default function IntentDetailPage() {
   );
   const [submitIntent, { loading: submitting, error: submitError }] =
     useMutation(SUBMIT_INTENT, { onCompleted: () => refetch() });
-  const [cancelIntent, { loading: cancelling }] = useMutation(CANCEL_INTENT, {
-    onCompleted: () => refetch(),
+  const [cancelIntent, { loading: cancelling, error: cancelError }] = useMutation(CANCEL_INTENT, {
+    onCompleted: () => { forceReload.current = true; setDirty(false); refetch(); },
   });
-  const [pickUp] = useMutation(PICK_UP, { onCompleted: () => refetch() });
-  const [release] = useMutation(RELEASE, { onCompleted: () => refetch() });
-  const [requestChanges] = useMutation(REQUEST_CHANGES);
+  const [pickUp, { error: pickUpError }] = useMutation(PICK_UP, { onCompleted: () => refetch() });
+  const [release, { error: releaseError }] = useMutation(RELEASE, { onCompleted: () => refetch() });
+  const [requestChanges, { error: requestError }] = useMutation(REQUEST_CHANGES);
+  // One button action at a time; a second tap while one runs does nothing.
+  const busyAction = useBusyAction();
+  const [confirm, setConfirm] = useState<"" | "cancel" | "release" | "build">("");
+  const [cancelReason, setCancelReason] = useState("");
+  const [notice, setNotice] = useState("");
   const [generate, { loading: generating, error: generateError }] = useMutation(
     GENERATE,
     {
@@ -358,7 +377,11 @@ export default function IntentDetailPage() {
 
   if (loading && !intent)
     return (
-      <div className="p-10 text-sm text-[var(--ink-3)]">Loading intent…</div>
+      <div role="status" aria-label="Loading intent" className="space-y-4">
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
     );
   if (error && !intent)
     return (
@@ -368,7 +391,11 @@ export default function IntentDetailPage() {
     );
   if (!intent)
     return (
-      <div className="p-10 text-sm text-[var(--ink-3)]">Intent not found.</div>
+      <EmptyState
+        title="This intent was not found"
+        description="It may have been removed, or the link is old."
+        action={<Link href="/dashboard/intents" className="inline-flex h-10 items-center rounded-md border border-[var(--line)] px-4 text-sm font-semibold">Back to intents</Link>}
+      />
     );
 
   const badge = intentStatusBadge(intent.status);
@@ -500,19 +527,34 @@ export default function IntentDetailPage() {
     await submitIntent({ variables: { id } });
   };
 
-  const mutationError = saveError || submitError || generateError;
+  // Each action runs through the busy guard and never throws into the page; failures show in the banner above.
+  const guarded = (key: string, task: () => Promise<unknown>) => { void busyAction.run(key, task).catch(() => undefined); };
+  const buildQuote = () => guarded("build", async () => {
+    // Unsaved edits are saved first so the quote is built from what is on screen.
+    if (dirty) await updateIntent({ variables: { id, input: { rows: JSON.stringify(rows), notes } } });
+    await generate({ variables: { intentId: id, note: "Generated from intent editor" } });
+  });
+  const doCancel = () => guarded("cancel", async () => {
+    await cancelIntent({ variables: { id, reason: cancelReason.trim() } });
+    setConfirm("");
+    setCancelReason("");
+  });
+
+  const mutationError = saveError || submitError || generateError || cancelError || pickUpError || releaseError || requestError;
 
   return (
     <div className="space-y-5 pb-12">
       {mutationError ? <QueryErrorBanner error={mutationError} /> : null}
+      {notice ? <div role="status" className="rounded-r4 border border-[var(--info)]/25 bg-[var(--info-bg)] px-4 py-2.5 text-sm font-medium text-[var(--info)]">{notice}</div> : null}
 
       {/* Sticky header */}
       <section className="sticky top-[64px] z-10 -mx-4 lg:-mx-8 border-b border-[var(--line)] bg-[var(--surface)]/95 px-4 py-4 backdrop-blur lg:px-8">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
             <Link
-              href={`/dashboard/leads/${intent.leadId}`}
-              className="mt-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-3)] hover:bg-[var(--bg-soft)]"
+              href={intent.leadId ? `/dashboard/leads/${intent.leadId}` : "/dashboard/intents"}
+              aria-label={intent.leadId ? "Back to the lead" : "Back to intents"}
+              className="mt-1 inline-flex h-11 w-11 shrink-0 sm:h-9 sm:w-9 items-center justify-center rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--ink-3)] hover:bg-[var(--bg-soft)]"
             >
               <ArrowLeft className="h-4 w-4" />
             </Link>
@@ -521,11 +563,7 @@ export default function IntentDetailPage() {
                 <p className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-5)]">
                   Intent
                 </p>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-widest ${badge.bg}`}
-                >
-                  {badge.label}
-                </span>
+                <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
                 <span className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                   {intent.intentType === "revision"
                     ? "Revision"
@@ -567,24 +605,22 @@ export default function IntentDetailPage() {
           {!myLock && (isOwner || isManager) ? (
             <button
               type="button"
-              onClick={() =>
-                requestChanges({
-                  variables: {
-                    id,
-                    message: "Customer asked for further edits",
-                  },
-                })
-              }
-              className="ml-auto rounded-full bg-blue-700 px-3 py-1 text-xs font-bold text-white hover:bg-blue-800"
+              disabled={busyAction.isBusy()}
+              onClick={() => guarded("request", async () => {
+                await requestChanges({ variables: { id, message: "Customer asked for further edits" } });
+                setNotice("The office was asked to release this intent for edits.");
+              })}
+              className="ml-auto min-h-11 rounded-full bg-blue-700 px-4 py-1 text-xs font-bold text-white hover:bg-blue-800 disabled:opacity-60 sm:min-h-0 sm:px-3"
             >
-              Request edit
+              {busyAction.isBusy("request") ? "Asking…" : "Request edit"}
             </button>
           ) : null}
           {myLock || isManager ? (
             <button
               type="button"
-              onClick={() => release({ variables: { id, force: !myLock } })}
-              className="rounded-full bg-white px-3 py-1 text-xs font-bold text-blue-800 ring-1 ring-blue-200 hover:bg-blue-50"
+              disabled={busyAction.isBusy()}
+              onClick={() => setConfirm("release")}
+              className="min-h-11 rounded-full bg-white px-4 py-1 text-xs font-bold text-blue-800 ring-1 ring-blue-200 hover:bg-blue-50 disabled:opacity-60 sm:min-h-0 sm:px-3"
             >
               <Unlock className="mr-1 inline h-3 w-3" /> Release lock
             </button>
@@ -601,7 +637,7 @@ export default function IntentDetailPage() {
       ) : null}
       {isDraft ? (
         <div className="rounded-r4 border border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-slate-700">
-          Draft — only you can see this. Submit when ready for office to price.
+          Draft: only you can see this. Submit when ready for office to price.
         </div>
       ) : null}
       {isConverted ? (
@@ -638,6 +674,7 @@ export default function IntentDetailPage() {
                 <Search className="h-4 w-4 text-[var(--ink-4)]" />
                 <input
                   type="search"
+                  aria-label="Search products to add"
                   placeholder="Search showroom code, SKU, name or brand…"
                   value={searchTerm}
                   onChange={(e) => {
@@ -710,9 +747,7 @@ export default function IntentDetailPage() {
         </div>
 
         {rows.length === 0 ? (
-          <p className="mt-4 rounded-r4 border border-dashed border-[var(--line)] p-8 text-center text-sm text-[var(--ink-4)]">
-            No items yet. {editable ? "Search above to add products." : ""}
-          </p>
+          <EmptyState compact className="mt-4 rounded-r4 border border-dashed border-[var(--line)]" title="No items yet" description={editable ? "Search above to add products." : "Nothing was added to this intent."} />
         ) : null}
 
         <datalist id="intent-area-list">
@@ -768,17 +803,19 @@ export default function IntentDetailPage() {
                                   quoteImage: e.target.value,
                                 })
                               }
+                              aria-label={`Customer-facing image link for ${row.name || "this item"}`}
                               placeholder="Optional customer-facing image URL"
                             />
                           ) : null}
                         </div>
                         <div>
-                          <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                          <label htmlFor={`intent-qty-${flatIdx}`} className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Qty
                           </label>
                           {isAreaPriced(row) ? (
                             <div className="space-y-1">
                               <Input
+                                id={`intent-qty-${flatIdx}`}
                                 type="number"
                                 min="0"
                                 data-needs-value
@@ -797,6 +834,7 @@ export default function IntentDetailPage() {
                             </div>
                           ) : (
                             <Input
+                              id={`intent-qty-${flatIdx}`}
                               type="number"
                               min="1"
                               data-needs-value
@@ -812,10 +850,11 @@ export default function IntentDetailPage() {
                           )}
                         </div>
                         <div>
-                          <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                          <label htmlFor={`intent-unit-${flatIdx}`} className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Unit
                           </label>
                           <Input
+                            id={`intent-unit-${flatIdx}`}
                             value={
                               isAreaPriced(row)
                                 ? `${row.pricingUom} rate / ${row.inventoryUom} stock`
@@ -825,10 +864,11 @@ export default function IntentDetailPage() {
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                          <label htmlFor={`intent-price-${flatIdx}`} className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Price ₹
                           </label>
                           <Input
+                            id={`intent-price-${flatIdx}`}
                             type="number"
                             min="0"
                             placeholder="Rate ₹ (optional)"
@@ -842,10 +882,11 @@ export default function IntentDetailPage() {
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
+                          <label htmlFor={`intent-area-${flatIdx}`} className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
                             Area
                           </label>
                           <AreaInput
+                            id={`intent-area-${flatIdx}`}
                             value={row.area || "General Selection"}
                             onCommit={(area) => updateRow(flatIdx, { area })}
                             disabled={!editable}
@@ -856,7 +897,8 @@ export default function IntentDetailPage() {
                             <button
                               type="button"
                               onClick={() => removeRow(flatIdx)}
-                              className="grid h-9 w-9 place-items-center rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                              aria-label={`Remove ${row.name || "this item"}`}
+                              className="grid h-11 w-11 place-items-center sm:h-9 sm:w-9 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -882,10 +924,11 @@ export default function IntentDetailPage() {
 
       {/* Notes */}
       <section className="rounded-r5 border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm-soft">
-        <label className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
+        <label htmlFor="intent-notes" className="text-xs font-bold uppercase tracking-widest text-[var(--ink-5)]">
           Notes for office
         </label>
         <textarea
+          id="intent-notes"
           value={notes}
           onChange={(e) => {
             setNotes(e.target.value);
@@ -914,8 +957,8 @@ export default function IntentDetailPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={saveDraft}
-                  disabled={saving || !dirty}
+                  onClick={() => guarded("save", async () => { await updateIntent({ variables: { id, input: { rows: JSON.stringify(rows), notes } } }); })}
+                  disabled={saving || !dirty || busyAction.isBusy()}
                 >
                   <Save className="mr-1.5 h-3.5 w-3.5" />{" "}
                   {saving ? "Saving…" : "Save"}
@@ -923,8 +966,8 @@ export default function IntentDetailPage() {
                 {isDraft || isPending ? (
                   <Button
                     size="sm"
-                    onClick={saveAndSubmit}
-                    disabled={submitting || saving || rows.length === 0}
+                    onClick={() => guarded("submit", saveAndSubmit)}
+                    disabled={submitting || saving || rows.length === 0 || busyAction.isBusy()}
                   >
                     <Send className="mr-1.5 h-3.5 w-3.5" />{" "}
                     {submitting
@@ -937,22 +980,15 @@ export default function IntentDetailPage() {
               </>
             ) : null}
             {isOfficeOrManager && isPending ? (
-              <Button size="sm" onClick={() => pickUp({ variables: { id } })}>
+              <Button size="sm" disabled={busyAction.isBusy()} loading={busyAction.isBusy("pickup")} onClick={() => guarded("pickup", async () => { await pickUp({ variables: { id } }); })}>
                 <Hammer className="mr-1.5 h-3.5 w-3.5" /> Pick up
               </Button>
             ) : null}
             {isOfficeOrManager && isLocked && (myLock || isManager) ? (
               <Button
                 size="sm"
-                onClick={() =>
-                  generate({
-                    variables: {
-                      intentId: id,
-                      note: "Generated from intent editor",
-                    },
-                  })
-                }
-                disabled={generating}
+                onClick={() => (dirty ? setConfirm("build") : buildQuote())}
+                disabled={generating || busyAction.isBusy()}
               >
                 <Check className="mr-1.5 h-3.5 w-3.5" />{" "}
                 {generating ? "Generating…" : "Build quote"}
@@ -961,13 +997,9 @@ export default function IntentDetailPage() {
             {!isConverted && !isCancelled ? (
               <button
                 type="button"
-                onClick={() =>
-                  cancelIntent({
-                    variables: { id, reason: "Cancelled from editor" },
-                  })
-                }
-                disabled={cancelling}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-3 text-xs font-bold uppercase tracking-widest text-rose-700 hover:bg-rose-100"
+                onClick={() => setConfirm("cancel")}
+                disabled={cancelling || busyAction.isBusy()}
+                className="inline-flex h-11 items-center sm:h-9 gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-3 text-xs font-bold uppercase tracking-widest text-rose-700 hover:bg-rose-100"
               >
                 <X className="h-3.5 w-3.5" /> Cancel intent
               </button>
@@ -975,6 +1007,44 @@ export default function IntentDetailPage() {
           </div>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={confirm === "cancel"}
+        onOpenChange={(open) => { if (!open) { setConfirm(""); setCancelReason(""); } }}
+        title="Cancel this intent?"
+        description="The intent is frozen for audit and cannot be edited or turned into a quote afterwards."
+        confirmLabel="Cancel intent"
+        cancelLabel="Keep intent"
+        tone="danger"
+        busy={busyAction.isBusy("cancel")}
+        confirmDisabled={!cancelReason.trim()}
+        onConfirm={doCancel}
+      >
+        <Field label="Reason for cancelling" htmlFor="intent-cancel-reason" required hint="Kept in the intent history.">
+          <Textarea id="intent-cancel-reason" rows={3} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Why is this intent being cancelled?" />
+        </Field>
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={confirm === "release"}
+        onOpenChange={(open) => { if (!open) setConfirm(""); }}
+        title="Release the lock?"
+        description={myLock ? "You stop building this quote and the intent goes back to pending for the office." : "You take the lock away from the office staff who is building this quote. They can no longer build the quote from this intent until it is picked up again."}
+        confirmLabel="Release lock"
+        cancelLabel="Keep lock"
+        tone="danger"
+        busy={busyAction.isBusy("release")}
+        onConfirm={() => guarded("release", async () => { await release({ variables: { id, force: !myLock } }); setConfirm(""); })}
+      />
+      <ConfirmDialog
+        open={confirm === "build"}
+        onOpenChange={(open) => { if (!open) setConfirm(""); }}
+        title="Save your edits and build the quote?"
+        description="You changed this intent and have not saved yet. Your edits are saved first, then the quote is built from what is on screen."
+        confirmLabel="Save and build quote"
+        cancelLabel="Not yet"
+        busy={busyAction.isBusy("build")}
+        onConfirm={() => { setConfirm(""); buildQuote(); }}
+      />
     </div>
   );
 }

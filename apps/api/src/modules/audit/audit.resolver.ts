@@ -2,7 +2,7 @@ import { Args, Context, Field, InputType, ObjectType, Query, Resolver, Int } fro
 import { GraphQLJSON } from 'graphql-scalars';
 import { AuditService } from './audit.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { GraphqlRequestContext, requireRoles } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission } from '../auth/session-context';
 
 /**
  * Audit GraphQL surface.
@@ -98,7 +98,7 @@ export class AuditResolver {
     @Args('take', { type: () => Int, nullable: true }) take?: number,
     @Args('cursor', { nullable: true }) cursor?: string,
   ): Promise<AuditEventsPage> {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'audit.view', ['admin', 'owner']);
     const result = await this.audit.findAll({ filters: filters as any, take, cursor });
     return result as any;
   }
@@ -108,7 +108,7 @@ export class AuditResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('range', { nullable: true }) range?: string,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'audit.view', ['admin', 'owner']);
     return this.audit.getStats(range || 'week');
   }
 
@@ -118,7 +118,7 @@ export class AuditResolver {
     @Args('from', { nullable: true }) from?: Date,
     @Args('to', { nullable: true }) to?: Date,
   ) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'audit.view', ['admin', 'owner']);
     return this.audit.getFacets(from, to);
   }
 
@@ -128,7 +128,7 @@ export class AuditResolver {
     @Args('filters', { nullable: true }) filters?: AuditFiltersInput,
     @Args('take', { type: () => Int, nullable: true }) take?: number,
   ): Promise<string> {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    await requirePermission(this.prisma, ctx, 'audit.view', ['admin', 'owner']);
     return this.audit.exportCsv(filters as any, take);
   }
 }

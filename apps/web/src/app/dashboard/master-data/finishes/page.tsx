@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { gql, useMutation, useQuery } from '@apollo/client';
 import { Palette, RotateCcw, Save, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
 import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 import { MasterQuickAdd } from '@/components/quick-add/quick-add';
@@ -15,6 +16,7 @@ const empty = { id: '', name: '', code: '', description: '', status: 'active', s
 export default function FinishMasterPage() {
   const { data, loading, error, refetch } = useQuery(DATA, { fetchPolicy: 'cache-and-network' });
   const [form, setForm] = useState<any>(empty);
+  useUnsavedChanges(!form.id && JSON.stringify(form) !== JSON.stringify(empty), 'This form has details that are not saved yet. Leave without saving?');
   const [search, setSearch] = useState('');
   const [save, { loading: saving, error: saveError }] = useMutation(SAVE, { onCompleted: () => { void refetch(); setForm(empty); } });
   const rows = useMemo<any[]>(() => data?.masterProductFinishes || [], [data?.masterProductFinishes]);
@@ -42,7 +44,7 @@ export default function FinishMasterPage() {
           <div className="mt-5 flex gap-3"><Button disabled={saving || !form.name} onClick={submit}><Save className="mr-2 h-4 w-4" />Save finish</Button><Button variant="outline" onClick={() => setForm(empty)}><RotateCcw className="mr-2 h-4 w-4" />Clear</Button></div>
         </div>
         <div className="mp-panel p-5">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="text-2xl font-semibold text-[var(--ink)]">Finishes</h2><p className="mt-1 text-sm text-[var(--ink-4)]">{rows.length} values in master data.</p></div><div className="flex h-10 min-w-72 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search finishes" className="w-full bg-transparent text-sm outline-none" /></div></div>
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="text-2xl font-semibold text-[var(--ink)]">Finishes</h2><p className="mt-1 text-sm text-[var(--ink-4)]">{rows.length} values in master data.</p></div><div className="flex h-10 min-w-72 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" /><input aria-label="Search finishes" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search finishes" className="w-full bg-transparent text-sm outline-none" /></div></div>
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filtered.map((row) => <button key={row.id} onClick={() => setForm(row)} className="rounded-r4 border border-[var(--line)] bg-[var(--surface)] p-4 text-left transition hover:border-[var(--brand-300)] hover:shadow-sm-soft"><p className="font-semibold text-[var(--ink)]">{row.name}</p><p className="mt-1 text-xs font-semibold uppercase tracking-wider text-[var(--ink-5)]">{row.status} · {row.code || 'No code'}</p></button>)}</div>
           {!loading && !filtered.length ? <div className="mt-5 rounded-r4 border border-dashed border-[var(--line)] p-8 text-center text-sm font-semibold text-[var(--ink-4)]">No finishes found.</div> : null}
         </div>

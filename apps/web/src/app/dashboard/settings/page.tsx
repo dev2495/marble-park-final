@@ -70,6 +70,9 @@ const defaults = {
   supportEmail: '',
   publicCatalogueEnabled: true,
   publicPriceMode: 'mrp',
+  documentNumberingPeriod: 'calendar',
+  invoiceGstSplitEnabled: false,
+  quoteExpiryEnabled: false,
   approvalDiscountThreshold: 15,
   quoteBrandSelectionMode: 'all',
   quoteBrandIds: [],
@@ -235,6 +238,9 @@ export default function SettingsPage() {
           supportEmail: form.supportEmail || '',
           publicCatalogueEnabled: form.publicCatalogueEnabled !== false,
           publicPriceMode: form.publicPriceMode || 'mrp',
+          documentNumberingPeriod: form.documentNumberingPeriod === 'financial' ? 'financial' : 'calendar',
+          invoiceGstSplitEnabled: form.invoiceGstSplitEnabled === true,
+          quoteExpiryEnabled: form.quoteExpiryEnabled === true,
           approvalDiscountThreshold: Number(form.approvalDiscountThreshold || defaults.approvalDiscountThreshold),
           quoteBrandSelectionMode: form.quoteBrandSelectionMode || 'all',
           quoteBrandIds: Array.isArray(form.quoteBrandIds) ? form.quoteBrandIds : [],
@@ -341,12 +347,12 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-7 pb-10">
-      <section className="border-b border-[var(--line)] pb-6 pt-2">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ink-4)]">System settings</p>
-            <h1 className="mt-2 max-w-4xl font-display text-3xl font-bold text-[var(--ink)] lg:text-4xl">Company identity and customer documents</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">
+      <section className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0">
+            <p className="mp-eyebrow">System settings</p>
+            <h1 className="mp-page-title">Company identity and customer documents</h1>
+            <p className="mp-page-sub">
               Keep quote PDFs, sales order links, approval thresholds and customer-facing contact information correct before client testing starts.
             </p>
           </div>
@@ -434,6 +440,34 @@ export default function SettingsPage() {
             <Field label="Default terms"><textarea value={form.defaultTerms || ''} onChange={(e) => setForm({ ...form, defaultTerms: e.target.value })} className="min-h-32 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" placeholder="Freight, payment, return, cancellation and image-reference terms" /></Field>
             <Field label="Bank details"><textarea value={form.bankDetails || ''} onChange={(e) => setForm({ ...form, bankDetails: e.target.value })} className="min-h-32 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none focus:border-[var(--brand-400)]" placeholder="Bank, account number, IFSC and branch" /></Field>
             <Field label="Document footer" className="lg:col-span-2"><Input value={form.documentFooter || ''} onChange={(e) => setForm({ ...form, documentFooter: e.target.value })} placeholder="Thank you for choosing Marble Park." /></Field>
+          </div>
+        </div>
+
+        <div className="mp-panel p-5 lg:p-6 xl:col-span-2">
+          <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-r3 bg-[var(--brand-50)] text-[var(--brand-700)]"><Landmark className="h-5 w-5" /></div><div><h2 className="text-2xl font-semibold tracking-tight text-[var(--ink)]">Invoices and numbering</h2><p className="text-sm text-[var(--ink-4)]">Check both with your accountant before changing them. Documents already made keep their numbers and layout.</p></div></div>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <fieldset className="rounded-md border border-[var(--line)] p-4">
+              <legend className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">Document numbers restart</legend>
+              <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                {[
+                  ['calendar', 'Every 1 January', 'Numbers look like INV/2026/0001. This is how it works today.'],
+                  ['financial', 'Every 1 April', 'Indian financial year, India time. Numbers look like INV/2026-27/0001.'],
+                ].map(([value, label, help]) => (
+                  <label key={value} className={cn('cursor-pointer rounded-md border p-3', (form.documentNumberingPeriod || 'calendar') === value ? 'border-[var(--ink)] bg-[var(--bg-soft)]' : 'border-[var(--line)]')}>
+                    <span className="flex items-center gap-2 font-semibold text-[var(--ink)]"><input type="radio" name="document-numbering-period" value={value} checked={(form.documentNumberingPeriod || 'calendar') === value} onChange={() => setForm({ ...form, documentNumberingPeriod: value })} className="accent-[#9d2a24]" />{label}</span>
+                    <span className="mt-1 block text-xs leading-5 text-[var(--ink-4)]">{help}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <label className="flex items-start gap-3 rounded-md border border-[var(--line)] p-4">
+              <input type="checkbox" className="mt-1 h-5 w-5 accent-[#9d2a24]" checked={form.invoiceGstSplitEnabled === true} onChange={(e) => setForm({ ...form, invoiceGstSplitEnabled: e.target.checked })} />
+              <span><span className="block font-semibold text-[var(--ink)]">Show GST split on invoices</span><span className="block text-xs leading-5 text-[var(--ink-4)]">Invoice shows CGST and SGST for customers in our state, IGST for other states, and the HSN code on each line. An order without GST prints as a Bill of Supply instead of a Tax Invoice. Off means invoices print as they do today.</span></span>
+            </label>
+            <label className="flex items-start gap-3 rounded-md border border-[var(--line)] p-4">
+              <input type="checkbox" className="mt-1 h-5 w-5 accent-[#9d2a24]" checked={form.quoteExpiryEnabled === true} onChange={(e) => setForm({ ...form, quoteExpiryEnabled: e.target.checked })} />
+              <span><span className="block font-semibold text-[var(--ink)]">Expire quotes after their valid-until date</span><span className="block text-xs leading-5 text-[var(--ink-4)]">An open quote past its Valid until date is marked expired and cannot be sent, shared or ordered until a new date is saved. Off means quotes stay open as they do today.</span></span>
+            </label>
           </div>
         </div>
 

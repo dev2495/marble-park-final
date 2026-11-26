@@ -2,6 +2,8 @@ import { stockStatus, stockThreshold } from '../common/stock-status';
 import { Injectable } from '@nestjs/common';
 import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 import { PrismaService } from '../prisma/prisma.service';
+import { COUNTED_QUOTE_WHERE, CONFIRMED_QUOTE_STATUSES, isQuoteConfirmed, quoteValue } from '../owner-reports/quote-value';
+import { mrpPerBaseUnit } from '../common/stock-units';
 
 @Injectable()
 export class DashboardsService {
@@ -23,29 +25,30 @@ export class DashboardsService {
     ] = await Promise.all([
       this.prisma.lead.count(),
       this.prisma.lead.count({ where: { stage: 'new' } }),
-      this.prisma.quote.count(),
-      this.prisma.quote.count({ where: { status: 'sent' } }),
-      this.prisma.quote.count({ where: { status: 'confirmed' } }),
+      this.prisma.quote.count({ where: COUNTED_QUOTE_WHERE as any }),
+      this.prisma.quote.count({ where: { ...COUNTED_QUOTE_WHERE, status: 'sent' } as any }),
+      this.prisma.quote.count({ where: { ...COUNTED_QUOTE_WHERE, OR: [{ status: { in: CONFIRMED_QUOTE_STATUSES } }, { confirmedAt: { not: null } }] } as any }),
       this.prisma.product.count(),
-      this.prisma.product.findMany({ select: { media: true } }),
+      // Counted in the database instead of loading every product's media on each call (same rule as before).
+      this.prisma.$queryRawUnsafe<Array<{ count: number }>>(`SELECT COUNT(*)::int AS count FROM "Product" WHERE jsonb_typeof(media) = 'object' AND ((media->>'primary') IS NOT NULL AND (media->>'primary') NOT IN ('', 'false', '0', 'null') OR (jsonb_typeof(media->'gallery') = 'array' AND jsonb_array_length(media->'gallery') > 0))`),
       this.prisma.customer.count(),
       this.prisma.user.count({ where: { active: true } }),
-      this.prisma.dispatchJob.count({ where: { status: { not: 'delivered' } } as any }),
+      // Open dispatch work only: delivered and cancelled jobs are finished.
+      this.prisma.dispatchJob.count({ where: { status: { in: ['pending', 'packed', 'dispatched'] } } as any }),
       this.prisma.dispatchJob.count({ where: { status: 'pending' } }),
     ]);
-    const catalogueImages = (productsForImageCoverage as any[]).filter((product) => {
-      const media: any = product.media || {};
-      return Boolean(media.primary || (Array.isArray(media.gallery) && media.gallery.length));
-    }).length;
+    const catalogueImages = Number((productsForImageCoverage as any[])[0]?.count || 0);
 
+    // Same value rule as the owner reports: pre-GST taxable value, replaced and cancelled revisions left out.
     const allQuotes = await this.prisma.quote.findMany({
-      include: { customer: true, owner: true },
+      where: COUNTED_QUOTE_WHERE,
+      select: { id: true, ownerId: true, status: true, confirmedAt: true, lines: true, commercialTotal: true, supersededByQuoteId: true },
       orderBy: { createdAt: 'desc' },
     } as any) as any[];
-    const totalQuoteValue = allQuotes.reduce((sum, quote) => sum + this.quoteTotal(quote.lines), 0);
+    const totalQuoteValue = allQuotes.reduce((sum, quote) => sum + this.quoteTotal(quote), 0);
     const confirmedQuoteValue = allQuotes
-      .filter((quote) => quote.status === 'confirmed')
-      .reduce((sum, quote) => sum + this.quoteTotal(quote.lines), 0);
+      .filter((quote) => isQuoteConfirmed(quote))
+      .reduce((sum, quote) => sum + this.quoteTotal(quote), 0);
 
     const salesUsers = await this.prisma.user.findMany({
       where: { active: true, role: { in: ['owner', 'admin', 'sales_manager', 'sales'] } as any },
@@ -66,7 +69,7 @@ export class DashboardsService {
     const userPerformance = salesUsers.map((user) => {
       const ownedQuotes = allQuotes.filter((quote) => quote.ownerId === user.id);
       const leads: any = leadGroups.find((row: any) => row.ownerId === user.id);
-      const confirmed = ownedQuotes.filter((quote) => quote.status === 'confirmed');
+      const confirmed = ownedQuotes.filter((quote) => isQuoteConfirmed(quote));
       return {
         id: user.id,
         name: user.name,
@@ -76,8 +79,8 @@ export class DashboardsService {
         pipelineValue: leads?._sum?.expectedValue || 0,
         quotes: ownedQuotes.length,
         confirmedQuotes: confirmed.length,
-        quoteValue: ownedQuotes.reduce((sum, quote) => sum + this.quoteTotal(quote.lines), 0),
-        wonValue: confirmed.reduce((sum, quote) => sum + this.quoteTotal(quote.lines), 0),
+        quoteValue: ownedQuotes.reduce((sum, quote) => sum + this.quoteTotal(quote), 0),
+        wonValue: confirmed.reduce((sum, quote) => sum + this.quoteTotal(quote), 0),
       };
     });
 
@@ -149,11 +152,13 @@ export class DashboardsService {
   }
 
   async getSalesDashboard(ownerId: string): Promise<any> {
-    const [myLeads, myQuotes, wonQuotes] = await Promise.all([
+    const [myLeads, myCountedQuotes] = await Promise.all([
       this.prisma.lead.count({ where: { ownerId } }),
-      this.prisma.quote.count({ where: { ownerId } }),
-      this.prisma.quote.count({ where: { ownerId, status: 'confirmed' } }),
+      this.prisma.quote.findMany({ where: { ownerId, ...COUNTED_QUOTE_WHERE } as any, select: { status: true, confirmedAt: true, lines: true, commercialTotal: true } }) as Promise<any[]>,
     ]);
+    const myQuotes = myCountedQuotes.length;
+    const myConfirmed = myCountedQuotes.filter((quote) => isQuoteConfirmed(quote));
+    const wonQuotes = myConfirmed.length;
 
     const pendingFollowupsRaw = await this.prisma.followUpTask.findMany({
       where: {
@@ -193,7 +198,9 @@ export class DashboardsService {
         myLeads,
         myQuotes,
         wonQuotes,
-        quoteValue: quotes.reduce((sum, quote) => sum + this.quoteTotal(quote.lines), 0),
+        // Whole book of live quotes, not just the five recent ones listed below.
+        quoteValue: myCountedQuotes.reduce((sum, quote) => sum + this.quoteTotal(quote), 0),
+        wonValue: myConfirmed.reduce((sum, quote) => sum + this.quoteTotal(quote), 0),
       },
       pendingFollowups,
       recentQuotes: quotes,
@@ -212,7 +219,7 @@ export class DashboardsService {
       lowStock: 0,
       outOfStock: 0,
       totalValue: 0,
-      // Value of stock at Product Master MRP (before GST), and what could not be valued.
+      // Value of stock at Product Master MRP (GST included), and what could not be valued.
       mrpValue: 0,
       mrpMissingProducts: 0,
       mrpMissingUnits: 0,
@@ -234,8 +241,9 @@ export class DashboardsService {
       summary.totalValue += stock.onHandValue;
       if (stock.onHand > 0) {
         summary.stockedProducts++;
-        const mrp = Number(balance.product?.defaultMrpInclusive || 0);
-        if (mrp > 0) summary.mrpValue += stock.onHand * mrp;
+        // On hand is in stock base units (pieces for boxed tiles); convert MRP to that unit first.
+        const mrp = mrpPerBaseUnit(balance.product);
+        if (mrp > 0) summary.mrpValue += Math.round(stock.onHand * mrp * 100) / 100;
         else { summary.mrpMissingProducts++; summary.mrpMissingUnits += stock.onHand; }
         const missing = Math.min(stock.onHand, stock.missingCostQuantity);
         summary.missingCostUnits += missing;
@@ -247,12 +255,7 @@ export class DashboardsService {
     return { stats: summary, summary };
   }
 
-  private quoteTotal(lines: any) {
-    const parsed = Array.isArray(lines) ? lines : [];
-    return parsed.reduce((sum, line: any) => {
-      const qty = Number(line.qty || line.quantity || 0);
-      const price = Number(line.price || line.sellPrice || 0);
-      return sum + qty * price;
-    }, 0);
+  private quoteTotal(quote: any) {
+    return quoteValue(quote).taxable;
   }
 }

@@ -4,8 +4,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ulid } from 'ulid';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { Prisma } from '@prisma/client';
+import { mrpPerBaseUnit } from '../common/stock-units';
 import { computeStockAlertState, evaluateStockAlertTransitionsTx, isAlertingState, normalizeThreshold } from './stock-alerts';
 import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
+import { ACTIVE_DEMAND_STATUSES } from '../common/demand-status';
 
 export interface CreateInventoryInput {
   productId: string;
@@ -280,8 +282,17 @@ export class InventoryService {
       ${source} ${where}
     `);
     const row = rows[0] || {};
+    // Stock is in base units (pieces for a boxed tile) while MRP may be per box or per sq ft:
+    // value it through the same per-base-unit MRP the owner reports use, so both figures agree.
+    const mrpWhere = Prisma.sql`WHERE ${Prisma.join([...conditions, Prisma.sql`b."onHand" > 0`], ' AND ')}`;
+    const mrpRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT b."onHand" AS "onHand", p."defaultMrpInclusive" AS "defaultMrpInclusive", p."baseUom" AS "baseUom",
+        p."priceUom" AS "priceUom", p."salesUom" AS "salesUom", p."unit" AS "unit", p."piecesPerPack" AS "piecesPerPack", p."coveragePerPack" AS "coveragePerPack"
+      ${source} ${mrpWhere}
+    `);
+    row.mrpValue = (mrpRows as any[]).reduce((sum, item) => sum + Number(item.onHand || 0) * mrpPerBaseUnit({ ...item, defaultMrpInclusive: Number(item.defaultMrpInclusive || 0) }), 0);
     const demand = await this.prisma.purchaseDemand.aggregate({
-      where: { status: { in: ['open', 'partially_ordered', 'ordered'] }, ...(args.category ? { category: { equals: args.category, mode: 'insensitive' } } : {}), ...(args.brand ? { brand: { equals: args.brand, mode: 'insensitive' } } : {}) } as any,
+      where: { status: { in: ACTIVE_DEMAND_STATUSES }, ...(args.category ? { category: { equals: args.category, mode: 'insensitive' } } : {}), ...(args.brand ? { brand: { equals: args.brand, mode: 'insensitive' } } : {}) } as any,
       _sum: { quantity: true, receivedQuantity: true },
     });
     return {

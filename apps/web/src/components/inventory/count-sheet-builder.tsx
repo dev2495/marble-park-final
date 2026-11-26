@@ -6,6 +6,7 @@ import { gql, useApolloClient, useQuery } from '@apollo/client';
 import { Check, ChevronLeft, ChevronRight, Download, Loader2, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useFocusTrap } from '@/hooks/use-focus-trap';
 
 const OPTIONS = gql`query CountSheetOptions { countSheetOptions }`;
 const CANDIDATES = gql`query CountSheetCandidates($filter: CountSheetFilterInput, $skip: Int, $take: Int) { countSheetCandidates(filter: $filter, skip: $skip, take: $take) }`;
@@ -49,6 +50,8 @@ function Chips({ label, items, selected, onToggle }: { label: string; items: Arr
 export function CountSheetBuilder({ onClose }: { onClose: () => void }) {
   const client = useApolloClient();
   const dialogRef = useRef<HTMLDivElement>(null);
+  // Tab stays inside the sheet builder; its own effect below handles Escape, first focus and focus return.
+  useFocusTrap(dialogRef, true, { returnFocus: false });
   const [search, setSearch] = useState('');
   const [categories, setCategories] = useState<string[]>([]);
   const [brands, setBrands] = useState<string[]>([]);
@@ -124,7 +127,7 @@ export function CountSheetBuilder({ onClose }: { onClose: () => void }) {
           <aside className="space-y-5 overflow-y-auto border-b border-[var(--line)] p-5 lg:border-b-0 lg:border-r">
             <label className="block">
               <span className="text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Search</span>
-              <span className="mt-2 flex h-10 items-center rounded-md border border-[var(--line)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" aria-hidden="true" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Code, name or brand" className="min-w-0 flex-1 bg-transparent text-sm text-[var(--ink)] outline-none" /></span>
+              <span className="mt-2 flex h-10 items-center rounded-md border border-[var(--line)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" aria-hidden="true" /><input aria-label="Code, name or brand" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Code, name or brand" className="min-w-0 flex-1 bg-transparent text-sm text-[var(--ink)] outline-none" /></span>
             </label>
             <Chips label="Category" items={optionData?.countSheetOptions?.categories || []} selected={categories} onToggle={(name) => toggle(categories, setCategories, name)} />
             <Chips label="Brand" items={optionData?.countSheetOptions?.brands || []} selected={brands} onToggle={(name) => toggle(brands, setBrands, name)} />

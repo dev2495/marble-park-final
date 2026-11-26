@@ -1,6 +1,7 @@
 "use client";
+import { statusLabel } from "@/lib/utils";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { gql, useMutation, useQuery } from "@apollo/client";
 import {
@@ -24,6 +25,11 @@ import { Input } from "@/components/ui/input";
 import { ProductImageFrame } from "@/components/product-image-frame";
 import { QueryErrorBanner } from "@/components/query-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useBusyAction } from "@/hooks/use-busy-action";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill } from "@/components/ui/status-pill";
 
 const DATA = gql`
   query DisplayAssetDesk(
@@ -177,6 +183,9 @@ export default function DisplayAssetsPage() {
   const [reason, setReason] = useState(
     "Routine showroom display lifecycle update",
   );
+  const formRef = useRef<HTMLFormElement>(null);
+  const { isBusy, run: runBusy } = useBusyAction();
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
   const dProduct = useDebouncedValue(productSearch.trim(), 250);
   const dLot = useDebouncedValue(lotSearch.trim(), 250);
   const dDisplay = useDebouncedValue(displaySearch.trim(), 250);
@@ -282,8 +291,11 @@ export default function DisplayAssetsPage() {
     setLotSearch("");
     setReason("Routine showroom display lifecycle update");
   }
-  async function save(event: React.FormEvent) {
+  function save(event: React.FormEvent) {
     event.preventDefault();
+    return runBusy("save", () => saveInner());
+  }
+  async function saveInner() {
     setFormError("");
     const common = {
       internalCode: form.internalCode,
@@ -352,6 +364,9 @@ export default function DisplayAssetsPage() {
     await refetch();
   }
   async function retryLabel() {
+    await runBusy("retry-label", retryLabelInner);
+  }
+  async function retryLabelInner() {
     if (!labelRecovery) return;
     await label({
       variables: {
@@ -367,6 +382,9 @@ export default function DisplayAssetsPage() {
     setLabelRecovery(null);
   }
   async function act(action: string) {
+    await runBusy(`act:${action}`, () => actInner(action));
+  }
+  async function actInner(action: string) {
     if (!form.id || !reason.trim()) return;
     await transition({
       variables: {
@@ -389,7 +407,16 @@ export default function DisplayAssetsPage() {
     clear();
     await refetch();
   }
+  const actionLabels: Record<string, string> = {
+    inspect: "Record an inspection",
+    maintenance: "Move to maintenance",
+    reactivate: "Reactivate this asset",
+    remove: "Remove this display asset",
+    return_to_stock: "Return to the stock lot",
+  };
+  useUnsavedChanges(!form.id && Boolean(form.productId || form.internalCode), "A display asset is half filled in. Leave without saving?");
   const busy =
+    isBusy() ||
     createState.loading ||
     updateState.loading ||
     labelState.loading ||
@@ -398,33 +425,33 @@ export default function DisplayAssetsPage() {
   return (
     <div className="space-y-5 pb-12">
       {errors.map((item: any, index) => (
-        <QueryErrorBanner key={index} error={item} />
+        <QueryErrorBanner key={index} error={item} onRetry={index === 0 ? () => void refetch() : undefined} />
       ))}
-      <header className="relative overflow-hidden rounded-[1.75rem] border border-[#decac2] bg-[radial-gradient(circle_at_86%_10%,rgba(234,137,93,.26),transparent_28%),linear-gradient(125deg,#1e1a18,#4f2922_54%,#9a3b2f)] p-6 text-white shadow-[0_26px_70px_-42px_rgba(90,28,20,.85)] sm:p-8">
-        <div className="flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
-          <div>
+      <header className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0">
             <Link
               href="/dashboard/inventory"
-              className="inline-flex items-center gap-2 text-xs font-semibold text-white/65"
+              className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ink-4)] hover:text-[var(--ink)]"
             >
               <ArrowLeft className="h-4 w-4" />
               Inventory
             </Link>
-            <p className="mt-5 text-[11px] font-bold uppercase tracking-[.18em] text-[#f2c6b7]">
+            <p className="mp-eyebrow mt-3">
               Showroom asset control
             </p>
-            <h1 className="mt-2 max-w-3xl font-display text-3xl font-bold sm:text-4xl">
-              Move exact stock to display—or register a true vendor sample.
+            <h1 className="mp-page-title">
+              Move exact stock to display, or register a true vendor sample.
             </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/72">
+            <p className="mp-page-sub">
               Purchased goods must be posted through GRN first, then issued from
               their exact lot. Free vendor samples are registered directly and
               never inflate saleable inventory.
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="mp-page-actions grid grid-cols-3 gap-2 text-center">
             <Metric
-              value={data?.displaySamplesPage?.total || 0}
+              value={loading && !data ? "…" : data?.displaySamplesPage?.total || 0}
               label="assets"
             />
             <Metric
@@ -456,8 +483,9 @@ export default function DisplayAssetsPage() {
       ) : null}
       <section className="grid min-w-0 gap-5 xl:grid-cols-[27rem_1fr]">
         <form
+          ref={formRef}
           onSubmit={save}
-          className="mp-panel min-w-0 self-start overflow-hidden xl:sticky xl:top-20"
+          className="mp-panel scroll-mt-20 min-w-0 self-start overflow-hidden xl:sticky xl:top-20"
         >
           <div className="border-b border-[var(--line)] bg-[var(--bg-soft)] p-5">
             <div className="flex items-start justify-between gap-3">
@@ -787,7 +815,7 @@ export default function DisplayAssetsPage() {
                 (!form.id && !selectedProduct) ||
                 !form.internalCode ||
                 !form.locationId ||
-                !form.displayZone.trim() ||
+                !String(form.displayZone || "").trim() ||
                 (!form.id && sourceMode === "inventory" && !form.sourceLotId)
               }
             >
@@ -811,7 +839,7 @@ export default function DisplayAssetsPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => act("inspect")}
+                    onClick={() => setPendingAction("inspect")}
                   >
                     Inspect
                   </Button>
@@ -819,7 +847,7 @@ export default function DisplayAssetsPage() {
                     type="button"
                     variant="outline"
                     onClick={() =>
-                      act(
+                      setPendingAction(
                         form.status === "maintenance"
                           ? "reactivate"
                           : "maintenance",
@@ -833,7 +861,7 @@ export default function DisplayAssetsPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => act("remove")}
+                    onClick={() => setPendingAction("remove")}
                   >
                     Remove
                   </Button>
@@ -841,7 +869,7 @@ export default function DisplayAssetsPage() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => act("return_to_stock")}
+                      onClick={() => setPendingAction("return_to_stock")}
                     >
                       Return to lot
                     </Button>
@@ -851,6 +879,26 @@ export default function DisplayAssetsPage() {
             ) : null}
           </div>
         </form>
+        <ConfirmDialog
+          open={pendingAction !== null}
+          onOpenChange={(open) => { if (!open) setPendingAction(null); }}
+          title={`${actionLabels[pendingAction || ""] || "Confirm"}?`}
+          description={`This changes ${form.internalCode || "the asset"} and posts a stock entry where stock is involved. The reason is saved in the audit history.`}
+          confirmLabel="Yes, do it"
+          tone={pendingAction === "remove" || pendingAction === "return_to_stock" ? "danger" : "default"}
+          busy={isBusy(`act:${pendingAction}`)}
+          confirmDisabled={!reason.trim()}
+          onConfirm={async () => {
+            if (!pendingAction) return;
+            await act(pendingAction);
+            setPendingAction(null);
+          }}
+        >
+          <label className="block text-xs font-semibold text-[var(--ink-4)]">
+            Reason (required)
+            <Input className="mt-1" value={reason} onChange={(e) => setReason(e.target.value)} />
+          </label>
+        </ConfirmDialog>
         <div className="min-w-0 space-y-4">
           <div className="grid gap-3 md:grid-cols-3">
             <Guide
@@ -883,6 +931,7 @@ export default function DisplayAssetsPage() {
                   <Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
                   <Input
                     className="pl-9 sm:w-72"
+                    aria-label="Search display assets"
                     value={displaySearch}
                     onChange={(e) => {
                       setDisplaySearch(e.target.value);
@@ -892,6 +941,7 @@ export default function DisplayAssetsPage() {
                   />
                 </label>
                 <select
+                  aria-label="Filter by state"
                   value={displayStatus}
                   onChange={(e) => {
                     setDisplayStatus(e.target.value);
@@ -911,14 +961,24 @@ export default function DisplayAssetsPage() {
                 <button
                   type="button"
                   key={row.id}
-                  onClick={() =>
+                  onClick={() => {
                     setForm({
                       ...blank,
                       ...row,
+                      displayZone: row.displayZone || "",
+                      internalCode: row.internalCode || "",
+                      locationId: row.locationId || "",
+                      condition: row.condition || blank.condition,
+                      issuedQuantity: row.issuedQuantity ?? blank.issuedQuantity,
                       nextInspectionAt:
                         row.nextInspectionAt?.slice?.(0, 10) || "",
-                    })
-                  }
+                    });
+                    // Bring the edit form into view and focus it, since on a small screen it sits above the list.
+                    window.setTimeout(() => {
+                      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      formRef.current?.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled])")?.focus({ preventScroll: true });
+                    }, 60);
+                  }}
                   className="bg-[var(--surface)] p-4 text-left transition hover:bg-[var(--bg-soft)]"
                 >
                   <div className="flex gap-3">
@@ -943,14 +1003,19 @@ export default function DisplayAssetsPage() {
                         {row.displayZone || "Zone pending"}
                       </span>
                       <small className="mt-1 block text-[var(--ink-4)]">
-                        {row.status} · {row.condition} ·{" "}
-                        {row.issuedQuantity || 0} stock units
+                        <StatusPill tone={row.status === "active" ? "success" : row.status === "maintenance" ? "warning" : "neutral"}>{statusLabel(row.status)}</StatusPill>{" "}
+                        {row.condition} · {row.issuedQuantity || 0} stock units
                       </small>
                     </span>
                   </div>
                 </button>
               ))}
-              {!loading && !register.length ? (
+              {loading && !register.length ? (
+                <div className="col-span-full space-y-2 bg-[var(--surface)] p-4" aria-busy="true">
+                  <Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" />
+                </div>
+              ) : null}
+              {!loading && !error && !register.length ? (
                 <div className="col-span-full grid min-h-48 place-items-center p-8 text-center">
                   <div>
                     <Store className="mx-auto h-7 w-7 text-[var(--ink-5)]" />
@@ -972,6 +1037,7 @@ export default function DisplayAssetsPage() {
                 <Button
                   size="icon"
                   variant="outline"
+                  aria-label="Previous page"
                   disabled={!page}
                   onClick={() => setPage(page - 1)}
                 >
@@ -980,6 +1046,7 @@ export default function DisplayAssetsPage() {
                 <Button
                   size="icon"
                   variant="outline"
+                  aria-label="Next page"
                   disabled={!data?.displaySamplesPage?.hasNext}
                   onClick={() => setPage(page + 1)}
                 >
@@ -999,13 +1066,13 @@ export default function DisplayAssetsPage() {
     </div>
   );
 }
-function Metric({ value, label }: { value: number; label: string }) {
+function Metric({ value, label }: { value: number | string; label: string }) {
   return (
-    <div className="min-w-24 rounded-2xl border border-white/10 bg-white/10 p-3 backdrop-blur">
-      <b className="text-2xl tabular-nums">
-        {Number(value || 0).toLocaleString("en-IN")}
+    <div className="mp-card min-w-24 p-3">
+      <b className="text-2xl tabular-nums text-[var(--ink)]">
+        {typeof value === "string" ? value : Number(value || 0).toLocaleString("en-IN")}
       </b>
-      <p className="mt-1 text-xs font-semibold uppercase text-white/55">
+      <p className="mt-1 text-xs font-semibold uppercase text-[var(--ink-4)]">
         {label}
       </p>
     </div>

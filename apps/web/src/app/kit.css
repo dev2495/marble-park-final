@@ -1,0 +1,356 @@
+/*
+ * Marble Park UI kit styles (uisystem lane).
+ * Imported by app/layout.tsx after globals.css, so these come after the
+ * Tailwind utilities and win ties without !important.
+ *
+ *  1. Status pill          6. Tables
+ *  2. Spinner              7. Touch targets (coarse pointers)
+ *  3. Skeleton             8. Shell: skip link, side menu, top bar
+ *  4. Empty state          9. Reduced motion
+ *  5. Fields and inputs   10. Print
+ */
+
+/* 1 ── Status pill ─────────────────────────────────────────────────────── */
+.mp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  padding: 2px 10px 2px 8px;
+  border-radius: var(--rp);
+  border: 1px solid transparent;
+  background: var(--neutral-bg);
+  color: var(--neutral-fg);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  text-transform: none;
+}
+.mp-pill__dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.9;
+}
+.mp-pill--success { background: var(--success-bg); color: var(--success-fg); border-color: color-mix(in srgb, var(--success-border) 28%, transparent); }
+.mp-pill--warning { background: var(--warning-bg); color: var(--warning-fg); border-color: color-mix(in srgb, var(--warning-border) 30%, transparent); }
+.mp-pill--danger  { background: var(--danger-bg);  color: var(--danger-fg);  border-color: color-mix(in srgb, var(--danger-border) 28%, transparent); }
+.mp-pill--info    { background: var(--info-bg);    color: var(--info-fg);    border-color: color-mix(in srgb, var(--info-border) 28%, transparent); }
+.mp-pill--neutral { background: var(--neutral-bg); color: var(--neutral-fg); border-color: var(--line); }
+
+/* Status helpers for pages that do not use the component. */
+.mp-tone-success { color: var(--success-fg); }
+.mp-tone-warning { color: var(--warning-fg); }
+.mp-tone-danger  { color: var(--danger-fg); }
+.mp-tone-info    { color: var(--info-fg); }
+.mp-callout {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 12px 14px; border-radius: var(--r4);
+  border: 1px solid var(--line); border-left-width: 3px;
+  background: var(--surface-2); color: var(--ink-2);
+  font-size: var(--fs-sm); line-height: 1.5;
+}
+.mp-callout--success { background: var(--success-bg); border-color: var(--success-border); }
+.mp-callout--warning { background: var(--warning-bg); border-color: var(--warning-border); }
+.mp-callout--danger  { background: var(--danger-bg);  border-color: var(--danger-border); }
+.mp-callout--info    { background: var(--info-bg);    border-color: var(--info-border); }
+
+/* Old Tailwind fill buttons that carry white text keep a passing fill in dark. */
+:where(.dark) .bg-\[var\(--success\)\] { background-color: var(--success-solid); }
+:where(.dark) .bg-\[var\(--warning\)\] { background-color: var(--warning-solid); }
+:where(.dark) .bg-\[var\(--danger\)\]  { background-color: var(--danger-solid); }
+:where(.dark) .bg-\[var\(--info\)\]    { background-color: var(--info-solid); }
+
+/* 2 ── Spinner (Button loading) ────────────────────────────────────────── */
+.mp-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex: none;
+  margin-right: 0.5em;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.85;
+  animation: mp-spin 700ms linear infinite;
+}
+@keyframes mp-spin { to { transform: rotate(360deg); } }
+
+/* 3 ── Skeleton ────────────────────────────────────────────────────────── */
+.mp-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--ink) 7%, var(--surface));
+}
+.mp-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 70%, transparent), transparent);
+  animation: mp-shimmer 1.4s var(--eo) infinite;
+}
+:where(.dark) .mp-skeleton { background: color-mix(in srgb, #ffffff 6%, var(--surface)); }
+:where(.dark) .mp-skeleton::after { background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent); }
+@keyframes mp-shimmer { to { transform: translateX(100%); } }
+
+/* 4 ── Empty state ─────────────────────────────────────────────────────── */
+.mp-empty__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  color: var(--ink-4);
+  background:
+    radial-gradient(60px 40px at 30% 0%, var(--surface-glow), transparent 70%),
+    var(--bg-soft);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), var(--sh-sm);
+}
+:where(.dark) .mp-empty__icon { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04); }
+
+/* 5 ── Fields and inputs ───────────────────────────────────────────────── */
+.mp-field-label {
+  display: block;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+.mp-field[data-invalid] :is(input, select, textarea, button[role="combobox"]) {
+  border-color: var(--danger-border);
+}
+.mp-field[data-invalid] :is(input, select, textarea):focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger-border) 22%, transparent);
+}
+/* Shared control look (Input, Select, Textarea, SelectMenu trigger). */
+/* Colours come from the components' own classes so a page can still pass
+   border-* or bg-*; only hover is added here. */
+:where(.mp-control):hover:not(:disabled):not(:focus):not([aria-invalid="true"]) { border-color: var(--input-border-hover); }
+
+/* Hand-written fields in pages mostly use border-[var(--line)] (1.25:1).
+   Inside the app, give text fields, selects and text areas the 3:1 edge
+   without touching each page. Focused and invalid fields keep their colour. */
+:where(.mp-app-shell) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), select, textarea):is([class*="border-[var(--line)]"], [class*="border-[var(--line-strong)]"]):not(:focus):not([aria-invalid="true"]) {
+  border-color: var(--input-border);
+}
+
+/* Native <select> with a drawn chevron (Select primitive). */
+.mp-select-chevron {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 16px;
+}
+
+/* Numbers in fields and cells line up. */
+input[type="number"], input[inputmode="decimal"], input[inputmode="numeric"] { font-variant-numeric: tabular-nums; }
+
+/* 6 ── Tables ──────────────────────────────────────────────────────────── */
+.mp-app-shell table { font-variant-numeric: tabular-nums; }
+.mp-app-shell th { text-align: start; }
+/* Numeric helper classes for any table. */
+.mp-num, .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mp-num-center { text-align: center; font-variant-numeric: tabular-nums; }
+
+.mp-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-sm); color: var(--ink-2); }
+.mp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-4);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mp-table tbody td { padding: 12px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+.mp-table tbody tr:last-child td { border-bottom: 0; }
+.mp-table tbody tr { transition: background-color var(--df) var(--eo); }
+.mp-table tbody tr:hover td { background: color-mix(in srgb, var(--brand-600) 3.5%, var(--surface)); }
+.mp-table--zebra tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--ink) 2%, var(--surface)); }
+.mp-table--dense thead th { padding: 8px 12px; }
+.mp-table--dense tbody td { padding: 8px 12px; }
+.mp-table tbody tr[data-selected] td { background: var(--brand-50); }
+.mp-table tbody tr[data-clickable] { cursor: pointer; }
+
+/* Kit table look for older hand-styled tables: colours, header type and row lines only.
+   Cell padding stays with the page, so nothing is padded twice. */
+.mp-table-skin { color: var(--ink-2); }
+.mp-table-skin thead th {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-4);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.mp-table-skin tbody td { border-bottom-color: var(--line-soft); }
+.mp-table-skin tbody tr { transition: background-color var(--df) var(--eo); }
+.mp-table-skin tbody tr:hover > td { background: color-mix(in srgb, var(--brand-600) 3.5%, var(--surface)); }
+.mp-table tbody tr[data-clickable]:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+:where(.dark) .mp-table tbody tr:hover td { background: rgba(255, 255, 255, 0.03); }
+:where(.dark) .mp-table--zebra tbody tr:nth-child(even) td { background: rgba(255, 255, 255, 0.02); }
+
+.mp-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r5);
+  background: var(--surface);
+  box-shadow: var(--sh-sm);
+}
+
+/* Page header pattern: <header class="mp-page-header"><div><p class="mp-eyebrow">..</p><h1 class="mp-page-title">..</h1><p class="mp-page-sub">..</p></div><div class="mp-page-actions">..</div></header> */
+.mp-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 20px;
+  margin-bottom: 20px;
+}
+.mp-eyebrow {
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-700);
+}
+.mp-page-title {
+  margin-top: 2px;
+  font-size: clamp(1.25rem, 1.05rem + 0.8vw, 1.625rem);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.mp-page-sub { margin-top: 4px; max-width: 62ch; font-size: var(--fs-sm); line-height: 1.5; color: var(--ink-4); }
+.mp-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Small text floor inside the app: 10 and 11px become 12px. Print labels are outside the shell and keep their sizes. */
+.mp-app-shell .text-\[10px\], .mp-app-shell .text-\[11px\] { font-size: 0.75rem; }
+
+/* 7 ── Touch targets ───────────────────────────────────────────────────── */
+/* Desktop keeps its density; finger pointers (iPad, phone) get 44px. */
+@media (pointer: coarse) {
+  .mp-tap { min-height: var(--tap); }
+  .mp-tap-icon { min-height: var(--tap); min-width: var(--tap); }
+  .mp-control { min-height: var(--tap); font-size: 16px; } /* 16px stops iOS zooming into the field */
+  .mp-icon-btn { min-height: var(--tap); min-width: var(--tap); }
+  .mp-topbar :is(button, a) { min-height: var(--tap); min-width: var(--tap); }
+  .mp-sidebar nav a, .mp-mobile-nav nav a { min-height: var(--tap); }
+  [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"] { min-height: var(--tap); }
+}
+
+/* 8 ── Shell ───────────────────────────────────────────────────────────── */
+.mp-skip-link {
+  position: fixed;
+  left: 12px;
+  top: 10px;
+  z-index: 200;
+  padding: 10px 16px;
+  border-radius: var(--r4);
+  background: var(--ink);
+  color: var(--surface);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  box-shadow: var(--sh-pop);
+  transform: translateY(-160%);
+  transition: transform var(--db) var(--eo);
+}
+.mp-skip-link:focus, .mp-skip-link:focus-visible { transform: translateY(0); }
+
+.mp-main:focus { outline: none; }
+
+/* Side menu. data-open="true": opened with its toggle button (click, tap or
+   keyboard) and docked; the page moves over to make room. Closed, it is an
+   icon rail that peeks open while a mouse hovers it or while keyboard focus
+   is inside it (:focus-visible only, so a mouse click does not hold it open). */
+.mp-sidebar[data-open="true"] { width: 16rem; }
+.mp-sidebar[data-open="true"] .mp-rail-label { opacity: 1; transform: none; pointer-events: auto; }
+.mp-sidebar[data-open="false"]:has(:focus-visible) { width: 16rem; box-shadow: 0 24px 60px -20px rgba(24, 24, 27, 0.22); }
+.mp-sidebar[data-open="false"]:has(:focus-visible) .mp-rail-label { opacity: 1; transform: none; pointer-events: auto; }
+@media (hover: hover) and (pointer: fine) {
+  .mp-sidebar[data-pinned="false"]:hover { width: 16rem; box-shadow: 0 24px 60px -20px rgba(24, 24, 27, 0.22); }
+  .mp-sidebar[data-pinned="false"]:hover .mp-rail-label { opacity: 1; transform: none; pointer-events: auto; transition-delay: 75ms; }
+}
+.mp-rail-label {
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+.mp-sidebar nav a:focus-visible, .mp-sidebar button:focus-visible { outline-offset: -2px; }
+
+/* Top bar controls share one quiet look. */
+.mp-topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  min-width: 36px;
+  border-radius: var(--r3);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: var(--sh-sm);
+  transition: background-color var(--df) var(--eo), border-color var(--df) var(--eo), color var(--df) var(--eo);
+}
+.mp-topbar-btn:hover { background: var(--bg-soft); border-color: var(--line-strong); color: var(--ink); }
+.mp-topbar-btn[data-state="open"] { background: var(--bg-soft); border-color: var(--line-strong); }
+
+/* Dialog motion */
+.mp-overlay { animation: mp-fade-in 160ms var(--eo) both; }
+.mp-dialog-panel { animation: mp-dialog-in 220ms var(--eo) both; }
+@keyframes mp-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mp-dialog-in { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+.mp-sheet-in-left { animation: mp-sheet-left 240ms var(--eo) both; }
+.mp-sheet-in-right { animation: mp-sheet-right 240ms var(--eo) both; }
+@keyframes mp-sheet-left { from { transform: translateX(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes mp-sheet-right { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.mp-toast-enter { animation: mp-dialog-in 220ms var(--eo) both; }
+
+/* Radix dropdown / popover entrance */
+.mp-pop[data-state="open"] { animation: mp-pop-in 140ms var(--eo) both; }
+@keyframes mp-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+/* 9 ── Reduced motion ──────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .mp-skeleton::after { animation: none; display: none; }
+  .mp-spinner { animation-duration: 1.6s !important; } /* keep a slow turn so "busy" still reads */
+  .mp-overlay, .mp-dialog-panel, .mp-sheet-in-left, .mp-sheet-in-right, .mp-toast-enter, .mp-pop[data-state="open"] { animation: none !important; }
+  .mp-sidebar, .mp-rail-label, .mp-skip-link { transition: none !important; }
+  [class*="hover:-translate-y"]:hover, [class*="hover:translate-y"]:hover, [class*="hover:scale"]:hover { transform: none !important; }
+  .icon-pop:hover, .mp-kpi:hover { transform: none !important; }
+}
+
+/* 10 ── Print ──────────────────────────────────────────────────────────── */
+@media print {
+  @page { margin: 12mm; }
+  html, body, .mp-app-shell { background: #ffffff !important; background-image: none !important; color: #111111 !important; }
+  .mp-sidebar, .mp-topbar, .mp-mobile-nav, .mp-skip-link, .mp-no-print, .no-print,
+  [data-sonner-toaster], [role="alert"].fixed { display: none !important; }
+  .mp-main, .mp-main-shell { padding-left: 0 !important; }
+  .mp-main > .mp-page { padding: 0 !important; }
+  .mp-card, .mp-panel, .mp-kpi, .mp-shell-panel, .mp-table-wrap {
+    box-shadow: none !important;
+    background: #ffffff !important;
+    border-color: #d4d4d8 !important;
+    break-inside: avoid;
+  }
+  .mp-table thead th { position: static; background: #f4f4f5 !important; color: #3f3f46 !important; }
+  .mp-table thead { display: table-header-group; }
+  tr, img { break-inside: avoid; }
+  a[href]::after { content: none; }
+  * { animation: none !important; transition: none !important; }
+}

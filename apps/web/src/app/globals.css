@@ -48,21 +48,61 @@
     --brand-800:    #661c18;
     --brand-900:    #4d1714;
 
-    --success:      #059669;
-    --success-bg:   #ecfdf5;
-    --warning:      #d97706;
-    --warning-bg:   #fffbeb;
-    --danger:       #dc2626;
-    --danger-bg:    #fef2f2;
-    --info:         #0284c7;
-    --info-bg:      #f0f9ff;
+    /* Status tones. --x is the TEXT colour (kept as the old name because 100+
+       call sites use text-[var(--x)]); -fg is the same value by its clear
+       name; -bg the pale tint; -border 3:1 against surface; -solid a fill
+       that carries white text. Ratios are in the uisystem notes. */
+    --success:        #047857;          /* 5.21 on -bg, 5.03 on --bg */
+    --success-fg:     var(--success);
+    --success-bg:     #ecfdf5;
+    --success-border: #059669;          /* 3.77 on surface */
+    --success-solid:  #047857;          /* white text 5.48 */
+    --warning:        #9a4a07;          /* 6.03 on -bg, 5.73 on --bg */
+    --warning-fg:     var(--warning);
+    --warning-bg:     #fffbeb;
+    --warning-border: #d97706;          /* 3.19 on surface */
+    --warning-solid:  #9a4a07;          /* white text 6.26 */
+    --danger:         #b91c1c;          /* 5.91 on -bg, 5.93 on --bg */
+    --danger-fg:      var(--danger);
+    --danger-bg:      #fef2f2;
+    --danger-border:  #dc2626;          /* 4.83 on surface */
+    --danger-solid:   #b91c1c;          /* white text 6.47 */
+    --info:           #0369a1;          /* 5.57 on -bg, 5.44 on --bg */
+    --info-fg:        var(--info);
+    --info-bg:        #f0f9ff;
+    --info-border:    #0284c7;          /* 4.10 on surface */
+    --info-solid:     #0369a1;          /* white text 5.93 */
+    --neutral-fg:     var(--ink-3);
+    --neutral-bg:     var(--bg-soft);
+    --neutral-border: var(--line-strong);
+    --on-solid:       #ffffff;
+
+    /* Form controls: the edge must reach 3:1 (WCAG 1.4.11). */
+    --input-border:       #858995;      /* 3.49 on surface, 3.20 on --bg */
+    --input-border-hover: #6f7380;
+    --input-bg:           var(--surface);
 
     --ring:         rgba(157, 42, 36, 0.30);
+    --focus:        #9d2a24;
+
+    /* Type scale. 13px is the smallest size for real text; 12px only for
+       uppercase labels with tracking. */
+    --fs-2xs: 0.75rem;   /* 12 · eyebrow labels */
+    --fs-xs:  0.8125rem; /* 13 · meta, hints */
+    --fs-sm:  0.875rem;  /* 14 · body, tables */
+    --fs-md:  1rem;      /* 16 */
+    --fs-lg:  1.125rem;  /* 18 */
+    --fs-xl:  1.375rem;  /* 22 · page title */
+
+    /* Touch: 44px minimum on coarse pointers. */
+    --tap: 44px;
 
     --sh-flat:      0 1px 0 rgba(24, 24, 27, 0.04);
     --sh-sm:        0 1px 2px rgba(24, 24, 27, 0.05);
     --sh-md:        0 10px 26px -18px rgba(15, 23, 42, 0.26);
     --sh-lg:        0 24px 70px -34px rgba(15, 23, 42, 0.28);
+    --sh-xl:        0 2px 6px rgba(24, 24, 27, 0.06), 0 32px 80px -24px rgba(15, 23, 42, 0.38);
+    --sh-pop:       0 1px 2px rgba(24, 24, 27, 0.06), 0 16px 40px -12px rgba(15, 23, 42, 0.22);
 
     --r2: 4px; --r3: 6px; --r4: 8px; --r5: 12px; --r6: 16px; --rp: 999px;
 
@@ -128,21 +168,32 @@
     --brand-800:    #f2bcb7;
     --brand-900:    #f9dedb;
 
-    --success:      #10b981;
-    --success-bg:   #052e24;
-    --warning:      #f59e0b;
-    --warning-bg:   #3a2106;
-    --danger:       #ef4444;
-    --danger-bg:    #3a0f0f;
-    --info:         #38bdf8;
-    --info-bg:      #0c2c3f;
+    --success:        #34d399;          /* 7.68 on -bg, 8.35 on surface */
+    --success-bg:     #052e24;
+    --success-border: #10b981;          /* 6.33 on surface */
+    --warning:        #fbbf24;          /* 8.98 on -bg, 9.62 on surface */
+    --warning-bg:     #3a2106;
+    --warning-border: #f59e0b;          /* 7.48 on surface */
+    --danger:         #f87171;          /* 6.05 on -bg, 5.80 on surface */
+    --danger-bg:      #3a0f0f;
+    --danger-border:  #ef4444;          /* 4.27 on surface */
+    --info:           #38bdf8;          /* 6.77 on -bg, 7.50 on surface */
+    --info-bg:        #0c2c3f;
+    --info-border:    #0ea5e9;          /* 5.79 on surface */
+    /* -solid fills stay the light-mode values: white text passes on both. */
+
+    --input-border:       #747889;      /* 3.66 on surface, 3.34 on surface-2 */
+    --input-border-hover: #8a8e9e;
 
     --ring:         rgba(214, 106, 98, 0.45);
+    --focus:        #f1aaa4;
 
     --sh-flat:      0 1px 0 rgba(0, 0, 0, 0.35);
     --sh-sm:        0 1px 2px rgba(0, 0, 0, 0.40);
     --sh-md:        0 4px 12px -4px rgba(0, 0, 0, 0.55);
     --sh-lg:        0 12px 32px -12px rgba(0, 0, 0, 0.65);
+    --sh-xl:        0 0 0 1px rgba(255, 255, 255, 0.04), 0 32px 80px -24px rgba(0, 0, 0, 0.75);
+    --sh-pop:       0 0 0 1px rgba(255, 255, 255, 0.04), 0 16px 40px -12px rgba(0, 0, 0, 0.65);
 
     /* shadcn (dark) */
     --background: 230 14% 9%;
@@ -477,6 +528,9 @@
 :root.dark [class*="bg-[#f7f8fb]"] { background-color: var(--bg) !important; }
 :root.dark [class*="bg-[#f0f2f7]"] { background-color: var(--bg-soft) !important; }
 :root.dark [class*="bg-[#f8fafc]"] { background-color: var(--surface-2) !important; }
+/* Warm near-white panels and table heads written as hex in older pages (were bright islands in dark mode). */
+:root.dark :is([class~="bg-[#f7f4f3]"], [class~="bg-[#fffaf7]"], [class~="bg-[#f7faff]"], [class~="bg-[#fff8f5]"], [class~="bg-[#fffdfb]"], [class~="bg-[#f8f4ef]"], [class~="bg-[#fffdfc]"], [class~="bg-[#fffbf2]"], [class~="bg-[#fffaf9]"], [class~="bg-[#fff8f4]"], [class~="bg-[#fff7f4]"], [class~="bg-[#fff7f2]"], [class~="bg-[#fcfcfd]"], [class~="bg-[#f8f4f1]"], [class~="bg-[#f7f3f1]"]) { background-color: var(--surface-2) !important; }
+:root.dark :is([class~="bg-[#fff3ef]"], [class~="bg-[#fff4ef]"], [class~="bg-[#fff0eb]"], [class~="bg-[#fff4f2]"], [class~="bg-[#fbede8]"], [class~="bg-[#f2e5df]"], [class~="bg-[#fff5f5]"], [class~="bg-[#fef2f2]"]) { background-color: rgba(189,75,68,0.14) !important; }
 
 :root.dark [class*="text-[#18181b]"] { color: var(--ink) !important; }
 :root.dark [class*="text-[#27272a]"] { color: var(--ink-2) !important; }
@@ -534,9 +588,11 @@
   color: var(--ink-3);
 }
 .mp-nav-inactive:hover {
-  background: rgba(255,255,255,0.72);
+  background: rgba(24,24,27,0.045);
   color: var(--ink);
 }
+.mp-nav-inactive:hover svg { color: var(--ink-2); }
+.mp-nav-active { font-weight: 600; }
 
 :root.dark .mp-app-shell { background: linear-gradient(180deg, #161619 0%, #1b1b1e 48%, #141416 100%); }
 

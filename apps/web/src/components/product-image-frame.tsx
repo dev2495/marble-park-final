@@ -34,7 +34,7 @@ export function ProductImageFrame({
     : src;
 
   return (
-    <div className={cn('relative isolate overflow-hidden bg-[#eaf0fa]', className)}>
+    <div className={cn('relative isolate overflow-hidden bg-[#eaf0fa] dark:bg-[var(--surface-2)]', className)}>
       {src && status !== 'error' ? (
         <>
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.72),rgba(226,232,240,0.46))]" />

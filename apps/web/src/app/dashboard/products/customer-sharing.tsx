@@ -155,7 +155,7 @@ export function ShareBar({ products, onRemove, onClear, onCreate }: { products: 
           {products.map((product) => (
             <li key={product.id} className="flex shrink-0 items-center gap-1 rounded-full bg-[var(--bg-soft)] py-1 pl-3 pr-1 text-xs text-[var(--ink-2)]">
               <span className="max-w-[10rem] truncate">{product.name || product.sku}</span>
-              <button type="button" onClick={() => onRemove(product.id)} aria-label={`Remove ${product.name || product.sku}`} className="grid h-6 w-6 place-items-center rounded-full hover:bg-[var(--surface)]"><X className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => onRemove(product.id)} aria-label={`Remove ${product.name || product.sku}`} className="mp-tap-icon grid h-6 w-6 place-items-center rounded-full hover:bg-[var(--surface)]"><X className="h-3.5 w-3.5" /></button>
             </li>
           ))}
         </ul>

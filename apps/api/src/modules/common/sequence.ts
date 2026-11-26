@@ -9,9 +9,9 @@ export async function nextDocumentNumber(
   date = new Date(),
   options: SequenceOptions = {},
 ) {
-  const year = date.getFullYear();
-  const key = `${scope}:${year}`;
-  const prefixForYear = `${prefix}/${year}/`;
+  const period = await numberingPeriod(tx, date);
+  const key = `${scope}:${period.key}`;
+  const prefixForYear = `${prefix}/${period.label}/`;
   const existingMax = await maxExistingSequence(prefixForYear, options);
 
   await tx.sequenceCounter.upsert({
@@ -32,6 +32,29 @@ export async function nextDocumentNumber(
     data: { value: { increment: 1 }, updatedAt: new Date() },
   });
   return `${prefixForYear}${String(counter.value).padStart(4, '0')}`;
+}
+
+const IST_OFFSET_MS = 330 * 60000;
+
+/**
+ * Settings > Document numbering. "calendar" (default) keeps the original rule
+ * exactly: the year of the date in server time, counter key scope:YYYY, number
+ * PREFIX/YYYY/0001. "financial" restarts on 1 April in India time, counter key
+ * scope:FYYYYY, number PREFIX/2026-27/0001, so the two series never collide.
+ */
+export async function numberingPeriod(tx: any, date: Date): Promise<{ key: string; label: string }> {
+  let mode = 'calendar';
+  // No catch here: this runs inside the caller's transaction, where a failed statement
+  // aborts the whole transaction, so swallowing it would only make the next step fail.
+  const settings = await tx?.appSetting?.findFirst?.({ orderBy: { updatedAt: 'desc' }, select: { documentNumberingPeriod: true } });
+  if (settings?.documentNumberingPeriod === 'financial') mode = 'financial';
+  if (mode !== 'financial') {
+    const year = date.getFullYear();
+    return { key: String(year), label: String(year) };
+  }
+  const india = new Date(date.getTime() + IST_OFFSET_MS);
+  const startYear = india.getUTCMonth() >= 3 ? india.getUTCFullYear() : india.getUTCFullYear() - 1;
+  return { key: `FY${startYear}`, label: `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}` };
 }
 
 async function maxExistingSequence(prefixForYear: string, options: SequenceOptions) {

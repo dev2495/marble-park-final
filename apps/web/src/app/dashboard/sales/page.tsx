@@ -1,4 +1,5 @@
 'use client';
+import { statusLabel } from '@/lib/utils';
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -6,6 +7,9 @@ import { gql, useMutation, useQuery } from '@apollo/client';
 import { ArrowUpRight, CalendarClock, CheckCircle, FileSpreadsheet, PhoneCall, Plus, ShoppingBag, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
+import { useBusyAction } from '@/hooks/use-busy-action';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const SALES_DESK = gql`
   query SalesDesk($ownerId: String!) {
@@ -22,7 +26,8 @@ function money(value: number) {
 }
 
 function quoteTotal(lines: any) {
-  return (Array.isArray(lines) ? lines : []).reduce((sum, line) => sum + Number(line.qty || line.quantity || 0) * Number(line.price || line.sellPrice || 0), 0);
+  // Value before GST, the same rule as the owner reports.
+  return (Array.isArray(lines) ? lines : []).reduce((sum, line) => sum + Number(line?.taxableValue || 0), 0);
 }
 
 const stages = ['new', 'contacted', 'proposal', 'negotiation', 'won'];
@@ -37,6 +42,9 @@ export default function SalesDeskPage() {
 
   const { data, loading, error, refetch } = useQuery(SALES_DESK, { variables: { ownerId: user?.id || '' }, skip: !ready || !user?.id });
   const [updateStage, { error: stageError }] = useMutation(UPDATE_STAGE, { onCompleted: () => refetch() });
+  // One stage change at a time: a second tap while one is saving does nothing.
+  const busyAction = useBusyAction();
+  const moveLead = (lead: any, stage: string) => { void busyAction.run(`stage-${lead.id}`, async () => { await updateStage({ variables: { id: lead.id, stage } }); }).catch(() => undefined); };
   const leads = useMemo<any[]>(() => data?.leads || [], [data?.leads]);
   const quotes = useMemo<any[]>(() => data?.quotes || [], [data?.quotes]);
   const stats = data?.salesDashboard?.stats || {};
@@ -48,17 +56,16 @@ export default function SalesDeskPage() {
     <div className="space-y-6 pb-10">
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
       {stageError ? <QueryErrorBanner error={stageError} /> : null}
-      <section className="relative overflow-hidden rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]">
-        <div className="absolute inset-0 hidden" />
-        <div className="relative flex flex-col justify-between gap-7 xl:flex-row xl:items-end">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Sales operating desk</p>
-            <h1 className="mt-3 max-w-4xl font-display text-3xl font-bold leading-tight text-[#18181b] tracking-[-0.055em]">Call, qualify, quote, follow up, close.</h1>
-            <p className="mt-5 max-w-2xl text-sm text-[#52525b]">A sales user workspace that starts with leads, converts to image-backed quotes, and moves confirmed work to dispatch.</p>
+      <section className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0">
+            <p className="mp-eyebrow">Sales operating desk</p>
+            <h1 className="mp-page-title">Call, qualify, quote, follow up, close.</h1>
+            <p className="mp-page-sub">A sales user workspace that starts with leads, converts to image-backed quotes, and moves confirmed work to dispatch.</p>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <Button asChild size="lg" className="bg-[#2563eb] text-white hover:bg-[#1d4ed8]"><Link href="/dashboard/leads/new"><Plus className="mr-2 h-5 w-5" /> New lead</Link></Button>
-            <Button asChild variant="warning" size="lg"><Link href="/dashboard/quotes/new"><FileSpreadsheet className="mr-2 h-5 w-5" /> Build quote</Link></Button>
+          <div className="mp-page-actions">
+            <Button asChild><Link href="/dashboard/leads/new"><Plus className="mr-2 h-4 w-4" /> New lead</Link></Button>
+            <Button asChild variant="outline"><Link href="/dashboard/quotes/new"><FileSpreadsheet className="mr-2 h-4 w-4" /> Build quote</Link></Button>
           </div>
         </div>
       </section>
@@ -94,9 +101,9 @@ export default function SalesDeskPage() {
                         <p className="mt-1 truncate text-xs font-bold text-[#52525b]">{lead.customer?.name || lead.source}</p>
                         <p className="mt-2 text-sm font-black text-[#059669]">{money(lead.expectedValue)}</p>
                         <div className="mt-3 flex flex-wrap gap-1">
-                          {stage !== 'contacted' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'contacted' } })} className="rounded-xl bg-[#eff6ff] px-2 py-1 text-xs font-black text-[#1d4ed8]">Contacted</button>}
-                          {stage !== 'proposal' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'proposal' } })} className="rounded-xl bg-[#ecfdf5] px-2 py-1 text-xs font-black text-[#059669]">Proposal</button>}
-                          {stage !== 'won' && <button onClick={() => updateStage({ variables: { id: lead.id, stage: 'won' } })} className="rounded-xl bg-[#18181b] px-2 py-1 text-xs font-black text-white">Won</button>}
+                          {stage !== 'contacted' && <button type="button" disabled={busyAction.isBusy()} aria-label={`Mark ${lead.title} as contacted`} onClick={() => moveLead(lead, 'contacted')} className="min-h-11 rounded-xl bg-[#eff6ff] px-3 py-1 text-xs font-black text-[#1d4ed8] disabled:opacity-50 xl:min-h-0 xl:px-2">Contacted</button>}
+                          {stage !== 'proposal' && <button type="button" disabled={busyAction.isBusy()} aria-label={`Move ${lead.title} to proposal`} onClick={() => moveLead(lead, 'proposal')} className="min-h-11 rounded-xl bg-[#ecfdf5] px-3 py-1 text-xs font-black text-[#059669] disabled:opacity-50 xl:min-h-0 xl:px-2">Proposal</button>}
+                          {stage !== 'won' && <button type="button" disabled={busyAction.isBusy()} aria-label={`Mark ${lead.title} as won`} onClick={() => moveLead(lead, 'won')} className="min-h-11 rounded-xl bg-[#18181b] px-3 py-1 text-xs font-black text-white disabled:opacity-50 xl:min-h-0 xl:px-2">{busyAction.isBusy(`stage-${lead.id}`) ? 'Saving…' : 'Won'}</button>}
                         </div>
                       </article>
                     ))}
@@ -112,13 +119,16 @@ export default function SalesDeskPage() {
             <div className="flex items-center justify-between"><h2 className="text-2xl font-black tracking-tight">Today follow-up</h2><PhoneCall className="h-6 w-6 text-[#2563eb]" /></div>
             <div className="mt-5 space-y-3">
               {dueToday.slice(0, 6).map((lead: any) => <div key={lead.id} className="rounded-2xl bg-white/65 p-4"><p className="font-semibold text-[#18181b]">{lead.title}</p><p className="mt-1 text-xs font-bold text-[#52525b]">{lead.customer?.mobile || lead.customer?.name || 'Call customer'}</p></div>)}
-              {!dueToday.length && <p className="rounded-2xl border border-dashed border-[#e4e4e7]/20 p-6 text-center text-sm font-bold text-[#52525b]">No due follow-ups.</p>}
+              {loading && !data ? <Skeleton className="h-16 w-full" /> : null}
+              {!loading && !error && !dueToday.length && <EmptyState compact title="No due follow-ups" description="Leads with a next action due today or earlier show here." />}
             </div>
           </div>
           <div className="mp-card rounded-r5 p-5">
             <div className="flex items-center justify-between"><h2 className="text-2xl font-black tracking-tight">Recent quotes</h2><Button asChild variant="outline" size="sm"><Link href="/dashboard/quotes">All quotes</Link></Button></div>
             <div className="mt-5 space-y-3">
-              {quotes.slice(0, 5).map((quote: any) => <Link key={quote.id} href={`/dashboard/quotes/${quote.id}`} className="block rounded-2xl bg-white/65 p-4 transition hover:bg-white"><div className="flex justify-between gap-3"><p className="font-semibold text-[#18181b]">{quote.quoteNumber}</p><span className="text-xs font-black uppercase text-[#2563eb]">{quote.status}</span></div><p className="mt-1 truncate text-xs font-bold text-[#52525b]">{quote.customer?.name || quote.title}</p></Link>)}
+              {loading && !data ? <Skeleton className="h-16 w-full" /> : null}
+              {!loading && !error && !quotes.length ? <EmptyState compact title="No quotes yet" description="Quotes you make show up here." /> : null}
+              {quotes.slice(0, 5).map((quote: any) => <Link key={quote.id} href={`/dashboard/quotes/${quote.id}`} className="block rounded-2xl bg-white/65 p-4 transition hover:bg-white"><div className="flex justify-between gap-3"><p className="font-semibold text-[#18181b]">{quote.quoteNumber}</p><span className="text-xs font-black uppercase text-[#2563eb]">{statusLabel(quote.status)}</span></div><p className="mt-1 truncate text-xs font-bold text-[#52525b]">{quote.customer?.name || quote.title}</p></Link>)}
             </div>
           </div>
         </div>

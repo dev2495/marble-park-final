@@ -147,7 +147,7 @@ export function SalesManagerDashboard({ effectiveRole, user }: { effectiveRole: 
       <section className="grid gap-3 xl:grid-cols-[1.3fr_0.9fr]">
         <Panel title="Team leaderboard" subtitle="Confirmed quote value" tone="success" rightAction={<Link href="/dashboard/users" className="text-xs font-medium text-[#1d4ed8] hover:underline">View team</Link>}>
           <div className="overflow-hidden rounded-r3 border border-[#f4f4f5]">
-            <table className="w-full text-sm">
+            <table className="mp-table-skin w-full text-sm">
               <thead className="bg-[#fafafa] text-left text-[11px] font-semibold uppercase tracking-wider text-[#71717a]">
                 <tr>
                   <th className="px-3 py-2.5">Rep</th>

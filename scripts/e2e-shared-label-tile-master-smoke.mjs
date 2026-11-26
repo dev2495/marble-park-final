@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { createApiClient } from './lib/api-client.mjs';
 
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
@@ -6,14 +7,7 @@ const PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
-async function gql(query, variables = {}, token, expectError = false) {
-  const response = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ query, variables }) });
-  const json = await response.json();
-  const error = json.errors?.map((row) => row.message).join('; ') || '';
-  if (expectError) return error;
-  if (!response.ok || error) throw new Error(error || `GraphQL request failed (${response.status})`);
-  return json.data;
-}
+const { gql } = createApiClient(API);
 
 async function main() {
   const suffix = Date.now().toString(36).toUpperCase();

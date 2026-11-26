@@ -1,3 +1,4 @@
+import { assert } from './lib/api-client.mjs';
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const OWNER_EMAIL = process.env.OWNER_EMAIL || 'admin@marblepark.com';
@@ -18,9 +19,6 @@ async function gql(query, variables, token) {
   return json;
 }
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 async function login(email, password) {
   const result = await gql(

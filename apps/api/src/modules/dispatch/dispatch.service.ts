@@ -4,9 +4,12 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { consumeExactReservedLotTx, consumeReservedLotsTx } from '../common/lot-allocation';
+import { applyLotStockPostingTx } from '../common/lot-stock-posting';
+import { fillBackordersForProductsTx, refreshOrderLineStockTx } from '../common/backorder-fill';
+import { closeFinishedDemandsTx } from '../common/demand-status';
 import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 import { ulid } from 'ulid';
-import { stockFactor } from '../common/stock-units';
+import { stockFactor, tileBoxReading } from '../common/stock-units';
 
 export interface CreateDispatchJobInput {
   quoteId?: string;
@@ -40,7 +43,25 @@ export interface CreateChallanInput {
   packages?: number;
   lines?: any;
   pickListId?: string;
+  /** 'vehicle' (our or a hired vehicle, details required) or 'self_pickup' (customer collects). */
+  transportMode?: string;
 }
+
+export interface ChallanTransportInput {
+  transportMode?: string;
+  vehicleNo?: string;
+  vehicleNumber?: string;
+  driverName?: string;
+  driverPhone?: string;
+  contactPhone?: string;
+  transporter?: string;
+  transporterName?: string;
+  notes?: string;
+  remarks?: string;
+}
+
+/** Values the old screen sent before there was a transport form. Shown as "not entered". */
+export const PLACEHOLDER_TRANSPORT = { vehicleNumber: 'PENDING', driverName: 'Dispatch desk', transporterName: 'Store vehicle', contactPhone: '0000000000' };
 
 export interface CreatePickListInput {
   salesOrderId: string;
@@ -63,13 +84,15 @@ export class DispatchService {
       where,
       include: { customer: true, quote: true, salesOrder: true },
       orderBy: { createdAt: 'desc' },
+      take: 500,
     } as any) as any;
   }
 
   async dispatchQueue(args?: { status?: string; customerId?: string }): Promise<any[]> {
     const where: any = {};
     if (args?.status) where.status = args.status;
-    else where.status = { in: ['pending', 'packed', 'dispatched', 'delivered'] };
+    // The work queue: delivered and cancelled jobs are finished (ask for status 'delivered' to see them).
+    else where.status = { in: ['pending', 'packed', 'dispatched'] };
     if (args?.customerId) where.customerId = args.customerId;
 
     const jobs = await this.prisma.dispatchJob.findMany({
@@ -115,6 +138,7 @@ export class DispatchService {
       ordersByQuote.set(order.quoteId, matching);
     }
     const orderIds = (orders as any[]).map((order) => order.id);
+    const pickableByOrder = await this.unpickedReservedByLocation(this.prisma, orderIds);
     const purchaseDemands = orderIds.length
       ? await (this.prisma as any).purchaseDemand.findMany({ where: { sourceOrderId: { in: orderIds } } }).catch(() => [])
       : [];
@@ -123,8 +147,16 @@ export class DispatchService {
     const reservationsByOrderProduct = this.groupByOrderProduct(reservations as any[]);
     const challanQtyByJobProduct = this.groupChallanQty(challans as any[]);
     const challansByJob = new Map<string, any[]>();
+    // Products of order and challan lines, so each line can read in boxes (pieces per box, sold by box or piece).
+    const readingIds = Array.from(new Set([
+      ...Array.from(unitFactor.keys()),
+      ...(challans as any[]).flatMap((challan) => (Array.isArray(challan.lines) ? challan.lines : []).map((line: any) => line?.productId)),
+    ].filter(Boolean))) as string[];
+    const readingProducts = readingIds.length ? await this.prisma.product.findMany({ where: { id: { in: readingIds } } }) : [];
+    const productById = new Map((readingProducts as any[]).map((product) => [product.id, product]));
     for (const challan of challans as any[]) {
-      challansByJob.set(challan.dispatchJobId, [...(challansByJob.get(challan.dispatchJobId) || []), challan]);
+      const lines = Array.isArray(challan.lines) ? this.withBoxReading(challan.lines, productById) : challan.lines;
+      challansByJob.set(challan.dispatchJobId, [...(challansByJob.get(challan.dispatchJobId) || []), { ...challan, lines }]);
     }
 
     return jobs.map((job: any) => {
@@ -150,6 +182,9 @@ export class DispatchService {
             ...line,
             productId,
             dispatchKey,
+            // Lets the screen put a received special-order line on a challan without a pick list.
+            salesOrderLineId: demand?.metadata?.salesOrderLineId || null,
+            specialOrder: tileSpecialOrder,
             purchaseDemand: demand || null,
             orderedQty,
             committedQty,
@@ -203,6 +238,7 @@ export class DispatchService {
           onHand: toSelling(productId, Number(balance?.onHand || 0)),
           available: toSelling(productId, Number(balance?.available || 0)),
           piecesPerUnit: unitFactor.get(productId) || 1,
+          ...tileBoxReading(productById.get(productId)),
           status,
         };
       });
@@ -254,6 +290,8 @@ export class DispatchService {
         invalidLines: lineStatus.filter((line: any) => line.status === 'invalid_product'),
         specialOrderLines: lineStatus.filter((line: any) => line.status === 'tile_special_order'),
         completedLines: lineStatus.filter((line: any) => line.status === 'fully_dispatched'),
+        // Locations holding this order's reserved stock not yet on a pick list, most first (base units).
+        pickableLocations: salesOrder ? pickableByOrder.get(salesOrder.id) || [] : [],
       challans: challansByJob.get(job.id) || [],
       };
     });
@@ -307,7 +345,13 @@ export class DispatchService {
     else if (status === 'partial_dispatch') lineWhere.status = 'partial_dispatched';
     else if (status === 'dispatched') lineWhere.status = 'dispatched';
     else if (status === 'delivered') lineWhere.status = 'delivered';
-    else if (status === 'needs_reservation') lineWhere.reservedQuantity = 0;
+    // Sent, delivered and cancelled lines hold nothing and need nothing.
+    else if (status === 'needs_reservation') {
+      lineWhere.reservedQuantity = 0;
+      lineWhere.allocatedQuantity = 0;
+      lineWhere.backorderedQuantity = 0;
+      lineWhere.status = { notIn: ['dispatched', 'delivered', 'cancelled', 'partial_dispatched', 'partial_delivered'] };
+    }
 
     const sortMap: Record<string, any[]> = {
       oldest: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -344,7 +388,7 @@ export class DispatchService {
     const lineIds = page.map((line: any) => line.id) as string[];
     const [orders, products, reservations, allocations, picks, dispatchLines, demands] = await Promise.all([
       this.prisma.salesOrder.findMany({ where: { id: { in: orderIds } } }) as any,
-      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, sku: true, name: true, brand: true, media: true } }) as any : [],
+      productIds.length ? this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, sku: true, name: true, brand: true, media: true, category: true, unit: true, baseUom: true, salesUom: true, purchaseUom: true, piecesPerPack: true } }) as any : [],
       this.prisma.reservation.findMany({ where: { salesOrderLineId: { in: lineIds }, status: { in: ['reserved', 'backordered'] } } }) as any,
       this.prisma.lotReservation.findMany({ where: { salesOrderLineId: { in: lineIds }, status: 'reserved' }, include: { lot: true, location: true } }) as any,
       this.prisma.pickLine.findMany({ where: { salesOrderLineId: { in: lineIds }, status: { notIn: ['cancelled', 'dispatched'] } }, include: { pickList: true, lot: true, location: true } }) as any,
@@ -420,6 +464,7 @@ export class DispatchService {
         product: productMap.get(line.productId) || null,
         // Reservations, lot allocations and pick lines below count base units (pieces per box for boxed tiles).
         piecesPerUnit: stockFactor(productMap.get(line.productId)),
+        ...tileBoxReading(productMap.get(line.productId)),
         purchaseDemand: demand,
         reservations: lineReservations,
         lotAllocations: lineAllocations,
@@ -572,6 +617,8 @@ export class DispatchService {
       const openPicks = await tx.pickLine.findMany({
         where: {
           salesOrderLineId: { in: orderLineIds }, locationId: location.id,
+          // Sent, cancelled or returned pick lines no longer hold any reserved stock.
+          status: { notIn: ['dispatched', 'cancelled', 'returned'] },
           pickList: { status: { in: ['ready', 'picking', 'picked', 'partial_packed', 'packed', 'completed', 'challan_created'] } },
         },
       });
@@ -583,17 +630,28 @@ export class DispatchService {
       const requestedByIdentity = new Map<string, number>();
       for (const row of requestedRows) {
         const key = `${row.salesOrderLineId || ''}:${row.lotId || ''}:${row.locationId || location.id}`;
-        const quantity = Math.trunc(Number(row.quantity || row.requestedQuantity || 0));
+        const quantity = this.wholeQty(row.quantity ?? row.requestedQuantity, 'Pick quantity');
         if (quantity > 0) requestedByIdentity.set(key, quantity);
       }
+      const pickProducts = requestedRows.length
+        ? new Map(((await tx.product.findMany({ where: { id: { in: Array.from(new Set(allocations.map((row: any) => row.salesOrderLine?.productId).filter(Boolean))) as string[] } } })) as any[]).map((row) => [row.id, row]))
+        : new Map<string, any>();
       const selected = allocations.map((allocation: any) => {
         const key = `${allocation.salesOrderLineId}:${allocation.lotId}:${allocation.locationId}`;
         const available = Math.max(0, Number(allocation.quantity || 0) - Number(openByIdentity.get(key) || 0));
         const requested = requestedRows.length ? Number(requestedByIdentity.get(key) || 0) : available;
         if (requested > available) throw new BadRequestException(`${allocation.lot.lotNumber} has only ${available} unpicked reserved units`);
+        if (requestedRows.length) this.assertFullBoxes(pickProducts.get(allocation.salesOrderLine?.productId), requested, available);
         return { allocation, requested };
       }).filter((row: any) => row.requested > 0);
-      if (!selected.length) throw new BadRequestException('No unpicked reserved stock is available at this location');
+      if (!selected.length) {
+        const elsewhere = ((await this.unpickedReservedByLocation(tx, [salesOrder.id])).get(salesOrder.id) || [])
+          .filter((row) => row.locationId !== location.id)
+          .map((row) => row.name || row.code);
+        throw new BadRequestException(elsewhere.length
+          ? `No unpicked reserved stock is available at ${location.name || 'this location'}. This order's reserved stock is at: ${elsewhere.join(', ')}.`
+          : 'No unpicked reserved stock is available at this location. This order has no reserved stock left to pick.');
+      }
       const pickNumber = await nextDocumentNumber(tx, 'pick_list', 'PK', new Date(), {
         existingNumbers: async (prefixForYear) => (await tx.pickList.findMany({
           where: { pickNumber: { startsWith: prefixForYear } }, select: { pickNumber: true },
@@ -633,10 +691,13 @@ export class DispatchService {
     if (!['start', 'pick', 'pack', 'complete', 'cancel'].includes(normalizedAction)) throw new BadRequestException('Unsupported pick-list action');
     const inputLines = new Map((this.normalizeLines(input?.lines) || []).map((row: any) => [String(row.pickLineId || row.id || ''), row]));
     return this.prisma.$transaction(async (tx: any) => {
-      const pick = await tx.pickList.findUnique({ where: { id }, include: { lines: true } });
+      const pick = await tx.pickList.findUnique({ where: { id }, include: { lines: { include: { product: true } } } });
       if (!pick) throw new NotFoundException('Pick list not found');
       if (normalizedAction === 'cancel') {
-        if (!['ready', 'picking'].includes(pick.status)) throw new BadRequestException(`${pick.pickNumber} cannot be cancelled from ${pick.status}`);
+        if (!['ready', 'picking', 'picked', 'partial_packed', 'packed', 'completed'].includes(pick.status)) throw new BadRequestException(`${pick.pickNumber} cannot be cancelled from ${pick.status}`);
+        // A packed pick can be undone only while none of it is on a live challan; its stock stays reserved for the order.
+        const onChallan = await tx.dispatchLine.count({ where: { pickLineId: { in: pick.lines.map((line: any) => line.id) }, status: { notIn: ['cancelled', 'returned'] } } });
+        if (onChallan) throw new BadRequestException(`${pick.pickNumber} is on a challan. Cancel the challan first.`);
         await tx.pickLine.updateMany({ where: { pickListId: id }, data: { status: 'cancelled', updatedAt: new Date() } });
         await tx.pickList.update({ where: { id }, data: { status: 'cancelled', cancelledAt: new Date(), updatedAt: new Date(), metadata: { ...(pick.metadata as any), cancelReason: input?.reason || 'Cancelled' } } });
       } else if (normalizedAction === 'start') {
@@ -647,8 +708,9 @@ export class DispatchService {
         for (const line of pick.lines) {
           const row: any = inputLines.get(line.id);
           if (!row) continue;
-          const quantity = Math.trunc(Number(row.pickedQuantity ?? row.quantity ?? 0));
+          const quantity = this.wholeQty(row.pickedQuantity ?? row.quantity, 'Picked quantity');
           if (quantity < 0 || quantity > line.requestedQuantity) throw new BadRequestException('Picked quantity must be between zero and requested quantity');
+          this.assertFullBoxes(line.product, quantity, line.requestedQuantity);
           await tx.pickLine.update({ where: { id: line.id }, data: { pickedQuantity: quantity, status: quantity === line.requestedQuantity ? 'picked' : 'partial', pickedBy: actorUserId, pickedAt: new Date(), updatedAt: new Date() } });
         }
         const refreshed = await tx.pickLine.findMany({ where: { pickListId: id } });
@@ -659,8 +721,9 @@ export class DispatchService {
         for (const line of pick.lines) {
           const row: any = inputLines.get(line.id);
           if (!row) continue;
-          const quantity = Math.trunc(Number(row.packedQuantity ?? row.quantity ?? 0));
+          const quantity = this.wholeQty(row.packedQuantity ?? row.quantity, 'Packed quantity');
           if (quantity < 0 || quantity > line.pickedQuantity) throw new BadRequestException('Packed quantity cannot exceed picked quantity');
+          this.assertFullBoxes(line.product, quantity, line.pickedQuantity);
           await tx.pickLine.update({ where: { id: line.id }, data: { packedQuantity: quantity, status: quantity === line.requestedQuantity ? 'packed' : 'partial_packed', updatedAt: new Date() } });
         }
         const refreshed = await tx.pickLine.findMany({ where: { pickListId: id } });
@@ -688,7 +751,7 @@ export class DispatchService {
     }, { isolationLevel: 'Serializable', timeout: 30000 });
   }
 
-  async createChallan(data: CreateChallanInput) {
+  async createChallan(data: CreateChallanInput, actorUserId = 'system') {
     const dispatchJobId = data.dispatchJobId || data.jobId;
     if (!dispatchJobId) throw new BadRequestException('A dispatch job is required to create a challan');
 
@@ -702,31 +765,36 @@ export class DispatchService {
       : await this.prisma.salesOrder.findFirst({ where: { quoteId: job.quoteId } }).catch(() => null);
     if (!salesOrder) throw new BadRequestException('Dispatch requires a linked Sales Order. Convert the quote to a sales order first.');
 
-    if (!data.pickListId) throw new BadRequestException('Complete a pick list before creating a challan');
-    const pickList = await this.prisma.pickList.findUnique({
+    const transport = this.normalizeTransport(data, job);
+    const requestedLines = this.normalizeLines(data.lines) || [];
+    // Special-order tile lines have no Product Master item, no lot and no pick list.
+    // They go on a challan once their goods have been received against the order.
+    const specialLines = await this.specialOrderChallanLines(salesOrder, requestedLines);
+    if (!data.pickListId && !specialLines.length) throw new BadRequestException('Complete a pick list before creating a challan');
+    const pickList: any = data.pickListId ? await this.prisma.pickList.findUnique({
       where: { id: data.pickListId },
       include: { lines: { include: { salesOrderLine: true, product: true, lot: true, location: true } } },
-    });
-    if (!pickList || pickList.salesOrderId !== salesOrder.id) throw new BadRequestException('Selected pick list does not belong to this sales order');
-    if (!['packed', 'completed'].includes(pickList.status)) throw new BadRequestException('Pick list must be completed before challan creation');
+    }) : null;
+    if (data.pickListId && (!pickList || pickList.salesOrderId !== salesOrder.id)) throw new BadRequestException('Selected pick list does not belong to this sales order');
+    if (pickList && !['packed', 'completed'].includes(pickList.status)) throw new BadRequestException('Pick list must be completed before challan creation');
 
-    const contactPhone = data.contactPhone || data.driverPhone || job.customer?.mobile || '';
-    if (!contactPhone) throw new BadRequestException('A driver/contact phone is required');
+    const contactPhone = transport.contactPhone;
 
-    const priorDispatchLines = await this.prisma.dispatchLine.findMany({
-      where: { pickLineId: { in: pickList.lines.map((line: any) => line.id) }, status: { not: 'cancelled' } },
-    });
+    const priorDispatchLines = pickList ? await this.prisma.dispatchLine.findMany({
+      where: { pickLineId: { in: pickList.lines.map((line: any) => line.id) }, status: { notIn: ['cancelled', 'returned'] } },
+    }) : [];
     const priorByPickLine = new Map<string, number>();
     for (const line of priorDispatchLines) {
       if (!line.pickLineId) continue;
       priorByPickLine.set(line.pickLineId, (priorByPickLine.get(line.pickLineId) || 0) + Number(line.packedQuantity || 0));
     }
-    const requestedLines = this.normalizeLines(data.lines) || [];
-    const requestedByPickLine = new Map(requestedLines.map((line: any) => [String(line.pickLineId || ''), Math.trunc(Number(line.dispatchQty || line.quantity || 0))]));
-    const challanLines = pickList.lines.map((line: any) => {
+    const pickRequests = requestedLines.filter((line: any) => line.pickLineId);
+    const requestedByPickLine = new Map(pickRequests.map((line: any) => [String(line.pickLineId || ''), this.wholeQty(line.dispatchQty ?? line.quantity, 'Challan quantity')]));
+    const pickChallanLines = (pickList?.lines || []).map((line: any) => {
       const availablePacked = Math.max(0, Number(line.packedQuantity || 0) - Number(priorByPickLine.get(line.id) || 0));
-      const dispatchQty = requestedLines.length ? Number(requestedByPickLine.get(line.id) || 0) : availablePacked;
+      const dispatchQty = pickRequests.length ? Number(requestedByPickLine.get(line.id) || 0) : availablePacked;
       if (dispatchQty > availablePacked) throw new BadRequestException(`${line.product.sku} has only ${availablePacked} packed units left on ${pickList.pickNumber}`);
+      if (pickRequests.length) this.assertFullBoxes(line.product, dispatchQty, availablePacked);
       return {
         pickLineId: line.id,
         salesOrderLineId: line.salesOrderLineId,
@@ -747,6 +815,7 @@ export class DispatchService {
         dispatchQty,
       };
     }).filter((line: any) => line.dispatchQty > 0);
+    const challanLines = [...pickChallanLines, ...specialLines];
     if (!challanLines.length) throw new BadRequestException('Select at least one ready item to create a challan');
     await this.assertDispatchableLines(challanLines, job);
     const challan = await this.prisma.$transaction(async (tx: any) => {
@@ -755,18 +824,37 @@ export class DispatchService {
           id: ulid(), challanNumber: await this.generateChallanNumber(tx),
           quoteId: data.quoteId || job.quoteId, salesOrderId: data.salesOrderId || salesOrder.id,
           dispatchJobId, customerId: data.customerId || job.customerId, status: 'pending',
-          vehicleNumber: data.vehicleNumber || data.vehicleNo, driverName: data.driverName,
-          transporterName: data.transporterName || data.transporter, contactPhone,
-          siteAddress: data.siteAddress || job.siteAddress, remarks: data.remarks || data.notes || '',
+          vehicleNumber: transport.vehicleNumber, driverName: transport.driverName,
+          transporterName: transport.transporterName, contactPhone,
+          transportMode: transport.transportMode,
+          siteAddress: data.siteAddress || job.siteAddress, remarks: transport.notes,
           lines: challanLines, updatedAt: new Date(),
         },
         include: { customer: true, quote: true },
       });
-      await this.createDispatchRecordsForChallanTx(tx, created, job, salesOrder, challanLines, data);
+      await this.createDispatchRecordsForChallanTx(tx, created, job, salesOrder, challanLines, { ...data, transporterName: transport.transporterName || undefined, transporter: transport.transporterName || undefined, vehicleNumber: transport.vehicleNumber || undefined, vehicleNo: transport.vehicleNumber || undefined, driverName: transport.driverName || undefined, contactPhone: transport.contactPhone || undefined, driverPhone: transport.contactPhone || undefined, remarks: transport.notes, notes: transport.notes });
       await tx.dispatchJob.update({
         where: { id: dispatchJobId }, data: { status: 'packed', updatedAt: new Date() },
       });
-      await tx.pickList.update({ where: { id: pickList.id }, data: { status: 'challan_created', updatedAt: new Date() } });
+      if (pickList) {
+        // Only a pick whose every packed unit is now on a challan is finished; a part
+        // challan leaves the rest of the pick ready for the next challan.
+        const onChallans = await tx.dispatchLine.groupBy({
+          by: ['pickLineId'],
+          where: { pickLineId: { in: pickList.lines.map((line: any) => line.id) }, status: { notIn: ['cancelled', 'returned'] } },
+          _sum: { packedQuantity: true },
+        });
+        const coveredByLine = new Map((onChallans as any[]).map((row) => [row.pickLineId, Number(row._sum?.packedQuantity || 0)]));
+        const fullyCovered = pickList.lines.every((line: any) => Number(line.packedQuantity || 0) <= 0 || Number(coveredByLine.get(line.id) || 0) >= Number(line.packedQuantity || 0));
+        if (fullyCovered) await tx.pickList.update({ where: { id: pickList.id }, data: { status: 'challan_created', updatedAt: new Date() } });
+      }
+      await tx.auditEvent.create({
+        data: {
+          id: ulid(), actorUserId, action: 'dispatch_challan.create', entityType: 'DispatchChallan', entityId: created.id,
+          summary: `Created ${created.challanNumber}`,
+          metadata: { pickListId: pickList?.id || null, lineCount: challanLines.length, transportMode: transport.transportMode, specialOrderLines: specialLines.length },
+        },
+      });
       return created;
     }, { isolationLevel: 'Serializable', timeout: 30000 });
     await this.notifications.create({
@@ -801,10 +889,174 @@ export class DispatchService {
     });
   }
 
+  /**
+   * Cancels a challan. Before it leaves: its lines go back to the pick so a new
+   * challan can be made; stock was never taken out. After a failed delivery: the
+   * goods are back, so stock is posted back in (re-reserved for the same order
+   * line) with a movement record, and the order line is no longer counted as sent.
+   */
+  async cancelChallan(id: string, reasonInput: string, actorUserId: string) {
+    const reason = String(reasonInput || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (reason.length < 5) throw new BadRequestException('Say why this challan is being cancelled');
+    return this.prisma.$transaction(async (tx: any) => {
+      const challan = await tx.dispatchChallan.findUnique({ where: { id } });
+      if (!challan) throw new NotFoundException('Challan not found');
+      if (challan.status === 'cancelled') return challan;
+      if (challan.status === 'dispatched') throw new BadRequestException(`${challan.challanNumber} is out for delivery. Mark the delivery as failed first, then cancel it when the goods are back.`);
+      if (!['pending', 'failed_delivery'].includes(challan.status)) throw new BadRequestException(`${challan.challanNumber} is ${challan.status} and cannot be cancelled`);
+      const lines = await tx.dispatchLine.findMany({ where: { challanId: id } });
+      // Goods already billed: cancelling would let them be sent and billed again.
+      const billed = lines.length ? await tx.salesInvoiceLine.findFirst({
+        where: { dispatchLineId: { in: lines.map((line: any) => line.id) }, salesInvoice: { status: { not: 'void' } } },
+        select: { salesInvoice: { select: { invoiceNumber: true } } },
+      }) : null;
+      if (billed) throw new BadRequestException(`${challan.challanNumber} is already billed on invoice ${billed.salesInvoice?.invoiceNumber || ''}. Void that invoice first, then cancel the challan.`);
+      const wasOut = challan.status === 'failed_delivery';
+      if (wasOut) {
+        await this.returnFailedDeliveryStockTx(tx, challan, lines, actorUserId, reason);
+      } else {
+        await tx.dispatchLine.updateMany({ where: { challanId: id }, data: { status: 'cancelled', updatedAt: new Date() } });
+      }
+      // The pick is open again: a finished pick goes back to "completed" so a new challan can be made.
+      const pickLineIds = lines.map((line: any) => line.pickLineId).filter(Boolean);
+      if (pickLineIds.length) {
+        const pickLines = await tx.pickLine.findMany({ where: { id: { in: pickLineIds } }, select: { pickListId: true } });
+        const pickIds = Array.from(new Set(pickLines.map((row: any) => row.pickListId)));
+        if (!wasOut) await tx.pickList.updateMany({ where: { id: { in: pickIds }, status: 'challan_created' }, data: { status: 'completed', updatedAt: new Date() } });
+      }
+      await tx.shipment.updateMany({ where: { challanId: id }, data: { status: 'cancelled', updatedAt: new Date() } });
+      const updated = await tx.dispatchChallan.update({
+        where: { id },
+        data: { status: 'cancelled', remarks: [String(challan.remarks || '').trim(), `Cancelled: ${reason}`].filter(Boolean).join('\n'), updatedAt: new Date() },
+      });
+      await this.refreshJobStatusTx(tx, challan.dispatchJobId);
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: 'dispatch_challan.cancel', entityType: 'DispatchChallan', entityId: id,
+        summary: `Cancelled ${challan.challanNumber}${wasOut ? ' after a failed delivery; stock taken back' : ''}`,
+        metadata: { reason, statusWas: challan.status, stockReturned: wasOut, lineCount: lines.length },
+      } });
+      return updated;
+    }, { isolationLevel: 'Serializable', timeout: 60000 });
+  }
+
+  /** The delivery did not happen. Goods are still on the books as sent until the challan is cancelled or sent again. */
+  async reportFailedDelivery(id: string, reasonInput: string, actorUserId: string) {
+    const reason = String(reasonInput || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (reason.length < 5) throw new BadRequestException('Say why the delivery failed');
+    return this.prisma.$transaction(async (tx: any) => {
+      const challan = await tx.dispatchChallan.findUnique({ where: { id } });
+      if (!challan) throw new NotFoundException('Challan not found');
+      if (challan.status === 'failed_delivery') return challan;
+      if (challan.status !== 'dispatched') throw new BadRequestException(`${challan.challanNumber} is ${challan.status}; only a challan out for delivery can fail`);
+      await tx.dispatchLine.updateMany({ where: { challanId: id, status: 'dispatched' }, data: { status: 'failed_delivery', updatedAt: new Date() } });
+      await tx.shipment.updateMany({ where: { challanId: id }, data: { status: 'failed_delivery', updatedAt: new Date() } });
+      const updated = await tx.dispatchChallan.update({
+        where: { id },
+        data: { status: 'failed_delivery', remarks: [String(challan.remarks || '').trim(), `Delivery failed: ${reason}`].filter(Boolean).join('\n'), updatedAt: new Date() },
+      });
+      await this.refreshJobStatusTx(tx, challan.dispatchJobId);
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: 'dispatch_challan.failed_delivery', entityType: 'DispatchChallan', entityId: id,
+        summary: `Delivery failed for ${challan.challanNumber}`, metadata: { reason },
+      } });
+      return updated;
+    }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
+  /** Posts the goods of a failed delivery back into stock, held again for the same order line. */
+  private async returnFailedDeliveryStockTx(tx: any, challan: any, lines: any[], actorUserId: string, reason: string) {
+    const touchedOrderLines = new Set<string>();
+    const order = challan.salesOrderId ? await tx.salesOrder.findUnique({ where: { id: challan.salesOrderId } }) : null;
+    // A cancelled order gets nothing held back: its goods come back as free stock.
+    const orderLive = !order || !['cancelled', 'closed'].includes(String(order.status || ''));
+    const freedProducts: string[] = [];
+    for (const line of lines) {
+      if (!['dispatched', 'failed_delivery'].includes(String(line.status))) continue;
+      const quantity = Number(line.dispatchedQuantity || line.packedQuantity || 0);
+      if (quantity <= 0) continue;
+      if (line.productId) {
+        const allocations: any[] = Array.isArray(line.metadata?.lotAllocations) && line.metadata.lotAllocations.length
+          ? line.metadata.lotAllocations
+          : line.lotId && line.locationId ? [{ lotId: line.lotId, locationId: line.locationId, quantity }] : [];
+        let left = quantity;
+        for (const allocation of allocations) {
+          const back = Math.min(left, Number(allocation.quantity || 0));
+          if (back <= 0 || !allocation.lotId || !allocation.locationId) continue;
+          left -= back;
+          const lotReservation = line.salesOrderLineId && orderLive ? await tx.lotReservation.findFirst({
+            where: { salesOrderLineId: line.salesOrderLineId, lotId: String(allocation.lotId), locationId: String(allocation.locationId) },
+            include: { reservation: true },
+            orderBy: { updatedAt: 'desc' },
+          }) : null;
+          await applyLotStockPostingTx(tx, {
+            productId: line.productId, lotId: String(allocation.lotId), locationId: String(allocation.locationId),
+            idempotencyKey: `failed-delivery-return:${challan.id}:${line.id}:${allocation.lotId}:${allocation.locationId}`,
+            type: 'failed_delivery_return', direction: 'in', quantity: back,
+            onHandDelta: back, reservedDelta: lotReservation ? back : 0,
+            reason: `Back from failed delivery ${challan.challanNumber}: ${reason}`, createdBy: actorUserId,
+            relatedQuoteId: challan.quoteId, relatedChallanId: challan.id,
+            referenceType: 'DispatchChallan', referenceId: challan.id, sourceDocumentNo: challan.challanNumber,
+            metadata: { dispatchLineId: line.id, salesOrderLineId: line.salesOrderLineId, reReserved: Boolean(lotReservation) },
+          });
+          if (lotReservation) {
+            const heldNow = lotReservation.status === 'reserved' ? Number(lotReservation.quantity || 0) : 0;
+            await tx.lotReservation.update({ where: { id: lotReservation.id }, data: { quantity: heldNow + back, status: 'reserved', releasedAt: null, updatedAt: new Date() } });
+            const reservation = await tx.reservation.findUnique({ where: { id: lotReservation.reservationId } });
+            const reservationNow = reservation && reservation.status === 'reserved' ? Number(reservation.quantity || 0) : 0;
+            await tx.reservation.update({ where: { id: lotReservation.reservationId }, data: { quantity: reservationNow + back, status: 'reserved', updatedAt: new Date() } });
+          } else {
+            freedProducts.push(line.productId);
+          }
+        }
+        if (left > 0) throw new BadRequestException(`${line.sku}: could not find the lots it was sent from, so its stock cannot be taken back automatically`);
+        if (line.pickLineId) await tx.pickLine.updateMany({ where: { id: line.pickLineId }, data: { status: 'returned', updatedAt: new Date() } });
+      } else if (line.salesOrderLineId) {
+        // Special-order tile: no stock record, only the order line's sent and ready counts move back.
+        const orderLine = await tx.salesOrderLine.findUnique({ where: { id: line.salesOrderLineId } });
+        if (orderLine) {
+          await tx.salesOrderLine.update({
+            where: { id: orderLine.id },
+            data: {
+              dispatchedQuantity: Math.max(0, Number(orderLine.dispatchedQuantity || 0) - quantity),
+              allocatedQuantity: Math.min(Number(orderLine.orderedQuantity || 0), Number(orderLine.allocatedQuantity || 0) + quantity),
+              updatedAt: new Date(),
+            },
+          });
+        }
+        await tx.stockLedgerEntry.create({
+          data: {
+            id: ulid(), productId: null, locationId: null, type: 'special_order_return', quantity, direction: 'in',
+            referenceType: 'DispatchChallan', referenceId: challan.id, sourceDocumentNo: challan.challanNumber,
+            reason: `Special-order goods back from failed delivery ${challan.challanNumber}`, createdBy: actorUserId,
+            metadata: { dispatchLineId: line.id, salesOrderLineId: line.salesOrderLineId, sku: line.sku },
+          },
+        });
+      }
+      await tx.dispatchLine.update({ where: { id: line.id }, data: { status: 'returned', returnedQuantity: quantity, updatedAt: new Date() } });
+      if (line.salesOrderLineId && line.productId) touchedOrderLines.add(line.salesOrderLineId);
+    }
+    // Sent counts on the order lines no longer include the goods that came back.
+    for (const orderLineId of touchedOrderLines) {
+      const orderLine = await tx.salesOrderLine.findUnique({ where: { id: orderLineId } });
+      if (!orderLine) continue;
+      const product = orderLine.productId ? await tx.product.findUnique({ where: { id: orderLine.productId } }) : null;
+      const sent = await tx.dispatchLine.aggregate({ where: { salesOrderLineId: orderLineId, status: { in: ['dispatched', 'delivered', 'failed_delivery'] } }, _sum: { dispatchedQuantity: true } });
+      const dispatchedQuantity = Math.min(Number(orderLine.orderedQuantity || 0), Math.floor(Number(sent._sum?.dispatchedQuantity || 0) / stockFactor(product) + 1e-9));
+      await tx.salesOrderLine.update({ where: { id: orderLineId }, data: { dispatchedQuantity, updatedAt: new Date() } });
+      if (!challan.quoteId) await refreshOrderLineStockTx(tx, orderLineId, product);
+    }
+    if (challan.quoteId) await syncSalesOrderLinesForQuoteTx(tx, challan.quoteId);
+    // Goods that came back free (no live hold to return to) go to waiting orders first.
+    await fillBackordersForProductsTx(tx, freedProducts, { actorUserId, source: 'failed_delivery' });
+  }
+
   async updateChallanStatus(id: string, status: string, actorUserId = 'system', deliveryProof?: any) {
     const challan = await this.prisma.dispatchChallan.findUnique({ where: { id } });
     if (!challan) throw new NotFoundException('Challan not found');
     if (challan.status === status) return challan as any;
+    // Cancelling and failed delivery move stock and pick lists, and need a reason.
+    if (status === 'cancelled') return this.cancelChallan(id, 'Cancelled from the challan status', actorUserId);
+    if (status === 'failed_delivery') return this.reportFailedDelivery(id, 'Delivery reported as failed', actorUserId);
 
     const allowedTransitions: Record<string, string[]> = {
       pending: ['dispatched', 'cancelled'],
@@ -838,6 +1090,8 @@ export class DispatchService {
       if (status === 'dispatched') {
         if (current.status === 'failed_delivery') {
           updated = await tx.dispatchChallan.update({ where: { id }, data });
+          // Sent again after a failed attempt: the lines are on the road again.
+          await tx.dispatchLine.updateMany({ where: { challanId: id, status: 'failed_delivery' }, data: { status: 'dispatched', updatedAt: new Date() } });
           await tx.shipment.updateMany({ where: { challanId: id }, data: { status: 'dispatched', updatedAt: new Date() } });
           await this.refreshJobStatusTx(tx, updated.dispatchJobId);
         } else {
@@ -914,6 +1168,7 @@ export class DispatchService {
       where,
       include: { customer: true, quote: true },
       orderBy: { createdAt: 'desc' },
+      take: 500,
     } as any) as any;
   }
 
@@ -926,7 +1181,35 @@ export class DispatchService {
     const salesOrder = challan.salesOrderId
       ? await this.prisma.salesOrder.findUnique({ where: { id: challan.salesOrderId } }).catch(() => null)
       : null;
-    return { ...challan, salesOrder };
+    return { ...challan, lines: await this.withPiecesPerUnit(challan.lines), salesOrder };
+  }
+
+  /**
+   * Challan lines made before pieces per box was stored on them: a line counted
+   * in pieces of a boxed tile gets the product's factor so it reads in boxes.
+   * Lines counted in boxes (older tile challans) are left exactly as stored.
+   */
+  private async withPiecesPerUnit(rawLines: any) {
+    const lines = Array.isArray(rawLines) ? rawLines : [];
+    const productIds = Array.from(new Set(lines.map((line: any) => line?.productId).filter(Boolean))) as string[];
+    if (!productIds.length) return rawLines;
+    const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
+    return this.withBoxReading(lines, new Map((products as any[]).map((product) => [product.id, product])));
+  }
+
+  /** Adds piecesPerBox / soldBy (and a missing piecesPerUnit on pieces-counted lines) so a line reads in boxes. Read-only. */
+  private withBoxReading(lines: any[], productById: Map<string, any>) {
+    return lines.map((line: any) => {
+      const product = line?.productId ? productById.get(line.productId) : null;
+      if (!product) return line;
+      const countedInPieces = String(line.unit || '').toUpperCase() === 'PC';
+      return {
+        ...line,
+        ...(line.piecesPerUnit == null && countedInPieces ? { piecesPerUnit: stockFactor(product) } : {}),
+        // Older lines stored in boxes keep reading as stored.
+        ...(countedInPieces ? tileBoxReading(product) : {}),
+      };
+    });
   }
 
   async getDashboardStats() {
@@ -997,17 +1280,7 @@ export class DispatchService {
         const productId = String(line.productId || '').trim();
         const dispatchKey = productId || String(line.dispatchKey || line.sourceLineKey || line.tileCode || line.sku || index);
         const quantity = Math.trunc(Number(line.dispatchQty || line.qty || line.quantity || 0));
-        const lineKey = String(line.lineKey || line.quoteLineId || dispatchKey).trim();
-        const orderLine = await tx.salesOrderLine.findFirst({
-          where: {
-            salesOrderId: salesOrder.id,
-            OR: [
-              line.quoteLineId ? { quoteLineId: String(line.quoteLineId) } : undefined,
-              lineKey ? { lineKey } : undefined,
-              productId ? { productId } : undefined,
-            ].filter(Boolean),
-          },
-        }).catch(() => null);
+        const orderLine = await this.resolveOrderLineTx(tx, salesOrder.id, line);
         await tx.dispatchLine.create({
           data: {
             id: ulid(),
@@ -1032,6 +1305,130 @@ export class DispatchService {
       }
   }
 
+  private wholeQty(value: any, label: string) {
+    const number = Number(value || 0);
+    if (!Number.isFinite(number) || number < 0) throw new BadRequestException(`${label} cannot be negative`);
+    if (!Number.isInteger(number)) throw new BadRequestException(`${label} must be a whole number (${number} is not). Stock is counted in whole units.`);
+    return number;
+  }
+
+  /**
+   * Real transport details for a challan. A vehicle delivery needs the vehicle
+   * number, driver name and driver phone; a customer pickup needs none of them.
+   */
+  private normalizeTransport(data: ChallanTransportInput, job?: any) {
+    const clean = (value: any, max: number) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+    const transportMode = String(data.transportMode || 'vehicle').trim().toLowerCase() === 'self_pickup' ? 'self_pickup' : 'vehicle';
+    const notes = clean(data.notes ?? data.remarks, 500);
+    if (transportMode === 'self_pickup') {
+      const phone = clean(data.driverPhone || data.contactPhone || job?.customer?.mobile || '', 24);
+      return { transportMode, vehicleNumber: null, driverName: clean(data.driverName, 80) || null, transporterName: null, contactPhone: phone, notes };
+    }
+    const vehicleNumber = clean(data.vehicleNumber || data.vehicleNo, 20).toUpperCase();
+    const driverName = clean(data.driverName, 80);
+    const contactPhone = clean(data.driverPhone || data.contactPhone, 24);
+    const transporterName = clean(data.transporterName || data.transporter, 80) || null;
+    if (!vehicleNumber || vehicleNumber === PLACEHOLDER_TRANSPORT.vehicleNumber) throw new BadRequestException('Enter the vehicle number, or choose customer pickup');
+    if (!/^[A-Z0-9][A-Z0-9 -]{3,19}$/.test(vehicleNumber)) throw new BadRequestException('Vehicle number can use letters, numbers, spaces and dashes only (for example GJ 01 AB 1234)');
+    if (driverName.length < 2 || driverName === PLACEHOLDER_TRANSPORT.driverName) throw new BadRequestException("Enter the driver's name");
+    const digits = contactPhone.replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 13 || /^0+$/.test(digits)) throw new BadRequestException("Enter the driver's phone number (10 digits)");
+    return { transportMode, vehicleNumber, driverName, transporterName, contactPhone, notes };
+  }
+
+  /** Transport details can be corrected until the challan leaves. */
+  async updateChallanTransport(id: string, input: ChallanTransportInput, actorUserId: string) {
+    return this.prisma.$transaction(async (tx: any) => {
+      const challan = await tx.dispatchChallan.findUnique({ where: { id }, include: { customer: true } });
+      if (!challan) throw new NotFoundException('Challan not found');
+      if (challan.status !== 'pending') throw new BadRequestException(`${challan.challanNumber} has already left; its transport details are final`);
+      const transport = this.normalizeTransport(input, { customer: challan.customer });
+      const before = { transportMode: challan.transportMode, vehicleNumber: challan.vehicleNumber, driverName: challan.driverName, transporterName: challan.transporterName, contactPhone: challan.contactPhone, remarks: challan.remarks };
+      const updated = await tx.dispatchChallan.update({
+        where: { id },
+        data: {
+          transportMode: transport.transportMode, vehicleNumber: transport.vehicleNumber, driverName: transport.driverName,
+          transporterName: transport.transporterName, contactPhone: transport.contactPhone, remarks: transport.notes, updatedAt: new Date(),
+        },
+      });
+      await tx.shipment.updateMany({
+        where: { challanId: id },
+        data: { transporterName: transport.transporterName, vehicleNumber: transport.vehicleNumber, driverName: transport.driverName, contactPhone: transport.contactPhone || null, updatedAt: new Date() },
+      });
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: 'dispatch_challan.transport', entityType: 'DispatchChallan', entityId: id,
+        summary: `Updated transport for ${challan.challanNumber}`, metadata: { before, after: transport },
+      } });
+      return updated;
+    }, { isolationLevel: 'Serializable', timeout: 20000 });
+  }
+
+  /** Challan lines for special-order tile lines (no Product Master item) that have been received. */
+  private async specialOrderChallanLines(salesOrder: any, requested: any[]) {
+    const rows = (requested || []).filter((line: any) => !line.pickLineId && line.salesOrderLineId && Number(line.dispatchQty ?? line.quantity ?? 0) > 0);
+    if (!rows.length) return [];
+    const orderLines = await this.prisma.salesOrderLine.findMany({ where: { id: { in: rows.map((row: any) => String(row.salesOrderLineId)) }, salesOrderId: salesOrder.id } });
+    const demands = await (this.prisma as any).purchaseDemand.findMany({ where: { sourceOrderId: salesOrder.id, sourceType: 'tile_special_order' } }).catch(() => []);
+    return rows.map((row: any) => {
+      const orderLine: any = orderLines.find((line: any) => line.id === String(row.salesOrderLineId));
+      if (!orderLine) throw new BadRequestException('A special-order line does not belong to this sales order');
+      if (orderLine.productId) throw new BadRequestException(`${orderLine.sku} is a stock item; dispatch it through a pick list`);
+      const demand = (demands as any[]).find((item) => String(item.metadata?.salesOrderLineId || '') === orderLine.id)
+        || (demands as any[]).find((item) => item.sku === orderLine.sku);
+      if (!demand) throw new BadRequestException(`${orderLine.sku} has no special-order purchase yet; it cannot be dispatched`);
+      return {
+        salesOrderLineId: orderLine.id,
+        lineKey: orderLine.lineKey,
+        dispatchKey: demand.sourceLineKey,
+        productId: null,
+        type: 'tile',
+        nonStock: true,
+        tileCode: demand.sku,
+        sku: orderLine.sku,
+        name: orderLine.name,
+        category: orderLine.category,
+        brand: orderLine.brand,
+        finish: orderLine.finish,
+        unit: String(orderLine.unit || demand.unit || 'BOX').toUpperCase(),
+        orderUnit: orderLine.unit,
+        piecesPerUnit: 1,
+        dispatchQty: this.wholeQty(row.dispatchQty ?? row.quantity, `${orderLine.sku} challan quantity`),
+      };
+    });
+  }
+
+  /**
+   * Finds the order line a challan line belongs to. A challan line built from a
+   * pick line carries its order-line id; that is the only safe match when the
+   * same item sits in two rooms. Older lines without it fall back to quote line,
+   * line key, and last to the product only when exactly one line has it.
+   */
+  private async resolveOrderLineTx(tx: any, salesOrderId: string, line: any) {
+    const orderLineId = String(line?.salesOrderLineId || '').trim();
+    if (orderLineId) {
+      const exact = await tx.salesOrderLine.findUnique({ where: { id: orderLineId } });
+      if (exact && exact.salesOrderId === salesOrderId) return exact;
+    }
+    if (line?.quoteLineId) {
+      const byQuoteLine = await tx.salesOrderLine.findMany({ where: { salesOrderId, quoteLineId: String(line.quoteLineId) } });
+      if (byQuoteLine.length === 1) return byQuoteLine[0];
+    }
+    const lineKey = String(line?.lineKey || '').trim();
+    if (lineKey) {
+      const byKey = await tx.salesOrderLine.findUnique({ where: { salesOrderId_lineKey: { salesOrderId, lineKey } } });
+      if (byKey) return byKey;
+    }
+    const productId = String(line?.productId || '').trim();
+    if (productId) {
+      const byProduct = await tx.salesOrderLine.findMany({ where: { salesOrderId, productId } });
+      if (byProduct.length === 1) return byProduct[0];
+      if (byProduct.length > 1) {
+        throw new BadRequestException(`${line?.sku || 'An item'} is on more than one line of this order and this challan line does not say which. Cancel the challan and create it again from the pick list.`);
+      }
+    }
+    return null;
+  }
+
   private normalizeLines(lines: any) {
     if (!lines) return null;
     if (typeof lines === 'string') {
@@ -1050,6 +1447,7 @@ export class DispatchService {
 
   private async consumeInventoryForChallan(tx: any, challan: any) {
     const lines = Array.isArray(challan.lines) ? challan.lines : [];
+    const sentOrderLines = new Set<string>();
     for (const line of lines) {
       const productId = String(line.productId || '').trim();
       const quantity = Number(line.dispatchQty || line.qty || line.quantity || 0);
@@ -1064,18 +1462,8 @@ export class DispatchService {
         : await tx.salesOrder.findFirst({ where: { quoteId: challan.quoteId } }).catch(() => null);
       let orderLine: any = null;
       if (salesOrder) {
-        const lineKey = String(line.lineKey || line.quoteLineId || line.dispatchKey || '').trim();
-        orderLine = await tx.salesOrderLine.findFirst({
-          where: {
-            salesOrderId: salesOrder.id,
-            OR: [
-              line.quoteLineId ? { quoteLineId: String(line.quoteLineId) } : undefined,
-              lineKey ? { lineKey } : undefined,
-              { productId },
-            ].filter(Boolean),
-          },
-          orderBy: { lineNo: 'asc' },
-        }).catch(() => null);
+        // The same item in two rooms is two order lines: match the exact line the pick carried.
+        orderLine = await this.resolveOrderLineTx(tx, salesOrder.id, line);
         // One challan line per pick line (one lot): update only its own dispatch line, or a second
         // lot of the same item would overwrite the first lot's quantity.
         await tx.dispatchLine.updateMany({
@@ -1094,6 +1482,7 @@ export class DispatchService {
             nextDispatched = Math.floor(Number(sent._sum?.dispatchedQuantity || 0) / factor + 1e-9);
           }
           nextDispatched = Math.min(Number(orderLine.orderedQuantity || 0), nextDispatched);
+          sentOrderLines.add(orderLine.id);
           await tx.salesOrderLine.update({
             where: { id: orderLine.id },
             data: {
@@ -1114,7 +1503,16 @@ export class DispatchService {
           where: { challanId: challan.id, pickLineId: String(line.pickLineId) },
           data: { metadata: { quoteId: challan.quoteId, lotAllocations: consumedLots, pickControlled: true }, updatedAt: new Date() },
         });
-        const pickedLine = await tx.pickLine.update({ where: { id: String(line.pickLineId) }, data: { status: 'dispatched', updatedAt: new Date() } });
+        // A pick line sent in parts stays open until every packed unit has gone.
+        const pickLineRow = await tx.pickLine.findUnique({ where: { id: String(line.pickLineId) } });
+        const sentForPickLine = await tx.dispatchLine.aggregate({
+          where: { pickLineId: String(line.pickLineId), status: { in: ['dispatched', 'delivered', 'failed_delivery'] } },
+          _sum: { dispatchedQuantity: true },
+        });
+        const fullySent = Number(sentForPickLine._sum?.dispatchedQuantity || 0) >= Number(pickLineRow?.packedQuantity || 0);
+        const pickedLine = fullySent
+          ? await tx.pickLine.update({ where: { id: String(line.pickLineId) }, data: { status: 'dispatched', updatedAt: new Date() } })
+          : pickLineRow;
         const remainingPickLines = await tx.pickLine.count({
           where: { pickListId: pickedLine.pickListId, status: { notIn: ['dispatched', 'cancelled'] } },
         });
@@ -1162,6 +1560,9 @@ export class DispatchService {
       }
     }
     if (challan.quoteId) await syncSalesOrderLinesForQuoteTx(tx, challan.quoteId);
+    // A direct order has no quote to sync: its lines' reserved / waiting counts are read again
+    // from the reservations, so goods sent no longer show as held for it.
+    else for (const orderLineId of sentOrderLines) await refreshOrderLineStockTx(tx, orderLineId);
   }
 
   private async consumeSpecialOrderLineTx(tx: any, challan: any, line: any, quantity: number) {
@@ -1170,7 +1571,10 @@ export class DispatchService {
       : await tx.salesOrder.findFirst({ where: { quoteId: challan.quoteId } }).catch(() => null);
     if (!salesOrder) return;
     const dispatchKey = String(line.dispatchKey || line.sourceLineKey || line.tileCode || line.sku || '').trim();
-    const orderLine = await tx.salesOrderLine.findFirst({
+    const exactLine = line.salesOrderLineId
+      ? await tx.salesOrderLine.findUnique({ where: { id: String(line.salesOrderLineId) } })
+      : null;
+    const orderLine = (exactLine && exactLine.salesOrderId === salesOrder.id ? exactLine : null) || await tx.salesOrderLine.findFirst({
       where: {
         salesOrderId: salesOrder.id,
         OR: [
@@ -1194,9 +1598,9 @@ export class DispatchService {
       },
     }).catch(() => null);
     await tx.dispatchLine.updateMany({
-      where: { challanId: challan.id, dispatchKey: orderLine.lineKey },
+      where: { challanId: challan.id, OR: [{ salesOrderLineId: orderLine.id }, { dispatchKey: dispatchKey || orderLine.lineKey }] },
       data: { dispatchedQuantity: quantity, status: 'dispatched', updatedAt: new Date() },
-    }).catch(() => null);
+    });
     await tx.stockLedgerEntry.create({
       data: {
         id: ulid(),
@@ -1261,7 +1665,11 @@ export class DispatchService {
             where: { id: line.salesOrderLineId },
             data: {
               deliveredQuantity: nextDelivered,
-              status: nextDelivered >= Number(orderLine.orderedQuantity || 0) ? 'delivered' : 'partial_delivered',
+              // Part delivered with some still to send stays in "left to dispatch" (partial_dispatched);
+              // everything sent and part of it delivered is partial_delivered.
+              status: nextDelivered >= Number(orderLine.orderedQuantity || 0)
+                ? 'delivered'
+                : Number(orderLine.dispatchedQuantity || 0) < Number(orderLine.orderedQuantity || 0) ? 'partial_dispatched' : 'partial_delivered',
               updatedAt: new Date(),
             },
           });
@@ -1359,12 +1767,67 @@ export class DispatchService {
     }
   }
 
+  /**
+   * A tile sold by the box leaves in full boxes only. A quantity typed by hand
+   * that is not whole boxes is refused; the quantity the system itself offers
+   * (what is reserved, picked or packed) is always accepted as it is.
+   */
+  private assertFullBoxes(product: any, quantity: number, systemQuantity: number) {
+    const factor = stockFactor(product);
+    if (factor <= 1 || quantity <= 0 || quantity === Number(systemQuantity) || quantity % factor === 0) return;
+    throw new BadRequestException(`This tile is sold in full boxes of ${factor} pieces`);
+  }
+
   /** Base units per selling unit for each product (pieces per box for boxed tiles, else 1). */
   private async unitFactors(ids: any[]) {
     const productIds = Array.from(new Set((ids || []).map((id) => String(id || '').trim()).filter(Boolean)));
     if (!productIds.length) return new Map<string, number>();
     const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
     return new Map(products.map((product: any) => [product.id, stockFactor(product)]));
+  }
+
+  // Reserved stock not yet on an open pick list, per order and location (base units), most first.
+  // Same counting as createPickList, so the screen can default to a location that will work.
+  private async unpickedReservedByLocation(db: any, salesOrderIds: string[]) {
+    const result = new Map<string, Array<{ locationId: string; code: string; name: string; quantity: number }>>();
+    const ids = Array.from(new Set(salesOrderIds.filter(Boolean)));
+    if (!ids.length) return result;
+    const allocations = await db.lotReservation.findMany({
+      where: { salesOrderLine: { salesOrderId: { in: ids } }, status: 'reserved', quantity: { gt: 0 } },
+      select: { salesOrderLineId: true, lotId: true, locationId: true, quantity: true, salesOrderLine: { select: { salesOrderId: true } }, location: { select: { code: true, name: true } } },
+    });
+    if (!allocations.length) return result;
+    const openPicks = await db.pickLine.findMany({
+      where: {
+        salesOrderLine: { salesOrderId: { in: ids } },
+        status: { notIn: ['dispatched', 'cancelled', 'returned'] },
+        pickList: { status: { in: ['ready', 'picking', 'picked', 'partial_packed', 'packed', 'completed', 'challan_created'] } },
+      },
+      select: { salesOrderLineId: true, lotId: true, locationId: true, requestedQuantity: true },
+    });
+    const openByIdentity = new Map<string, number>();
+    for (const line of openPicks) {
+      const key = `${line.salesOrderLineId}:${line.lotId}:${line.locationId}`;
+      openByIdentity.set(key, (openByIdentity.get(key) || 0) + Number(line.requestedQuantity || 0));
+    }
+    const byOrderLocation = new Map<string, { orderId: string; locationId: string; code: string; name: string; quantity: number }>();
+    for (const allocation of allocations) {
+      const key = `${allocation.salesOrderLineId}:${allocation.lotId}:${allocation.locationId}`;
+      const used = Math.min(Number(allocation.quantity || 0), Number(openByIdentity.get(key) || 0));
+      openByIdentity.set(key, Math.max(0, Number(openByIdentity.get(key) || 0) - used));
+      const free = Math.max(0, Number(allocation.quantity || 0) - used);
+      if (free <= 0) continue;
+      const orderId = allocation.salesOrderLine.salesOrderId;
+      const groupKey = `${orderId}:${allocation.locationId}`;
+      const row = byOrderLocation.get(groupKey) || { orderId, locationId: allocation.locationId, code: allocation.location?.code || '', name: allocation.location?.name || '', quantity: 0 };
+      row.quantity += free;
+      byOrderLocation.set(groupKey, row);
+    }
+    for (const { orderId, ...row } of byOrderLocation.values()) {
+      result.set(orderId, [...(result.get(orderId) || []), row]);
+    }
+    for (const rows of result.values()) rows.sort((a, b) => b.quantity - a.quantity);
+    return result;
   }
 
   private groupByOrderProduct(reservations: any[]) {
@@ -1393,37 +1856,52 @@ export class DispatchService {
   }
 
   private async refreshJobStatusTx(tx: any, dispatchJobId: string) {
-    const job = await tx.dispatchJob.findUnique({ where: { id: dispatchJobId }, include: { quote: true } as any } as any);
-    if (!job?.quote) return;
-    const challans = await tx.dispatchChallan.findMany({ where: { dispatchJobId, status: { in: ['pending', 'dispatched', 'delivered'] } } });
-    if (!challans.length) {
-      await tx.dispatchJob.update({ where: { id: dispatchJobId }, data: { status: 'pending', updatedAt: new Date() } }).catch(() => null);
-      return;
-    }
+    // Works for quote orders and direct orders alike: progress is read from the
+    // order lines, which count selling units (boxes), so no unit mixing.
+    const job = await tx.dispatchJob.findUnique({ where: { id: dispatchJobId } });
+    if (!job) return;
     const order = job.salesOrderId
       ? await tx.salesOrder.findUnique({ where: { id: job.salesOrderId } }).catch(() => null)
-      : await tx.salesOrder.findFirst({ where: { quoteId: job.quoteId } }).catch(() => null);
-    const orderedKeys = new Map<string, number>();
-    (this.normalizeLines(order?.lines || job.quote?.lines) || []).forEach((line: any, index: number) => {
-      const productId = String(line.productId || '').trim();
-      const key = productId || (order ? this.tileDemandKey(order.id, line, index) : this.lineDispatchKey(line, index));
-      const qty = Number(line.qty || line.quantity || 0);
-      if (key && qty > 0) orderedKeys.set(key, (orderedKeys.get(key) || 0) + qty);
-    });
-    const deliveredQty = this.groupChallanQty(challans.filter((challan: any) => challan.status === 'delivered'), 'quote');
-    const committedQty = this.groupChallanQty(challans, 'quote');
-    const fullyCommitted = Array.from(orderedKeys.entries()).every(([key, qty]) => Number(committedQty.get(key) || 0) >= qty);
-    const fullyDelivered = Array.from(orderedKeys.entries()).every(([key, qty]) => Number(deliveredQty.get(key) || 0) >= qty);
+      : job.quoteId ? await tx.salesOrder.findFirst({ where: { quoteId: job.quoteId } }) : null;
+    const challans = await tx.dispatchChallan.findMany({ where: { dispatchJobId, status: { in: ['pending', 'dispatched', 'delivered', 'failed_delivery'] } } });
+    const orderLines = order ? await tx.salesOrderLine.findMany({ where: { salesOrderId: order.id, orderedQuantity: { gt: 0 } } }) : [];
+    const fullyDelivered = orderLines.length > 0 && orderLines.every((line: any) => Number(line.deliveredQuantity || 0) >= Number(line.orderedQuantity || 0));
+    const fullyDispatched = orderLines.length > 0 && orderLines.every((line: any) => Number(line.dispatchedQuantity || 0) >= Number(line.orderedQuantity || 0));
     const hasPending = challans.some((challan: any) => challan.status === 'pending');
-    const hasDispatched = challans.some((challan: any) => challan.status === 'dispatched');
-    const nextStatus = fullyCommitted && fullyDelivered
+    const onRoad = challans.some((challan: any) => ['dispatched', 'failed_delivery'].includes(challan.status));
+    const nextStatus = fullyDelivered
       ? 'delivered'
-      : hasDispatched
+      : onRoad || (fullyDispatched && !hasPending)
         ? 'dispatched'
         : hasPending
           ? 'packed'
           : 'pending';
     await tx.dispatchJob.update({ where: { id: dispatchJobId }, data: { status: nextStatus, updatedAt: new Date() } }).catch(() => null);
+    // The order itself moves too: delivered when every line is delivered, dispatched
+    // when every line has left, and back to open if goods came back.
+    if (order && !['cancelled', 'closed'].includes(String(order.status || ''))) {
+      const orderStatus = fullyDelivered ? 'delivered' : fullyDispatched ? 'dispatched' : 'open';
+      if (orderStatus !== order.status && (orderStatus !== 'open' || ['dispatched', 'delivered'].includes(String(order.status)))) {
+        await tx.salesOrder.update({ where: { id: order.id }, data: { status: orderStatus, updatedAt: new Date() } });
+      }
+      if (fullyDelivered) await this.finishDeliveredOrderTx(tx, order.id, dispatchJobId);
+    }
+  }
+
+  /**
+   * Every line is delivered: the order leaves every work queue in the same save.
+   * Its purchase demands whose goods came in close, a waiting (backordered) row left
+   * behind holds no stock and is released so no later receipt fills it, and the
+   * "order awaiting fulfilment" task is resolved. Payment is not touched.
+   */
+  private async finishDeliveredOrderTx(tx: any, salesOrderId: string, dispatchJobId: string) {
+    const now = new Date();
+    await closeFinishedDemandsTx(tx, salesOrderId);
+    await tx.reservation.updateMany({ where: { salesOrderId, status: 'backordered' }, data: { status: 'released', updatedAt: now } });
+    await tx.notification.updateMany({
+      where: { type: 'work_dispatch', category: 'action', status: 'open', entityType: 'DispatchJob', entityId: dispatchJobId },
+      data: { status: 'resolved', resolvedAt: now, assignedUserId: null },
+    });
   }
 
   private lineDispatchKey(line: any, fallback?: string | number) {

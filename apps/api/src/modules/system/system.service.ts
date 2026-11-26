@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 import * as bcrypt from 'bcrypt';
@@ -7,6 +7,7 @@ import * as path from 'path';
 
 @Injectable()
 export class SystemService {
+  private readonly logger = new Logger(SystemService.name);
   constructor(private prisma: PrismaService) {}
 
   async getSettings() {
@@ -66,6 +67,7 @@ export class SystemService {
       cpSanitaryQuoteBrandIds: Array.isArray(settings.cpSanitaryQuoteBrandIds) ? settings.cpSanitaryQuoteBrandIds : (Array.isArray(settings.quoteBrandIds) ? settings.quoteBrandIds : []),
       supportPhone: settings.supportPhone,
       supportEmail: settings.supportEmail,
+      invoiceGstSplitEnabled: Boolean((settings as any).invoiceGstSplitEnabled),
     };
   }
 
@@ -89,6 +91,8 @@ export class SystemService {
     const cpSanitaryPolicy = policy(input.cpSanitaryQuoteBrandSelectionMode, input.cpSanitaryQuoteBrandIds, current.cpSanitaryQuoteBrandSelectionMode || legacyPolicy.mode, current.cpSanitaryQuoteBrandIds || legacyPolicy.ids, 'CP & Sanitary quote');
     const publicPriceMode = input.publicPriceMode === undefined ? (current as any).publicPriceMode || 'mrp' : String(input.publicPriceMode || '').trim().toLowerCase();
     if (!['hidden', 'mrp', 'nrp'].includes(publicPriceMode)) throw new BadRequestException('Customer page price must be hidden, mrp or nrp');
+    const documentNumberingPeriod = input.documentNumberingPeriod === undefined || input.documentNumberingPeriod === null ? (current as any).documentNumberingPeriod || 'calendar' : String(input.documentNumberingPeriod).trim().toLowerCase();
+    if (!['calendar', 'financial'].includes(documentNumberingPeriod)) throw new BadRequestException('Numbering must restart each calendar year or each financial year');
     const settings = await this.prisma.appSetting.update({
       where: { id: current.id },
       data: {
@@ -116,6 +120,9 @@ export class SystemService {
         supportEmail: input.supportEmail ?? current.supportEmail,
         publicCatalogueEnabled: input.publicCatalogueEnabled ?? (current as any).publicCatalogueEnabled ?? true,
         publicPriceMode,
+        documentNumberingPeriod,
+        invoiceGstSplitEnabled: input.invoiceGstSplitEnabled ?? (current as any).invoiceGstSplitEnabled ?? false,
+        quoteExpiryEnabled: input.quoteExpiryEnabled ?? (current as any).quoteExpiryEnabled ?? false,
         updatedAt: new Date(),
       },
     });
@@ -131,37 +138,37 @@ export class SystemService {
       throw new BadRequestException('Invalid reset confirmation');
     }
 
-    await (this.prisma as any).customerAllocation.deleteMany().catch(() => null);
-    await (this.prisma as any).salesInvoiceLine.deleteMany().catch(() => null);
-    await (this.prisma as any).customerLedgerEntry.deleteMany().catch(() => null);
-    await (this.prisma as any).customerPayment.deleteMany().catch(() => null);
-    await (this.prisma as any).collectionTask.deleteMany().catch(() => null);
-    await (this.prisma as any).salesInvoice.deleteMany().catch(() => null);
-    await (this.prisma as any).customerCreditProfile.deleteMany().catch(() => null);
-    await (this.prisma as any).returnLine.deleteMany().catch(() => null);
-    await (this.prisma as any).returnOrder.deleteMany().catch(() => null);
-    await (this.prisma as any).deliveryProof.deleteMany().catch(() => null);
-    await (this.prisma as any).shipment.deleteMany().catch(() => null);
-    await (this.prisma as any).dispatchLine.deleteMany().catch(() => null);
-    await (this.prisma as any).dispatchPackage.deleteMany().catch(() => null);
-    await (this.prisma as any).stockAdjustmentApproval.deleteMany().catch(() => null);
-    await (this.prisma as any).stockCountLine.deleteMany().catch(() => null);
-    await (this.prisma as any).stockCountSession.deleteMany().catch(() => null);
-    await (this.prisma as any).stockLedgerEntry.deleteMany().catch(() => null);
-    await (this.prisma as any).stockBalanceByLocation.deleteMany().catch(() => null);
-    await (this.prisma as any).stockLocation.deleteMany().catch(() => null);
-    await (this.prisma as any).productVendor.deleteMany().catch(() => null);
-    await (this.prisma as any).reorderPolicy.deleteMany().catch(() => null);
-    await (this.prisma as any).paymentReceipt.deleteMany().catch(() => null);
-    await (this.prisma as any).documentJob.deleteMany().catch(() => null);
-    await (this.prisma as any).salesOrderLine.deleteMany().catch(() => null);
-    await (this.prisma as any).quoteLine.deleteMany().catch(() => null);
-    await (this.prisma as any).goodsReceiptLine.deleteMany().catch(() => null);
-    await (this.prisma as any).goodsReceiptNote.deleteMany().catch(() => null);
-    await (this.prisma as any).purchaseOrderLine.deleteMany().catch(() => null);
-    await (this.prisma as any).purchaseOrder.deleteMany().catch(() => null);
-    await (this.prisma as any).purchaseDemand.deleteMany().catch(() => null);
-    await (this.prisma as any).sequenceCounter.deleteMany().catch(() => null);
+    await (this.prisma as any).customerAllocation.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).salesInvoiceLine.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).customerLedgerEntry.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).customerPayment.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).collectionTask.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).salesInvoice.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).customerCreditProfile.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).returnLine.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).returnOrder.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).deliveryProof.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).shipment.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).dispatchLine.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).dispatchPackage.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).stockAdjustmentApproval.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).stockCountLine.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).stockCountSession.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).stockLedgerEntry.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).stockBalanceByLocation.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).stockLocation.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).productVendor.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).reorderPolicy.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).paymentReceipt.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).documentJob.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).salesOrderLine.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).quoteLine.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).goodsReceiptLine.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).goodsReceiptNote.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).purchaseOrderLine.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).purchaseOrder.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).purchaseDemand.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
+    await (this.prisma as any).sequenceCounter.deleteMany().catch((error: Error) => this.logger.warn(`Workspace reset step failed: ${error.message}`));
     await this.prisma.dispatchChallan.deleteMany();
     await this.prisma.dispatchJob.deleteMany();
     await this.prisma.reservation.deleteMany();
@@ -232,7 +239,7 @@ export class SystemService {
     return this.prisma.auditEvent.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      take: args?.take || 100,
+      take: Math.min(Math.max(Number(args?.take) || 100, 1), 1000),
     });
   }
 

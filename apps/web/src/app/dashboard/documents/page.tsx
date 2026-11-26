@@ -12,7 +12,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { QueryErrorBanner, QueryLoading } from '@/components/query-state';
-import { cn } from '@/lib/utils';
+import { NoAccessState, isAccessRefused } from '@/components/no-access-state';
+import { cn, statusLabel } from '@/lib/utils';
+import { useFocusTrap } from '@/hooks/use-focus-trap';
+import { useMediaQuery } from '@/hooks/use-media-query';
 
 const DATA = gql`
   query DocumentVault($search: String, $category: String, $mediaKind: String, $status: String, $take: Float, $skip: Float, $jobTake: Int, $jobSkip: Int) {
@@ -124,6 +127,11 @@ export default function DocumentCenterPage() {
   const canManage = permissions.includes('documents.manage');
   const canPurge = permissions.includes('documents.delete');
   const selected = assets.find((asset) => asset.id === selectedId) || null;
+  // Details sheet: a full-screen popup below the lg breakpoint (keeps focus,
+  // Escape closes, focus goes back to the file); a side panel on desktop.
+  const detailsRef = useRef<HTMLElement>(null);
+  const detailsIsPopup = useMediaQuery('(max-width: 1023px)');
+  useFocusTrap(detailsRef, Boolean(selected) && detailsIsPopup, { onEscape: () => setSelectedId('') });
   const categories = useMemo(() => Array.from(new Set([...DEFAULT_CATEGORIES, ...(summary.categories || []).map((row: any) => row.name)])).sort(), [summary.categories]);
 
   useEffect(() => {
@@ -247,14 +255,17 @@ export default function DocumentCenterPage() {
 
   const contentUrl = selected ? vaultEndpoint(`/api/document-vault/files/${selected.id}/content`) : '';
 
+  // The menu shows this page to some roles whose rights do not cover all of it: say so calmly.
+  if (error && isAccessRefused(error) && !data) return <NoAccessState area="the document vault" pageTitle="Documents" />;
+
   return (
     <div className="min-w-0 space-y-5 pb-12">
-      <header className="border-b border-[var(--line)] pb-5">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase text-[var(--brand-700)]"><FolderOpen className="h-4 w-4" /> File vault</div>
-            <h1 className="mt-2 font-display text-3xl font-bold text-[var(--ink)] md:text-4xl">Every catalogue and sample, ready to present.</h1>
-            <p className="mt-2 text-sm leading-6 text-[var(--ink-3)]">Keep large PDFs, product imagery, videos and working documents together. Preview them here or issue a controlled public link.</p>
+      <header className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0 max-w-3xl">
+            <div className="mp-eyebrow flex items-center gap-2"><FolderOpen className="h-4 w-4" aria-hidden="true" /> File vault</div>
+            <h1 className="mp-page-title">Every catalogue and sample, ready to present.</h1>
+            <p className="mp-page-sub">Keep large PDFs, product imagery, videos and working documents together. Preview them here or issue a controlled public link.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => refetch()} title="Refresh"><RefreshCw className="h-4 w-4" /><span className="ml-2">Refresh</span></Button>
@@ -296,7 +307,7 @@ export default function DocumentCenterPage() {
                 <Textarea className="mt-1 min-h-20" value={uploadDescription} onChange={(event) => setUploadDescription(event.target.value)} placeholder="Collection, brand, room or use" />
               </label>
               {uploadFiles.length ? <div className="max-h-40 space-y-2 overflow-y-auto border-y border-[var(--line)] py-2">{uploadFiles.map((file, index) => <div key={`${file.name}-${index}`} className="flex items-center gap-2 text-xs"><File className="h-4 w-4 shrink-0 text-[var(--ink-4)]" /><span className="min-w-0 flex-1 truncate font-semibold text-[var(--ink)]">{file.name}</span><span className="text-[var(--ink-4)]">{uploadProgress[file.name] ?? formatBytes(file.size)}{typeof uploadProgress[file.name] === 'number' ? '%' : ''}</span><button disabled={uploading} onClick={() => setUploadFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove ${file.name}`}><X className="h-4 w-4" /></button></div>)}</div> : null}
-              <div className="flex gap-2"><Button className="flex-1" onClick={startUpload} disabled={!uploadFiles.length || uploading}>{uploading ? 'Uploading…' : `Upload ${uploadFiles.length || ''} ${uploadFiles.length === 1 ? 'file' : 'files'}`}</Button><Button variant="ghost" onClick={() => { setUploadOpen(false); setUploadFiles([]); }} disabled={uploading}>Cancel</Button></div>
+              <div className="flex gap-2"><Button variant="ghost" onClick={() => { setUploadOpen(false); setUploadFiles([]); }} disabled={uploading}>Cancel</Button><Button className="flex-1" onClick={startUpload} disabled={!uploadFiles.length || uploading}>{uploading ? 'Uploading…' : `Upload ${uploadFiles.length || ''} ${uploadFiles.length === 1 ? 'file' : 'files'}`}</Button></div>
             </div>
           </section>
         ) : null}
@@ -311,12 +322,12 @@ export default function DocumentCenterPage() {
         </section>
 
         <section className="flex flex-col gap-3 border-b border-[var(--line)] pb-4 lg:flex-row lg:items-center">
-          <label className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-4)]" /><Input value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" placeholder="Search title, filename, category or notes" /></label>
+          <label className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-4)]" /><Input aria-label="Search title, filename, category or notes" value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" placeholder="Search title, filename, category or notes" /></label>
           <div className="grid grid-cols-2 gap-2 sm:flex">
             <select aria-label="Category" value={category} onChange={(event) => setCategory(event.target.value)} className="h-9 min-w-0 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--ink)]"><option value="all">All categories</option>{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select>
             <select aria-label="File type" value={kind} onChange={(event) => setKind(event.target.value)} className="h-9 min-w-0 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--ink)]"><option value="all">All file types</option><option value="pdf">PDF</option><option value="image">Images</option><option value="video">Videos</option><option value="audio">Audio</option><option value="document">Office files</option></select>
             <select aria-label="Status" value={status} onChange={(event) => setStatus(event.target.value)} className="h-9 min-w-0 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--ink)]"><option value="active">Active</option><option value="archived">Archived</option></select>
-            <div className="flex rounded-md border border-[var(--line)] bg-[var(--surface)] p-0.5"><button className={cn('h-8 w-8 rounded', view === 'grid' && 'bg-[var(--bg-soft)]')} onClick={() => setView('grid')} title="Grid view"><Grid2X2 className="mx-auto h-4 w-4" /></button><button className={cn('h-8 w-8 rounded', view === 'list' && 'bg-[var(--bg-soft)]')} onClick={() => setView('list')} title="List view"><List className="mx-auto h-4 w-4" /></button></div>
+            <div className="flex rounded-md border border-[var(--line)] bg-[var(--surface)] p-0.5"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={cn('mp-tap-icon h-8 w-8 rounded', view === 'grid' && 'bg-[var(--bg-soft)]')} onClick={() => setView('grid')} title="Grid view"><Grid2X2 className="mx-auto h-4 w-4" /></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={cn('mp-tap-icon h-8 w-8 rounded', view === 'list' && 'bg-[var(--bg-soft)]')} onClick={() => setView('list')} title="List view"><List className="mx-auto h-4 w-4" /></button></div>
           </div>
         </section>
 
@@ -336,8 +347,8 @@ export default function DocumentCenterPage() {
             {assets.length ? <div className="mt-4 flex items-center justify-between border-t border-[var(--line)] pt-4"><p className="text-xs font-semibold text-[var(--ink-4)]">Page {page + 1} · up to {pageSize} files</p><div className="flex gap-2"><Button type="button" size="sm" variant="outline" disabled={page === 0 || loading} onClick={() => { setSelectedId(''); setPage((current) => Math.max(0, current - 1)); }}>Previous</Button><Button type="button" size="sm" variant="outline" disabled={!hasNextPage || loading} onClick={() => { setSelectedId(''); setPage((current) => current + 1); }}>Next</Button></div></div> : null}
           </section>
 
-          {selected ? <aside className="fixed inset-0 z-50 min-w-0 overflow-y-auto bg-[var(--surface)] p-4 lg:sticky lg:top-20 lg:z-auto lg:max-h-[calc(100vh-7rem)] lg:border-l lg:border-[var(--line)] lg:bg-transparent lg:p-0 lg:pl-5">
-            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold uppercase text-[var(--brand-700)]">{selected.category}</p><h2 className="mt-1 truncate text-xl font-bold text-[var(--ink)]">{selected.title}</h2><p className="mt-1 truncate text-xs text-[var(--ink-4)]">{selected.originalName} · {formatBytes(selected.sizeBytes)}</p></div><button onClick={() => setSelectedId('')} className="h-8 w-8 shrink-0 rounded-md hover:bg-[var(--bg-soft)]" title="Close details"><X className="mx-auto h-4 w-4" /></button></div>
+          {selected ? <aside ref={detailsRef} aria-label="File details" role={detailsIsPopup ? 'dialog' : undefined} aria-modal={detailsIsPopup ? true : undefined} onKeyDown={(event) => { if (event.key === 'Escape' && !detailsIsPopup) { event.stopPropagation(); setSelectedId(''); } }} className="fixed inset-0 z-50 min-w-0 overflow-y-auto bg-[var(--surface)] p-4 lg:sticky lg:top-20 lg:z-auto lg:max-h-[calc(100vh-7rem)] lg:border-l lg:border-[var(--line)] lg:bg-transparent lg:p-0 lg:pl-5">
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold uppercase text-[var(--brand-700)]">{selected.category}</p><h2 className="mt-1 truncate text-xl font-bold text-[var(--ink)]">{selected.title}</h2><p className="mt-1 truncate text-xs text-[var(--ink-4)]">{selected.originalName} · {formatBytes(selected.sizeBytes)}</p></div><button type="button" onClick={() => setSelectedId('')} className="mp-icon-btn h-9 w-9 shrink-0 rounded-md hover:bg-[var(--bg-soft)]" title="Close details" aria-label="Close details"><X className="mx-auto h-4 w-4" aria-hidden="true" /></button></div>
             <div className="mt-4 overflow-hidden rounded-lg border border-[var(--line)] bg-[#171717]">
               {selected.mediaKind === 'image' ? <img src={contentUrl} alt={selected.title} className="max-h-[34rem] min-h-56 w-full object-contain" /> : null}
               {selected.mediaKind === 'pdf' ? <iframe src={contentUrl} title={selected.title} className="h-[34rem] w-full bg-white" /> : null}
@@ -359,7 +370,7 @@ export default function DocumentCenterPage() {
         <section className="grid gap-px overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--line)] md:grid-cols-4">{[
           ['Readiness score', `${readiness.score || 0}%`], ['Document jobs', readiness.documents?.documentJobs || jobs.length], ['Payment receipts', readiness.payments?.paymentReceipts || 0], ['Dispatch records', (readiness.dispatch?.dispatchLines || 0) + (readiness.dispatch?.shipments || 0)],
         ].map(([label, value]) => <div key={label} className="bg-[var(--surface)] p-4"><p className="text-xs font-semibold uppercase text-[var(--ink-4)]">{label}</p><p className="mt-1 text-xl font-bold text-[var(--ink)]">{value}</p></div>)}</section>
-        <section className="overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)]"><div className="flex items-center gap-2 border-b border-[var(--line)] p-4"><FileText className="h-5 w-5 text-[var(--brand-700)]" /><h2 className="font-bold text-[var(--ink)]">Quote, order and dispatch records</h2></div><div className="divide-y divide-[var(--line)]">{jobs.map((job) => <div key={job.id} className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"><div><p className="text-sm font-bold text-[var(--ink)]">{job.documentType} · {job.entityType}</p><p className="mt-1 text-xs text-[var(--ink-4)]">{job.entityId} · {formatDate(job.updatedAt || job.createdAt)}</p></div><div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ring-1 ${tone(job.status)}`}>{job.status}</span>{job.url ? <Button asChild size="sm" variant="outline"><Link href={job.url} target="_blank">Open PDF</Link></Button> : null}</div></div>)}{!jobs.length && !loading ? <div className="p-10 text-center"><ShieldCheck className="mx-auto h-9 w-9 text-emerald-600" /><p className="mt-3 text-sm font-semibold text-[var(--ink-3)]">No generated document jobs yet.</p></div> : null}</div>{jobs.length || jobPage > 0 ? <div className="flex items-center justify-between border-t border-[var(--line)] p-4"><p className="text-xs font-semibold text-[var(--ink-4)]">Page {jobPage + 1}</p><div className="flex gap-2"><Button variant="outline" size="sm" disabled={jobPage === 0 || loading} onClick={() => setJobPage((current) => Math.max(0, current - 1))}>Previous</Button><Button variant="outline" size="sm" disabled={!hasNextJobPage || loading} onClick={() => setJobPage((current) => current + 1)}>Next</Button></div></div> : null}</section>
+        <section className="overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)]"><div className="flex items-center gap-2 border-b border-[var(--line)] p-4"><FileText className="h-5 w-5 text-[var(--brand-700)]" /><h2 className="font-bold text-[var(--ink)]">Quote, order and dispatch records</h2></div><div className="divide-y divide-[var(--line)]">{jobs.map((job) => <div key={job.id} className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"><div><p className="text-sm font-bold text-[var(--ink)]">{job.documentType} · {job.entityType}</p><p className="mt-1 text-xs text-[var(--ink-4)]">{job.entityId} · {formatDate(job.updatedAt || job.createdAt)}</p></div><div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ring-1 ${tone(job.status)}`}>{statusLabel(job.status)}</span>{job.url ? <Button asChild size="sm" variant="outline"><Link href={job.url} target="_blank">Open PDF</Link></Button> : null}</div></div>)}{!jobs.length && !loading ? <div className="p-10 text-center"><ShieldCheck className="mx-auto h-9 w-9 text-emerald-600" /><p className="mt-3 text-sm font-semibold text-[var(--ink-3)]">No generated document jobs yet.</p></div> : null}</div>{jobs.length || jobPage > 0 ? <div className="flex items-center justify-between border-t border-[var(--line)] p-4"><p className="text-xs font-semibold text-[var(--ink-4)]">Page {jobPage + 1}</p><div className="flex gap-2"><Button variant="outline" size="sm" disabled={jobPage === 0 || loading} onClick={() => setJobPage((current) => Math.max(0, current - 1))}>Previous</Button><Button variant="outline" size="sm" disabled={!hasNextJobPage || loading} onClick={() => setJobPage((current) => current + 1)}>Next</Button></div></div> : null}</section>
       </>}
     </div>
   );

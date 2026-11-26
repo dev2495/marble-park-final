@@ -2,6 +2,39 @@ import { BadRequestException } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { applyLotStockPostingTx } from './lot-stock-posting';
 
+/**
+ * A location whose stock may be promised to an order. Stock in transit between
+ * locations, inactive locations and any location flagged
+ * `excludeFromAvailableStock` hold goods that cannot be picked today.
+ */
+export function isReservableLocation(location: any) {
+  if (!location) return false;
+  if (location.status && location.status !== 'active') return false;
+  if (String(location.type || '').toLowerCase() === 'transit') return false;
+  if (String(location.code || '').toUpperCase() === 'IN-TRANSIT') return false;
+  const metadata = location.metadata && typeof location.metadata === 'object' ? location.metadata : {};
+  return metadata.excludeFromAvailableStock !== true;
+}
+
+/** Ids of locations whose stock must not be reserved or counted as available. */
+export async function nonReservableLocationIdsTx(tx: any): Promise<string[]> {
+  const locations = await tx.stockLocation.findMany({ select: { id: true, code: true, type: true, status: true, metadata: true } });
+  return (locations as any[]).filter((location) => !isReservableLocation(location)).map((location) => location.id);
+}
+
+/** Lot stock of a product that can be reserved now (excludes in-transit and excluded locations). */
+export async function reservableLotQuantityTx(tx: any, productId: string): Promise<number> {
+  const excluded = await nonReservableLocationIdsTx(tx);
+  const result = await tx.inventoryLotBalance.aggregate({
+    where: {
+      lot: { productId, status: 'active' },
+      ...(excluded.length ? { locationId: { notIn: excluded } } : {}),
+    },
+    _sum: { available: true },
+  });
+  return Math.max(0, Number(result?._sum?.available || 0));
+}
+
 export async function reserveAvailableLotsTx(tx: any, args: {
   reservationId: string;
   salesOrderLineId: string;
@@ -14,10 +47,12 @@ export async function reserveAvailableLotsTx(tx: any, args: {
   const quantity = Math.trunc(Number(args.quantity || 0));
   if (quantity <= 0) return [];
   if (!args.salesOrderLineId) throw new BadRequestException('A sales-order line is required for lot reservation');
-  const balances = await tx.inventoryLotBalance.findMany({
+  const allBalances = await tx.inventoryLotBalance.findMany({
     where: { available: { gt: 0 }, lot: { productId: args.productId, status: 'active' } },
     include: { lot: true, location: true },
   });
+  // In-transit and excluded locations hold goods that cannot be picked: never promise them.
+  const balances = allBalances.filter((row: any) => isReservableLocation(row.location));
   balances.sort((left: any, right: any) => {
     const received = new Date(left.lot.receivedAt).getTime() - new Date(right.lot.receivedAt).getTime();
     return received || String(left.lot.lotNumber).localeCompare(String(right.lot.lotNumber));

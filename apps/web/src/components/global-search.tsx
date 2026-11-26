@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation';
 import { gql, useQuery } from '@apollo/client';
 import { ArrowRight, Loader2, Search, X } from 'lucide-react';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useFocusTrap } from '@/hooks/use-focus-trap';
 import { cn } from '@/lib/utils';
 
 const SEARCH_EVERYTHING = gql`query SearchEverything($query: String!) { searchEverything(query: $query) }`;
@@ -64,12 +65,13 @@ export function GlobalSearch() {
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
-  useEffect(() => {
-    if (!sheet) return;
-    const timer = window.setTimeout(() => sheetInputRef.current?.focus(), 30);
-    document.body.style.overflow = 'hidden';
-    return () => { window.clearTimeout(timer); document.body.style.overflow = ''; };
-  }, [sheet]);
+  // Phone sheet: focus starts in the box, Tab stays inside, Escape clears the
+  // text first and then closes, focus goes back to the search button.
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(sheetRef, sheet, {
+    initialFocus: sheetInputRef,
+    onEscape: () => { if (query) setQuery(''); else close(); },
+  });
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); setActive((index) => Math.min(index + 1, Math.max(rows.length - 1, 0))); }
@@ -99,14 +101,14 @@ export function GlobalSearch() {
   return (
     <>
       {/* Desktop: inline box with a dropdown */}
-      <div ref={boxRef} className="relative hidden min-w-0 lg:block lg:w-[28rem]">
-        <div className={cn('flex h-9 items-center rounded-md border bg-[var(--surface)] px-3 shadow-sm-soft transition-colors', open ? 'border-[var(--brand-400)]' : 'border-[var(--line)]')}>
+      <div ref={boxRef} className="relative hidden min-w-0 lg:block lg:w-[20rem] xl:w-[28rem]">
+        <div className={cn('flex h-9 items-center rounded-md border bg-[var(--surface)] px-3 shadow-sm-soft transition-[border-color,box-shadow]', open ? 'border-[var(--brand-400)] shadow-[0_0_0_3px_var(--ring)]' : 'border-[var(--line)] hover:border-[var(--line-strong)]')}>
           <Search className="mr-2 h-4 w-4 shrink-0 text-[var(--ink-4)]" aria-hidden="true" />
-          <input ref={inputRef} {...inputProps} role="combobox" aria-expanded={open && term.length >= 2} onFocus={() => setOpen(true)} className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)] [&::-webkit-search-cancel-button]:hidden" />
+          <input ref={inputRef} {...inputProps} role="combobox" aria-controls={listId} aria-expanded={open && term.length >= 2} onFocus={() => setOpen(true)} className="w-full bg-transparent text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)] [&::-webkit-search-cancel-button]:hidden" />
           {waiting ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ink-4)]" aria-hidden="true" /> : <kbd className="hidden shrink-0 rounded border border-[var(--line)] px-1.5 text-[10px] font-semibold text-[var(--ink-4)] xl:inline">⌘K</kbd>}
         </div>
         {open && term.length >= 2 ? (
-          <div className="absolute right-0 top-full z-50 mt-2 w-[34rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface)] shadow-[0_12px_32px_-12px_rgba(24,24,27,0.22)]">
+          <div className="mp-toast-enter absolute right-0 top-full z-50 mt-2 w-[34rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-r5 border border-[var(--line)] bg-[var(--surface)] shadow-[var(--sh-pop)]">
             <div className="max-h-[70vh] overflow-y-auto p-1 custom-scrollbar">{results}</div>
           </div>
         ) : null}
@@ -118,14 +120,14 @@ export function GlobalSearch() {
       </button>
       {/* Portalled to <body>: the header's backdrop blur would otherwise trap a fixed sheet inside it. */}
       {sheet && typeof document !== 'undefined' ? createPortal(
-        <div className="fixed inset-0 z-[90] flex flex-col bg-[var(--surface)] lg:hidden" role="dialog" aria-modal="true" aria-label="Search">
+        <div ref={sheetRef} className="mp-mobile-nav fixed inset-0 z-[90] flex flex-col bg-[var(--surface)] lg:hidden" role="dialog" aria-modal="true" aria-label="Search">
           <div className="flex items-center gap-2 border-b border-[var(--line)] p-3">
             <div className="flex h-11 min-w-0 flex-1 items-center rounded-md border border-[var(--brand-400)] px-3">
               <Search className="mr-2 h-4 w-4 shrink-0 text-[var(--ink-4)]" aria-hidden="true" />
-              <input ref={sheetInputRef} {...inputProps} role="combobox" aria-expanded={term.length >= 2} className="w-full bg-transparent text-base text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)] [&::-webkit-search-cancel-button]:hidden" />
+              <input ref={sheetInputRef} {...inputProps} role="combobox" aria-controls={listId} aria-expanded={term.length >= 2} className="w-full bg-transparent text-base text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)] [&::-webkit-search-cancel-button]:hidden" />
               {waiting ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--ink-4)]" aria-hidden="true" /> : null}
             </div>
-            <button type="button" onClick={close} className="grid h-11 w-11 place-items-center rounded-md text-[var(--ink-3)]" aria-label="Close search"><X className="h-5 w-5" /></button>
+            <button type="button" onClick={close} className="grid h-11 w-11 place-items-center rounded-md text-[var(--ink-3)] hover:bg-[var(--bg-soft)]" aria-label="Close search"><X className="h-5 w-5" aria-hidden="true" /></button>
           </div>
           <div className="flex-1 overflow-y-auto p-2">{results}</div>
         </div>,

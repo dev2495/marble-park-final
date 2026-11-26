@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { evaluateStockAlertTransitionsTx } from '../inventory/stock-alerts';
 import { stockFactor } from './stock-units';
+import { quoteLineKey as sharedQuoteLineKey } from '@marble-park/pricing-contract/quote-line-key';
 
 type Tx = any;
 
@@ -42,9 +43,27 @@ export interface StockPostingInput {
 }
 
 export function wholeDelta(value: unknown) {
-  const parsed = Math.trunc(Number(value || 0));
-  if (!Number.isFinite(parsed)) throw new BadRequestException('Stock quantity must be a whole number');
-  return parsed;
+  const raw = Number(value || 0);
+  if (!Number.isFinite(raw)) throw new BadRequestException('Stock quantity must be a whole number');
+  const rounded = Math.round(raw);
+  // Stock is kept in whole units. Never cut 2.5 down to 2 without saying so.
+  if (Math.abs(raw - rounded) > 1e-9) {
+    throw new BadRequestException(`Stock quantity ${raw} is not a whole number. Stock is counted in whole units, so enter a whole quantity.`);
+  }
+  return rounded;
+}
+
+/**
+ * Locks one stock balance row for the rest of the transaction, so two postings
+ * for the same item at the same moment run one after the other instead of both
+ * reading the old total and the second overwriting the first.
+ */
+export async function lockStockRowTx(tx: Tx, table: 'InventoryBalance' | 'StockBalanceByLocation' | 'InventoryLotBalance', where: Record<string, string>) {
+  if (!tx || typeof tx.$queryRawUnsafe !== 'function') return;
+  const columns = Object.keys(where);
+  if (!columns.length) return;
+  const clause = columns.map((column, index) => `"${column}" = $${index + 1}`).join(' AND ');
+  await tx.$queryRawUnsafe(`SELECT 1 FROM "${table}" WHERE ${clause} FOR UPDATE`, ...columns.map((column) => where[column]));
 }
 
 export async function ensureDefaultStockLocationTx(tx: Tx) {
@@ -111,6 +130,7 @@ export async function applyStockPostingTx(tx: Tx, input: StockPostingInput) {
     || input.locationHoldDelta !== undefined;
   const location = hasLocationDelta || !input.skipLedger ? await resolveStockLocationTx(tx, input.locationId) : null;
 
+  await lockStockRowTx(tx, 'InventoryBalance', { productId });
   const current = await tx.inventoryBalance.findUnique({ where: { productId } }).catch(() => null);
   if (!current && (onHandDelta < 0 || reservedDelta < 0 || damagedDelta < 0 || holdDelta < 0)) {
     throw new BadRequestException('Cannot reduce stock for a SKU without an inventory balance');
@@ -273,6 +293,7 @@ async function applyLocationBucketDeltaTx(
     holdDelta: number;
   },
 ) {
+  await lockStockRowTx(tx, 'StockBalanceByLocation', { productId: args.productId, locationId: args.locationId });
   const existing = await tx.stockBalanceByLocation.findUnique({
     where: { productId_locationId: { productId: args.productId, locationId: args.locationId } },
   }).catch(() => null);
@@ -352,10 +373,8 @@ export function isTileSelectionLine(line: any) {
 }
 
 export function quoteLineKey(line: any, index: number) {
-  const productId = String(line?.productId || '').trim();
-  const tileCode = String(line?.tileCode || line?.sku || '').trim();
-  const area = String(line?.area || line?.room || line?.section || '').trim();
-  return productId ? `product:${productId}:${area || index}` : `tile:${tileCode || index}:${area || index}`;
+  // One key format for API and quote screen (packages/pricing-contract/quote-line-key).
+  return sharedQuoteLineKey(line, index);
 }
 
 export function tileDemandKey(orderId: string, line: any, index: number) {
@@ -380,6 +399,8 @@ export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
   const quoteLineMap = new Map((quoteLines as any[]).map((row) => [row.lineKey, row]));
   const quoteLineById = new Map((quoteLines as any[]).map((row) => [row.id, row]));
   for (const salesOrder of salesOrders as any[]) {
+    // A cancelled order keeps its lines as they were cancelled (sales lane, cancelSalesOrder).
+    if (salesOrder.status === 'cancelled') continue;
     const linkedReservations = (reservations as any[]).filter((reservation) => reservation.salesOrderId === salesOrder.id);
     const legacyReservations = linkedReservations.length || salesOrders.length !== 1
       ? linkedReservations

@@ -9,17 +9,16 @@ import { Button } from '@/components/ui/button';
 import { QueryErrorBanner } from '@/components/query-state';
 import { ProductImageFrame } from '@/components/product-image-frame';
 import { thumbnailUrl } from '@/lib/media';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatusPill, type StatusTone } from '@/components/ui/status-pill';
 
 const WALK_INS = gql`query ShowroomWalkIns($day: String, $status: String) { showroomWalkIns(day: $day, status: $status) }`;
 const START_QUOTE = gql`mutation StartWalkInQuote($visitId: ID!) { startWalkInQuote(visitId: $visitId) }`;
 const SET_STATUS = gql`mutation SetWalkInStatus($visitId: ID!, $status: String!) { setWalkInStatus(visitId: $visitId, status: $status) }`;
 
 const STATUS_LABEL: Record<string, string> = { open: 'Waiting', quoting: 'Quote started', closed: 'Closed' };
-const STATUS_TONE: Record<string, string> = {
-  open: 'bg-amber-100 text-amber-900',
-  quoting: 'bg-sky-100 text-sky-900',
-  closed: 'bg-[var(--bg-soft)] text-[var(--ink-3)]',
-};
+const STATUS_TONE: Record<string, StatusTone> = { open: 'warning', quoting: 'info', closed: 'neutral' };
 
 function indiaDay(offsetDays = 0, from?: string) {
   const base = from ? new Date(`${from}T12:00:00+05:30`) : new Date();
@@ -55,7 +54,7 @@ export default function WalkInsPage() {
     try {
       const result = (await startQuote({ variables: { visitId: visit.id } })).data?.startWalkInQuote;
       if (!result?.customerId) throw new Error('No customer was returned for this walk-in.');
-      const params = new URLSearchParams({ customer: result.customerId });
+      const params = new URLSearchParams({ customer: result.customerId, visit: visit.id });
       if (result.productIds?.length) params.set('products', result.productIds.join(','));
       router.push(`/dashboard/quotes/new?${params.toString()}`);
     } catch (failure) {
@@ -80,13 +79,13 @@ export default function WalkInsPage() {
   return (
     <div className="space-y-5 pb-10">
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">Showroom walk-ins</h1>
-          <p className="mt-1 text-sm text-[var(--ink-3)]">Customers who checked in from the showroom scan poster, with every product they scanned. Start a quote in one tap.</p>
+      <header className="mp-page-header">
+        <div className="min-w-0">
+          <h1 className="mp-page-title">Showroom walk-ins</h1>
+          <p className="mp-page-sub">Customers who checked in from the showroom scan poster, with every product they scanned. Start a quote in one tap.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={() => refetch()}><RefreshCcw className="mr-2 h-4 w-4" />Refresh</Button>
+        <div className="mp-page-actions">
+          <Button type="button" variant="outline" disabled={loading} loading={loading && Boolean(data)} onClick={() => refetch()}><RefreshCcw className="mr-2 h-4 w-4" />Refresh</Button>
           <Button asChild variant="outline"><Link href="/print/showroom-poster" target="_blank"><ScanLine className="mr-2 h-4 w-4" />Scan poster</Link></Button>
         </div>
       </header>
@@ -95,13 +94,13 @@ export default function WalkInsPage() {
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" size="icon" aria-label="Previous day" onClick={() => setDay(indiaDay(-1, day))}><ChevronLeft className="h-4 w-4" /></Button>
           <label htmlFor="walk-in-day" className="sr-only">Day</label>
-          <input id="walk-in-day" type="date" value={day} max={today} onChange={(event) => setDay(event.target.value || today)} className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]" />
+          <input id="walk-in-day" type="date" value={day} max={today} onChange={(event) => setDay(event.target.value || today)} className="h-11 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)] sm:h-10" />
           <Button type="button" variant="outline" size="icon" aria-label="Next day" disabled={day >= today} onClick={() => setDay(indiaDay(1, day))}><ChevronRight className="h-4 w-4" /></Button>
           {day !== today ? <Button type="button" variant="ghost" size="sm" onClick={() => setDay(today)}>Today</Button> : null}
         </div>
         <div className="flex flex-wrap gap-2" role="toolbar" aria-label="Status">
           {[['', 'All'], ['open', 'Waiting'], ['quoting', 'Quote started'], ['closed', 'Closed']].map(([value, label]) => (
-            <button key={value || 'all'} type="button" aria-pressed={status === value} onClick={() => setStatus(value)} className={`h-9 rounded-full border px-4 text-sm font-semibold ${status === value ? 'border-[var(--ink)] bg-[var(--ink)] text-[var(--surface)]' : 'border-[var(--line)] text-[var(--ink-3)]'}`}>{label}</button>
+            <button key={value || 'all'} type="button" aria-pressed={status === value} onClick={() => setStatus(value)} className={`h-11 rounded-full border px-4 text-sm font-semibold sm:h-9 ${status === value ? 'border-[var(--ink)] bg-[var(--ink)] text-[var(--surface)]' : 'border-[var(--line)] text-[var(--ink-3)]'}`}>{label}</button>
           ))}
         </div>
       </section>
@@ -109,11 +108,9 @@ export default function WalkInsPage() {
       <p className="text-sm text-[var(--ink-3)]" aria-live="polite">{loading && !data ? 'Loading walk-ins…' : `${counts.total} walk-in${counts.total === 1 ? '' : 's'} · ${counts.open} waiting · ${counts.scanned} products scanned`}</p>
       {actionError ? <p role="alert" className="rounded-r3 border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">{actionError}</p> : null}
 
-      {!loading && !visits.length ? (
-        <div className="rounded-r4 border border-dashed border-[var(--line)] bg-[var(--surface)] p-10 text-center">
-          <p className="font-semibold text-[var(--ink)]">No walk-ins {day === today ? 'yet today' : 'on this day'}.</p>
-          <p className="mt-1 text-sm text-[var(--ink-3)]">Customers appear here when they check in from the showroom scan poster.</p>
-        </div>
+      {loading && !data ? <div role="status" aria-label="Loading walk-ins" className="space-y-3"><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /></div> : null}
+      {!loading && !error && !visits.length ? (
+        <EmptyState icon={UserCheck} className="rounded-r4 border border-dashed border-[var(--line)] bg-[var(--surface)]" title={`No walk-ins ${day === today ? 'yet today' : 'on this day'}`} description="Customers appear here when they check in from the showroom scan poster." />
       ) : null}
 
       <ul className="space-y-3">
@@ -126,7 +123,7 @@ export default function WalkInsPage() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-lg font-semibold text-[var(--ink)]">{visit.name}</h2>
-                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_TONE[visit.status] || ''}`}>{STATUS_LABEL[visit.status] || visit.status}</span>
+                    <StatusPill tone={STATUS_TONE[visit.status] || 'neutral'}>{STATUS_LABEL[visit.status] || visit.status}</StatusPill>
                     {visit.customer ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800"><UserCheck className="h-3.5 w-3.5" aria-hidden="true" />Existing customer</span> : null}
                   </div>
                   <p className="mt-1 text-sm text-[var(--ink-3)]">

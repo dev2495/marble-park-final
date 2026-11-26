@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
+import { assert, createApiClient } from './lib/api-client.mjs';
 
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'admin@marblepark.com';
@@ -7,24 +8,12 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const prisma = new PrismaClient();
 const cleanupContext = { productIds: [], customerIds: [], quoteIds: [], leadIds: [] };
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 function unique(prefix) {
   return `${prefix}-${Date.now().toString(36).toUpperCase()}`;
 }
 
-async function gql(query, variables = {}, token) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const json = await response.json();
-  if (!response.ok || json.errors?.length) throw new Error(json.errors?.map((error) => error.message).join('; ') || `GraphQL request failed (${response.status})`);
-  return { data: json.data, setCookie: response.headers.get('set-cookie') || '' };
-}
+const { gql } = createApiClient(API);
 
 async function main() {
   const login = await gql(

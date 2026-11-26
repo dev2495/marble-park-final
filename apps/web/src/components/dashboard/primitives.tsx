@@ -1,6 +1,6 @@
 'use client';
 
-import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
+import { motion, useMotionValue, useTransform, animate, useReducedMotion } from 'framer-motion';
 import { useEffect } from 'react';
 import { ArrowUpRight, type LucideIcon } from 'lucide-react';
 import Link from 'next/link';
@@ -47,13 +47,19 @@ export function Countup({
   format?: (v: number) => string;
   className?: string;
 }) {
-  const mv = useMotionValue(from);
+  const reduceMotion = useReducedMotion();
+  const mv = useMotionValue(reduceMotion ? value : from);
   const rounded = useTransform(mv, (latest) => format(latest));
   useEffect(() => {
+    // Reduced motion: show the number straight away, no counting.
+    if (reduceMotion) {
+      mv.set(value);
+      return;
+    }
     const controls = animate(mv, value, { duration, ease: [0.22, 1, 0.36, 1] });
     return () => controls.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }, [value, reduceMotion]);
   return <motion.span className={className}>{rounded as any}</motion.span>;
 }
 
@@ -274,9 +280,11 @@ export function moneyShort(value: number): string {
 export function moneyExact(value: number): string {
   return `₹${Math.round(Number(value || 0)).toLocaleString('en-IN')}`;
 }
+/** Quote value before GST, the same rule as the owner reports (sum of each line's taxable value). */
 export function quoteTotal(lines: any): number {
-  return (Array.isArray(lines) ? lines : []).reduce(
-    (sum, line) => sum + Number(line.qty || line.quantity || 0) * Number(line.price || line.sellPrice || 0),
-    0,
-  );
+  return Math.round((Array.isArray(lines) ? lines : []).reduce((sum, line) => sum + Number(line?.taxableValue || 0), 0) * 100) / 100;
+}
+/** Same "confirmed" rule as the owner reports. */
+export function isQuoteConfirmed(quote: any): boolean {
+  return ['confirmed', 'won', 'ordered', 'partially_ordered', 'closed'].includes(String(quote?.status || '')) || Boolean(quote?.confirmedAt);
 }

@@ -6,7 +6,8 @@ import { brandedLabelQrDataUrl } from '../common/branded-label-qr';
 import { parseLabelCode } from '../common/label-code';
 import { tilePricingChoice } from '../common/tile-pricing-unit';
 import { nextDocumentNumber } from '../common/sequence';
-import { applyLotStockPostingTx } from '../common/lot-stock-posting';
+import { applyLotStockPostingTx, holdsAllFreeStock, syncExcludedLocationHoldsTx } from '../common/lot-stock-posting';
+import { fillBackordersForProductsTx, fillBackordersTx } from '../common/backorder-fill';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReceivablesService } from '../receivables/receivables.service';
 import { stockFactor } from '../common/stock-units';
@@ -215,6 +216,10 @@ export class OperationsService {
           updatedAt: new Date(),
         },
       });
+      // Turning "exclude from available stock" on or off holds or frees the stock already there.
+      if (holdsAllFreeStock(existing) !== holdsAllFreeStock(updated)) {
+        await syncExcludedLocationHoldsTx(tx, updated.id, actorUserId, `location-flag:${ulid()}`);
+      }
       await tx.auditEvent.create({
         data: {
           id: ulid(),
@@ -358,16 +363,40 @@ export class OperationsService {
   }
 
   async approveStockCountSession(id: string, actorUserId: string) {
-    const session = await (this.prisma as any).stockCountSession.findUnique({ where: { id } });
-    if (!session) throw new NotFoundException('Stock count session not found');
-    if (session.status === 'posted') return this.decorateStockCount(id);
-    if (!['draft', 'submitted'].includes(session.status)) throw new BadRequestException(`Count ${session.countNumber} cannot be posted from ${session.status}`);
-    const lines = await (this.prisma as any).stockCountLine.findMany({ where: { stockCountId: id }, include: { product: true, lot: true } });
-    if (!lines.length) throw new BadRequestException('Stock count has no lines to approve');
+    const first = await (this.prisma as any).stockCountSession.findUnique({ where: { id } });
+    if (!first) throw new NotFoundException('Stock count session not found');
+    if (first.status === 'posted') return this.decorateStockCount(id);
 
     return this.prisma.$transaction(async (tx: any) => {
+      // Read the count again inside the transaction: a second approval or a reject
+      // a moment ago must win, and the lines must be the ones being posted.
+      const session = await tx.stockCountSession.findUnique({ where: { id } });
+      if (!session) throw new NotFoundException('Stock count session not found');
+      if (session.status === 'posted') return this.decorateStockCount(id, tx);
+      if (!['draft', 'submitted'].includes(session.status)) throw new BadRequestException(`Count ${session.countNumber} cannot be posted from ${session.status}`);
+      const lines = await tx.stockCountLine.findMany({ where: { stockCountId: id }, include: { product: true, lot: true } });
+      if (!lines.length) throw new BadRequestException('Stock count has no lines to approve');
+      // The difference was worked out when the count was entered. If stock moved
+      // since then (a dispatch, a receipt), that difference is out of date.
+      const moved: string[] = [];
+      for (const line of lines) {
+        if (!line.lotId) continue;
+        const locationId = line.locationId || session.locationId;
+        const balance = locationId
+          ? await tx.inventoryLotBalance.findUnique({ where: { lotId_locationId: { lotId: line.lotId, locationId } } })
+          : null;
+        const now = Number(balance?.onHand || 0);
+        if (now !== Number(line.expectedQuantity || 0)) {
+          moved.push(`${line.product?.sku || line.productId} (${line.lot?.lotNumber || 'lot'}): ${line.expectedQuantity} when counted, ${now} now`);
+        }
+      }
+      if (moved.length) {
+        throw new BadRequestException(`Stock changed after this count was taken, so its differences are out of date: ${moved.slice(0, 5).join('; ')}${moved.length > 5 ? ` and ${moved.length - 5} more` : ''}. Reject this count and count these items again.`);
+      }
+      const gainedProductIds: string[] = [];
       for (const line of lines) {
         const variance = Number(line.variance || 0);
+        if (variance > 0) gainedProductIds.push(line.productId);
         let lot = line.lot;
         if (!lot && variance < 0) throw new BadRequestException(`${line.product?.sku || line.productId} needs an exact lot before stock can be reduced`);
         if (!lot && variance > 0) {
@@ -447,8 +476,33 @@ export class OperationsService {
           metadata: { lineCount: lines.length },
         },
       });
+      // Stock found in the count goes to waiting orders first.
+      await fillBackordersForProductsTx(tx, gainedProductIds, { actorUserId, source: 'stock_count' });
       return this.decorateStockCount(approved.id, tx);
     }, { isolationLevel: 'Serializable', timeout: 30000 });
+  }
+
+  /** Throws away a count that should not be posted (wrong items, stock moved since). Nothing moves. */
+  async rejectStockCountSession(id: string, reasonInput: string, actorUserId: string) {
+    const reason = String(reasonInput || '').trim();
+    if (reason.length < 5) throw new BadRequestException('Say why this count is being rejected');
+    return this.prisma.$transaction(async (tx: any) => {
+      const session = await tx.stockCountSession.findUnique({ where: { id } });
+      if (!session) throw new NotFoundException('Stock count session not found');
+      if (session.status === 'rejected') return this.decorateStockCount(id, tx);
+      if (!['draft', 'submitted'].includes(session.status)) throw new BadRequestException(`Count ${session.countNumber} is ${session.status} and cannot be rejected`);
+      const metadata = session.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata) ? session.metadata : {};
+      await tx.stockCountSession.update({
+        where: { id },
+        data: { status: 'rejected', metadata: { ...metadata, rejectReason: reason, rejectedBy: actorUserId, rejectedAt: new Date().toISOString() }, updatedAt: new Date() },
+      });
+      await tx.stockCountLine.updateMany({ where: { stockCountId: id }, data: { status: 'rejected', updatedAt: new Date() } });
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: 'stock_count.reject', entityType: 'StockCountSession', entityId: id,
+        summary: `Rejected ${session.countNumber}`, metadata: { reason },
+      } });
+      return this.decorateStockCount(id, tx);
+    }, { isolationLevel: 'Serializable', timeout: 20000 });
   }
 
   async inventoryLots(args?: { productId?: string; locationId?: string; status?: string; search?: string; take?: number }) {
@@ -721,6 +775,7 @@ export class OperationsService {
         data: { id: ulid(), actorUserId, action: 'opening_stock.post', entityType: 'OpeningStockSession', entityId: id,
           summary: `Posted ${session.sessionNumber}`, metadata: { lineCount: session.lines.length, ownerOverride: session.createdBy === actorUserId } },
       });
+      await fillBackordersForProductsTx(tx, session.lines.map((line: any) => line.productId), { actorUserId, source: 'opening_stock' });
       return posted;
     }, { isolationLevel: 'Serializable', timeout: 60000 });
   }
@@ -791,7 +846,8 @@ export class OperationsService {
           await applyLotStockPostingTx(tx, {
             productId: line.productId, lotId: line.lotId, locationId: transit.id,
             idempotencyKey: `transfer:${id}:${line.id}:transit-in`, type: 'transfer_transit', direction: 'in', quantity,
-            onHandDelta: quantity, reason: `Transfer ${transfer.transferNumber} in transit`, createdBy: actorUserId,
+            // Held while on the road: in-transit goods are not available to sell or reserve.
+            onHandDelta: quantity, holdDelta: quantity, reason: `Transfer ${transfer.transferNumber} in transit`, createdBy: actorUserId,
             referenceType: 'StockTransfer', referenceId: id, sourceDocumentNo: transfer.transferNumber,
           });
           await tx.stockTransferLine.update({ where: { id: line.id }, data: { dispatchedQuantity: quantity, status: 'in_transit', updatedAt: new Date() } });
@@ -806,10 +862,13 @@ export class OperationsService {
           const damaged = this.wholeOrZero(receivedInput.damagedQuantity || 0, 'Damaged quantity');
           if (received + damaged !== Number(line.dispatchedQuantity)) throw new BadRequestException(`${line.lot.lotNumber} received plus damaged must equal dispatched quantity`);
           const transitQuantity = Number(line.dispatchedQuantity);
+          // Transfers sent before the in-transit hold existed carry no hold; release only what is held.
+          const transitBalance = await tx.inventoryLotBalance.findUnique({ where: { lotId_locationId: { lotId: line.lotId, locationId: transit.id } } });
+          const transitHold = Math.min(transitQuantity, Math.max(0, Number(transitBalance?.hold || 0)));
           await applyLotStockPostingTx(tx, {
             productId: line.productId, lotId: line.lotId, locationId: transit.id,
             idempotencyKey: `transfer:${id}:${line.id}:transit-out`, type: 'transfer_transit_clear', direction: 'out', quantity: transitQuantity,
-            onHandDelta: -transitQuantity, reason: `Transfer ${transfer.transferNumber} received`, createdBy: actorUserId,
+            onHandDelta: -transitQuantity, holdDelta: -transitHold, reason: `Transfer ${transfer.transferNumber} received`, createdBy: actorUserId,
             referenceType: 'StockTransfer', referenceId: id, sourceDocumentNo: transfer.transferNumber, requireOnHand: true,
           });
           if (received > 0) await applyLotStockPostingTx(tx, {
@@ -827,6 +886,8 @@ export class OperationsService {
           await tx.stockTransferLine.update({ where: { id: line.id }, data: { receivedQuantity: received, damagedQuantity: damaged, status: 'received', updatedAt: new Date() } });
         }
         await tx.stockTransfer.update({ where: { id }, data: { status: 'received', receivedBy: actorUserId, receivedAt: new Date(), updatedAt: new Date() } });
+        // Goods off the road are sellable again: waiting orders get them first.
+        await fillBackordersForProductsTx(tx, transfer.lines.map((line: any) => line.productId), { actorUserId, source: 'transfer_receipt' });
       } else {
         if (!['draft', 'submitted', 'approved'].includes(transfer.status)) throw new BadRequestException(`${transfer.transferNumber} cannot be cancelled from ${transfer.status}`);
         await tx.stockTransfer.update({ where: { id }, data: { status: 'cancelled', metadata: { ...(transfer.metadata || {}), cancelReason: input?.reason || 'Cancelled' }, updatedAt: new Date() } });
@@ -848,8 +909,7 @@ export class OperationsService {
   async closeInventoryPeriod(input: any, actorUserId: string) {
     const periodType = String(input.periodType || 'monthly').trim().toLowerCase();
     if (!['monthly', 'year_end'].includes(periodType)) throw new BadRequestException('Period type must be monthly or year_end');
-    const periodKey = String(input.periodKey || '').trim();
-    if (!periodKey) throw new BadRequestException('Period key is required');
+    const { periodKey, periodEnd } = this.normalizePeriod(periodType, input.periodKey);
     return this.prisma.$transaction(async (tx: any) => {
       const existing = await tx.inventoryPeriodClose.findUnique({ where: { periodKey } });
       if (existing?.status === 'closed') return tx.inventoryPeriodClose.findUnique({ where: { id: existing.id }, include: { snapshots: true } });
@@ -859,7 +919,8 @@ export class OperationsService {
       if (!countSession || countSession.status !== 'posted') throw new BadRequestException('A posted monthly/year-end physical count is required before period close');
       const openTransfers = await tx.stockTransfer.count({ where: { status: { in: ['submitted', 'approved', 'in_transit'] } } });
       if (openTransfers) throw new BadRequestException(`${openTransfers} stock transfer(s) must be completed or cancelled before period close`);
-      const effectiveAt = input.effectiveAt ? new Date(input.effectiveAt) : new Date();
+      // The close describes stock at the end of the period, not at the moment of clicking.
+      const effectiveAt = periodEnd;
       const closeNumber = existing?.closeNumber || await nextDocumentNumber(tx, 'inventory_close', periodType === 'year_end' ? 'YC' : 'MC', effectiveAt, {
         existingNumbers: async (prefixForYear) => (await tx.inventoryPeriodClose.findMany({ where: { closeNumber: { startsWith: prefixForYear } }, select: { closeNumber: true } })).map((row: any) => row.closeNumber),
       });
@@ -867,8 +928,30 @@ export class OperationsService {
         data: { id: ulid(), closeNumber, periodType, periodKey, status: 'review', effectiveAt, openedAt: new Date(), countSessionId: countSession.id,
           createdBy: actorUserId, notes: input.notes || '', metadata: {}, updatedAt: new Date() },
       });
+      if (existing) {
+        await tx.inventoryPeriodClose.update({ where: { id: existing.id }, data: { effectiveAt, countSessionId: countSession.id, updatedAt: new Date() } });
+      }
       await tx.inventoryPeriodSnapshot.deleteMany({ where: { inventoryPeriodCloseId: close.id } });
-      const balances = await tx.inventoryLotBalance.findMany({ include: { lot: true } });
+      const currentBalances = await tx.inventoryLotBalance.findMany({ include: { lot: true } });
+      // Take back every movement posted after the period ended, so the snapshot is the period-end stock.
+      // A movement counts by its business date when it has one (a correction dated inside the
+      // period but entered after it ended belongs to the period), else by when it was entered.
+      const later = await tx.$queryRaw`
+        SELECT "lotId", "locationId",
+          COALESCE(SUM("onHandDelta"), 0)::int AS "onHandDelta", COALESCE(SUM("reservedDelta"), 0)::int AS "reservedDelta",
+          COALESCE(SUM("damagedDelta"), 0)::int AS "damagedDelta", COALESCE(SUM("holdDelta"), 0)::int AS "holdDelta"
+        FROM "InventoryLotLedgerEntry"
+        WHERE COALESCE("effectiveAt", "createdAt") > ${periodEnd}
+        GROUP BY "lotId", "locationId"`;
+      const laterByKey = new Map<string, any>((later as any[]).map((row) => [`${row.lotId}:${row.locationId}`, row]));
+      const balances = (currentBalances as any[]).map((balance) => {
+        const delta = laterByKey.get(`${balance.lotId}:${balance.locationId}`) || {};
+        const onHand = Math.max(0, Number(balance.onHand || 0) - Number(delta.onHandDelta || 0));
+        const reserved = Math.max(0, Number(balance.reserved || 0) - Number(delta.reservedDelta || 0));
+        const damaged = Math.max(0, Number(balance.damaged || 0) - Number(delta.damagedDelta || 0));
+        const hold = Math.max(0, Number(balance.hold || 0) - Number(delta.holdDelta || 0));
+        return { ...balance, onHand, reserved, damaged, hold, available: Math.max(0, onHand - reserved - damaged - hold) };
+      }).filter((balance) => balance.onHand > 0 || new Date(balance.lot?.receivedAt || 0).getTime() <= periodEnd.getTime());
       let totalQuantity = 0;
       let totalValue = 0;
       for (const balance of balances) {
@@ -892,6 +975,68 @@ export class OperationsService {
         summary: `Closed ${periodKey}`, metadata: { periodType, countSessionId: countSession.id, totalQuantity, totalValue } } });
       return closed;
     }, { isolationLevel: 'Serializable', timeout: 120000 });
+  }
+
+  /**
+   * Reopens a closed stock period so postings into it are allowed again.
+   * Owner and admin only (checked in the resolver); always audited with a reason.
+   */
+  async reopenInventoryPeriod(id: string, reasonInput: string, actorUserId: string) {
+    const reason = String(reasonInput || '').trim();
+    if (reason.length < 8) throw new BadRequestException('Say why this period is being reopened (at least 8 characters)');
+    return this.prisma.$transaction(async (tx: any) => {
+      const close = await tx.inventoryPeriodClose.findUnique({ where: { id } });
+      if (!close) throw new NotFoundException('Stock period not found');
+      if (close.status !== 'closed') throw new BadRequestException(`${close.periodKey} is not closed`);
+      const metadata = close.metadata && typeof close.metadata === 'object' && !Array.isArray(close.metadata) ? close.metadata : {};
+      const reopenings = Array.isArray((metadata as any).reopenings) ? (metadata as any).reopenings : [];
+      const updated = await tx.inventoryPeriodClose.update({
+        where: { id },
+        data: {
+          status: 'reopened',
+          metadata: { ...metadata, reopenings: [...reopenings, { reason, reopenedBy: actorUserId, reopenedAt: new Date().toISOString(), closedAt: close.closedAt, closedBy: close.closedBy }] },
+          updatedAt: new Date(),
+        },
+        include: { snapshots: { take: 20, orderBy: { stockValue: 'desc' } } },
+      });
+      await tx.auditEvent.create({ data: {
+        id: ulid(), actorUserId, action: 'inventory_period.reopen', entityType: 'InventoryPeriodClose', entityId: id,
+        summary: `Reopened ${close.periodKey}`, metadata: { reason, closeNumber: close.closeNumber },
+      } });
+      return updated;
+    }, { isolationLevel: 'Serializable', timeout: 20000 });
+  }
+
+  /**
+   * Period names have one fixed form: monthly YYYY-MM, year end YYYY-YY (April to
+   * March). Only a period that has fully ended can be closed.
+   */
+  private normalizePeriod(periodType: string, raw: any) {
+    const text = String(raw || '').trim().toUpperCase().replace(/^FY/, '');
+    const todayParts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
+    const nowYear = Number(todayParts.find((part) => part.type === 'year')?.value);
+    const nowMonth = Number(todayParts.find((part) => part.type === 'month')?.value);
+    // End of a month in India time (UTC+5:30), as an instant.
+    const monthEnd = (year: number, month: number) => new Date(Date.UTC(year, month, 1, 0, 0, 0) - (5.5 * 60 * 60 * 1000) - 1);
+    if (periodType === 'monthly') {
+      const match = /^(\d{4})-(\d{2})$/.exec(text);
+      if (!match) throw new BadRequestException('Choose the month to close (for example 2026-10)');
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      if (month < 1 || month > 12) throw new BadRequestException('Choose a real month to close');
+      if (year > nowYear || (year === nowYear && month >= nowMonth)) {
+        throw new BadRequestException('Only a month that has ended can be closed. The current month stays open until it is over.');
+      }
+      return { periodKey: `${year}-${String(month).padStart(2, '0')}`, periodEnd: monthEnd(year, month) };
+    }
+    const match = /^(\d{4})-(\d{2}|\d{4})$/.exec(text);
+    if (!match) throw new BadRequestException('Choose the financial year to close (for example 2025-26)');
+    const start = Number(match[1]);
+    const endShort = match[2].length === 4 ? match[2].slice(-2) : match[2];
+    if (Number(endShort) !== (start + 1) % 100) throw new BadRequestException('A financial year runs April to March, for example 2025-26');
+    const currentFyStart = nowMonth >= 4 ? nowYear : nowYear - 1;
+    if (start >= currentFyStart) throw new BadRequestException('Only a financial year that has ended can be closed');
+    return { periodKey: `${start}-${endShort}`, periodEnd: monthEnd(start + 1, 3) };
   }
 
   async returnOrders(args?: { status?: string; take?: number }) {
@@ -954,14 +1099,25 @@ export class OperationsService {
       const returnLocation = input.locationId
         ? await this.resolveStockLocationTx(tx, input.locationId)
         : await this.ensureDefaultLocationTx(tx);
+      // Money lane (C13): the customer credited is the customer on the sales order,
+      // never a value sent by the screen. A screen value that disagrees is refused.
+      const firstDispatchLineId = lines.map((row: any) => row.dispatchLineId).find(Boolean);
+      const firstDispatchLine = firstDispatchLineId ? await tx.dispatchLine.findUnique({ where: { id: String(firstDispatchLineId) }, select: { salesOrderId: true } }) : null;
+      const returnSalesOrderId = input.salesOrderId || firstDispatchLine?.salesOrderId || null;
+      const returnSalesOrder = returnSalesOrderId ? await tx.salesOrder.findUnique({ where: { id: returnSalesOrderId }, select: { customerId: true } }) : null;
+      if (returnSalesOrderId && !returnSalesOrder) throw new BadRequestException('The sales order for this return was not found');
+      if (returnSalesOrder && input.customerId && input.customerId !== returnSalesOrder.customerId) {
+        throw new BadRequestException('This return belongs to a different customer than the one selected. Refresh and pick the item again.');
+      }
+      const returnCustomerId = returnSalesOrder?.customerId || input.customerId || null;
       const order = await tx.returnOrder.create({
         data: {
           id: ulid(),
           returnNumber,
           idempotencyKey,
-          salesOrderId: input.salesOrderId || null,
+          salesOrderId: returnSalesOrderId,
           challanId: input.challanId || null,
-          customerId: input.customerId || null,
+          customerId: returnCustomerId,
           status: input.receive ? 'received' : 'draft',
           reason: input.reason || 'Customer return',
           refundMode: input.refundMode || null,
@@ -973,6 +1129,7 @@ export class OperationsService {
         },
       });
       let maximumRefundAmount = 0;
+      let invoicedRefundAmount = 0;
       for (const [rowIndex, row] of lines.entries()) {
         const quantity = this.whole(row.quantity, `${row.sku || 'Return'} quantity`);
         const dispatchLine = row.dispatchLineId
@@ -1001,6 +1158,8 @@ export class OperationsService {
         if (sourceCommercialLine) {
           maximumRefundAmount += Number(sourceCommercialLine.grossLineTotal || commercialLine?.lineTotal || 0) * quantity / sourceCommercialQuantity;
         }
+        // Money lane (C2/C5): only goods already invoiced can carry a credit note or refund.
+        if (invoiceLine) invoicedRefundAmount += Number(invoiceLine.grossLineTotal || 0) * quantity / sourceCommercialQuantity;
         const sourceAllocations = Array.isArray(row.lotAllocations)
           ? row.lotAllocations
           : Array.isArray(dispatchLine?.metadata?.lotAllocations) ? dispatchLine.metadata.lotAllocations : [];
@@ -1116,10 +1275,22 @@ export class OperationsService {
           }
         }
       }
+      if (input.receive) {
+        // Good returned goods go to waiting orders for the same item first.
+        const returnedProductIds = await tx.returnLine.findMany({ where: { returnOrderId: order.id, resellQuantity: { gt: 0 } }, select: { productId: true } });
+        await fillBackordersForProductsTx(tx, returnedProductIds.map((row: any) => row.productId), { actorUserId, source: 'customer_return' });
+      }
       const refundAmount = Number(input.refundAmount || 0);
       if (!Number.isFinite(refundAmount) || refundAmount < 0) throw new BadRequestException('Refund amount must be zero or positive');
       if (refundAmount > maximumRefundAmount + 0.01) {
         throw new BadRequestException(`Refund amount cannot exceed the returned commercial value of ${maximumRefundAmount.toFixed(2)}`);
+      }
+      // Returned before invoicing: the invoice will leave this quantity out, so a credit
+      // note on top would credit the customer twice.
+      if (input.receive && refundAmount > 0 && refundAmount > invoicedRefundAmount + 0.01) {
+        throw new BadRequestException(invoicedRefundAmount > 0
+          ? `Only ${invoicedRefundAmount.toFixed(2)} of these goods has been invoiced, so the credit or refund cannot be more than that. The invoice leaves out anything returned before it is made.`
+          : 'These goods have not been invoiced yet. The invoice will leave out the returned quantity, so choose "No refund now". To give back advance money, void the receipt on Customer Accounts and record the right amount.');
       }
       if (input.receive && refundAmount > 0) {
         const creditNoteNumber = await nextDocumentNumber(tx, 'credit_note', 'CN', new Date(), {
@@ -1130,7 +1301,7 @@ export class OperationsService {
         const creditNote = await tx.creditNote.create({
           data: {
             id: ulid(), creditNoteNumber, returnOrderId: order.id,
-            salesOrderId: input.salesOrderId || null, customerId: input.customerId || null,
+            salesOrderId: returnSalesOrderId, customerId: returnCustomerId,
             amount: refundAmount, unappliedAmount: refundAmount, refundMode: String(input.refundMode || 'credit_note'),
             status: 'issued', createdBy: actorUserId, notes: input.reason || 'Customer return',
             metadata: { returnNumber, maximumRefundAmount }, updatedAt: new Date(),
@@ -1912,6 +2083,9 @@ export class OperationsService {
           summary: `Approved ${request.type} for ${request.product.sku}`, metadata: { quantity, requestedBy: request.requestedBy },
         },
       });
+      if (['increase', 'damage_release', 'hold_release'].includes(request.type)) {
+        await fillBackordersTx(tx, request.productId, { actorUserId, source: 'stock_adjustment' });
+      }
       return approved;
     }, { isolationLevel: 'Serializable', timeout: 30000 });
   }
@@ -2193,14 +2367,17 @@ export class OperationsService {
   }
 
   private whole(value: any, label: string) {
-    const number = Math.trunc(Number(value || 0));
+    const number = Number(value || 0);
     if (!Number.isFinite(number) || number <= 0) throw new BadRequestException(`${label} must be a positive whole number`);
+    // Stock is kept in whole units: say so instead of cutting 2.5 down to 2.
+    if (!Number.isInteger(number)) throw new BadRequestException(`${label} must be a whole number (${number} is not). Stock is counted in whole units.`);
     return number;
   }
 
   private wholeOrZero(value: any, label: string) {
-    const number = Math.trunc(Number(value || 0));
+    const number = Number(value || 0);
     if (!Number.isFinite(number) || number < 0) throw new BadRequestException(`${label} cannot be negative`);
+    if (!Number.isInteger(number)) throw new BadRequestException(`${label} must be a whole number (${number} is not). Stock is counted in whole units.`);
     return number;
   }
 

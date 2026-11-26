@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
+import { createApiClient } from './lib/api-client.mjs';
 
 if (process.env.ALLOW_MUTATING_ACCEPTANCE !== 'true') {
   throw new Error('Refusing to mutate data. Run only against an isolated acceptance database with ALLOW_MUTATING_ACCEPTANCE=true.');
@@ -19,16 +20,7 @@ let createdRestrictedUserId = null;
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const close = (actual, expected, message) => assert(Math.abs(Number(actual) - Number(expected)) <= 0.02, `${message}: expected ${expected}, received ${actual}`);
 
-async function gql(query, variables = {}, token) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const payload = await response.json();
-  if (!response.ok || payload.errors?.length) throw new Error(payload.errors?.map((row) => row.message).join('; ') || `GraphQL ${response.status}`);
-  return payload.data;
-}
+const { gql } = createApiClient(API);
 
 async function main() {
   assert(TEST_PASSWORD, 'TEST_PASSWORD is required for the isolated acceptance identity');

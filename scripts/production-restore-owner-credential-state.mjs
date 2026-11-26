@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { assert } from './lib/api-client.mjs';
 
 const require = createRequire(import.meta.url);
 const { PrismaClient } = require('@prisma/client');
@@ -15,9 +16,6 @@ const OWNER_EMAIL = String(process.env.BOOTSTRAP_OWNER_EMAIL || '').trim().toLow
 const SOURCE_BACKUP = String(process.env.CREDENTIAL_RESTORE_SOURCE || '').trim();
 const MODE = process.env.CREDENTIAL_RESTORE_MODE === 'verify' ? 'verify' : 'restore';
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 const current = new PrismaClient();
 const source = new PrismaClient({ datasources: { db: { url: SOURCE_DATABASE_URL } } });

@@ -1,4 +1,5 @@
 'use client';
+import { statusLabel } from '@/lib/utils';
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -38,7 +39,7 @@ function SessionLines({ session }: { session: any }) {
         <label className="mb-2 flex h-10 max-w-sm items-center rounded-md border border-[var(--line)] px-3"><Search className="mr-2 h-4 w-4 text-[var(--ink-4)]" aria-hidden="true" /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Find a line by code or name" aria-label="Find a line" className="w-full bg-transparent text-sm outline-none" /></label>
       ) : null}
       <div className="max-h-[26rem] overflow-auto rounded-md border border-[var(--line)]">
-        <table className="w-full min-w-[640px] text-left text-sm">
+        <table className="mp-table-skin w-full min-w-[640px] text-left text-sm">
           <thead className="sticky top-0 bg-[var(--bg-soft)] text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]"><tr><th className="p-3">Product</th><th className="p-3">Lot</th><th className="p-3 text-right">Qty</th><th className="p-3">Cost</th></tr></thead>
           <tbody className="divide-y divide-[var(--line)]">
             {rows.map((line: any) => (
@@ -321,7 +322,7 @@ export default function OpeningStockPage() {
           <div className="max-h-[40rem] divide-y divide-[var(--line)] overflow-y-auto border-r border-[var(--line)]">
             {history.map((session) => (
               <button key={session.id} type="button" onClick={() => setHistoryId(session.id)} aria-current={selectedHistory?.id === session.id} className={`w-full p-4 text-left hover:bg-[var(--bg-soft)] ${selectedHistory?.id === session.id ? 'bg-[var(--brand-50)]' : ''}`}>
-                <span className="flex items-center justify-between"><span className="font-black text-[var(--ink)]">{session.sessionNumber}</span><span className={`rounded-full px-2 py-0.5 text-xs font-bold ${session.status === 'posted' ? 'bg-emerald-100 text-emerald-800' : 'bg-[var(--bg-soft)] text-[var(--ink-3)]'}`}>{session.status}</span></span>
+                <span className="flex items-center justify-between"><span className="font-black text-[var(--ink)]">{session.sessionNumber}</span><span className={`rounded-full px-2 py-0.5 text-xs font-bold ${session.status === 'posted' ? 'bg-emerald-100 text-emerald-800' : 'bg-[var(--bg-soft)] text-[var(--ink-3)]'}`}>{statusLabel(session.status)}</span></span>
                 <span className="mt-1 block text-xs text-[var(--ink-4)]">{(session.lines || []).length} items · {units(session).toLocaleString('en-IN')} units · {dateLabel(session.effectiveAt)}</span>
               </button>
             ))}

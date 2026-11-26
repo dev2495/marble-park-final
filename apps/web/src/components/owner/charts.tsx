@@ -27,7 +27,7 @@ function useWidth() {
 }
 
 export function Legend({ items }: { items: Array<{ name: string; color?: string }> }) {
-  return <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1 text-xs text-[var(--ink-3)]">{items.map((item, index) => <span key={item.name} className="inline-flex items-center"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px]" style={{ background: color(item.color, index) }} />{item.name}</span>)}</div>;
+  return <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1 text-xs text-[var(--ink-3)]">{items.map((item, index) => <span key={`${item.name}-${index}`} className="inline-flex items-center"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px]" style={{ background: color(item.color, index) }} />{item.name}</span>)}</div>;
 }
 
 export function BarsChart({ cats, series, kind, stacked, line, height = 240 }: any) {
@@ -77,11 +77,11 @@ export function DonutChart({ slices, kind, center }: any) {
   return (
     <div className="ox-chart mt-3.5">
       <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto block h-auto w-full" style={{ maxWidth: size }} role="img" aria-label={`Share: ${slices.map((s: any) => `${s.label} ${Math.round((s.v / total) * 100)}%`).join(', ')}`}>
-        {slices.map((slice: any, i: number) => { const f = slice.v / total; const el = <circle key={slice.label} className="ox-arc" r={r} cx={c} cy={c} fill="none" stroke={color(slice.color, i)} strokeWidth={22} pathLength={1} strokeDasharray={`${f} ${1 - f}`} strokeDashoffset={-offset} transform={`rotate(-90 ${c} ${c})`} style={{ animationDelay: `${i * 110}ms` }}><title>{`${slice.label}: ${show(slice.v, kind || 'inr')} (${Math.round(f * 100)}%)`}</title></circle>; offset += f; return el; })}
+        {slices.map((slice: any, i: number) => { const f = slice.v / total; const el = <circle key={`${slice.label}-${i}`} className="ox-arc" r={r} cx={c} cy={c} fill="none" stroke={color(slice.color, i)} strokeWidth={22} pathLength={1} strokeDasharray={`${f} ${1 - f}`} strokeDashoffset={-offset} transform={`rotate(-90 ${c} ${c})`} style={{ animationDelay: `${i * 110}ms` }}><title>{`${slice.label}: ${show(slice.v, kind || 'inr')} (${Math.round(f * 100)}%)`}</title></circle>; offset += f; return el; })}
         <text x={c} y={c - 2} textAnchor="middle" style={{ fontFamily: 'var(--f-display)', fontSize: 22, fill: 'var(--ink)', fontWeight: 600 }}>{center?.[0]}</text>
         <text x={c} y={c + 18} textAnchor="middle">{center?.[1]}</text>
       </svg>
-      <div className="mt-2 flex flex-wrap justify-center gap-x-3.5 gap-y-1 text-xs text-[var(--ink-3)]">{slices.map((slice: any, i: number) => <span key={slice.label} className="inline-flex items-center"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px]" style={{ background: color(slice.color, i) }} />{slice.label} · {Math.round((slice.v / total) * 100)}%</span>)}</div>
+      <div className="mt-2 flex flex-wrap justify-center gap-x-3.5 gap-y-1 text-xs text-[var(--ink-3)]">{slices.map((slice: any, i: number) => <span key={`${slice.label}-${i}`} className="inline-flex items-center"><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px]" style={{ background: color(slice.color, i) }} />{slice.label} · {Math.round((slice.v / total) * 100)}%</span>)}</div>
     </div>
   );
 }

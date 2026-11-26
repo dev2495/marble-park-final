@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
+import { assert, createApiClient } from './lib/api-client.mjs';
 
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const WEB = process.env.WEB_URL || 'http://localhost:3000';
@@ -9,20 +10,8 @@ const prisma = new PrismaClient();
 const cleanup = { productIds: [], customerIds: [], quoteIds: [], leadIds: [], orderIds: [] };
 let purchaseOrderId = null;
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
-async function gql(query, variables = {}, token) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const json = await response.json();
-  if (!response.ok || json.errors?.length) throw new Error(json.errors?.map((row) => row.message).join('; ') || `GraphQL ${response.status}`);
-  return json.data;
-}
+const { gql } = createApiClient(API);
 
 async function pdf(path, token, label) {
   if (process.env.SKIP_PDF === '1') return;

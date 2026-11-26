@@ -141,8 +141,10 @@ export class LeadsResolver {
 
   // ----- DataLoader-backed field resolvers -----
 
+  // Named apart from the Follow-up desk's completeFollowUp(entityType, id, values, markComplete):
+  // two mutations cannot share one name in the schema.
   @Mutation(() => GraphQLJSON)
-  async completeFollowUp(@Args('id', { type: () => ID }) id: string, @Args('outcome') outcome: string, @Context() ctx: GraphqlRequestContext) {
+  async completeLeadFollowUp(@Args('id', { type: () => ID }) id: string, @Args('outcome') outcome: string, @Context() ctx: GraphqlRequestContext) {
     return this.leads.completeFollowUp(id, outcome, await requireSession(this.prisma, ctx));
   }
 
@@ -212,7 +214,7 @@ export class LeadsResolver {
     if (!isPrivileged(user) && user.role !== 'office_staff' && existing.ownerId !== user.id) throw new Error('This lead is restricted');
     const leadInput = { ...input };
     if (!isPrivileged(user)) delete leadInput.ownerId;
-    return this.leads.update(id, leadInput as any);
+    return this.leads.update(id, leadInput as any, user.id);
   }
 
   @Mutation(() => LeadOutput)
@@ -224,7 +226,7 @@ export class LeadsResolver {
     const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales', 'office_staff']);
     const existing = await this.leads.findById(id);
     if (!isPrivileged(user) && user.role !== 'office_staff' && existing.ownerId !== user.id) throw new Error('This lead is restricted');
-    return this.leads.updateStage(id, stage);
+    return this.leads.updateStage(id, stage, user.id);
   }
 
   @Query(() => [GraphQLJSON])
@@ -256,7 +258,7 @@ export class LeadsResolver {
 
   @Mutation(() => LeadOutput)
   async deleteLead(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager']);
-    return this.leads.delete(id);
+    const actor = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager']);
+    return this.leads.delete(id, actor.id);
   }
 }

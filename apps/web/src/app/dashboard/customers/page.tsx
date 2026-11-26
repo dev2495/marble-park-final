@@ -8,6 +8,10 @@ import { Input } from '@/components/ui/input';
 import { QueryErrorBanner } from '@/components/query-state';
 import Link from 'next/link';
 import { maskedMobile } from '@/lib/customer-display';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Field } from '@/components/ui/field';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const GET_CUSTOMERS = gql`
   query Customers($search: String, $skip: Float, $take: Float) {
@@ -105,34 +109,36 @@ export default function CustomersPage() {
   };
 
   const canForceCreate = role === 'admin' || role === 'owner';
+  // A half-filled new customer form is not lost to a link, Back or a closed tab without asking.
+  useUnsavedChanges(showForm && Object.values(formData).some((value) => value.trim() !== ''), 'The new customer is not saved yet. Leave and lose what you typed?');
 
   return (
     <div className="space-y-7 pb-10">
-      <section className="rounded-r6 mp-card bg-white border border-[#e4e4e7] p-6 text-[#18181b]">
-        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#71717a]">Customer master</p>
-            <h1 className="mt-3 font-display text-3xl font-bold tracking-[-0.02em] text-[#18181b]">Architects, walk-ins and project buyers.</h1>
-            <p className="mt-3 max-w-2xl text-sm text-[#52525b]">Keep site address, contact, city and design-owner context ready for quote and dispatch.</p>
+      <section className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0">
+            <p className="mp-eyebrow">Customer master</p>
+            <h1 className="mp-page-title">Architects, walk-ins and project buyers.</h1>
+            <p className="mp-page-sub">Keep site address, contact, city and design-owner context ready for quote and dispatch.</p>
           </div>
-          <Button onClick={() => setShowForm((value) => !value)} size="lg" className="bg-[#2563eb] text-white hover:bg-[#1d4ed8]"><Plus className="mr-2 h-5 w-5" /> {showForm ? 'Close' : 'Add customer'}</Button>
+          <Button onClick={() => setShowForm((value) => !value)}><Plus className="mr-2 h-4 w-4" /> {showForm ? 'Close' : 'Add customer'}</Button>
         </div>
       </section>
 
       <section className="mp-card rounded-r5 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search by customer, city, mobile..." className="h-[3.25rem] max-w-xl" />
+          <Input aria-label="Search customers" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search by customer, city, mobile..." className="h-[3.25rem] max-w-xl" />
           <p className="text-sm font-bold text-[#52525b]">Page {page + 1} · {customers.length} visible customers</p>
         </div>
 
         {showForm && (
           <form onSubmit={handleSubmit} className="mt-5 grid gap-3 rounded-r4 bg-white/65 p-4 md:grid-cols-4">
-            <Input placeholder="Name" aria-label="Customer name" value={formData.name} onChange={(event) => setFormData({ ...formData, name: event.target.value })} required />
-            <Input placeholder="Email" aria-label="Customer email" type="email" value={formData.email} onChange={(event) => setFormData({ ...formData, email: event.target.value })} />
-            <Input placeholder="Phone" aria-label="Customer phone" value={formData.phone} onChange={(event) => setFormData({ ...formData, phone: event.target.value })} required />
-            <Input placeholder="City" aria-label="Customer city" value={formData.city} onChange={(event) => setFormData({ ...formData, city: event.target.value })} />
-            <Input placeholder="GST number (optional)" aria-label="GST number" value={formData.gstNo} onChange={(event) => setFormData({ ...formData, gstNo: event.target.value })} className="md:col-span-3" />
-            <Button type="submit" disabled={creating || (blocking.length > 0 && !overrideReady)}>{creating ? 'Saving…' : 'Save'}</Button>
+            <Field label="Name" required><Input placeholder="Customer name" value={formData.name} onChange={(event) => setFormData({ ...formData, name: event.target.value })} required /></Field>
+            <Field label="Email"><Input placeholder="name@example.com" type="email" value={formData.email} onChange={(event) => setFormData({ ...formData, email: event.target.value })} /></Field>
+            <Field label="Phone" required><Input placeholder="Mobile number" value={formData.phone} onChange={(event) => setFormData({ ...formData, phone: event.target.value })} required /></Field>
+            <Field label="City"><Input placeholder="City" value={formData.city} onChange={(event) => setFormData({ ...formData, city: event.target.value })} /></Field>
+            <Field label="GST number (optional)" className="md:col-span-3"><Input placeholder="15-character GSTIN" value={formData.gstNo} onChange={(event) => setFormData({ ...formData, gstNo: event.target.value })} /></Field>
+            <Button type="submit" className="self-end" loading={creating} disabled={creating || (blocking.length > 0 && !overrideReady)}>{creating ? 'Saving…' : 'Save'}</Button>
 
             {blocking.length > 0 ? (
               <div role="alert" aria-live="polite" className="md:col-span-4 flex flex-col gap-2 rounded-2xl border border-amber-300 bg-amber-50/80 p-4 text-amber-900">
@@ -184,7 +190,9 @@ export default function CustomersPage() {
       {error ? <QueryErrorBanner error={error} onRetry={() => refetch()} /> : null}
 
       <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {loading && !data ? <div role="status" aria-live="polite" className="col-span-full rounded-r5 bg-white/70 p-12 text-center font-bold text-[#52525b]">Loading customers...</div> : customers.map((customer: any) => (
+        {loading && !data ? <div role="status" aria-label="Loading customers" className="col-span-full grid gap-5 md:grid-cols-2 xl:grid-cols-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-40 w-full" /><Skeleton className="h-40 w-full" /></div> : null}
+        {!loading && !error && !customers.length ? <EmptyState icon={Building2} className="col-span-full" title={search ? 'No customers match this search' : 'No customers yet'} description={search ? 'Check the spelling, or search by mobile number or city.' : 'Add the first customer with the button above.'} /> : null}
+        {!(loading && !data) && customers.map((customer: any) => (
           <article key={customer.id} className="mp-card rounded-r5 p-5 transition hover:-translate-y-1 hover:shadow-2xl">
             <div className="flex items-start gap-4">
               <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#18181b] text-lg font-black text-[#ffffff]"><Building2 className="h-6 w-6" /></div>

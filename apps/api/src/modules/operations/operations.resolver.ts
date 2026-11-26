@@ -5,6 +5,7 @@ import { GraphqlRequestContext, requirePermission, requireRoles, requireSession 
 import { PrismaService } from '../prisma/prisma.service';
 import { assertNoCostInput, inventoryCostView } from '../common/cost-visibility';
 import { OperationsService } from './operations.service';
+import { MoneyAmount, TextLimit } from '../common/input-rules';
 import { OpeningStockWorkbookService } from './opening-stock-workbook.service';
 
 @InputType()
@@ -24,7 +25,7 @@ class StockCountInput {
   @Field({ nullable: true }) periodKey?: string;
   @Field({ nullable: true }) effectiveAt?: string;
   @Field({ nullable: true }) device?: string;
-  @Field({ nullable: true }) notes?: string;
+  @TextLimit(1000) @Field({ nullable: true }) notes?: string;
   @Field(() => String) lines!: string;
   @Field({ nullable: true }) submit?: boolean;
 }
@@ -35,7 +36,7 @@ class OpeningStockInput {
   @Field({ nullable: true }) effectiveAt?: string;
   @Field({ nullable: true }) fiscalYear?: string;
   @Field({ nullable: true }) valuationMode?: string;
-  @Field({ nullable: true }) notes?: string;
+  @TextLimit(1000) @Field({ nullable: true }) notes?: string;
   @Field({ nullable: true }) ownerOverrideReason?: string;
   @Field(() => String) lines!: string;
   @Field({ nullable: true }) submit?: boolean;
@@ -45,7 +46,7 @@ class OpeningStockInput {
 class StockTransferInput {
   @Field() sourceLocationId!: string;
   @Field() destinationLocationId!: string;
-  @Field({ nullable: true }) notes?: string;
+  @TextLimit(1000) @Field({ nullable: true }) notes?: string;
   @Field(() => String) lines!: string;
   @Field({ nullable: true }) submit?: boolean;
 }
@@ -53,7 +54,7 @@ class StockTransferInput {
 @InputType()
 class StockTransferTransitionInput {
   @Field(() => String, { nullable: true }) lines?: string;
-  @Field({ nullable: true }) reason?: string;
+  @TextLimit(500) @Field({ nullable: true }) reason?: string;
 }
 
 @InputType()
@@ -62,7 +63,7 @@ class InventoryPeriodCloseInput {
   @Field() periodKey!: string;
   @Field({ nullable: true }) countSessionId?: string;
   @Field({ nullable: true }) effectiveAt?: string;
-  @Field({ nullable: true }) notes?: string;
+  @TextLimit(1000) @Field({ nullable: true }) notes?: string;
 }
 
 @InputType()
@@ -73,7 +74,7 @@ class ReturnOrderInput {
   @Field({ nullable: true }) locationId?: string;
   @Field() reason!: string;
   @Field({ nullable: true }) refundMode?: string;
-  @Field({ nullable: true }) refundAmount?: number;
+  @MoneyAmount() @Field({ nullable: true }) refundAmount?: number;
   @Field(() => String) lines!: string;
   @Field({ nullable: true }) receive?: boolean;
   @Field(() => GraphQLJSON, { nullable: true }) metadata?: any;
@@ -399,6 +400,28 @@ export class OperationsResolver {
   async approveStockCountSession(@Args('id', { type: () => ID }) id: string, @Context() ctx: GraphqlRequestContext) {
     const user = await requirePermission(this.prisma, ctx, 'stock_counts.manage');
     return this.operations.approveStockCountSession(id, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async rejectStockCountSession(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    // Same people who can approve a count can reject it.
+    const user = await requirePermission(this.prisma, ctx, 'stock_counts.manage');
+    return this.operations.rejectStockCountSession(id, reason, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON)
+  async reopenInventoryPeriod(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    // Reopening books is an owner decision: owner and admin only, always audited.
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    return this.operations.reopenInventoryPeriod(id, reason, user.id);
   }
 
   @Query(() => [GraphQLJSON])

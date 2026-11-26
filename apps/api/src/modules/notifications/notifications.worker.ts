@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { ModuleRef } from '@nestjs/core';
 import { PrismaService } from '../prisma/prisma.service';
 import { effectivePermissionsForUser } from '../auth/rbac';
 import { computeStockAlertState } from '../inventory/stock-alerts';
@@ -19,7 +20,7 @@ export class NotificationsWorker implements OnModuleInit, OnModuleDestroy {
   private running = false;
   lastSuccessAt: Date | null = null;
   lastError: string | null = null;
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private moduleRef: ModuleRef) {}
   onModuleInit() {
     if (process.env.NOTIFICATIONS_WORKER_DISABLED === '1') return;
     this.timer = setInterval(() => void this.tick(), 60000);
@@ -32,55 +33,107 @@ export class NotificationsWorker implements OnModuleInit, OnModuleDestroy {
     if (this.running) return;
     this.running = true;
     try {
-      await this.prisma.$transaction(async tx => {
-        const lock: any = await tx.$queryRaw`SELECT pg_try_advisory_xact_lock(719091) AS acquired`;
-        if (!lock[0]?.acquired) return;
-        const now = new Date();
-        const users = await tx.user.findMany({ where: { active: true }, select: { id: true, role: true, permissionOverrides: true } });
-        const audience = (n: any) => users.filter(u => n.targetUserId ? n.targetUserId === u.id : n.targetPermission
-          ? effectivePermissionsForUser(u).includes(n.targetPermission)
-          : n.targetRole === u.role || (n.targetRole === 'owner_admin' && ['owner','admin'].includes(u.role)));
-        const scan = async (model: string, where: any, include: any, each: (r: any) => Promise<void>) => {
-          let cursor: string | undefined;
-          for (;;) {
-            const rows = await (tx as any)[model].findMany({ where, ...(include ? { include } : {}), orderBy: { id: 'asc' }, take: 200, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
-            for (const row of rows) await each(row);
-            if (rows.length < 200) break;
-            cursor = rows[rows.length - 1].id;
-          }
-        };
-        const upsert = async (rule: string, work: Work) => {
-          // Missing assignees are routed to the explicit fallback team, never broadcast.
-          const targetUserId = work.targetUserId && users.some(u => u.id === work.targetUserId) ? work.targetUserId : null;
-          const targetRole = targetUserId ? null : (work.targetRole || (work.targetPermission ? null : 'owner_admin'));
-          const taskKey = `${rule}:${work.entityId}`;
-          const id = `work_${createHash('sha256').update(taskKey).digest('hex').slice(0, 32)}`;
-          const old = await tx.notification.findUnique({ where: { taskKey } });
-          const reopened = old?.status === 'resolved';
-          const data = { title: work.title, message: work.message, entityType: work.entityType, entityId: work.entityId,
-            href: work.href, targetUserId, targetRole, targetPermission: targetUserId ? null : work.targetPermission || null,
-            priority: work.priority || 'normal', dueAt: work.dueAt || null, category: 'action', status: 'open', resolvedAt: null,
-            reconciledAt: now, metadata: { actionLabel: work.actionLabel, rule },
-          };
-          const n = await tx.notification.upsert({ where: { taskKey }, create: { id, taskKey, type: rule, ...data },
-            update: { ...data, ...(reopened ? { createdAt: now, assignedUserId: null } : {}) } });
-          const eligible = audience(n);
-          if (n.assignedUserId && !eligible.some(u => u.id === n.assignedUserId)) await tx.notification.update({ where: { id: n.id }, data: { assignedUserId: null } });
-          await tx.notificationRecipient.createMany({ data: eligible.map(u => ({ notificationId: n.id, userId: u.id })), skipDuplicates: true });
-          if (reopened || (old && old.priority !== n.priority)) await tx.notificationRecipient.updateMany({ where: { notificationId: n.id }, data: { readAt: null, archivedAt: null, snoozedUntil: null } });
-          await tx.notification.update({ where: { id: n.id }, data: { deliveredAt: now, deliveryError: null } });
-        };
-        const source = async (model: string, where: any, include: any, rule: string, map: (r: any) => Work | null) => {
-          await scan(model, where, include, async row => { const work = map(row); if (work) await upsert(rule, work); });
-          await tx.notification.updateMany({ where: { type: rule, category: 'action', status: 'open', reconciledAt: { lt: now } }, data: { status: 'resolved', resolvedAt: now, assignedUserId: null } });
-        };
+      // A short lease row replaces the old single 60 second transaction: replicas
+      // still never run the projection twice at once, but each batch commits on its own.
+      if (await this.acquireLease()) {
+        try { await this.runCycle(); } finally { await this.releaseLease(); }
+        this.lastSuccessAt = new Date(); this.lastError = null;
+      }
+    } catch (error) {
+      this.lastError = (error as Error).message;
+      this.logger.error('Notification projection failed; existing work preserved; retry in 60 seconds', (error as Error).stack);
+    } finally {
+      // Delivery must continue even if a business-source query is temporarily broken.
+      try { await this.deliver(); } catch (error) { this.logger.error('Notification delivery cycle failed; retry in 60 seconds', (error as Error).stack); }
+      this.running = false;
+    }
+  }
+
+  private static readonly LEASE_KEY = 'system:notification-worker';
+  private static readonly CYCLE_BUDGET_MS = 40000;
+  private sourceCursor = 0;
+
+  /** Takes the worker lease for 5 minutes (a crashed worker frees itself). Uses the heartbeat row's dueAt. */
+  private async acquireLease(): Promise<boolean> {
+    const now = new Date();
+    await this.prisma.notification.upsert({ where: { taskKey: NotificationsWorker.LEASE_KEY },
+      create: { id: 'notification-worker-heartbeat', taskKey: NotificationsWorker.LEASE_KEY, title: 'Notification service', message: 'Healthy', type: 'system_heartbeat', status: 'resolved', deliveredAt: now, reconciledAt: now },
+      update: {} });
+    const taken = await this.prisma.notification.updateMany({
+      where: { taskKey: NotificationsWorker.LEASE_KEY, OR: [{ dueAt: null }, { dueAt: { lt: now } }] },
+      data: { dueAt: new Date(now.getTime() + 5 * 60000) },
+    });
+    return taken.count === 1;
+  }
+
+  private async releaseLease() {
+    await this.prisma.notification.updateMany({ where: { taskKey: NotificationsWorker.LEASE_KEY }, data: { dueAt: null, reconciledAt: new Date(), deliveredAt: new Date() } })
+      .catch((error) => this.logger.error(`Could not release the notification lease: ${error?.message}`));
+  }
+
+  /**
+   * One pass over the work sources. Each source is read in batches of 100, every
+   * batch is its own short transaction, and a source is only closed out (tasks that
+   * no longer match are resolved) after all of its batches succeeded. The pass stops
+   * after a time budget and the next minute continues with the next source, so
+   * a slow table can never block new notifications.
+   */
+  private async runCycle() {
+    const users = await this.prisma.user.findMany({ where: { active: true }, select: { id: true, role: true, permissionOverrides: true } });
+    const now = new Date();
+    const audience = (n: any) => users.filter(u => n.targetUserId ? n.targetUserId === u.id : n.targetPermission
+      ? effectivePermissionsForUser(u).includes(n.targetPermission)
+      : n.targetRole === u.role || (n.targetRole === 'owner_admin' && ['owner','admin'].includes(u.role)));
+    const defs: Array<{ name: string; run: () => Promise<void> }> = [];
+    const upsert = async (tx: any, passStart: Date, rule: string, work: Work) => {
+      // Missing assignees are routed to the explicit fallback team, never broadcast.
+      const targetUserId = work.targetUserId && users.some(u => u.id === work.targetUserId) ? work.targetUserId : null;
+      const targetRole = targetUserId ? null : (work.targetRole || (work.targetPermission ? null : 'owner_admin'));
+      const taskKey = `${rule}:${work.entityId}`;
+      const id = `work_${createHash('sha256').update(taskKey).digest('hex').slice(0, 32)}`;
+      const old = await tx.notification.findUnique({ where: { taskKey } });
+      const reopened = old?.status === 'resolved';
+      const data = { title: work.title, message: work.message, entityType: work.entityType, entityId: work.entityId,
+        href: work.href, targetUserId, targetRole, targetPermission: targetUserId ? null : work.targetPermission || null,
+        priority: work.priority || 'normal', dueAt: work.dueAt || null, category: 'action', status: 'open', resolvedAt: null,
+        reconciledAt: passStart, metadata: { actionLabel: work.actionLabel, rule },
+      };
+      const n = await tx.notification.upsert({ where: { taskKey }, create: { id, taskKey, type: rule, ...data },
+        update: { ...data, ...(reopened ? { createdAt: passStart, assignedUserId: null } : {}) } });
+      const eligible = audience(n);
+      if (n.assignedUserId && !eligible.some(u => u.id === n.assignedUserId)) await tx.notification.update({ where: { id: n.id }, data: { assignedUserId: null } });
+      await tx.notificationRecipient.createMany({ data: eligible.map(u => ({ notificationId: n.id, userId: u.id })), skipDuplicates: true });
+      if (reopened || (old && old.priority !== n.priority)) await tx.notificationRecipient.updateMany({ where: { notificationId: n.id }, data: { readAt: null, archivedAt: null, snoozedUntil: null } });
+      await tx.notification.update({ where: { id: n.id }, data: { deliveredAt: passStart, deliveryError: null } });
+    };
+    /** Reads one model in id order, 100 rows per short transaction. */
+    const scanBatches = async (model: string, where: any, include: any, each: (tx: any, row: any) => Promise<void>) => {
+      let lastId: string | undefined;
+      for (;;) {
+        const rows: any[] = await this.prisma.$transaction(async tx => {
+          const found = await (tx as any)[model].findMany({ where: lastId ? { AND: [where, { id: { gt: lastId } }] } : where, ...(include ? { include } : {}), orderBy: { id: 'asc' }, take: 100 });
+          for (const row of found) await each(tx, row);
+          return found;
+        }, { timeout: 20000, maxWait: 3000 });
+        if (rows.length < 100) break;
+        lastId = rows[rows.length - 1].id;
+      }
+    };
+    const source = async (model: string, where: any, include: any, rule: string, map: (r: any) => Work | null) => {
+      defs.push({ name: rule, run: async () => {
+        const passStart = new Date();
+        await scanBatches(model, where, include, async (tx, row) => { const work = map(row); if (work) await upsert(tx, passStart, rule, work); });
+        // Only reached when every batch succeeded, so a failed scan cannot resolve tasks.
+        await this.prisma.notification.updateMany({ where: { type: rule, category: 'action', status: 'open', reconciledAt: { lt: passStart } }, data: { status: 'resolved', resolvedAt: passStart, assignedUserId: null } });
+      } });
+    };
         await source('leadIntent', { status: { in: ['pending_quote','in_quote'] } }, null, 'work_intent', r => ({
           title: r.status === 'in_quote' ? 'Quote preparation in progress' : 'Selection waiting for a quote',
           message: `${r.intentType.replaceAll('_',' ')} · ${Array.isArray(r.rows) ? r.rows.length : 0} selections. Open the intent to build the quotation.`,
           entityType: 'LeadIntent', entityId: r.id, targetUserId: r.lockedBy, targetPermission: 'quotes.manage',
           href: `/dashboard/intents?intentId=${r.id}`, actionLabel: 'Open selection',
         }));
-        await source('quote', { status: { notIn: ['cancelled','rejected','expired','converted','confirmed'] }, OR: [{ pricingStatus: 'incomplete' }, { approvalStatus: 'pending' }] }, { customer: true }, 'work_quote', r => ({
+        await source('quote', { status: { notIn: ['cancelled','superseded','closed','lost','expired','won','confirmed','converted'] }, OR: [{ pricingStatus: 'incomplete' }, { approvalStatus: 'pending' }] }, { customer: true }, 'work_quote', r => ({
           title: r.pricingStatus === 'incomplete' ? 'Complete quotation pricing' : 'Review below-floor quotation',
           message: `${r.quoteNumber} · ${r.customer.name}. ${r.pricingStatus === 'incomplete' ? 'Complete missing MRP before sharing.' : 'Price approval is required before confirmation.'}`,
           entityType: 'Quote', entityId: r.id, targetUserId: r.pricingStatus === 'incomplete' ? r.ownerId : null,
@@ -147,28 +200,44 @@ export class NotificationsWorker implements OnModuleInit, OnModuleDestroy {
             href: `/dashboard/procurement?view=demand&search=${encodeURIComponent(r.product.sku)}`, actionLabel: 'Review replenishment' };
         });
         // Audit-backed import outcomes are durable updates, not perpetually open tasks.
-        await scan('auditEvent', { createdAt: { gte: new Date(now.getTime() - 30 * 86400000) }, action: { in: ['excel_import.blocked','excel_import.failed','tile_import.failed','catalogue_import.failed'] } }, null, async row => {
-          const taskKey = `import-event:${row.id}`;
-          await tx.notification.upsert({ where: { taskKey }, update: {}, create: {
-            id: `import_${row.id}`, taskKey, type: 'import_attention', category: 'updates', targetUserId: row.actorUserId,
-            title: 'Import requires review', message: row.summary, entityType: row.entityType, entityId: row.entityId,
-            href: '/dashboard/master-data/imports', createdAt: row.createdAt, metadata: { actionLabel: 'Review import', auditEventId: row.id },
-          } });
-        });
-        // Persist a worker heartbeat for all replicas and administrator diagnostics.
-        await tx.notification.upsert({ where: { taskKey: 'system:notification-worker' },
-          create: { id: 'notification-worker-heartbeat', taskKey: 'system:notification-worker', title: 'Notification service', message: 'Healthy', type: 'system_heartbeat', status: 'resolved', deliveredAt: now, reconciledAt: now },
-          update: { reconciledAt: now, deliveredAt: now } });
-      }, { timeout: 60000, maxWait: 3000 });
-      this.lastSuccessAt = new Date(); this.lastError = null;
-    } catch (error) {
-      this.lastError = (error as Error).message;
-      this.logger.error('Notification projection failed; existing work preserved; retry in 60 seconds', (error as Error).stack);
-    } finally {
-      // Delivery must continue even if a business-source query is temporarily broken.
-      try { await this.deliver(); } catch (error) { this.logger.error('Notification delivery cycle failed; retry in 60 seconds', (error as Error).stack); }
-      this.running = false;
-    }
+        defs.push({ name: 'import_attention', run: async () => {
+          await scanBatches('auditEvent', { createdAt: { gte: new Date(now.getTime() - 30 * 86400000) }, action: { in: ['excel_import.blocked','excel_import.failed','tile_import.failed','catalogue_import.failed'] } }, null, async (tx, row) => {
+            const taskKey = `import-event:${row.id}`;
+            await tx.notification.upsert({ where: { taskKey }, update: {}, create: {
+              id: `import_${row.id}`, taskKey, type: 'import_attention', category: 'updates', targetUserId: row.actorUserId,
+              title: 'Import requires review', message: row.summary, entityType: row.entityType, entityId: row.entityId,
+              href: '/dashboard/master-data/imports', createdAt: row.createdAt, metadata: { actionLabel: 'Review import', auditEventId: row.id },
+            } });
+          });
+        } });
+        // Quotes past their valid-until date become expired. The quotes module owns
+        // the rule; it is looked up at run time so this worker keeps working until that
+        // method exists. Accepted names: expireOverdueQuotes / sweepExpiredQuotes.
+        defs.push({ name: 'quote_expiry', run: async () => {
+          let quotes: any = null;
+          try {
+            const { QuotesService } = await import('../quotes/quotes.service');
+            quotes = this.moduleRef.get(QuotesService, { strict: false });
+          } catch (error) { this.logger.warn(`Quote expiry sweep not available: ${(error as Error).message}`); quotes = null; }
+          const sweep = quotes && (quotes.expireOverdueQuotes || quotes.sweepExpiredQuotes);
+          if (typeof sweep === 'function') await sweep.call(quotes);
+        } });
+        // Run the sources one after another from where the last pass stopped, within the time budget.
+        const startedAt = Date.now();
+        const total = defs.length;
+        let ran = 0;
+        let failures = 0;
+        while (ran < total && Date.now() - startedAt < NotificationsWorker.CYCLE_BUDGET_MS) {
+          const def = defs[this.sourceCursor % total];
+          this.sourceCursor = (this.sourceCursor + 1) % total;
+          ran += 1;
+          try { await def.run(); } catch (error) {
+            failures += 1;
+            this.logger.error(`Notification source ${def.name} failed; its existing work is kept`, (error as Error).stack);
+          }
+        }
+        if (ran < total) this.logger.warn(`Notification pass stopped after ${ran} of ${total} sources (time budget); continuing next minute`);
+        if (failures) throw new Error(`${failures} notification source(s) failed`);
   }
 
   async deliver() {

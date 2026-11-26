@@ -64,8 +64,8 @@ export default function NotificationWorkspace() {
   const open = (item: Notice) => { if (!item.readAt) void act([item.id], 'read'); };
   const allSelected = items.length > 0 && items.every(i => selected.includes(i.id));
   return <div className="mx-auto max-w-6xl space-y-6 pb-12 text-[var(--ink)]">
-    <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-      <div><p className="text-xs font-semibold uppercase tracking-widest text-[var(--brand-700)]">Marble Park · Work inbox</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">Your next move, in one place.</h1><p className="mt-2 max-w-xl text-sm leading-6 text-[var(--ink-3)]">From customer selection to inward and dispatch. See what needs you, open the exact work, and keep the team in sync.</p></div>
+    <header className="mp-page-header">
+      <div><p className="mp-eyebrow">Marble Park · Work inbox</p><h1 className="mp-page-title">Your next move, in one place.</h1><p className="mp-page-sub">From customer selection to inward and dispatch. See what needs you, open the exact work, and keep the team in sync.</p></div>
       <Button variant="outline" className="h-11" disabled={loading} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`}/>Refresh</Button>
     </header>
     <div className="flex flex-wrap gap-x-8 gap-y-3 border-y border-[var(--line)] py-4 text-sm" aria-live="polite">

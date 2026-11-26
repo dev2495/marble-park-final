@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { assert } from './lib/api-client.mjs';
 
 const GRAPHQL = process.env.API_URL || 'http://localhost:4000/graphql';
 const HTTP = new URL(GRAPHQL).origin;
@@ -11,9 +12,6 @@ const VIDEO = path.resolve('reports/marble-park-user-training-2026-07-17/videos/
 const prisma = new PrismaClient();
 const createdAssetIds = [];
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 async function gql(query, variables = {}, token) {
   const response = await fetch(GRAPHQL, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ query, variables }) });

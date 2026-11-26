@@ -7,7 +7,14 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useBusyAction } from '@/hooks/use-busy-action';
+import { useLocalDraft } from '@/hooks/use-local-draft';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
+import { useDocumentTitle } from '@/hooks/use-document-title';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatusPill } from '@/components/ui/status-pill';
 import {
   AlertTriangle, ArrowLeft, Camera, Check, ChevronDown, ChevronUp, Copy, Download, FileImage, ImagePlus, Layers3, Bath, Loader2, Plus, Printer, Search, Send, Share2, ShoppingCart, Trash2, Undo2, X,
 } from 'lucide-react';
@@ -17,12 +24,28 @@ import { PhysicalQrScanner } from '@/components/physical-qr-scanner';
 import { ScanProductSelector } from '@/components/scan-product-selector';
 import { ArchitectPicker, CustomerPicker, Field, Modal, QuickSkuDialog, inputClass, isFollowUp, primaryButton, secondaryButton } from '@/components/quick-add/quick-add';
 import { describeApolloError } from '@/lib/apollo-errors';
-import { cn } from '@/lib/utils';
+import { quoteLineKey as sharedQuoteLineKey } from '@marble-park/pricing-contract/quote-line-key';
+import { formatSellingQuantity } from '@marble-park/pricing-contract/box-quantity';
+import { cn, statusLabel } from '@/lib/utils';
 import {
   AREA_SUGGESTIONS, DEFAULT_AREA, baseQuoteNumber, commercialFingerprint, draftNumber, isTileLine, lineChanges, lineFromProduct, lineIssues, lineKey, money, patchLine,
-  prepareLegacyLine, priceLines, pricingBasis, productImage, quoteFamilyBrandIds, quoteTypeForProduct, revisionLetter, serializeLines, tilePriceUom, tilePricingCoverage,
+  prepareLegacyLine, priceLines, pricingBasis, restoreGstRates, productImage, quoteFamilyBrandIds, quoteTypeForProduct, revisionLetter, serializeLines, tilePriceUom, tilePricingCoverage, wholeUnitWord,
   type DiscountMode, type Line, type QuoteType, type TaxMode,
 } from './model';
+
+// A tile quote line counts boxes. For a boxed tile (N pieces a box) it reads
+// "38 Box" with the pieces beside it; priced quantity and rate stay as they are.
+function boxUnits(line: any) {
+  const unit = String(line?.inventoryUom || line?.unit || 'BOX').toUpperCase();
+  const fromLine = isTileLine(line) && ['BOX', 'PACK', 'CARTON'].includes(unit) ? Math.trunc(Number(line?.piecesPerPack || line?.pcsPerBox || 1)) : 1;
+  return { piecesPerUnit: Math.max(1, Number(line?.piecesPerUnit || 0) || fromLine || 1), orderUnit: unit, unit, piecesPerBox: line?.piecesPerBox, soldBy: line?.soldBy };
+}
+function boxQtyLabel(quantity: unknown, line: any) {
+  return formatSellingQuantity(quantity, boxUnits(line)).label;
+}
+function isBoxedLine(line: any) {
+  return formatSellingQuantity(1, boxUnits(line)).isBoxed;
+}
 
 // Text the system once saved into every quote; never typed by a person, so the
 // field shows empty and the PDF uses the Settings text instead.
@@ -47,7 +70,7 @@ const SETUP = gql`
 const QUOTE = gql`
   query QuoteWorkspaceQuote($id: ID!) {
     quote(id: $id) {
-      id quoteNumber title projectName status approvalStatus discountPercent displayMode quoteType createdAt validUntil sentAt confirmedAt notes lines quoteMeta
+      id quoteNumber title projectName status approvalStatus discountPercent displayMode quoteType createdAt updatedAt validUntil sentAt confirmedAt notes lines quoteMeta
       customer owner lead approval coverImage leadId customerId ownerId
       versionNumber supersedesQuoteId supersededByQuoteId intentId architectId architectName architect pricingVersion pricingStatus commercialTotal versions
     }
@@ -63,7 +86,8 @@ const CREATE_QUOTE = gql`mutation QuoteWorkspaceCreate($input: CreateQuoteInput!
 const UPDATE_QUOTE = gql`mutation QuoteWorkspaceUpdate($id: ID!, $input: UpdateQuoteInput!) { updateQuote(id: $id, input: $input) { id quoteNumber versionNumber status pricingStatus approvalStatus } }`;
 const SEND_QUOTE = gql`mutation QuoteWorkspaceSend($id: ID!) { sendQuote(id: $id) { id status sentAt } }`;
 const SHARE_QUOTE = gql`mutation QuoteWorkspaceShare($quoteId: ID!) { createQuoteShare(quoteId: $quoteId) }`;
-const CANCEL_QUOTE = gql`mutation QuoteWorkspaceCancel($id: ID!, $reason: String!) { cancelQuote(id: $id, reason: $reason) { id status } }`;
+const CANCEL_QUOTE = gql`mutation QuoteWorkspaceCancel($id: ID!, $reason: String!) { cancelQuote(id: $id, reason: $reason) { id status approval } }`;
+const MARK_LOST = gql`mutation QuoteWorkspaceLost($id: ID!, $reason: String!) { markQuoteLost(id: $id, reason: $reason) { id status } }`;
 const CREATE_ORDER = gql`mutation QuoteWorkspaceOrder($input: CreateSalesOrderInput!) { createSalesOrderFromQuote(input: $input) }`;
 const CLOSE_REMAINDER = gql`mutation QuoteWorkspaceClose($quoteId: ID!, $reason: String!) { closeQuoteRemainder(quoteId: $quoteId, reason: $reason) { id status } }`;
 const UPLOAD = gql`mutation QuoteWorkspaceUpload($filename: String!, $contentBase64: String!, $scope: String) { uploadStoredAsset(filename: $filename, contentBase64: $contentBase64, scope: $scope) { result } }`;
@@ -97,16 +121,25 @@ function pct(value: number) {
   return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }
 
+// True from 1024px up, where the line table has room. Below that each line becomes a stacked card.
+function useWideScreen() {
+  return useSyncExternalStore(
+    (notify) => { const query = window.matchMedia('(min-width: 1024px)'); query.addEventListener('change', notify); return () => query.removeEventListener('change', notify); },
+    () => window.matchMedia('(min-width: 1024px)').matches,
+    () => true,
+  );
+}
+
 const PHONE_BAR_ACTIONS = new Set(['draft', 'confirm', 'docs', 'share', 'order', 'discard', 'save']);
 
-const STATUS_PILL: Record<Mode, { label: string; className: string }> = {
-  new: { label: 'New', className: 'bg-[var(--bg-soft)] text-[var(--ink-3)]' },
-  draft: { label: 'Draft', className: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
-  confirmed: { label: 'Ready to send', className: 'bg-[var(--success-bg)] text-[var(--success)]' },
-  revising: { label: 'Revising', className: 'bg-[var(--info-bg)] text-[var(--info)]' },
-  locked: { label: 'Ordered', className: 'bg-violet-100 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300' },
-  reviseOrdered: { label: 'Revising', className: 'bg-[var(--info-bg)] text-[var(--info)]' },
-  closed: { label: 'Closed', className: 'bg-[var(--bg-soft)] text-[var(--ink-3)]' },
+const STATUS_PILL: Record<Mode, { label: string; tone: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
+  new: { label: 'New', tone: 'neutral' },
+  draft: { label: 'Draft', tone: 'warning' },
+  confirmed: { label: 'Ready to send', tone: 'success' },
+  revising: { label: 'Revising', tone: 'info' },
+  locked: { label: 'Ordered', tone: 'info' },
+  reviseOrdered: { label: 'Revising', tone: 'info' },
+  closed: { label: 'Closed', tone: 'neutral' },
 };
 
 export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
@@ -158,7 +191,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
   const [resultsOpen, setResultsOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'' | 'customer' | 'architect' | 'sku' | 'order' | 'cancel' | 'documents' | 'owner'>('');
+  const [dialog, setDialog] = useState<'' | 'customer' | 'architect' | 'sku' | 'order' | 'cancel' | 'lost' | 'documents' | 'owner'>('');
   // Office staff, sales managers, owners and admins may hand a quote to another sales person.
   const [canReassign, setCanReassign] = useState(false);
   useEffect(() => {
@@ -173,7 +206,14 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
   const [scanResult, setScanResult] = useState<any>(null);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const busyAction = useBusyAction();
+  const busy = busyAction.isBusy();
+  const wide = useWideScreen();
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const forceReload = useRef(false);
+  const [reloadTick, setReloadTick] = useState(0);
+  const dirtyRef = useRef(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const loadedFor = useRef<string>('');
@@ -233,6 +273,13 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     const signature = `${quote.id}:${quote.quoteNumber}:${quote.versionNumber}:${quote.status}:${quote.pricingStatus}:${JSON.stringify(quote.lines).length}`;
     if (loadedFor.current === signature) return;
     loadedFor.current = signature;
+    // A refresh after "Mark as sent", a salesperson change or a background update must not wipe what is being typed.
+    // Only a save, a discard or an order forces the screen to take the server's version.
+    if (dirtyRef.current && !forceReload.current) {
+      setOwnerId(quote.ownerId || quote.owner?.id || '');
+      return;
+    }
+    forceReload.current = false;
     const meta = quote.quoteMeta || {};
     const productMap = new Map((legacyProducts.data?.productsByIds || []).map((product: any) => [String(product.id), product]));
     const roomNames = new Map<string, string>();
@@ -286,7 +333,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     setExtraAreas([]);
     const firstArea = loaded[0]?.area || DEFAULT_AREA;
     setTargetArea(firstArea);
-  }, [isNew, legacyIds.length, legacyProducts.data?.productsByIds, legacyProducts.loading, quote, settingsFingerprint]);
+  }, [isNew, legacyIds.length, legacyProducts.data?.productsByIds, legacyProducts.loading, quote, reloadTick, settingsFingerprint]);
 
   // ---------- derived ----------
   const activeLines = useMemo(() => lines.filter((line) => !line._removed), [lines]);
@@ -316,7 +363,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     && String(quote.pricingVersion || '') === 'unified_retail_v1' && Array.isArray(quote.lines) && quote.lines.length > 0
     && quote.lines.every((line: any) => String(line.pricingVersion || '') === 'unified_retail_v1' && Number(line.mrpInclusive || 0) > 0 && line.mrpConfirmedAt && line.mrpConfirmedById));
   const commercialLocked = Boolean(fulfillment?.orders?.length);
-  const closedStatus = Boolean(quote && (['cancelled', 'superseded', 'closed', 'lost', 'expired'].includes(quote.status) || quote.supersededByQuoteId));
+  // An expired quote stays open for editing so it can be re-validated with a new valid-until date.
+  const closedStatus = Boolean(quote && (['cancelled', 'superseded', 'closed', 'lost', 'won'].includes(quote.status) || quote.supersededByQuoteId));
+  const expired = quote?.status === 'expired';
   const fingerprint = useMemo(() => commercialFingerprint(lines, taxMode, discountType, discountValue), [discountType, discountValue, lines, taxMode]);
   const commercialDirty = !isNew && fingerprint !== baselineFingerprint;
   const settingsDirty = !isNew && currentSettings !== baselineSettings;
@@ -326,6 +375,29 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
         : persistedConfirmed ? (commercialDirty ? 'revising' : 'confirmed')
           : 'draft';
   const canEditLines = ['new', 'draft', 'confirmed', 'revising', 'reviseOrdered'].includes(mode);
+
+  // ---------- unsaved work: leave-page warning and a local copy that survives a crash ----------
+  const editedSinceLoad = !isNew && baseline !== null && (commercialDirty || settingsDirty);
+  dirtyRef.current = editedSinceLoad;
+  const hasWork = isNew ? (lines.length > 0 || projectName.trim() !== '' || remarks.trim() !== '' || discountValue !== '') : editedSinceLoad;
+  useUnsavedChanges(hasWork && !leaving, 'This quote has changes that are not saved. Leave and lose them?');
+  useDocumentTitle(quote?.quoteNumber ? `Quote ${quote.quoteNumber}` : null);
+  const draftBase = quote ? `${quote.quoteNumber}:${quote.versionNumber}:${quote.status}` : 'new';
+  const draftValue = useMemo(() => ({
+    base: draftBase, quoteType, lines, customer, ownerId, architect, projectName, validUntil, displayMode, taxMode, discountType, discountValue, remarks, terms, bankDetails, coverImage, tagline, extraAreas,
+  }), [architect, bankDetails, coverImage, customer, discountType, discountValue, displayMode, draftBase, extraAreas, lines, ownerId, projectName, quoteType, remarks, tagline, taxMode, terms, validUntil]);
+  const draft = useLocalDraft(isNew ? 'quote:new' : `quote:${quoteId}`, draftValue, { enabled: hasWork && !leaving && canEditLines });
+  const applyDraft = () => {
+    const saved = draft.restored;
+    if (!saved) return;
+    setQuoteType(saved.quoteType === 'tile' ? 'tile' : 'cp_sanitary'); quoteTypeLocked.current = true;
+    setLines(Array.isArray(saved.lines) ? saved.lines : []);
+    if (isNew) { setCustomer(saved.customer ?? null); setOwnerId(saved.ownerId || ownerId); }
+    setArchitect(saved.architect ?? null); setProjectName(saved.projectName || ''); setValidUntil(saved.validUntil || isoDate(null)); setDisplayMode(saved.displayMode === 'selection' ? 'selection' : 'priced');
+    setTaxMode(saved.taxMode === 'non_gst' ? 'non_gst' : 'gst'); setDiscountType(saved.discountType === 'FIXED_AMOUNT' ? 'FIXED_AMOUNT' : 'PERCENT'); setDiscountValue(saved.discountValue || '');
+    setRemarks(saved.remarks || ''); setTerms(saved.terms || ''); setBankDetails(saved.bankDetails || ''); setCoverImage(saved.coverImage || ''); setTagline(saved.tagline || ''); setExtraAreas(Array.isArray(saved.extraAreas) ? saved.extraAreas : []);
+    draft.dismissRestored();
+  };
   const versionNumber = Number(quote?.versionNumber || 1);
   const familyBase = quote ? baseQuoteNumber(quote) : '';
   const nextRevisionName = quote ? `${familyBase}${revisionLetter(versionNumber + 1)}` : '';
@@ -334,6 +406,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     for (const row of fulfillment?.lines || []) map.set(String(row.lineKey || ''), Number(row.ordered || 0));
     return map;
   }, [fulfillment?.lines]);
+  // Same key the server gives the line (product + room), taken from the line as it was saved,
+  // so moving a line to another room while revising keeps its ordered quantity.
+  const orderedFor = (line: Line) => orderedQtyByKey.get(sharedQuoteLineKey({ ...(baseline?.get(line._k) || line), area: (baseline?.get(line._k) || line).area || DEFAULT_AREA }, 0)) || 0;
 
   const areas = useMemo(() => {
     const seen: string[] = [];
@@ -513,6 +588,8 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       ...loaded,
       remarks, terms: terms || undefined, bankDetails: bankDetails || undefined, coverImage, tagline,
       quoteType, pricingVersion: 'unified_retail_v1', taxTreatment: isNew ? 'EXCLUSIVE' : (meta.taxTreatment || undefined),
+      // A quote started from the Walk-ins screen remembers the visit it came from.
+      ...(isNew && searchParams.get('visit') ? { walkInVisitId: String(searchParams.get('visit')) } : {}),
       ...commercialMeta,
     });
   };
@@ -527,6 +604,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     const family = activeLines.find((line) => quoteTypeForProduct(line) !== quoteType);
     if (family) { setError(`${family.sku || family.name} does not belong in this quote type. Remove it first.`); setFocusKey(family._k); return false; }
     if (discountIssue) { setError(discountIssue); return false; }
+    // What is already on a sales order cannot be reduced, removed or moved to another room in a revision.
+    const underOrdered = lines.find((line) => orderedFor(line) > 0 && (line._removed || draftNumber(line.qty ?? line.quantity) < orderedFor(line) || !sameRoom(line.area, (baseline?.get(line._k) || line).area)));
+    if (underOrdered) { setError(`${underOrdered.name}: ${orderedFor(underOrdered)} already ordered in ${(baseline?.get(underOrdered._k) || underOrdered).area}. Keep at least that quantity in that room, or cancel the order first.`); setAreaFilter('all'); setFocusKey(underOrdered._k); return false; }
     const hard = blocking.find(({ issue }) => asDraft ? ['family', 'nrpInput', 'special', 'coverage', 'qty'].includes(issue.key) : true);
     if (hard) { setError(`${hard.line.name}: ${hard.issue.message}.`); setAreaFilter('all'); setFocusKey(hard.line._k); return false; }
     return true;
@@ -539,8 +619,8 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     displayMode,
     discountPercent: discountType === 'PERCENT' ? Number(discountValue || 0) : 0,
   });
-  const run = async (operation: string, task: () => Promise<void>) => {
-    setBusy(true);
+  // One action at a time: a second tap while one is running does nothing.
+  const run = (operation: string, task: () => Promise<void>) => busyAction.run(operation, async () => {
     setError('');
     try { await task(); } catch (err) {
       const message = errorText(err, operation);
@@ -548,8 +628,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       const lineKeyFromError = describeApolloError(err, operation).lineKey;
       const line = lineKeyFromError ? activeLines.find((row) => row.lineKey === lineKeyFromError) : null;
       if (line) setFocusKey(line._k);
-    } finally { setBusy(false); }
-  };
+    }
+  });
+  const reloadFromServer = () => { forceReload.current = true; loadedFor.current = ''; setReloadTick((tick) => tick + 1); };
   const saveNew = (asDraft: boolean) => {
     if (!validateBeforeSave(asDraft)) return;
     void run('CreateQuote', async () => {
@@ -566,6 +647,8 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       const created = result.data?.createQuote;
       if (!created?.id) throw new Error('The quote was not saved.');
       notify(`${created.quoteNumber} ${asDraft ? 'saved as a draft' : 'confirmed'}.`);
+      setLeaving(true);
+      draft.clear();
       router.replace(`/dashboard/quotes/${created.id}`);
     });
   };
@@ -575,13 +658,15 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     void run('UpdateQuote', async () => {
       const result = await updateQuote({ variables: { id: quote.id, input: {
         ...commonInput(),
+        expectedUpdatedAt: quote.updatedAt || undefined,
         saveAsDraft: asDraft,
         coverImage,
         quoteMeta: buildMeta(true),
         lines: serializeLines(activeLines, rowByKey, taxMode, discountType, discountValue),
       } } });
       const saved = result.data?.updateQuote;
-      loadedFor.current = '';
+      reloadFromServer();
+      draft.clear();
       await Promise.all([quoteQuery.refetch(), fulfillmentQuery.refetch()]);
       if (saved && saved.quoteNumber !== quote.quoteNumber) notify(`Saved as ${saved.quoteNumber}. The PDF, share link and architect bundle now show this revision.`);
       else notify(asDraft ? 'Draft saved.' : `${saved?.quoteNumber || quote.quoteNumber} confirmed.`);
@@ -591,6 +676,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
     if (!quote) return;
     void run('UpdateQuote', async () => {
       await updateQuote({ variables: { id: quote.id, input: {
+        expectedUpdatedAt: quote.updatedAt || undefined,
         architectId: architect?.id || '',
         projectName,
         validUntil: validUntil ? new Date(`${validUntil}T23:59:59`).toISOString() : undefined,
@@ -598,7 +684,8 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
         coverImage,
         quoteMeta: buildMeta(false),
       } } });
-      loadedFor.current = '';
+      reloadFromServer();
+      draft.clear();
       await quoteQuery.refetch();
       notify('Changes saved.');
     });
@@ -621,11 +708,14 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       const created = result.data?.createQuote;
       if (!created?.id) throw new Error('The revision was not saved.');
       notify(`${created.quoteNumber} saved. ${quote.quoteNumber} keeps its sales order history.`);
+      setLeaving(true);
+      draft.clear();
       router.push(`/dashboard/quotes/${created.id}`);
     });
   };
   const discard = () => {
-    loadedFor.current = '';
+    reloadFromServer();
+    draft.clear();
     setReviseOrdered(false);
     void quoteQuery.refetch().then(() => notify('Changes discarded. The saved quote is unchanged.'));
   };
@@ -634,6 +724,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
   const [sendQuote] = useMutation(SEND_QUOTE);
   const [shareQuote] = useMutation(SHARE_QUOTE);
   const [cancelQuote] = useMutation(CANCEL_QUOTE);
+  const [markLost] = useMutation(MARK_LOST);
   const [uploadCover] = useMutation(UPLOAD);
   const share = () => void run('CreateQuoteShare', async () => {
     const token = (await shareQuote({ variables: { quoteId: quote.id } })).data?.createQuoteShare?.token;
@@ -687,7 +778,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
   };
 
   // ---------- render helpers ----------
-  if (!isNew && quoteQuery.loading && !quote) return <div role="status" className="mp-card rounded-r5 p-10 text-center font-semibold text-[var(--ink-4)]">Loading quote…</div>;
+  if (!isNew && quoteQuery.loading && !quote) return <div role="status" aria-label="Loading quote" className="flex flex-col gap-3"><Skeleton className="h-16 w-full" /><div className="grid gap-3 xl:grid-cols-[11.5rem_minmax(0,1fr)_18rem]"><Skeleton className="h-24 w-full xl:h-64" /><Skeleton className="h-72 w-full" /><Skeleton className="h-48 w-full xl:h-64" /></div></div>;
   if (!isNew && quoteQuery.error && !quote) return <div className="mp-card rounded-r5 p-6"><QueryErrorBanner error={quoteQuery.error} onRetry={() => quoteQuery.refetch()} /></div>;
   if (!isNew && !quote) return <div className="mp-card rounded-r5 p-10 text-center font-semibold text-[var(--ink-4)]">Quote not found.</div>;
 
@@ -702,22 +793,22 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
   const headerActions = (() => {
     const buttons: ReactNode[] = [];
     if (mode === 'new' || mode === 'draft') {
-      buttons.push(<button key="draft" type="button" disabled={busy} onClick={() => (isNew ? saveNew(true) : saveExisting(true))} className={secondaryButton}>Save draft</button>);
+      buttons.push(<button key="draft" type="button" disabled={busy} onClick={() => (isNew ? saveNew(true) : saveExisting(true))} className={secondaryButton}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Save draft</button>);
       buttons.push(<button key="confirm" type="button" disabled={busy || !customer || !activeLines.length} onClick={() => { if (!pricingReady) { firstBlockingFocus(); setError(blocking.length ? `${blocking.length} thing${blocking.length === 1 ? '' : 's'} to fix before confirming. They are listed on the right.` : discountIssue || 'Add items first.'); return; } return isNew ? saveNew(false) : saveExisting(false); }} className={primaryButton}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{blocking.length ? `Fix ${blocking.length} to confirm` : 'Confirm quote'}</button>);
     }
     if (mode === 'confirmed' || mode === 'locked') {
-      if (settingsDirty) buttons.push(<button key="save-settings" type="button" disabled={busy} onClick={saveSettings} className={primaryButton}>Save changes</button>);
+      if (settingsDirty) buttons.push(<button key="save-settings" type="button" disabled={busy} onClick={saveSettings} className={primaryButton}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Save changes</button>);
       buttons.push(<button key="docs" type="button" onClick={() => setDialog('documents')} className={secondaryButton}><Download className="h-4 w-4" /><span className="mp-bar-label">PDF</span></button>);
       buttons.push(<button key="share" type="button" disabled={busy || approvalPending} onClick={share} className={secondaryButton}><Share2 className="h-4 w-4" /><span className="mp-bar-label">Share</span></button>);
       if (mode === 'locked') buttons.push(<button key="rev" type="button" onClick={() => setReviseOrdered(true)} className={secondaryButton}>Revise</button>);
-      buttons.push(<button key="order" type="button" disabled={approvalPending} onClick={() => setDialog('order')} className={primaryButton}><ShoppingCart className="h-4 w-4" />{mode === 'locked' ? 'Order remaining' : 'Convert to order'}</button>);
+      buttons.push(<button key="order" type="button" disabled={approvalPending || busy} onClick={() => setDialog('order')} className={primaryButton}><ShoppingCart className="h-4 w-4" />{mode === 'locked' ? 'Order remaining' : 'Convert to order'}</button>);
     }
     if (mode === 'revising') {
-      buttons.push(<button key="discard" type="button" disabled={busy} onClick={discard} className={secondaryButton}><Undo2 className="h-4 w-4" />Discard</button>);
+      buttons.push(<button key="discard" type="button" disabled={busy} onClick={() => setConfirmDiscard(true)} className={secondaryButton}><Undo2 className="h-4 w-4" />Discard</button>);
       buttons.push(<button key="save" type="button" disabled={busy || !pricingReady} onClick={() => saveExisting(false)} className={primaryButton}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Save as {nextRevisionName}</button>);
     }
     if (mode === 'reviseOrdered') {
-      buttons.push(<button key="discard" type="button" disabled={busy} onClick={discard} className={secondaryButton}>Cancel revision</button>);
+      buttons.push(<button key="discard" type="button" disabled={busy} onClick={() => setConfirmDiscard(true)} className={secondaryButton}>Cancel revision</button>);
       buttons.push(<button key="save" type="button" disabled={busy || !pricingReady} onClick={saveOrderedRevision} className={primaryButton}>Save as {nextRevisionName}</button>);
     }
     return buttons;
@@ -735,14 +826,14 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Link href="/dashboard/quotes" aria-label="Back to quotes" className="rounded-md p-1.5 text-[var(--ink-4)] hover:bg-[var(--bg-soft)]"><ArrowLeft className="h-4 w-4" /></Link>
           <h1 className="font-display text-xl font-bold tracking-[-0.01em] text-[var(--ink)]">{quoteTitle}</h1>
-          <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold', pill.className)}><span className="h-1.5 w-1.5 rounded-full bg-current" />{mode === 'closed' ? (quote?.supersededByQuoteId ? 'Superseded' : String(quote?.status || '').replace('_', ' ')) : mode === 'confirmed' && sentLabel ? sentLabel : pill.label}{mode === 'draft' && blocking.length ? ` · ${blocking.length} to fix` : ''}</span>
-          {approvalPending ? <span className="rounded-full bg-[var(--warning-bg)] px-2.5 py-1 text-xs font-semibold text-[var(--warning)]">Waiting for owner price approval</span> : null}
+          <StatusPill tone={pill.tone}>{mode === 'closed' ? (quote?.supersededByQuoteId ? 'Superseded' : String(quote?.status || '').replace('_', ' ')) : mode === 'confirmed' && sentLabel ? sentLabel : pill.label}{mode === 'draft' && blocking.length ? ` · ${blocking.length} to fix` : ''}</StatusPill>
+          {approvalPending ? <StatusPill tone="warning">Waiting for owner price approval</StatusPill> : null}
           {sentLabel && mode !== 'confirmed' ? <span className="rounded-full bg-[var(--bg-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--ink-3)]">{sentLabel}</span> : null}
           <div className="-mx-1 flex w-full items-center gap-1.5 overflow-x-auto px-1 [&>*]:shrink-0 sm:mx-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:px-0">
-            <button type="button" disabled={!isNew} onClick={() => setDialog('customer')} className={cn('inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium', customer ? 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)] disabled:cursor-default' : 'border-[var(--brand-500)] bg-[var(--brand-50)] font-semibold text-[var(--brand-700)]')}>
+            <button type="button" disabled={!isNew} onClick={() => setDialog('customer')} className={cn('inline-flex min-h-11 items-center gap-2 lg:min-h-0 lg:h-8 rounded-full border px-3 text-xs font-medium', customer ? 'border-[var(--line)] bg-[var(--surface)] text-[var(--ink-2)] disabled:cursor-default' : 'border-[var(--brand-500)] bg-[var(--brand-50)] font-semibold text-[var(--brand-700)]')}>
               {customer ? <><b className="font-semibold text-[var(--ink)]">{customer.name}</b><span className="text-[var(--ink-4)]">{customer.mobile}{customer.city ? ` · ${customer.city}` : ''}</span>{isFollowUp(customer) ? <span className="rounded bg-[var(--warning-bg)] px-1.5 text-[10px] font-semibold text-[var(--warning)]">follow up</span> : null}</> : <><Plus className="h-3.5 w-3.5" />Customer (name and mobile is enough)</>}
             </button>
-            <button type="button" disabled={mode === 'closed'} onClick={() => setDialog('architect')} className={cn('inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium', architect ? 'border-[var(--line)] text-[var(--ink-2)]' : 'border-dashed border-[var(--line-strong)] font-semibold text-[var(--brand-700)]')}>
+            <button type="button" disabled={mode === 'closed'} onClick={() => setDialog('architect')} className={cn('inline-flex min-h-11 items-center gap-2 lg:min-h-0 lg:h-8 rounded-full border px-3 text-xs font-medium', architect ? 'border-[var(--line)] text-[var(--ink-2)]' : 'border-dashed border-[var(--line-strong)] font-semibold text-[var(--brand-700)]')}>
               {architect ? <><span className="text-[var(--ink-4)]">Architect</span><b className="font-semibold text-[var(--ink)]">{architect.name}</b></> : <><Plus className="h-3.5 w-3.5" />Architect</>}
             </button>
             <QuoteTypeChip quoteType={quoteType} editable={isNew && activeLines.length === 0} onChange={(value) => { quoteTypeLocked.current = true; setQuoteType(value); }} />
@@ -756,7 +847,15 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       </section>
 
       {/* Banners */}
-      {setup.error ? <QueryErrorBanner error={setup.error} /> : null}
+      {setup.error ? <QueryErrorBanner error={setup.error} onRetry={() => setup.refetch()} /> : null}
+      {draft.restored && canEditLines ? (
+        <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-r4 border border-[var(--info)]/25 bg-[var(--info-bg)] px-4 py-2.5 text-sm text-[var(--info)]">
+          <span className="min-w-0 flex-1"><b className="font-semibold">An unsaved {isNew ? 'quote' : 'copy of your edits'} was found on this device{draft.savedAt ? ` from ${shortDate(new Date(draft.savedAt).toISOString())}` : ''}.</b>{' '}
+            {!isNew && (draft.restored as any).base !== draftBase ? `This quote was saved again since then (${draftBase.split(':')[0]}). Restoring puts your older edits on screen; nothing is saved until you press save, so check them first.` : 'Restore it to carry on where you left off.'}</span>
+          <button type="button" onClick={applyDraft} className={cn(primaryButton, 'h-11 sm:h-9')}>Restore</button>
+          <button type="button" onClick={() => draft.clear()} className={cn(secondaryButton, 'h-11 sm:h-9')}>Discard it</button>
+        </div>
+      ) : null}
       {error ? <div role="alert" className="flex items-start gap-2 rounded-r4 border border-[var(--warning)]/40 bg-[var(--warning-bg)] px-4 py-2.5 text-sm font-medium text-[var(--warning)]"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span className="flex-1">{error}</span><button type="button" aria-label="Dismiss" onClick={() => setError('')}><X className="h-4 w-4" /></button></div> : null}
       {openQuotes.length ? (
         <Banner tone="info" title={`${customer?.name || 'This customer'} already has ${openQuotes.length === 1 ? 'an open quote' : `${openQuotes.length} open quotes`}.`}>
@@ -776,21 +875,27 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       {mode === 'draft' && activeLines.some((line) => String(line.pricingVersion) === 'legacy_unverified') ? <Banner tone="info" title="Older quote loaded with current Product Master MRP.">The customer rate is kept as a fixed NRP. Check each line, then press Confirm quote.</Banner> : null}
       {quote?.supersededByQuoteId ? <Banner tone="warning" title="A newer version replaced this quote."><Link className="font-semibold underline" href={`/dashboard/quotes/${quote.supersededByQuoteId}`}>Open the current version</Link></Banner> : null}
       {quote?.status === 'cancelled' ? <Banner tone="danger" title="This quote is cancelled.">Its history is kept; changes and orders are turned off.</Banner> : null}
+      {quote?.status === 'lost' ? <Banner tone="danger" title="The customer did not go ahead.">{quote.approval?.lost?.reason ? `Reason: ${quote.approval.lost.reason}. ` : ''}Its history is kept; start a new quote if they come back.</Banner> : null}
+      {expired ? <Banner tone="warning" title={`This quote was valid until ${shortDate(quote.validUntil) || 'an earlier date'}.`}>It cannot be sent, shared or ordered as it is. Check the prices, set a new Valid until date on the right and save to bring it back.</Banner> : null}
+      {quote?.approvalStatus === 'rejected' ? <Banner tone="warning" title="The owner did not approve this price.">{quote.approval?.rejection?.note ? `Owner's note: ${quote.approval.rejection.note}. ` : ''}Change the price and confirm the quote again; it goes back for approval if it is still below the floor rate.</Banner> : null}
 
       {/* Workspace */}
       <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[11.5rem_minmax(0,1fr)_18rem] 2xl:grid-cols-[13.5rem_minmax(0,1fr)_20rem]">
         {/* Areas rail */}
-        <aside aria-label="Areas" className="flex min-h-0 gap-1 overflow-x-auto rounded-r5 border border-[var(--line)] bg-[var(--surface-2)] p-2 xl:flex-col xl:overflow-y-auto">
+        <aside aria-label="Areas" className="flex min-h-0 min-w-0 flex-col gap-2 rounded-r5 border border-[var(--line)] bg-[var(--surface-2)] p-2 xl:gap-1 xl:overflow-y-auto">
           <p className="hidden px-2 pb-1 pt-1 text-[10.5px] font-bold uppercase tracking-[0.1em] text-[var(--ink-4)] xl:block">Areas</p>
-          <AreaButton active={areaFilter === 'all'} name="All areas" count={activeLines.length} value={totals.lineNet} onClick={() => setAreaFilter('all')} />
-          {areas.map((area) => {
-            const info = areaTotals.get(area) || { count: 0, value: 0, warn: false };
-            return <AreaButton key={area} active={areaFilter === area} name={area} count={info.count} value={info.value} warn={info.warn} onClick={() => { setAreaFilter(area); setTargetArea(area); }} />;
-          })}
+          {/* Below xl the area chips scroll sideways and "New area" sits on its own row, always in view. */}
+          <div className="flex min-w-0 gap-1 overflow-x-auto xl:flex-col xl:overflow-visible">
+            <AreaButton active={areaFilter === 'all'} name="All areas" count={activeLines.length} value={totals.lineNet} onClick={() => setAreaFilter('all')} />
+            {areas.map((area) => {
+              const info = areaTotals.get(area) || { count: 0, value: 0, warn: false };
+              return <AreaButton key={area} active={areaFilter === area} name={area} count={info.count} value={info.value} warn={info.warn} onClick={() => { setAreaFilter(area); setTargetArea(area); }} />;
+            })}
+          </div>
           {canEditLines ? (
-            <div className="mt-1 hidden gap-1 px-1 xl:flex">
-              <input list="mp-area-list" value={newArea} onChange={(event) => setNewArea(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addArea(); } }} placeholder="+ New area" aria-label="New area name" className="h-8 min-w-0 flex-1 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs" />
-              <button type="button" onClick={addArea} className="h-8 rounded-md border border-[var(--line-strong)] px-2 text-xs font-semibold">Add</button>
+            <div className="flex min-w-0 items-center gap-1 px-1 xl:mt-1">
+              <input list="mp-area-list" value={newArea} onChange={(event) => setNewArea(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addArea(); } }} placeholder="+ New area" aria-label="New area name" className="h-11 min-w-0 flex-1 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-sm sm:max-w-xs xl:h-8 xl:max-w-none xl:text-xs" />
+              <button type="button" onClick={addArea} aria-label="Add area" className="h-11 rounded-md border border-[var(--line-strong)] px-3 text-sm font-semibold xl:h-8 xl:px-2 xl:text-xs">Add</button>
             </div>
           ) : null}
           <datalist id="mp-area-list">{AREA_SUGGESTIONS.map((area) => <option key={area} value={area} />)}</datalist>
@@ -848,6 +953,33 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
                   <button type="button" onClick={() => searchRef.current?.focus()} className={secondaryButton}>Add first item</button>
                 </div>
               </div>
+            ) : !wide ? (
+              <div className="flex flex-col gap-4 p-3" data-testid="quote-line-cards">
+                {visibleAreas.map((area) => {
+                  const areaLines = lines.filter((line) => line.area === area);
+                  const info = areaTotals.get(area) || { count: 0, value: 0, warn: false };
+                  return (
+                    <section key={area} aria-label={`${area} items`} className="flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-[var(--bg-soft)] px-3 py-2">
+                        {canEditLines ? <AreaName name={area} onRename={(value) => renameArea(area, value)} /> : <b className="text-[13px]">{area}</b>}
+                        <span className="font-mono text-[11px] text-[var(--ink-4)]">{info.count} item{info.count === 1 ? '' : 's'}</span>
+                        {canEditLines && area === targetArea ? <span className="rounded-full bg-[var(--brand-600)] px-2 py-0.5 text-[10.5px] font-semibold text-white">new items go here</span> : null}
+                        <span className="ml-auto text-[13px] font-semibold tabular-nums">{money(info.value)}</span>
+                      </div>
+                      {areaLines.map((line) => (
+                        <LineCard key={line._k} onFocusRoom={() => { if (!line._removed && line.area !== targetArea) setTargetArea(line.area); }} total={itemTotals.get(String(line.productId || ''))} line={line} row={rowByKey.get(line._k)} issues={issuesByKey.get(line._k) || []} editable={canEditLines && !line._removed} quoteType={quoteType}
+                          change={revisionChanges.find((item) => item.line._k === line._k)} ordered={orderedFor(line)}
+                          otherAreas={areas.filter((value) => value !== line.area)} alsoIn={activeLines.filter((row) => row.productId === line.productId && row._k !== line._k).map((row) => row.area)}
+                          expanded={expanded === line._k} onToggle={() => setExpanded((current) => (current === line._k ? null : line._k))}
+                          onChange={(patch) => updateLine(line._k, patch)} onRemove={() => removeLine(line)} onUndo={() => undoRemove(line)}
+                          onCopy={(target) => copyToArea(line, target)} taxMode={taxMode} />
+                      ))}
+                      {!areaLines.length ? <p className="px-2 text-xs text-[var(--ink-4)]">Nothing here yet.</p> : null}
+                      {canEditLines ? <button type="button" onClick={() => { setTargetArea(area); searchRef.current?.focus(); }} className="min-h-11 self-start px-2 text-sm font-semibold text-[var(--brand-700)]">+ Add item to {area}</button> : null}
+                    </section>
+                  );
+                })}
+              </div>
             ) : (
               <table className="w-full min-w-[44rem] table-fixed border-separate border-spacing-0 text-sm">
                 <thead className="sticky top-0 z-10 bg-[var(--surface)]">
@@ -881,7 +1013,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
                         </tr>
                         {areaLines.map((line) => (
                           <LineRow key={line._k} onFocusRoom={() => { if (!line._removed && line.area !== targetArea) setTargetArea(line.area); }} total={itemTotals.get(String(line.productId || ''))} line={line} row={rowByKey.get(line._k)} issues={issuesByKey.get(line._k) || []} editable={canEditLines && !line._removed} quoteType={quoteType}
-                            change={revisionChanges.find((item) => item.line._k === line._k)} ordered={orderedQtyByKey.get(String(line.lineKey || '')) || 0} brands={brands}
+                            change={revisionChanges.find((item) => item.line._k === line._k)} ordered={orderedFor(line)} brands={brands}
                             otherAreas={areas.filter((value) => value !== line.area)} alsoIn={activeLines.filter((row) => row.productId === line.productId && row._k !== line._k).map((row) => row.area)}
                             expanded={expanded === line._k} onToggle={() => setExpanded((current) => (current === line._k ? null : line._k))}
                             onChange={(patch) => updateLine(line._k, patch)} onRemove={() => removeLine(line)} onUndo={() => undoRemove(line)}
@@ -961,7 +1093,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
             {meta.confirmedAt ? <p className="-mt-0.5 mb-1 text-right text-[11px] text-[var(--ink-4)]">{shortDate(meta.confirmedAt)}</p> : null}
             {isNew ? (
               <label className="mt-1 flex items-center justify-between gap-2 text-xs text-[var(--ink-3)]">Sales person
-                <select value={ownerId} onChange={(event) => setOwnerId(event.target.value)} className="h-8 max-w-[11rem] rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold">{assignees.map((user: any) => <option key={user.id} value={user.id}>{user.name}</option>)}</select>
+                <select aria-label="Sales person" value={ownerId} onChange={(event) => setOwnerId(event.target.value)} className="h-8 max-w-[11rem] rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs font-semibold">{assignees.map((user: any) => <option key={user.id} value={user.id}>{user.name}</option>)}</select>
               </label>
             ) : (
               <div className="flex items-center justify-between gap-2 py-0.5 text-xs">
@@ -991,14 +1123,15 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
 
           <Card title="Quote settings">
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <label className="flex flex-col gap-1 text-[var(--ink-4)]">Quote discount
+              <div className="flex flex-col gap-1 text-[var(--ink-4)]">Quote discount
                 <div className="flex gap-1">
-                  <select disabled={!canEditLines} value={discountType} onChange={(event) => setDiscountType(event.target.value as DiscountMode)} className="h-8 w-14 rounded-md border border-[var(--line)] bg-[var(--surface)] px-1 text-xs"><option value="PERCENT">%</option><option value="FIXED_AMOUNT">₹</option></select>
-                  <input disabled={!canEditLines} type="number" min={0} value={discountValue} onChange={(event) => setDiscountValue(event.target.value)} placeholder="0" className={cn('h-8 min-w-0 flex-1 rounded-md border bg-[var(--surface)] px-2 text-right text-xs tabular-nums', discountIssue ? 'border-[var(--warning)]' : 'border-[var(--line)]')} />
+                  <select aria-label="Quote discount type" disabled={!canEditLines} value={discountType} onChange={(event) => setDiscountType(event.target.value as DiscountMode)} className="h-8 w-14 rounded-md border border-[var(--line)] bg-[var(--surface)] px-1 text-xs"><option value="PERCENT">%</option><option value="FIXED_AMOUNT">₹</option></select>
+                  <input aria-label="Quote discount amount" aria-invalid={discountIssue ? true : undefined} aria-describedby={discountIssue ? 'quote-discount-error' : undefined} disabled={!canEditLines} type="number" min={0} value={discountValue} onChange={(event) => setDiscountValue(event.target.value)} placeholder="0" className={cn('h-8 min-w-0 flex-1 rounded-md border bg-[var(--surface)] px-2 text-right text-xs tabular-nums', discountIssue ? 'border-[var(--warning)]' : 'border-[var(--line)]')} />
                 </div>
-              </label>
+                {discountIssue ? <span id="quote-discount-error" role="alert" className="text-[11px] font-semibold text-[var(--warning)]">{discountIssue}</span> : null}
+              </div>
               <label className="flex flex-col gap-1 text-[var(--ink-4)]">Tax
-                <select disabled={!canEditLines} value={taxMode} onChange={(event) => setTaxMode(event.target.value as TaxMode)} className="h-8 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs"><option value="gst">GST quotation</option><option value="non_gst">Without GST</option></select>
+                <select disabled={!canEditLines} value={taxMode} onChange={(event) => { const next = event.target.value as TaxMode; if (next === 'gst' && taxMode === 'non_gst') setLines((current) => restoreGstRates(current)); setTaxMode(next); }} className="h-8 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs"><option value="gst">GST quotation</option><option value="non_gst">Without GST</option></select>
               </label>
               <label className="flex flex-col gap-1 text-[var(--ink-4)]">Valid until<input type="date" disabled={mode === 'closed'} value={validUntil} onChange={(event) => setValidUntil(event.target.value)} className="h-8 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs" /></label>
               <label className="flex flex-col gap-1 text-[var(--ink-4)]">PDF type
@@ -1030,8 +1163,9 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
 
           {!isNew && mode !== 'closed' ? (
             <div className="flex flex-wrap gap-2 px-1 pb-2 text-xs">
-              {pdfReady && quote.status !== 'sent' && !approvalPending ? <button type="button" onClick={markSent} className="inline-flex items-center gap-1 font-semibold text-[var(--ink-3)] hover:text-[var(--ink)]"><Send className="h-3.5 w-3.5" />Mark as sent</button> : null}
-              <button type="button" onClick={() => setDialog('cancel')} className="font-semibold text-[var(--danger)] hover:underline">Cancel quote</button>
+              {pdfReady && quote.status !== 'sent' && !approvalPending ? <button type="button" disabled={busy} onClick={markSent} className="inline-flex min-h-11 items-center gap-1 px-2 font-semibold text-[var(--ink-3)] hover:text-[var(--ink)] disabled:opacity-50 xl:min-h-0 xl:px-0">{busyAction.isBusy('SendQuote') ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}{busyAction.isBusy('SendQuote') ? 'Marking as sent…' : 'Mark as sent'}</button> : null}
+              {!commercialLocked ? <button type="button" disabled={busy} onClick={() => setDialog('lost')} className="min-h-11 px-2 font-semibold text-[var(--ink-3)] hover:underline disabled:opacity-50 xl:min-h-0 xl:px-0">Customer said no</button> : null}
+              <button type="button" disabled={busy} onClick={() => setDialog('cancel')} className="min-h-11 px-2 font-semibold text-[var(--danger)] hover:underline disabled:opacity-50 xl:min-h-0 xl:px-0">Cancel quote</button>
             </div>
           ) : null}
         </aside>
@@ -1041,7 +1175,7 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-[var(--line)] bg-[var(--surface)]/95 p-3 backdrop-blur xl:hidden">
         <div className="min-w-0 flex-1"><p className="text-[11px] text-[var(--ink-4)]">Total</p><b className="whitespace-nowrap font-display text-base tabular-nums sm:text-lg">{money(totals.total)}</b></div>
         {/* Narrow phones: PDF and Share become square icon buttons and the cart icon drops, so the total stays readable. */}
-        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2 [&_.mp-bar-label]:sr-only [&>button:has(.mp-bar-label)]:w-10 [&>button:has(.mp-bar-label)]:px-0 [&>button]:px-3 [&_.lucide-shopping-cart]:hidden sm:[&_.mp-bar-label]:not-sr-only sm:[&>button:has(.mp-bar-label)]:w-auto sm:[&>button]:px-4 sm:[&_.lucide-shopping-cart]:inline">{phoneBarActions}</div>
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2 [&>button]:min-h-11 [&_.mp-bar-label]:sr-only [&>button:has(.mp-bar-label)]:w-10 [&>button:has(.mp-bar-label)]:px-0 [&>button]:px-3 [&_.lucide-shopping-cart]:hidden sm:[&_.mp-bar-label]:not-sr-only sm:[&>button:has(.mp-bar-label)]:w-auto sm:[&>button]:px-4 sm:[&_.lucide-shopping-cart]:inline">{phoneBarActions}</div>
       </div>
 
       {/* Dialogs */}
@@ -1049,13 +1183,22 @@ export function QuoteWorkspace({ quoteId }: { quoteId?: string }) {
       <ArchitectPicker open={dialog === 'architect'} onClose={() => setDialog('')} architects={architects} currentId={architect?.id} onAdded={() => setup.refetch()} onPick={(picked) => { setArchitect(picked); setDialog(''); }} />
       <QuickSkuDialog open={dialog === 'sku'} onClose={() => setDialog('')} initialName={search.trim()} family={quoteType} onCreated={(product) => { setDialog(''); setSearch(''); if (addProduct(product)) notify(`${product.sku} created in Product Master and added to ${targetArea}. It is listed in the Follow-up queue.`); }} />
       {quote ? <DocumentsDialog open={dialog === 'documents'} onClose={() => setDialog('')} quote={quote} pdfReady={pdfReady} hasArchitect={Boolean(architect?.id || quote.architectId)} /> : null}
-      {quote ? <OrderDrawer open={dialog === 'order'} onClose={() => setDialog('')} quote={quote} fulfillment={fulfillment} onDone={async (message) => { await Promise.all([quoteQuery.refetch(), fulfillmentQuery.refetch()]); loadedFor.current = ''; notify(message); }} /> : null}
-      {quote ? <OwnerDialog open={dialog === 'owner'} onClose={() => setDialog('')} current={owner} assignees={assignees} onConfirm={(nextId, reason) => run('ReassignQuoteOwner', async () => {
+      {quote ? <OrderDrawer open={dialog === 'order'} onClose={() => setDialog('')} quote={quote} fulfillment={fulfillment} onDone={async (message) => { await Promise.all([quoteQuery.refetch(), fulfillmentQuery.refetch()]); reloadFromServer(); notify(message); }} /> : null}
+      {quote ? <OwnerDialog open={dialog === 'owner'} onClose={() => setDialog('')} busy={busyAction.isBusy('ReassignQuoteOwner')} current={owner} assignees={assignees} onConfirm={(nextId, reason) => run('ReassignQuoteOwner', async () => {
         const result = (await reassignOwner({ variables: { quoteId: quote.id, ownerId: nextId, reason: reason || undefined } })).data?.reassignQuoteOwner;
-        setDialog(''); loadedFor.current = ''; await quoteQuery.refetch();
+        setDialog(''); loadedFor.current = ''; setReloadTick((tick) => tick + 1); await quoteQuery.refetch();
         notify(`${quote.quoteNumber} is now with ${result?.to?.name || 'the new sales person'}.${result?.ordersKept ? ` ${result.ordersKept} order${result.ordersKept === 1 ? '' : 's'} already made stay with ${result.from?.name || 'the previous person'}.` : ''}`);
       })} /> : null}
-      {quote ? <CancelDialog open={dialog === 'cancel'} onClose={() => setDialog('')} onConfirm={(reason) => run('CancelQuote', async () => { await cancelQuote({ variables: { id: quote.id, reason } }); setDialog(''); loadedFor.current = ''; await quoteQuery.refetch(); notify(`${quote.quoteNumber} cancelled.`); })} /> : null}
+      {quote ? <CancelDialog open={dialog === 'cancel'} onClose={() => setDialog('')} busy={busyAction.isBusy('CancelQuote')} onConfirm={(reason) => run('CancelQuote', async () => {
+        const result = await cancelQuote({ variables: { id: quote.id, reason } });
+        const cancellation = result.data?.cancelQuote?.approval?.cancellation || {};
+        const held = Number(cancellation.advanceHeld || 0);
+        setDialog(''); reloadFromServer(); draft.clear(); await Promise.all([quoteQuery.refetch(), fulfillmentQuery.refetch()]);
+        notify(`${quote.quoteNumber} cancelled${(cancellation.orderIds || []).length ? ` with ${(cancellation.orderIds || []).length} order${(cancellation.orderIds || []).length === 1 ? '' : 's'}; held stock is free again` : ''}.${held > 0 ? ` Advance of ${money(held)} stays on the customer's account: refund it or use it on another order from Customer Accounts.` : ''}`);
+      })} /> : null}
+      {quote ? <ReasonDialog open={dialog === 'lost'} onClose={() => setDialog('')} busy={busyAction.isBusy('MarkQuoteLost')} title="Customer did not go ahead" subtitle="The quote is kept as lost with your reason. Any stock it still held is freed." label="Why did the customer not go ahead?" placeholder="For example: bought elsewhere, price too high, project on hold" keepLabel="Keep quote open" confirmLabel="Mark as lost"
+        onConfirm={(reason) => run('MarkQuoteLost', async () => { await markLost({ variables: { id: quote.id, reason } }); setDialog(''); reloadFromServer(); draft.clear(); await quoteQuery.refetch(); notify(`${quote.quoteNumber} marked as lost.`); })} /> : null}
+      <ConfirmDialog open={confirmDiscard} onOpenChange={setConfirmDiscard} title="Throw away your changes?" description={`Everything you changed on this screen since it was last saved will be lost. ${quote?.quoteNumber || 'The saved quote'} stays as it is.`} confirmLabel="Throw away changes" cancelLabel="Keep editing" tone="danger" onConfirm={() => { setConfirmDiscard(false); discard(); }} />
 
       {toast ? <div role="status" className="fixed bottom-20 left-1/2 z-[80] max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-xl bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-[var(--surface)] shadow-lg-soft xl:bottom-6">{toast}</div> : null}
     </div>
@@ -1141,7 +1284,7 @@ function LineRow({ line, row, issues, editable, quoteType, change, ordered, bran
             {brandCode || line.brand ? <span>{brandCode || line.brand}</span> : null}
             {tile && Number(line.coveragePerPack || 0) > 0 ? <span className="rounded bg-[var(--bg-soft)] px-1.5 text-[10.5px] font-semibold text-[var(--ink-3)]">1 {String(line.inventoryUom || 'box').toLowerCase()} = {Number(line.coveragePerPack).toFixed(2)} sqft</span> : null}
             {alsoIn.length && total ? <span className="rounded bg-[var(--info-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--info)]" title={total.rooms.map((room) => `${room.area}: ${room.qty} ${total.unit}`).join('\n')}>also in {Array.from(new Set(alsoIn)).join(', ')} · {Number(total.qty.toFixed(2))} {total.unit} in total</span> : null}
-            {lockedByOrder ? <span className="rounded bg-violet-100 px-1.5 text-[10.5px] font-semibold text-violet-800 dark:bg-violet-500/15 dark:text-violet-300">{ordered} ordered</span> : null}
+            {lockedByOrder ? <span className="rounded bg-violet-100 px-1.5 text-[10.5px] font-semibold text-violet-800 dark:bg-violet-500/15 dark:text-violet-300">{isBoxedLine(line) ? boxQtyLabel(ordered, line) : ordered} ordered</span> : null}
             {line._removed ? <span className="rounded bg-[var(--danger-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--danger)]">removed in this revision</span>
               : change?.kind === 'added' ? <span className="rounded bg-[var(--success-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--success)]">added</span>
                 : change?.kind === 'changed' ? <span className="rounded bg-[var(--info-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--info)]" title={change.detail.join(', ')}>changed: {change.detail.join(', ')}</span> : null}
@@ -1152,10 +1295,10 @@ function LineRow({ line, row, issues, editable, quoteType, change, ordered, bran
           {tile ? (
             unit === 'PC' ? (
               <div><input data-primary aria-label={`Pieces for ${line.name}`} type="number" min={1} step={1} disabled={!canEdit} value={draftNumber(line.requestedPieces) || ''} placeholder="pieces" onChange={(event) => onChange({ requestedPieces: event.target.value === '' ? '' : Number(event.target.value) })} className={cn(numberCell, blockingKeys.has('qty') && 'border-[var(--warning)] bg-[var(--warning-bg)]')} />
-                <p className="mt-0.5 text-right text-[11px] text-[var(--ink-4)]">{qty} {String(line.inventoryUom || '').toLowerCase()} · {qty * Number(line.piecesPerPack || 1)} pc</p></div>
+                <p className="mt-0.5 text-right text-[11px] text-[var(--ink-4)]">{isBoxedLine(line) ? <b className="font-semibold text-[var(--ink-2)]">{boxQtyLabel(qty, line)}</b> : <>{qty} {String(line.inventoryUom || '').toLowerCase()}</>} · {qty * Number(line.piecesPerPack || 1)} pc</p></div>
             ) : coverage > 0 ? (
               <div><input data-primary aria-label={`Area in ${unit} for ${line.name}`} type="number" min={0} disabled={!canEdit} value={draftNumber(line.requestedArea) || ''} placeholder={unit.toLowerCase()} onChange={(event) => onChange({ requestedArea: event.target.value === '' ? '' : Number(event.target.value) })} className={cn(numberCell, blockingKeys.has('qty') && 'border-[var(--warning)] bg-[var(--warning-bg)]')} />
-                <p className="mt-0.5 text-right text-[11px] text-[var(--ink-4)]">{qty ? `${qty} ${String(line.inventoryUom || 'box').toLowerCase()} · covers ${(qty * coverage).toFixed(unit === 'SQM' ? 3 : 2)} ${unit.toLowerCase()}` : `boxes follow the ${unit.toLowerCase()}`}</p></div>
+                <p className="mt-0.5 text-right text-[11px] text-[var(--ink-4)]">{qty ? <>{isBoxedLine(line) ? <b className="font-semibold text-[var(--ink-2)]">{boxQtyLabel(qty, line)}</b> : `${qty} ${String(line.inventoryUom || 'box').toLowerCase()}`}{isBoxedLine(line) ? ` · ${qty * Number(line.piecesPerPack || 1)} pc` : ''} · covers {(qty * coverage).toFixed(unit === 'SQM' ? 3 : 2)} {unit.toLowerCase()}</> : `boxes follow the ${unit.toLowerCase()}`}</p></div>
             ) : <p className="text-right text-[11px] font-semibold text-[var(--warning)]">Add box coverage in Tile Master</p>
           ) : (
             <div><input data-primary aria-label={`Quantity for ${line.name}`} type="number" min={Math.max(1, ordered)} step={1} disabled={!canEdit} value={qty || ''} placeholder="qty" onChange={(event) => onChange({ qty: event.target.value === '' ? '' : Number(event.target.value) })} className={cn(numberCell, blockingKeys.has('qty') && 'border-[var(--warning)] bg-[var(--warning-bg)]')} />
@@ -1168,22 +1311,24 @@ function LineRow({ line, row, issues, editable, quoteType, change, ordered, bran
               <p className="mb-0.5 text-right text-[11px] tabular-nums text-[var(--ink-4)]">MRP <b className="font-semibold text-[var(--ink-2)]">{money(Number(row?.mrpInclusive || line.mrpInclusive || 0))}</b> / {mrpUnit.toLowerCase()}</p>
               <div className="flex gap-1">
                 <input aria-label={`NRP for ${line.name}`} type="number" min={0} step="0.01" disabled={!canEdit} value={line.nrpInput === '' || line.nrpInput == null || Number(line.nrpInput) === 0 ? '' : line.nrpInput}
+                  aria-invalid={blockingKeys.has('nrpInput') || undefined} aria-describedby={blockingKeys.has('nrpInput') ? `nrp-reason-${line._k}` : undefined}
                   placeholder={line.nrpMode === 'FIXED_NRP' ? 'NRP ₹' : '% off'} onChange={(event) => onChange({ nrpInput: event.target.value, pricingVersion: 'unified_retail_v1' })} className={cn(numberCell, (blockingKeys.has('nrp') || blockingKeys.has('nrpInput')) && 'border-[var(--warning)] bg-[var(--warning-bg)]')} />
-                <button type="button" disabled={!canEdit} title={line.nrpMode === 'FIXED_NRP' ? 'Entering NRP in rupees. Click to enter % off MRP.' : 'Entering % off MRP. Click to enter NRP in rupees.'} onClick={() => onChange({ nrpMode: line.nrpMode === 'FIXED_NRP' ? 'PERCENT_OFF_MRP' : 'FIXED_NRP', nrpInput: '', pricingVersion: 'unified_retail_v1' })}
+                <button type="button" disabled={!canEdit} aria-label={line.nrpMode === 'FIXED_NRP' ? `Switch ${line.name} to % off MRP` : `Switch ${line.name} to NRP in rupees`} title={line.nrpMode === 'FIXED_NRP' ? 'Entering NRP in rupees. Click to enter % off MRP.' : 'Entering % off MRP. Click to enter NRP in rupees.'} onClick={() => onChange({ nrpMode: line.nrpMode === 'FIXED_NRP' ? 'PERCENT_OFF_MRP' : 'FIXED_NRP', nrpInput: '', pricingVersion: 'unified_retail_v1' })}
                   className="h-8 w-8 shrink-0 rounded-md border border-[var(--line)] text-xs font-bold text-[var(--ink-3)] hover:bg-[var(--bg-soft)] disabled:opacity-50">{line.nrpMode === 'FIXED_NRP' ? '₹' : '%'}</button>
               </div>
+              {blockingKeys.has('nrpInput') ? <p id={`nrp-reason-${line._k}`} role="alert" className="mt-0.5 text-right text-[11px] font-semibold leading-tight text-[var(--warning)]">{issues.find((issue) => issue.key === 'nrpInput')?.message}</p> : null}
             </>
           )}
         </td>
         <td className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle tabular-nums">
-          {row?.mrpMissing ? '—' : <><b className="font-semibold">{money(Number(row?.specialRateInclusive || 0))}</b><p className="text-[11px] text-[var(--ink-4)]">{(line.specialMode || 'NONE') !== 'NONE' ? <span className="font-semibold text-[var(--info)]">special · </span> : null}{qty ? `${pct(Number(row?.discountOnMrp || 0))} off` : `/ ${mrpUnit.toLowerCase()}`}</p></>}
+          {row?.mrpMissing || row?.inputRejection ? '—' : <><b className="font-semibold">{money(Number(row?.specialRateInclusive || 0))}</b><p className="text-[11px] text-[var(--ink-4)]">{(line.specialMode || 'NONE') !== 'NONE' ? <span className="font-semibold text-[var(--info)]">special · </span> : null}{qty ? `${pct(Number(row?.discountOnMrp || 0))} off` : `/ ${mrpUnit.toLowerCase()}`}</p></>}
         </td>
-        <td className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle font-semibold tabular-nums">{row?.mrpMissing || line._removed ? '—' : money(Number(row?.grossBeforeQuoteDiscount || 0))}</td>
+        <td className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle font-semibold tabular-nums">{row?.mrpMissing || row?.inputRejection || line._removed ? '—' : money(Number(row?.grossBeforeQuoteDiscount || 0))}</td>
         <td className="border-b border-[var(--line)] px-2 py-1.5 text-right align-middle">
           {line._removed ? <button type="button" onClick={onUndo} className="rounded-md border border-[var(--line-strong)] px-2 py-1 text-xs font-semibold">Undo</button> : (
             <div className="flex justify-end gap-0.5">
-              <button type="button" onClick={onToggle} aria-expanded={expanded} title="Special rate, GST, add to another area" className="rounded-md p-1.5 text-[var(--ink-4)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]">{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
-              {editable ? <button type="button" onClick={onRemove} title="Remove" className="rounded-md p-1.5 text-[var(--ink-4)] hover:bg-[var(--danger-bg)] hover:text-[var(--danger)] disabled:opacity-40"><Trash2 className="h-4 w-4" /></button> : null}
+              <button type="button" onClick={onToggle} aria-expanded={expanded} aria-label={`More options for ${line.name}`} title="Special rate, GST, add to another area" className="mp-tap-icon grid place-items-center rounded-md p-1.5 text-[var(--ink-4)] hover:bg-[var(--bg-soft)] hover:text-[var(--ink)]">{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+              {editable && ordered <= 0 ? <button type="button" onClick={onRemove} aria-label={`Remove ${line.name}`} title="Remove" className="mp-tap-icon grid place-items-center rounded-md p-1.5 text-[var(--ink-4)] hover:bg-[var(--danger-bg)] hover:text-[var(--danger)] disabled:opacity-40"><Trash2 className="h-4 w-4" /></button> : null}
             </div>
           )}
         </td>
@@ -1193,12 +1338,13 @@ function LineRow({ line, row, issues, editable, quoteType, change, ordered, bran
           <td className="border-b border-[var(--line)]" />
           <td colSpan={6} className="border-b border-[var(--line)] px-2 py-2.5">
             <div className="flex flex-wrap items-end gap-4 text-xs text-[var(--ink-3)]">
-              <label className="flex flex-col gap-1">Special pricing
+              <div className="flex flex-col gap-1">Special pricing
                 <div className="flex gap-1">
-                  <select disabled={!canEdit || row?.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event) => onChange({ specialMode: event.target.value, specialInput: '', pricingVersion: 'unified_retail_v1' })} className="h-8 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select>
-                  <input disabled={!canEdit || row?.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} type="number" min={0} value={Number(line.specialInput || 0) ? line.specialInput : ''} placeholder={(line.specialMode || 'NONE') === 'NONE' ? '—' : line.specialMode === 'PERCENT_OFF_NRP' ? '%' : '₹'} onChange={(event) => onChange({ specialInput: event.target.value, pricingVersion: 'unified_retail_v1' })} className={cn(numberCell, 'w-24', blockingKeys.has('special') && 'border-[var(--warning)] bg-[var(--warning-bg)]')} />
+                  <select aria-label={`Special pricing type for ${line.name}`} disabled={!canEdit || row?.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event) => onChange({ specialMode: event.target.value, specialInput: '', pricingVersion: 'unified_retail_v1' })} className="h-8 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 text-xs"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select>
+                  <input aria-label={`Special rate or percent for ${line.name}`} aria-invalid={blockingKeys.has('special') || undefined} aria-describedby={blockingKeys.has('special') ? `special-reason-${line._k}` : undefined} disabled={!canEdit || row?.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} type="number" min={0} value={Number(line.specialInput || 0) ? line.specialInput : ''} placeholder={(line.specialMode || 'NONE') === 'NONE' ? '—' : line.specialMode === 'PERCENT_OFF_NRP' ? '%' : '₹'} onChange={(event) => onChange({ specialInput: event.target.value, pricingVersion: 'unified_retail_v1' })} className={cn(numberCell, 'w-24', blockingKeys.has('special') && 'border-[var(--warning)] bg-[var(--warning-bg)]')} />
                 </div>
-              </label>
+                {blockingKeys.has('special') ? <span id={`special-reason-${line._k}`} role="alert" className="max-w-[16rem] text-[11.5px] font-semibold text-[var(--warning)]">{issues.find((issue) => issue.key === 'special')?.message}</span> : null}
+              </div>
               <label className="flex flex-col gap-1">GST %
                 {taxMode === 'gst' ? <input disabled={!canEdit} type="number" min={0} max={100} value={line.taxRate ?? 18} onChange={(event) => onChange({ taxRate: event.target.value })} className={cn(numberCell, 'w-20')} /> : <span className="h-8 rounded-md bg-[var(--bg-soft)] px-2 leading-8">Without GST</span>}
               </label>
@@ -1221,6 +1367,140 @@ function LineRow({ line, row, issues, editable, quoteType, change, ordered, bran
   );
 }
 
+// The same line as LineRow, stacked for phones and tablets: every field has its own label, 44px touch targets,
+// and nothing sits off-screen. Quantity, NRP, special rate, GST, move/copy and remove are all reachable.
+const cardInput = 'h-11 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-right text-base tabular-nums outline-none focus:border-[var(--brand-500)] focus:ring-2 focus:ring-[var(--ring)] disabled:bg-[var(--bg-soft)] disabled:text-[var(--ink-4)] sm:text-sm';
+const cardLabel = 'mb-1 block text-xs font-semibold text-[var(--ink-3)]';
+
+function LineCard({ line, row, issues, editable, quoteType, change, ordered, otherAreas, alsoIn, expanded, onToggle, onChange, onRemove, onUndo, onCopy, taxMode, onFocusRoom, total }: {
+  onFocusRoom: () => void; total?: { qty: number; unit: string; rooms: Array<{ area: string; qty: number }> };
+  line: Line; row: any; issues: Array<{ key: string; message: string; blocking: boolean }>; editable: boolean; quoteType: QuoteType;
+  change?: { kind: 'added' | 'changed' | 'removed'; detail: string[] }; ordered: number; otherAreas: string[]; alsoIn: string[];
+  expanded: boolean; onToggle: () => void; onChange: (patch: Record<string, any>) => void; onRemove: () => void; onUndo: () => void; onCopy: (area: string) => void; taxMode: TaxMode;
+}) {
+  const tile = isTileLine(line);
+  const unit = tile ? tilePriceUom(line.pricingUom) : '';
+  const coverage = tile ? tilePricingCoverage(line.coveragePerPack, unit) : 0;
+  const blockingKeys = new Set(issues.filter((issue) => issue.blocking).map((issue) => issue.key));
+  const message = (key: string) => issues.find((issue) => issue.blocking && issue.key === key)?.message;
+  const qty = draftNumber(line.qty ?? line.quantity);
+  const mrpUnit = row?.mrpUnit || '';
+  const canEdit = editable;
+  const k = line._k;
+  const invUnit = String(line.inventoryUom || line.unit || 'pc').toLowerCase();
+  const qtyField = tile
+    ? unit === 'PC'
+      ? { label: 'Pieces', value: draftNumber(line.requestedPieces) || '', patch: (v: any) => ({ requestedPieces: v }), min: 1, hint: `${isBoxedLine(line) ? boxQtyLabel(qty, line) : `${qty} ${String(line.inventoryUom || '').toLowerCase()}`} · ${qty * Number(line.piecesPerPack || 1)} pc` }
+      : coverage > 0
+        ? { label: `Area (${unit.toLowerCase()})`, value: draftNumber(line.requestedArea) || '', patch: (v: any) => ({ requestedArea: v }), min: 0, hint: qty ? `${isBoxedLine(line) ? `${boxQtyLabel(qty, line)} · ${qty * Number(line.piecesPerPack || 1)} pc` : `${qty} ${String(line.inventoryUom || 'box').toLowerCase()}`} · covers ${(qty * coverage).toFixed(unit === 'SQM' ? 3 : 2)} ${unit.toLowerCase()}` : `boxes follow the ${unit.toLowerCase()}` }
+        : null
+    : { label: 'Quantity', value: qty || '', patch: (v: any) => ({ qty: v }), min: Math.max(1, ordered), hint: invUnit };
+  const stripe = line._removed ? 'border-l-[var(--danger)]' : change?.kind === 'added' ? 'border-l-[var(--success)]' : change?.kind === 'changed' ? 'border-l-[var(--info)]' : blockingKeys.size ? 'border-l-[var(--warning)]' : 'border-l-[var(--line)]';
+  const invalid = (key: string) => blockingKeys.has(key) && 'border-[var(--warning)] bg-[var(--warning-bg)]';
+  const showMrpLink = row?.mrpMissing;
+  return (
+    <article id={`line-${k}`} onFocusCapture={onFocusRoom} className={cn('rounded-xl border border-l-4 border-[var(--line)] bg-[var(--surface)] p-3', stripe, line._removed && 'opacity-60')}>
+      <div className="flex items-start gap-3">
+        <ProductImageFrame src={productImage(line.media) || line.quoteImage || '/catalogue-art/faucet.svg'} alt="" className="h-12 w-12 shrink-0 rounded-md" imageClassName="p-0.5" />
+        <div className="min-w-0 flex-1">
+          <p className={cn('break-words text-sm font-semibold text-[var(--ink)]', line._removed && 'line-through')}>{line.name}</p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--ink-4)]">
+            <span className="font-mono">{line.internalCode || line.sku}</span>
+            {line.brand ? <span>{line.brand}</span> : null}
+            {tile && Number(line.coveragePerPack || 0) > 0 ? <span className="rounded bg-[var(--bg-soft)] px-1.5 text-[10.5px] font-semibold text-[var(--ink-3)]">1 {String(line.inventoryUom || 'box').toLowerCase()} = {Number(line.coveragePerPack).toFixed(2)} sqft</span> : null}
+            {alsoIn.length && total ? <span className="rounded bg-[var(--info-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--info)]">also in {Array.from(new Set(alsoIn)).join(', ')} · {Number(total.qty.toFixed(2))} {total.unit} in total</span> : null}
+            {ordered > 0 ? <span className="rounded bg-violet-100 px-1.5 text-[10.5px] font-semibold text-violet-800 dark:bg-violet-500/15 dark:text-violet-300">{isBoxedLine(line) ? boxQtyLabel(ordered, line) : ordered} ordered</span> : null}
+            {line._removed ? <span className="rounded bg-[var(--danger-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--danger)]">removed in this revision</span>
+              : change?.kind === 'added' ? <span className="rounded bg-[var(--success-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--success)]">added</span>
+                : change?.kind === 'changed' ? <span className="rounded bg-[var(--info-bg)] px-1.5 text-[10.5px] font-semibold text-[var(--info)]">changed: {change.detail.join(', ')}</span> : null}
+          </div>
+        </div>
+        {line._removed ? <button type="button" onClick={onUndo} className="h-11 shrink-0 rounded-lg border border-[var(--line-strong)] px-3 text-sm font-semibold">Undo</button> : (
+          <div className="flex shrink-0 gap-1">
+            <button type="button" onClick={onToggle} aria-expanded={expanded} aria-label={`More options for ${line.name}`} className="grid h-11 w-11 place-items-center rounded-lg text-[var(--ink-3)] hover:bg-[var(--bg-soft)]">{expanded ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}</button>
+            {editable && ordered <= 0 ? <button type="button" onClick={onRemove} aria-label={`Remove ${line.name}`} className="grid h-11 w-11 place-items-center rounded-lg text-[var(--ink-3)] hover:bg-[var(--danger-bg)] hover:text-[var(--danger)]"><Trash2 className="h-5 w-5" /></button> : null}
+          </div>
+        )}
+      </div>
+
+      {!line._removed ? (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div>
+            {qtyField ? (
+              <>
+                <label htmlFor={`qty-${k}`} className={cardLabel}>{qtyField.label}</label>
+                <input id={`qty-${k}`} data-primary type="number" inputMode={qtyField.label.startsWith('Area') ? 'decimal' : 'numeric'} step={qtyField.label.startsWith('Area') ? 'any' : 1} min={qtyField.min} disabled={!canEdit} value={qtyField.value} aria-invalid={blockingKeys.has('qty') || undefined} aria-describedby={`qty-hint-${k}`}
+                  onChange={(event) => onChange(qtyField.patch(event.target.value === '' ? '' : Number(event.target.value)))} className={cn(cardInput, invalid('qty'))} />
+                <p id={`qty-hint-${k}`} className={cn('mt-1 text-right text-[11px]', blockingKeys.has('qty') ? 'font-semibold text-[var(--warning)]' : 'text-[var(--ink-4)]')}>{message('qty') || qtyField.hint}</p>
+              </>
+            ) : <p className="text-xs font-semibold text-[var(--warning)]">Add box coverage in Tile Master</p>}
+          </div>
+          <div>
+            {showMrpLink ? (
+              <Link href={`/dashboard/master-data/pricing-readiness?tab=missing&search=${encodeURIComponent(line.sku || '')}`} className="mt-5 inline-flex h-11 items-center rounded-lg bg-[var(--warning-bg)] px-3 text-sm font-semibold text-[var(--warning)]">Add MRP</Link>
+            ) : (
+              <>
+                <label htmlFor={`nrp-${k}`} className={cardLabel}>{line.nrpMode === 'FIXED_NRP' ? 'NRP (₹)' : 'NRP (% off MRP)'} <span className="font-normal text-[var(--ink-4)]">· MRP {money(Number(row?.mrpInclusive || line.mrpInclusive || 0))}</span></label>
+                <div className="flex gap-1">
+                  <input id={`nrp-${k}`} type="number" inputMode="decimal" min={0} step="0.01" disabled={!canEdit} value={line.nrpInput === '' || line.nrpInput == null || Number(line.nrpInput) === 0 ? '' : line.nrpInput} aria-invalid={blockingKeys.has('nrpInput') || blockingKeys.has('nrp') || undefined}
+                    aria-describedby={`nrp-reason-${k}`} placeholder={line.nrpMode === 'FIXED_NRP' ? 'NRP ₹' : '% off'} onChange={(event) => onChange({ nrpInput: event.target.value, pricingVersion: 'unified_retail_v1' })} className={cn(cardInput, (blockingKeys.has('nrp') || blockingKeys.has('nrpInput')) && 'border-[var(--warning)] bg-[var(--warning-bg)]')} />
+                  <button type="button" disabled={!canEdit} aria-label={line.nrpMode === 'FIXED_NRP' ? `Switch ${line.name} to % off MRP` : `Switch ${line.name} to NRP in rupees`} onClick={() => onChange({ nrpMode: line.nrpMode === 'FIXED_NRP' ? 'PERCENT_OFF_MRP' : 'FIXED_NRP', nrpInput: '', pricingVersion: 'unified_retail_v1' })}
+                    className="h-11 w-11 shrink-0 rounded-lg border border-[var(--line)] text-sm font-bold text-[var(--ink-3)] hover:bg-[var(--bg-soft)] disabled:opacity-50">{line.nrpMode === 'FIXED_NRP' ? '₹' : '%'}</button>
+                </div>
+                <p id={`nrp-reason-${k}`} role={blockingKeys.has('nrpInput') ? 'alert' : undefined} className="mt-1 text-right text-[11px] font-semibold leading-tight text-[var(--warning)]">{message('nrpInput') || (blockingKeys.has('nrp') ? message('nrp') : '')}</p>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {!line._removed ? (
+        <div className="mt-2 flex items-end justify-between gap-3 border-t border-[var(--line)] pt-2 text-sm">
+          <div className="text-xs text-[var(--ink-4)]">
+            <span>Rate</span>{' '}
+            <b className="text-sm font-semibold text-[var(--ink)] tabular-nums">{row?.mrpMissing || row?.inputRejection ? '—' : `${money(Number(row?.specialRateInclusive || 0))} / ${mrpUnit.toLowerCase()}`}</b>
+            {!row?.mrpMissing && !row?.inputRejection && qty ? <span className="ml-1">· {(line.specialMode || 'NONE') !== 'NONE' ? 'special · ' : ''}{pct(Number(row?.discountOnMrp || 0))} off</span> : null}
+          </div>
+          <div className="text-right"><span className="block text-xs text-[var(--ink-4)]">Amount</span><b className="font-display text-base font-bold tabular-nums">{row?.mrpMissing || row?.inputRejection ? '—' : money(Number(row?.grossBeforeQuoteDiscount || 0))}</b></div>
+        </div>
+      ) : null}
+      {issues.filter((issue) => !['qty', 'nrpInput', 'nrp', 'special'].includes(issue.key)).map((issue) => <p key={issue.key} className={cn('mt-1 rounded px-2 py-1 text-[11.5px] font-semibold', issue.blocking ? 'bg-[var(--warning-bg)] text-[var(--warning)]' : 'bg-[var(--bg-soft)] text-[var(--ink-3)]')}>{issue.message}</p>)}
+      {blockingKeys.has('special') && !expanded ? <p role="alert" className="mt-1 rounded bg-[var(--warning-bg)] px-2 py-1 text-[11.5px] font-semibold text-[var(--warning)]">{message('special')}</p> : null}
+
+      {expanded && !line._removed ? (
+        <div className="mt-3 grid gap-3 border-t border-[var(--line)] pt-3 text-xs text-[var(--ink-3)]">
+          <div>
+            <label htmlFor={`special-mode-${k}`} className={cardLabel}>Special pricing</label>
+            <div className="grid grid-cols-[1fr_6.5rem] gap-2">
+              <select id={`special-mode-${k}`} disabled={!canEdit || row?.mrpMissing} value={line.specialMode || 'NONE'} onChange={(event) => onChange({ specialMode: event.target.value, specialInput: '', pricingVersion: 'unified_retail_v1' })} className="h-11 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-sm"><option value="NONE">No special</option><option value="PERCENT_OFF_NRP">% off NRP</option><option value="FIXED_SPECIAL_RATE">Set rate ₹</option></select>
+              <input id={`special-${k}`} aria-label={`Special rate or percent for ${line.name}`} aria-invalid={blockingKeys.has('special') || undefined} aria-describedby={`special-reason-${k}`} type="number" inputMode="decimal" min={0} disabled={!canEdit || row?.mrpMissing || (line.specialMode || 'NONE') === 'NONE'} value={Number(line.specialInput || 0) ? line.specialInput : ''} placeholder={(line.specialMode || 'NONE') === 'NONE' ? '—' : line.specialMode === 'PERCENT_OFF_NRP' ? '%' : '₹'}
+                onChange={(event) => onChange({ specialInput: event.target.value, pricingVersion: 'unified_retail_v1' })} className={cn(cardInput, invalid('special'))} />
+            </div>
+            <p id={`special-reason-${k}`} role={blockingKeys.has('special') ? 'alert' : undefined} className="mt-1 text-[11.5px] font-semibold text-[var(--warning)]">{message('special')}</p>
+          </div>
+          <div>
+            <label htmlFor={`gst-${k}`} className={cardLabel}>GST %</label>
+            {taxMode === 'gst' ? <input id={`gst-${k}`} disabled={!canEdit} type="number" inputMode="decimal" min={0} max={100} value={line.taxRate ?? 18} onChange={(event) => onChange({ taxRate: event.target.value })} className={cn(cardInput, 'w-28')} /> : <span id={`gst-${k}`} className="inline-flex h-11 items-center rounded-lg bg-[var(--bg-soft)] px-3 text-sm">Without GST</span>}
+          </div>
+          {!row?.mrpMissing && !row?.inputRejection && qty ? <p className="text-[11.5px]">Final {money(Number(row?.finalUnitPayable || 0))} / {mrpUnit.toLowerCase()} after quote discount{taxMode === 'gst' ? ` · line incl. GST ${money(Number(row?.total || 0))}` : ''}</p> : null}
+          {canEdit && otherAreas.length ? (
+            <div>
+              <span className={cardLabel}><Copy className="mr-1 inline h-3.5 w-3.5" />Also add to</span>
+              <div className="flex flex-wrap gap-2">{otherAreas.slice(0, 8).map((area) => <button key={area} type="button" onClick={() => onCopy(area)} className="min-h-11 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 text-sm font-semibold">+ {area}</button>)}</div>
+            </div>
+          ) : null}
+          {canEdit && otherAreas.length ? (
+            <div>
+              <label htmlFor={`move-${k}`} className={cardLabel}>Move to</label>
+              <select id={`move-${k}`} value="" onChange={(event) => { if (event.target.value) onChange({ area: event.target.value }); }} className="h-11 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-sm"><option value="">Choose area</option>{otherAreas.map((area) => <option key={area}>{area}</option>)}</select>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 function DocumentsDialog({ open, onClose, quote, pdfReady, hasArchitect }: { open: boolean; onClose: () => void; quote: any; pdfReady: boolean; hasArchitect: boolean }) {
   return (
     <Modal open={open} onClose={onClose} title="Documents" subtitle={`Always built from ${quote.quoteNumber}. A later revision replaces them; no old files are kept.`}>
@@ -1238,7 +1518,7 @@ function DocLink({ href, icon, title, detail, disabled, newTab }: { href: string
   return <a href={href} target={newTab ? '_blank' : undefined} rel="noreferrer" className="flex items-center gap-3 rounded-lg border border-[var(--line)] p-3 hover:border-[var(--brand-400)] hover:bg-[var(--surface-2)]">{body}</a>;
 }
 
-function OwnerDialog({ open, onClose, current, assignees, onConfirm }: { open: boolean; onClose: () => void; current: any; assignees: any[]; onConfirm: (ownerId: string, reason: string) => void }) {
+function OwnerDialog({ open, onClose, busy, current, assignees, onConfirm }: { open: boolean; onClose: () => void; busy?: boolean; current: any; assignees: any[]; onConfirm: (ownerId: string, reason: string) => void }) {
   const [nextId, setNextId] = useState('');
   const [reason, setReason] = useState('');
   useEffect(() => { if (open) { setNextId(''); setReason(''); } }, [open]);
@@ -1246,7 +1526,7 @@ function OwnerDialog({ open, onClose, current, assignees, onConfirm }: { open: b
   const next = choices.find((user: any) => user.id === nextId);
   return (
     <Modal open={open} onClose={onClose} title="Change sales person" subtitle={`Now: ${current?.name || '—'}`}
-      footer={<><button type="button" onClick={onClose} className={secondaryButton}>Keep {current?.name || 'current'}</button><button type="button" disabled={!nextId} onClick={() => onConfirm(nextId, reason.trim())} className={primaryButton}>Hand to {next?.name || '…'}</button></>}>
+      footer={<><button type="button" onClick={onClose} disabled={busy} className={secondaryButton}>Keep {current?.name || 'current'}</button><button type="button" disabled={!nextId || busy} onClick={() => onConfirm(nextId, reason.trim())} className={primaryButton}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{busy ? 'Handing over…' : `Hand to ${next?.name || '…'}`}</button></>}>
       <div className="space-y-3">
         <Field label="New sales person">
           <select value={nextId} onChange={(event) => setNextId(event.target.value)} className={inputClass}>
@@ -1264,12 +1544,23 @@ function OwnerDialog({ open, onClose, current, assignees, onConfirm }: { open: b
   );
 }
 
-function CancelDialog({ open, onClose, onConfirm }: { open: boolean; onClose: () => void; onConfirm: (reason: string) => void }) {
+function CancelDialog({ open, onClose, busy, onConfirm }: { open: boolean; onClose: () => void; busy?: boolean; onConfirm: (reason: string) => void }) {
   const [reason, setReason] = useState('');
   return (
-    <Modal open={open} onClose={onClose} title="Cancel quote" subtitle="Converted orders can only be cancelled before dispatch, invoice or payment activity."
-      footer={<><button type="button" onClick={onClose} className={secondaryButton}>Keep quote</button><button type="button" disabled={!reason.trim()} onClick={() => onConfirm(reason.trim())} className={cn(primaryButton, 'bg-[var(--danger)] hover:bg-[var(--danger)]')}>Cancel quote</button></>}>
-      <Field label="Reason"><input value={reason} onChange={(event) => setReason(event.target.value)} className={inputClass} placeholder="Why is this quote cancelled?" /></Field>
+    <Modal open={open} onClose={onClose} title="Cancel quote" subtitle="Its orders are cancelled too, while nothing has left the warehouse and no invoice is open. Held and waiting stock is freed; an advance stays on the customer's account."
+      footer={<><button type="button" onClick={onClose} disabled={busy} className={secondaryButton}>Keep quote</button><button type="button" disabled={!reason.trim() || busy} onClick={() => onConfirm(reason.trim())} className={cn(primaryButton, 'bg-[var(--danger)] hover:bg-[var(--danger)]')}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{busy ? 'Cancelling…' : 'Cancel quote'}</button></>}>
+      <Field label="Reason for cancelling" hint="Required. It is kept on the quote history."><input value={reason} onChange={(event) => setReason(event.target.value)} className={inputClass} placeholder="Why is this quote cancelled?" /></Field>
+    </Modal>
+  );
+}
+
+function ReasonDialog({ open, onClose, busy, onConfirm, title, subtitle, label, placeholder, keepLabel, confirmLabel }: { open: boolean; onClose: () => void; busy?: boolean; onConfirm: (reason: string) => void; title: string; subtitle: string; label: string; placeholder: string; keepLabel: string; confirmLabel: string }) {
+  const [reason, setReason] = useState('');
+  useEffect(() => { if (!open) setReason(''); }, [open]);
+  return (
+    <Modal open={open} onClose={onClose} title={title} subtitle={subtitle}
+      footer={<><button type="button" onClick={onClose} disabled={busy} className={secondaryButton}>{keepLabel}</button><button type="button" disabled={!reason.trim() || busy} onClick={() => onConfirm(reason.trim())} className={cn(primaryButton, 'bg-[var(--danger)] hover:bg-[var(--danger)]')}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{busy ? 'Saving…' : confirmLabel}</button></>}>
+      <Field label={label} hint="Required. It is kept on the quote history."><input value={reason} onChange={(event) => setReason(event.target.value)} className={inputClass} placeholder={placeholder} /></Field>
     </Modal>
   );
 }
@@ -1278,9 +1569,11 @@ function OrderDrawer({ open, onClose, quote, fulfillment, onDone }: { open: bool
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [paymentMode, setPaymentMode] = useState('cash');
   const [advance, setAdvance] = useState('');
+  const [advanceMode, setAdvanceMode] = useState('cash');
   const [paymentTerms, setPaymentTerms] = useState('');
   const [promisedDate, setPromisedDate] = useState('');
   const [closeReason, setCloseReason] = useState('');
+  const [confirmClose, setConfirmClose] = useState(false);
   const [key, setKey] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<any>(null);
@@ -1303,11 +1596,14 @@ function OrderDrawer({ open, onClose, quote, fulfillment, onDone }: { open: bool
   }, new Map<string, { order: number; rooms: number }>());
   const selected = lines.map((line: any) => ({ quoteLineId: line.id, quantity: Number(quantities[line.id] || 0) })).filter((line: any) => line.quantity > 0);
   const submit = async () => {
+    if (orderState.loading) return;
     setError('');
+    const fraction = lines.find((line: any) => !Number.isInteger(Number(quantities[line.id] || 0)));
+    if (fraction) { setError(`${fraction.name}: whole numbers only. This item is counted in whole ${wholeUnitWord(fraction.unit)}.`); return; }
     const idempotencyKey = key || (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
     setKey(idempotencyKey);
     try {
-      const order = (await createOrder({ variables: { input: { quoteId: quote.id, paymentMode, advanceAmount: Number(advance || 0), paymentTerms: paymentTerms || undefined, promisedDate: promisedDate || undefined, idempotencyKey, lines: JSON.stringify(selected), notes: 'Created from quote workspace' } } })).data?.createSalesOrderFromQuote;
+      const order = (await createOrder({ variables: { input: { quoteId: quote.id, paymentMode, advanceAmount: Number(advance || 0), advancePaymentMode: paymentMode === 'cash' && Number(advance || 0) > 0 ? advanceMode : undefined, paymentTerms: paymentTerms || undefined, promisedDate: promisedDate || undefined, idempotencyKey, lines: JSON.stringify(selected), notes: 'Created from quote workspace' } } })).data?.createSalesOrderFromQuote;
       setResult(order);
       setKey('');
       await onDone(`Sales order ${order?.orderNumber} created from ${quote.quoteNumber}.`);
@@ -1322,26 +1618,32 @@ function OrderDrawer({ open, onClose, quote, fulfillment, onDone }: { open: bool
         <div className="max-h-72 space-y-1 overflow-y-auto">
           {lines.map((line: any) => (
             <label key={line.id} className="grid grid-cols-[1fr_6rem] items-center gap-3 rounded-lg border border-[var(--line)] px-3 py-2">
-              <span className="min-w-0"><b className="block truncate text-sm text-[var(--ink)]">{line.name}</b><span className="text-xs text-[var(--ink-4)]">{line.area} · ordered {line.ordered} of {line.quantity} {String(line.unit || '').toLowerCase()} · {line.remaining} left</span>{(skuTotals.get(line.sku)?.rooms || 0) > 1 ? <span className="block text-[11px] font-semibold text-[var(--info)]">In {skuTotals.get(line.sku)!.rooms} rooms · {skuTotals.get(line.sku)!.order} {String(line.unit || '').toLowerCase()} ordering now in total</span> : null}</span>
-              <input type="number" min={0} max={line.remaining} disabled={!line.remaining} value={quantities[line.id] ?? ''} onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))} aria-label={`Order quantity for ${line.name}`} className={numberCell} />
+              <span className="min-w-0"><b className="block truncate text-sm text-[var(--ink)]">{line.name}</b><span className="text-xs text-[var(--ink-4)]">{isBoxedLine(line)
+                ? `${line.area} · ordered ${boxQtyLabel(line.ordered, line)} of ${boxQtyLabel(line.quantity, line)} (${formatSellingQuantity(line.quantity, boxUnits(line)).piecesLabel}) · ${boxQtyLabel(line.remaining, line)} left`
+                : `${line.area} · ordered ${line.ordered} of ${line.quantity} ${String(line.unit || '').toLowerCase()} · ${line.remaining} left`}</span>{(skuTotals.get(line.sku)?.rooms || 0) > 1 ? <span className="block text-[11px] font-semibold text-[var(--info)]">In {skuTotals.get(line.sku)!.rooms} rooms · {skuTotals.get(line.sku)!.order} {String(line.unit || '').toLowerCase()} ordering now in total</span> : null}</span>
+              <input type="number" min={0} step={1} inputMode="numeric" max={line.remaining} disabled={!line.remaining} value={quantities[line.id] ?? ''} onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))} aria-label={`Order quantity for ${line.name}`} className={numberCell} />
             </label>
           ))}
           {!lines.length ? <p className="text-sm text-[var(--ink-4)]">Nothing left to order on this quote.</p> : null}
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Payment"><select value={paymentMode} onChange={(event) => setPaymentMode(event.target.value)} className={inputClass}><option value="cash">Cash</option><option value="credit">Credit</option></select></Field>
-          {paymentMode === 'cash' ? <Field label="Advance / paid ₹"><input type="number" min={0} value={advance} onChange={(event) => setAdvance(event.target.value)} className={inputClass} placeholder="0" /></Field> : <div />}
+          {paymentMode === 'cash' ? <Field label="Advance / paid ₹"><input type="number" min={0} value={advance} onChange={(event) => setAdvance(event.target.value)} className={inputClass} placeholder="0" />{Number(advance || 0) > 0 ? <select aria-label="How the advance was paid" value={advanceMode} onChange={(event) => setAdvanceMode(event.target.value)} className={cn(inputClass, 'mt-2')}>{[['cash', 'Paid in cash'], ['upi', 'Paid by UPI'], ['card', 'Paid by card'], ['bank_transfer', 'Bank transfer'], ['neft', 'NEFT'], ['rtgs', 'RTGS'], ['cheque', 'Cheque'], ['other', 'Other']].map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select> : null}</Field> : <div />}
           <Field label="Payment terms"><input value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} placeholder={paymentMode === 'credit' ? 'Net 30' : 'Cash on order'} className={inputClass} /></Field>
           <Field label="Promised dispatch"><input type="date" value={promisedDate} onChange={(event) => setPromisedDate(event.target.value)} className={inputClass} /></Field>
         </div>
         {(fulfillment?.orders || []).length ? (
           <div className="border-t border-[var(--line)] pt-3">
             <p className="text-xs font-bold uppercase tracking-wider text-[var(--ink-4)]">Orders from this quote</p>
-            {fulfillment.orders.map((order: any) => <div key={order.id} className="mt-1 flex justify-between text-sm"><a className="font-semibold underline" href={`/api/pdf/order/${order.id}`} target="_blank" rel="noreferrer">{order.orderNumber}</a><span className="text-[var(--ink-4)]">{order.status}</span><b className="tabular-nums">{money(order.totalAmount)}</b></div>)}
+            {fulfillment.orders.map((order: any) => <div key={order.id} className="mt-1 flex justify-between text-sm"><a className="font-semibold underline" href={`/api/pdf/order/${order.id}`} target="_blank" rel="noreferrer">{order.orderNumber}</a><span className="text-[var(--ink-4)]">{statusLabel(order.status)}</span><b className="tabular-nums">{money(order.totalAmount)}</b></div>)}
             <div className="mt-3 flex gap-2">
-              <input value={closeReason} onChange={(event) => setCloseReason(event.target.value)} placeholder="Reason to close what is left" className={cn(inputClass, 'h-9')} />
-              <button type="button" disabled={closeState.loading || !closeReason.trim() || !lines.some((line: any) => Number(line.remaining || 0) > 0)} onClick={async () => { try { await closeRemainder({ variables: { quoteId: quote.id, reason: closeReason } }); setCloseReason(''); await onDone('Remaining quantities closed. Order history is kept.'); } catch (err) { setError(errorText(err, 'CloseQuoteRemainder')); } }} className={cn(secondaryButton, 'h-9 shrink-0')}>Close remainder</button>
+              <input aria-label="Reason to close what is left" value={closeReason} onChange={(event) => { setCloseReason(event.target.value); setConfirmClose(false); }} placeholder="Reason to close what is left" className={cn(inputClass, 'h-10')} />
+              <button type="button" disabled={closeState.loading || !closeReason.trim() || !lines.some((line: any) => Number(line.remaining || 0) > 0)} onClick={async () => {
+                if (!confirmClose) { setConfirmClose(true); return; }
+                try { await closeRemainder({ variables: { quoteId: quote.id, reason: closeReason } }); setCloseReason(''); setConfirmClose(false); await onDone('Remaining quantities closed. Order history is kept.'); } catch (err) { setError(errorText(err, 'CloseQuoteRemainder')); }
+              }} className={cn(secondaryButton, 'shrink-0', confirmClose && 'border-[var(--danger)] text-[var(--danger)]')}>{closeState.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{confirmClose ? 'Yes, close what is left' : 'Close remainder'}</button>
             </div>
+            {confirmClose ? <p role="alert" className="mt-1 text-xs font-semibold text-[var(--danger)]">This stops the rest of the quote from being ordered. It cannot be undone. Press the button again to confirm.</p> : null}
           </div>
         ) : null}
       </div>

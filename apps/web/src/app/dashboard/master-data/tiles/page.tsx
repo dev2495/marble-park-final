@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
+import { useBusyAction } from "@/hooks/use-busy-action";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
+import { Skeleton } from "@/components/ui/skeleton";
 import { gql, useLazyQuery, useMutation, useQuery } from "@apollo/client";
 import {
   ArrowRight,
@@ -44,9 +47,6 @@ const WORKSPACE = gql`
     $variantSkip: Int
     $variantStatus: String
     $variantSort: String
-    $displaySearch: String
-    $displaySkip: Int
-    $displayStatus: String
   ) {
     tileDesignsPage(
       search: $designSearch
@@ -63,13 +63,6 @@ const WORKSPACE = gql`
       take: 40
       status: $variantStatus
       sort: $variantSort
-    )
-    displaySamplesPage(
-      search: $displaySearch
-      skip: $displaySkip
-      take: 30
-      status: $displayStatus
-      sort: "updated"
     )
     tileSizes(status: "active")
     masterProductBrands(status: "active")
@@ -335,9 +328,17 @@ export default function TileWorkspacePage() {
   const [recentDesignImport, setRecentDesignImport] = useState<any>(null);
   const designImportInput = useRef<HTMLInputElement>(null);
   const variantFormRef = useRef<HTMLFormElement>(null);
+  const designFormRef = useRef<HTMLFormElement>(null);
+  const { isBusy, run: runBusy } = useBusyAction();
+  // Tap-to-edit: the form sits beside or above the list, so bring it into view and focus its first field.
+  function revealForm(ref: { current: HTMLFormElement | null }) {
+    window.setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      ref.current?.querySelector<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled])")?.focus({ preventScroll: true });
+    }, 60);
+  }
   const debouncedDesignSearch = useDebouncedValue(designSearch, 250);
   const debouncedVariantSearch = useDebouncedValue(variantSearch, 250);
-  const debouncedDisplaySearch = useDebouncedValue(displaySearch, 250);
   const debouncedDesignPickerSearch = useDebouncedValue(
     designPickerSearch,
     200,
@@ -353,9 +354,6 @@ export default function TileWorkspacePage() {
     variantSkip: variantPage * 40,
     variantStatus,
     variantSort,
-    displaySearch: debouncedDisplaySearch || undefined,
-    displaySkip: displayPage * 30,
-    displayStatus,
   };
   const { data, loading, error, refetch } = useQuery(WORKSPACE, {
     variables,
@@ -439,7 +437,6 @@ export default function TileWorkspacePage() {
     [designPickerData?.tileDesignsPage?.items],
   );
   const variants = data?.tileVariantsPage?.items || [];
-  const displays = data?.displaySamplesPage?.items || [];
   const sizes = data?.tileSizes || [];
   const brands = data?.masterProductBrands || [];
   const finishes = data?.masterProductFinishes || [];
@@ -466,6 +463,9 @@ export default function TileWorkspacePage() {
       ),
     [lotData, display.productId],
   );
+  const designDirty = JSON.stringify(design) !== JSON.stringify(emptyDesign);
+  const variantDirty = JSON.stringify(variant) !== JSON.stringify(emptyVariant);
+  useUnsavedChanges(designDirty || variantDirty || Boolean(designImportPlan), "You have unsaved tile changes. Leave without saving?");
   const errors = [
     error,
     designPickerError,
@@ -511,6 +511,7 @@ export default function TileWorkspacePage() {
     }
   }
   function editDesign(row: any) {
+    revealForm(designFormRef);
     setDesign({
       ...emptyDesign,
       ...row,
@@ -555,6 +556,7 @@ export default function TileWorkspacePage() {
     setDesignPage(0);
   }
   function editVariant(row: any) {
+    revealForm(variantFormRef);
     setVariant({
       ...emptyVariant,
       ...row,
@@ -570,7 +572,11 @@ export default function TileWorkspacePage() {
       pricingEffectiveFrom: row.pricingEffectiveFrom ? String(row.pricingEffectiveFrom).slice(0, 10) : "",
     });
   }
-  async function submitVariant(event: any) {
+  function submitVariant(event: any) {
+    event.preventDefault();
+    return runBusy("variant", () => submitVariantInner(event));
+  }
+  async function submitVariantInner(event: any) {
     event.preventDefault();
     const pricingChanged = Boolean(variant.id && (variant.originalPriceUom !== variant.priceUom || (variant.originalMrp !== "" && Math.abs(Number(variant.defaultMrpInclusive) - Number(variant.originalMrp)) > 0.0001)));
     const response = await saveVariant({
@@ -710,6 +716,9 @@ export default function TileWorkspacePage() {
     await refetch();
   }
   async function downloadDesignTemplate() {
+    await runBusy("design-template", downloadDesignTemplateInner);
+  }
+  async function downloadDesignTemplateInner() {
     const response = await loadDesignTemplate();
     const template = response.data?.tileDesignImportTemplate;
     if (template?.contentBase64)
@@ -733,6 +742,9 @@ export default function TileWorkspacePage() {
     if (designImportInput.current) designImportInput.current.value = "";
   }
   async function applyDesignFile() {
+    await runBusy("design-import-apply", applyDesignFileInner);
+  }
+  async function applyDesignFileInner() {
     if (!designImport || !designImportPlan?.confirmationToken) return;
     const response = await applyDesignImport({
       variables: {
@@ -770,18 +782,18 @@ export default function TileWorkspacePage() {
   return (
     <div className="space-y-5 pb-10">
       {errors.map((item: any, index) => (
-        <QueryErrorBanner key={index} error={item} />
+        <QueryErrorBanner key={index} error={item} onRetry={index === 0 ? () => void refetch() : undefined} />
       ))}
-      <header className="border-b border-[var(--line)] pb-5 pt-2">
-        <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[.14em] text-[var(--ink-4)]">
+      <header className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0">
+            <p className="mp-eyebrow">
               Catalogue → stock identity → physical trace
             </p>
-            <h1 className="mt-1 font-display text-3xl font-bold text-[var(--ink)]">
+            <h1 className="mp-page-title">
               Tile design, variant and display workspace
             </h1>
-            <p className="mt-2 max-w-4xl text-sm leading-6 text-[var(--ink-3)]">
+            <p className="mp-page-sub">
               Design owns code, name, governed brand and imagery. Size owns
               geometry. Variant owns finish, immutable warehouse SKU and
               packing. Every inward posts to a variant lot; every display is a
@@ -793,7 +805,7 @@ export default function TileWorkspacePage() {
               type="button"
               variant="outline"
               onClick={downloadDesignTemplate}
-              disabled={designTemplateState.loading}
+              disabled={designTemplateState.loading || isBusy("design-template")}
             >
               <Upload className="mr-2 h-4 w-4" />
               {designTemplateState.loading
@@ -852,7 +864,7 @@ export default function TileWorkspacePage() {
           ].map(([label, value]) => (
             <div key={String(label)}>
               <p className="text-2xl font-semibold tabular-nums text-[var(--ink)]">
-                {Number(value).toLocaleString("en-IN")}
+                {loading && !data?.tileDesignStats ? "…" : Number(value).toLocaleString("en-IN")}
               </p>
               <p className="text-xs text-[var(--ink-4)]">{label}</p>
             </div>
@@ -946,6 +958,7 @@ export default function TileWorkspacePage() {
                 size="sm"
                 onClick={applyDesignFile}
                 disabled={
+                  isBusy("design-import-apply") ||
                   !designImportPlan.confirmationToken ||
                   Boolean(designImportPlan.failed) ||
                   designImportApplyState.loading
@@ -958,7 +971,7 @@ export default function TileWorkspacePage() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[46rem] text-left text-sm">
+            <table className="mp-table-skin w-full min-w-[46rem] text-left text-sm">
               <thead className="bg-[#f7f3f1] text-xs font-bold uppercase tracking-[.12em] text-[var(--ink-4)]">
                 <tr>
                   <th className="px-5 py-3">Excel row</th>
@@ -1088,7 +1101,7 @@ export default function TileWorkspacePage() {
       ) : null}
       {tab === "designs" ? (
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 shadow-[0_8px_24px_-24px_rgba(46,25,22,.6)]">
-          <div className="grid gap-3 lg:grid-cols-[minmax(18rem,1fr)_auto_auto_auto_auto]">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_auto_auto_auto_auto] [&>*]:min-w-0 sm:[&>label]:col-span-2 xl:[&>label]:col-span-1">
             <label className="relative">
               <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
               <Input
@@ -1228,61 +1241,16 @@ export default function TileWorkspacePage() {
           </select>
         </div>
       ) : null}
-      {tab === "display" ? (
-        <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] p-3">
-          <label className="relative block">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
-            <Input
-              className="pl-9"
-              value={variantSearch}
-              onChange={(e) => {
-                setVariantSearch(e.target.value);
-                setVariantPage(0);
-              }}
-              placeholder="Find tile variant by SKU, display code, design or alias"
-            />
-          </label>
-        </div>
-      ) : null}
-      {tab === "display" ? (
-        <section className="grid gap-3 rounded-2xl border border-[#e5cfc7] bg-[linear-gradient(115deg,#fff8f4,#fff)] p-4 md:grid-cols-[1fr_1fr_auto]">
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-            <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">
-              Received-stock display
-            </p>
-            <p className="mt-2 text-sm font-semibold text-emerald-950">
-              Choose the exact GRN lot and issued pieces. The lot ledger posts
-              one audited display issue.
-            </p>
-          </div>
-          <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
-            <p className="text-xs font-bold uppercase tracking-wider text-sky-700">
-              Vendor display sample
-            </p>
-            <p className="mt-2 text-sm font-semibold text-sky-950">
-              Leave source lot blank. The asset and label are registered, but
-              saleable stock never changes.
-            </p>
-          </div>
-          <div className="flex flex-row gap-2 md:flex-col md:justify-center">
-            <Button asChild size="sm" variant="outline">
-              <Link href="/dashboard/procurement?view=history">Find GRN</Link>
-            </Button>
-            <Button asChild size="sm">
-              <Link href="/dashboard/inventory/labels">Print labels</Link>
-            </Button>
-          </div>
-        </section>
-      ) : null}
 
       {tab === "images" ? <TileImageStudio onChanged={() => void refetch()} /> : null}
       {tab === "designs" ? (
         <section className="grid gap-5 xl:grid-cols-[25rem_1fr]">
           <form
+            ref={designFormRef}
             className="mp-panel self-start p-5 xl:sticky xl:top-4"
             onSubmit={(e) => {
               e.preventDefault();
-              saveDesign({
+              void runBusy("design", () => saveDesign({
                 variables: {
                   input: {
                     id: design.id || undefined,
@@ -1293,7 +1261,7 @@ export default function TileWorkspacePage() {
                     status: design.status,
                   },
                 },
-              });
+              }));
             }}
           >
             <div className="flex items-center justify-between">
@@ -1424,6 +1392,7 @@ export default function TileWorkspacePage() {
                 type="submit"
                 disabled={
                   designState.loading ||
+                  isBusy("design") ||
                   uploading ||
                   !design.designCode.trim() ||
                   !design.name.trim() ||
@@ -1514,7 +1483,10 @@ export default function TileWorkspacePage() {
               </div>
               );
             })}
-            {!loading && !designs.length ? (
+            {loading && !designs.length ? (
+              <div className="space-y-2 p-4" aria-busy="true"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>
+            ) : null}
+            {!loading && !error && !designs.length ? (
               <div className="grid min-h-52 place-items-center p-8 text-center">
                 <div>
                   <Boxes className="mx-auto h-7 w-7 text-[var(--ink-5)]" />
@@ -1744,7 +1716,7 @@ export default function TileWorkspacePage() {
                 </label>
                 <p className="self-end rounded-md bg-white p-2 text-[11px] text-[var(--ink-3)]">Changing the unit does not change the numbers below. Review MRP, NRP and floor as ₹ per {variant.priceUom} before saving.</p>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  MRP ₹ before GST / {variant.priceUom} *
+                  MRP ₹ incl GST / {variant.priceUom} *
                   <Input
                     className="mt-1"
                     type="number"
@@ -1759,7 +1731,7 @@ export default function TileWorkspacePage() {
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Default NRP ₹ before GST / {variant.priceUom}
+                  Default NRP ₹ incl GST / {variant.priceUom}
                   <Input
                     className="mt-1"
                     type="number"
@@ -1773,7 +1745,7 @@ export default function TileWorkspacePage() {
                   />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Floor price ₹ before GST / {variant.priceUom}
+                  Floor price ₹ incl GST / {variant.priceUom}
                   <Input className="mt-1" type="number" min="0.01" step="0.01" value={variant.floorPriceInclusive} onChange={(e) => setVariant({ ...variant, floorPriceInclusive: e.target.value })} placeholder="Optional · owner approval below floor" />
                 </label>
                 <label className="block text-xs font-semibold text-[var(--ink-4)]">MRP source<select className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-white px-2" value={variant.mrpSource} onChange={(e) => setVariant({ ...variant, mrpSource: e.target.value })}><option value="MANUAL">Verified manually</option><option value="PACKAGE">Printed package</option><option value="BRAND_LIST">Brand price list</option></select></label>
@@ -1799,6 +1771,7 @@ export default function TileWorkspacePage() {
                 type="submit"
                 disabled={
                   variantState.loading ||
+                  isBusy("variant") ||
                   !variant.tileDesignId ||
                   !variant.tileSizeId ||
                   !variant.finish ||
@@ -1848,7 +1821,10 @@ export default function TileWorkspacePage() {
                 </span>
               </button>
             ))}
-            {!loading && !variants.length ? (
+            {loading && !variants.length ? (
+              <div className="space-y-2 p-4" aria-busy="true"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>
+            ) : null}
+            {!loading && !error && !variants.length ? (
               <Empty text="No matching tile variants." />
             ) : null}
             <Pager
@@ -1860,338 +1836,6 @@ export default function TileWorkspacePage() {
         </section>
       ) : null}
 
-      {tab === "display" ? (
-        <section className="grid gap-5 xl:grid-cols-[25rem_1fr]">
-          <form
-            className="mp-panel self-start p-5 xl:sticky xl:top-4"
-            onSubmit={submitDisplay}
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="font-semibold">
-                  {display.id
-                    ? "Manage display asset"
-                    : "Register display asset"}
-                </h2>
-                <p className="mt-1 text-xs text-[var(--ink-4)]">
-                  Stock is consumed only when a source lot is chosen.
-                </p>
-              </div>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label="Clear display form"
-                onClick={() => setDisplay(emptyDisplay)}
-              >
-                <RotateCcw className="h-4 w-4" />
-              </Button>
-            </div>
-            <div className="mt-4 space-y-3">
-              <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                Tile variant
-                <select
-                  disabled={Boolean(display.id)}
-                  value={display.productId}
-                  onChange={(e) => {
-                    const row = variants.find(
-                      (x: any) => x.id === e.target.value,
-                    );
-                    setDisplay({
-                      ...emptyDisplay,
-                      productId: e.target.value,
-                      internalCode: row?.internalCode || row?.sku || "",
-                      imageUrl: imageOf(row?.tileDesignMaster) || imageOf(row),
-                      locationId: locations[0]?.id || "",
-                      labelProduct: row || null,
-                    });
-                  }}
-                  className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                >
-                  <option value="">
-                    Select variant from current result page
-                  </option>
-                  {variants.map((x: any) => (
-                    <option key={x.id} value={x.id}>
-                      {x.internalCode || x.sku} · {x.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                Display code
-                <Input
-                  className="mt-1"
-                  value={display.internalCode}
-                  onChange={(e) =>
-                    setDisplay({
-                      ...display,
-                      internalCode: e.target.value.toUpperCase(),
-                    })
-                  }
-                />
-              </label>
-              <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                Location
-                <select
-                  value={display.locationId}
-                  onChange={(e) =>
-                    setDisplay({ ...display, locationId: e.target.value })
-                  }
-                  className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                >
-                  <option value="">Select location</option>
-                  {locations.map((x: any) => (
-                    <option key={x.id} value={x.id}>
-                      {x.code} · {x.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                Zone
-                <Input
-                  className="mt-1"
-                  value={display.displayZone}
-                  onChange={(e) =>
-                    setDisplay({ ...display, displayZone: e.target.value })
-                  }
-                />
-              </label>
-              {!display.id ? (
-                <>
-                  <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                    Optional source lot
-                    <select
-                      value={display.sourceLotId}
-                      onChange={(e) =>
-                        setDisplay({ ...display, sourceLotId: e.target.value })
-                      }
-                      className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                    >
-                      <option value="">Non-stock vendor sample</option>
-                      {lots.map((lot: any) => (
-                        <option key={lot.id} value={lot.id}>
-                          {lot.lotNumber} · available{" "}
-                          {lot.available ??
-                            lot.balances?.reduce(
-                              (s: number, b: any) =>
-                                s + Number(b.available || 0),
-                              0,
-                            ) ??
-                            0}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {display.sourceLotId ? (
-                    <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                      Pieces issued to display
-                      <Input
-                        className="mt-1"
-                        type="number"
-                        min="1"
-                        value={display.issuedQuantity}
-                        placeholder="Enter qty"
-                        data-needs-value
-                        onChange={(e) =>
-                          setDisplay({
-                            ...display,
-                            issuedQuantity: e.target.value,
-                          })
-                        }
-                      />
-                    </label>
-                  ) : null}
-                </>
-              ) : null}
-              <div className="grid grid-cols-2 gap-3">
-                <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Condition
-                  <select
-                    value={display.condition}
-                    onChange={(e) =>
-                      setDisplay({ ...display, condition: e.target.value })
-                    }
-                    className="mt-1 h-10 w-full rounded-md border border-[var(--line)] bg-[var(--bg-soft)] px-3"
-                  >
-                    <option value="new">New</option>
-                    <option value="good">Good</option>
-                    <option value="worn">Worn</option>
-                    <option value="damaged">Damaged</option>
-                  </select>
-                </label>
-                <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                  Next inspection
-                  <Input
-                    className="mt-1"
-                    type="date"
-                    value={
-                      display.nextInspectionAt?.slice?.(0, 10) ||
-                      display.nextInspectionAt
-                    }
-                    onChange={(e) =>
-                      setDisplay({
-                        ...display,
-                        nextInspectionAt: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-              <Button
-                className="w-full"
-                type="submit"
-                disabled={
-                  !display.productId ||
-                  !display.internalCode ||
-                  createDisplayState.loading ||
-                  updateDisplayState.loading ||
-                  createLabelState.loading
-                }
-              >
-                {display.id
-                  ? "Save and clear"
-                  : "Register, post issue and label"}
-              </Button>
-              {display.id ? (
-                <div className="border-t border-[var(--line)] pt-3">
-                  <label className="block text-xs font-semibold text-[var(--ink-4)]">
-                    Lifecycle reason
-                    <Input
-                      className="mt-1"
-                      value={transitionReason}
-                      onChange={(e) => setTransitionReason(e.target.value)}
-                    />
-                  </label>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => runTransition("inspect")}
-                    >
-                      Record inspection
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => runTransition("maintenance")}
-                    >
-                      Maintenance
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => runTransition("remove")}
-                    >
-                      Remove asset
-                    </Button>
-                    {display.sourceLotId &&
-                    Number(display.issuedQuantity) > 0 ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => runTransition("return_to_stock")}
-                      >
-                        Return to lot
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </form>
-          <div className="mp-panel overflow-hidden">
-            <div className="flex flex-col gap-3 border-b border-[var(--line)] p-4 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="font-semibold">Display asset register</h2>
-                <p className="mt-1 text-xs text-[var(--ink-4)]">
-                  Searchable, inspectable and label-linked; never mixed with
-                  saleable stock.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  className="md:w-64"
-                  value={displaySearch}
-                  onChange={(e) => {
-                    setDisplaySearch(e.target.value);
-                    setDisplayPage(0);
-                  }}
-                  placeholder="Code, sample, zone or SKU"
-                />
-                <select
-                  value={displayStatus}
-                  onChange={(e) => {
-                    setDisplayStatus(e.target.value);
-                    setDisplayPage(0);
-                  }}
-                  className="h-10 rounded-md border border-[var(--line)] bg-[var(--surface)] px-3 text-sm"
-                >
-                  <option value="all">All</option>
-                  <option value="active">Active</option>
-                  <option value="maintenance">Maintenance</option>
-                  <option value="removed">Removed</option>
-                </select>
-              </div>
-            </div>
-            <div className="grid gap-px bg-[var(--line)] sm:grid-cols-2 2xl:grid-cols-3">
-              {displays.map((row: any) => (
-                <button
-                  key={row.id}
-                  onClick={() =>
-                    setDisplay({
-                      ...emptyDisplay,
-                      ...row,
-                      nextInspectionAt:
-                        row.nextInspectionAt?.slice?.(0, 10) || "",
-                    })
-                  }
-                  className="bg-[var(--surface)] p-4 text-left hover:bg-[var(--bg-soft)]"
-                >
-                  <div className="flex gap-3">
-                    <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded bg-[var(--bg-soft)]">
-                      {row.imageUrl || imageOf(row.product) ? (
-                        <img
-                          src={row.imageUrl || imageOf(row.product)}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <ImageOff className="h-5 w-5" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold">{row.internalCode}</p>
-                      <p className="truncate text-xs text-[var(--ink-4)]">
-                        {row.product?.name}
-                      </p>
-                      <p className="mt-2 flex items-center gap-1 text-xs">
-                        <MapPin className="h-3.5 w-3.5" />
-                        {row.displayZone || "Zone pending"}
-                      </p>
-                      <p className="mt-1 text-xs text-[var(--ink-4)]">
-                        {row.condition} · {row.status} ·{" "}
-                        {row.issuedQuantity || 0} stock pc
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              ))}
-              {!loading && !displays.length ? (
-                <div className="col-span-full">
-                  <Empty text="No matching display assets." />
-                </div>
-              ) : null}
-            </div>
-            <Pager
-              page={displayPage}
-              hasNext={Boolean(data?.displaySamplesPage?.hasNext)}
-              onPage={setDisplayPage}
-            />
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }
@@ -2232,6 +1876,7 @@ function RegisterHeader({
           <Input
             className="pl-9"
             value={search}
+            aria-label={`Search ${title.toLowerCase()}`}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={`Search ${title.toLowerCase()}`}
           />

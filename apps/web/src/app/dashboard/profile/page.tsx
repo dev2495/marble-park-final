@@ -68,6 +68,7 @@ export default function ProfilePage() {
         localStorage.setItem('user', JSON.stringify({ ...stored, ...result.updateMyProfile }));
       } catch {}
       setProfileSaved(Date.now());
+      setEmailPassword('');
       refetch();
     },
   });
@@ -78,6 +79,7 @@ export default function ProfilePage() {
 
   const [profile, setProfile] = useState({ name: '', email: '', phone: '', bio: '', avatarUrl: '' });
   const [pwd, setPwd] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const [emailPassword, setEmailPassword] = useState('');
   const [profileSaved, setProfileSaved] = useState<number | null>(null);
   const [passwordSaved, setPasswordSaved] = useState<number | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -114,6 +116,8 @@ export default function ProfilePage() {
     }
   }
 
+  const emailChanged = !!me && profile.email.trim().toLowerCase() !== String(me.email || '').toLowerCase();
+
   function handleProfileSubmit(event: React.FormEvent) {
     event.preventDefault();
     updateProfile({
@@ -121,6 +125,7 @@ export default function ProfilePage() {
         input: {
           name: profile.name,
           email: profile.email,
+          ...(emailChanged ? { currentPassword: emailPassword } : {}),
           phone: profile.phone,
           bio: profile.bio || null,
           avatarUrl: profile.avatarUrl || null,
@@ -210,6 +215,12 @@ export default function ProfilePage() {
               <span className="text-xs font-medium text-[#52525b]">Email</span>
               <Input value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} type="email" required />
             </label>
+            {emailChanged ? (
+              <label className="block space-y-1.5 md:col-span-2">
+                <span className="text-xs font-medium text-[#52525b]">Your current password (needed to change your login email)</span>
+                <Input value={emailPassword} onChange={(e) => setEmailPassword(e.target.value)} type="password" autoComplete="current-password" required />
+              </label>
+            ) : null}
             <label className="block space-y-1.5">
               <span className="text-xs font-medium text-[#52525b]">Phone</span>
               <Input value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} />

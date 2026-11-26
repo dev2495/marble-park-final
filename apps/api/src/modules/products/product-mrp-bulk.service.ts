@@ -61,8 +61,10 @@ export class ProductMrpBulkService {
         { brand: { contains: search, mode: 'insensitive' } },
         { category: { contains: search, mode: 'insensitive' } },
       ] };
-      if (where.OR) where.AND = [{ OR: where.OR }, searchClause], delete where.OR;
-      else where.AND = [searchClause];
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, searchClause];
+        delete where.OR;
+      } else where.AND = [searchClause];
     }
     return where;
   }

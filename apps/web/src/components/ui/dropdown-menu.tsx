@@ -26,9 +26,7 @@ const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        'z-50 min-w-[12rem] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)]/95 p-1.5 text-[var(--ink-2)] shadow-md-soft backdrop-blur-xl',
-        'data-[state=open]:animate-fade-in data-[state=open]:animate-slide-in',
-        'data-[side=bottom]:slide-in-from-top-1 data-[side=top]:slide-in-from-bottom-1',
+        'mp-pop z-50 min-w-[12rem] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)]/95 p-1.5 text-[var(--ink-2)] shadow-[var(--sh-pop)] backdrop-blur-xl',
         className,
       )}
       {...props}
@@ -48,7 +46,7 @@ const DropdownMenuItem = React.forwardRef<
       'focus:bg-[var(--bg-soft)] focus:text-[var(--ink)] data-[highlighted]:bg-[var(--bg-soft)] data-[highlighted]:text-[var(--ink)]',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       danger
-        ? 'text-[var(--danger)] focus:bg-[var(--danger-bg)] focus:text-[var(--danger)] data-[highlighted]:bg-[var(--danger-bg)] data-[highlighted]:text-[var(--danger)]'
+        ? 'text-[var(--danger-fg)] focus:bg-[var(--danger-bg)] focus:text-[var(--danger-fg)] data-[highlighted]:bg-[var(--danger-bg)] data-[highlighted]:text-[var(--danger-fg)]'
         : 'text-[var(--ink-2)]',
       inset ? 'pl-8' : '',
       className,

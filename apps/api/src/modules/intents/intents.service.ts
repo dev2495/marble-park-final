@@ -168,6 +168,8 @@ export class IntentsService {
     }
     if (input.notes !== undefined) data.notes = input.notes || '';
     if (input.followUpReason !== undefined) data.followUpReason = input.followUpReason || '';
+    // Saving while holding the lock keeps it: the 30-minute idle window counts from the last save.
+    if (intent.status === 'in_quote' && intent.lockedBy === actor.id) data.lockedAt = new Date();
     const updated = await this.prisma.leadIntent.update({ where: { id }, data });
     await this.recordActivity(intent.leadId, actor.id, 'intent.edited', `Intent updated while ${intent.status}.`);
     return this.attachRelations([updated]).then((r) => r[0]);
@@ -206,16 +208,23 @@ export class IntentsService {
     }
     const intent = await this.maybeAutoRelease(await this.getRaw(id));
     if (intent.status === 'in_quote') {
-      if (intent.lockedBy === actor.id) return this.attachRelations([intent]).then((r) => r[0]);
+      // Picking it up again keeps the lock alive during a long build (the 30-minute window restarts).
+      if (intent.lockedBy === actor.id) {
+        const refreshed = await this.prisma.leadIntent.update({ where: { id }, data: { lockedAt: new Date(), updatedAt: new Date() } });
+        return this.attachRelations([refreshed]).then((r) => r[0]);
+      }
       throw new BadRequestException('Another user has already picked up this intent.');
     }
     if (intent.status !== 'pending_quote') {
       throw new BadRequestException(`Intent is ${intent.status}, cannot pick up.`);
     }
-    const updated = await this.prisma.leadIntent.update({
-      where: { id },
+    // Claim only if still waiting: two people tapping Pick up at once cannot both get it.
+    const claimed = await this.prisma.leadIntent.updateMany({
+      where: { id, status: 'pending_quote' },
       data: { status: 'in_quote', lockedBy: actor.id, lockedAt: new Date(), updatedAt: new Date() },
     });
+    if (claimed.count !== 1) throw new BadRequestException('Another user has already picked up this intent.');
+    const updated = await this.getRaw(id);
     await this.recordActivity(intent.leadId, actor.id, 'intent.picked_up', 'Office staff started building the quote.');
     return this.attachRelations([updated]).then((r) => r[0]);
   }

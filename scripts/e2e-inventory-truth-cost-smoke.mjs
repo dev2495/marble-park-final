@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { ulid } from 'ulid';
+import { assert, createApiClient } from './lib/api-client.mjs';
 
 const prisma = new PrismaClient();
 const API = process.env.API_URL || 'http://127.0.0.1:4011/graphql';
@@ -8,13 +9,7 @@ const PASSWORD = process.env.TEST_PASSWORD || 'password123';
 const stamp = Date.now().toString(36).toUpperCase();
 const ids = { product: `TRUTH-P-${stamp}`, balance: `TRUTH-B-${stamp}`, lot: `TRUTH-L-${stamp}`, lotBalance: `TRUTH-LB-${stamp}` };
 
-function assert(condition, message) { if (!condition) throw new Error(message); }
-async function gql(query, variables = {}, token = '') {
-  const response = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ query, variables }) });
-  const body = await response.json();
-  if (!response.ok || body.errors?.length) throw new Error(body.errors?.map((row) => row.message).join('; ') || `GraphQL ${response.status}`);
-  return body.data;
-}
+const { gql } = createApiClient(API);
 
 try {
   const actor = await prisma.user.findFirst({ where: { email: EMAIL, active: true } });

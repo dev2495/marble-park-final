@@ -1,4 +1,5 @@
 "use client";
+import { statusLabel } from "@/lib/utils";
 
 import { gql, useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -123,7 +124,7 @@ function RulesPanel() {
             <li><b>Nothing is uploaded until you review the preview.</b> Every photo is resized to 1600 px and compressed (typically 150–400 KB) before upload.</li>
           </ol>
           <div className="overflow-x-auto rounded-md border border-[var(--line)] bg-white">
-            <table className="w-full min-w-[34rem] text-left text-xs">
+            <table className="mp-table-skin w-full min-w-[34rem] text-left text-xs">
               <thead className="bg-[var(--bg-soft)] text-[var(--ink-4)]">
                 <tr><th className="px-3 py-2 font-semibold">File in ZIP</th><th className="px-3 py-2 font-semibold">What happens</th></tr>
               </thead>
@@ -441,7 +442,7 @@ export function TileImageStudio({ onChanged }: { onChanged?: () => void }) {
             </div>
 
             <div className="overflow-x-auto rounded-md border border-[var(--line)]">
-              <table className="w-full min-w-[46rem] text-left text-sm">
+              <table className="mp-table-skin w-full min-w-[46rem] text-left text-sm">
                 <thead className="bg-[var(--bg-soft)] text-xs text-[var(--ink-4)]">
                   <tr><th className="px-3 py-2 font-semibold">File</th><th className="px-3 py-2 font-semibold">Status</th><th className="px-3 py-2 font-semibold">Matched to</th><th className="px-3 py-2 font-semibold">Details</th></tr>
                 </thead>
@@ -469,7 +470,7 @@ export function TileImageStudio({ onChanged }: { onChanged?: () => void }) {
               <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] p-3" role="status" aria-live="polite">
                 <div className="flex justify-between text-xs text-[var(--ink-3)]"><span>{running ? `Compressing and uploading… ${progress.current}` : "Upload finished"}</span><span className="font-semibold tabular-nums">{progress.done}/{progress.total}</span></div>
                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--bg-soft)]"><div className="h-full rounded-full bg-[var(--brand-600)] transition-all" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} /></div>
-                {!running ? <p className="mt-2 text-xs"><span className="font-semibold text-emerald-700">{doneCount} uploaded</span>{failedCount ? <span className="ml-3 font-semibold text-red-700">{failedCount} failed — see “Need attention”</span> : null}</p> : null}
+                {!running ? <p className="mt-2 text-xs"><span className="font-semibold text-emerald-700">{doneCount} uploaded</span>{failedCount ? <span className="ml-3 font-semibold text-red-700">{failedCount} failed, see “Need attention”</span> : null}</p> : null}
               </div>
             ) : null}
 
@@ -516,8 +517,8 @@ export function TileImageStudio({ onChanged }: { onChanged?: () => void }) {
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--ink)]">
                   <span className="font-mono">{row.designCode}</span>
-                  <button type="button" title="Copy suggested file name" onClick={() => void navigator.clipboard?.writeText(suggestedFileName(row.designCode))} className="rounded p-1 text-[var(--ink-4)] hover:bg-[var(--bg-soft)]"><Copy className="h-3.5 w-3.5" /></button>
-                  {row.status !== "active" ? <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs uppercase text-zinc-600">{row.status}</span> : null}
+                  <button type="button" aria-label="Copy suggested file name" title="Copy suggested file name" onClick={() => void navigator.clipboard?.writeText(suggestedFileName(row.designCode))} className="mp-tap-icon grid place-items-center rounded p-1text-[var(--ink-4)] hover:bg-[var(--bg-soft)]"><Copy className="h-3.5 w-3.5" /></button>
+                  {row.status !== "active" ? <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs uppercase text-zinc-600">{statusLabel(row.status)}</span> : null}
                 </p>
                 <p className="truncate text-xs text-[var(--ink-3)]">{row.name}{row.brand ? ` · ${row.brand}` : ""}</p>
                 <p className="mt-0.5 text-[11px] text-[var(--ink-4)]">{row.variantCount} variant{row.variantCount === 1 ? "" : "s"}{row.variantOverrides ? ` · ${row.variantOverrides} with own photo` : ""}{row.hasImage ? ` · ${row.imageCount} photo${row.imageCount === 1 ? "" : "s"}` : ""} · file name <span className="font-mono">{suggestedFileName(row.designCode)}</span></p>

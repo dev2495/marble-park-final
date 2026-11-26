@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Type-check, lint, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: apps/api
+      - name: Type-check API
+        run: npx tsc --noEmit -p tsconfig.json
+        working-directory: apps/api
+      - name: Type-check web
+        run: npx tsc --noEmit
+        working-directory: apps/web
+      - name: Lint (check only, never rewrites files)
+        run: npm run lint
+      - name: Web GraphQL documents match the API schema
+        run: npm run check:web-gql
+      - name: Unit tests
+        run: npm test --workspace=apps/api
+
+  integration:
+    name: Integration tests (real Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: checks
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mp_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mp_test?schema=public
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mp_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: apps/api
+      - name: Apply every migration to an empty database
+        run: npx prisma migrate deploy
+        working-directory: apps/api
+      - name: Seed demo users (fresh CI database only)
+        run: npx tsx prisma/seed.ts
+        working-directory: apps/api
+        env:
+          SEED_MODE: demo
+      - name: Integration tests
+        run: npm run test:integration
+
+  web-build:
+    name: Web build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: apps/api
+      - run: npm run build --workspace=apps/web
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'

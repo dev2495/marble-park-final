@@ -31,6 +31,11 @@ import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { useBusyAction } from "@/hooks/use-busy-action";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill } from "@/components/ui/status-pill";
+import { ScrollTable } from "@/components/dashboard/scroll-table";
 
 const DATA = gql`
   query ProcurementSuite(
@@ -56,6 +61,11 @@ const DATA = gql`
     $gSkip: Int
     $gDateFrom: String
     $gDateTo: String
+    $wDemand: Boolean = false
+    $wOrders: Boolean = false
+    $wHistPo: Boolean = false
+    $wGrn: Boolean = false
+    $wRefs: Boolean = false
   ) {
     procurementSummary
     purchaseDemandPage(
@@ -64,7 +74,7 @@ const DATA = gql`
       sort: $dSort
       skip: $dSkip
       take: 30
-    )
+    ) @include(if: $wDemand)
     purchaseOrderPage(
       search: $poSearch
       status: $poStatus
@@ -73,7 +83,7 @@ const DATA = gql`
       take: 25
       dateFrom: $poDateFrom
       dateTo: $poDateTo
-    )
+    ) @include(if: $wOrders)
     purchaseOrderHistoryPage: purchaseOrderPage(
       search: $hPoSearch
       status: $hPoStatus
@@ -82,7 +92,7 @@ const DATA = gql`
       take: 25
       dateFrom: $hPoDateFrom
       dateTo: $hPoDateTo
-    )
+    ) @include(if: $wHistPo)
     goodsReceiptPage(
       search: $gSearch
       source: $gSource
@@ -91,9 +101,9 @@ const DATA = gql`
       take: 25
       dateFrom: $gDateFrom
       dateTo: $gDateTo
-    )
-    vendors(status: "active", take: 250)
-    stockLocations(status: "active")
+    ) @include(if: $wGrn)
+    vendors(status: "active", take: 250) @include(if: $wRefs)
+    stockLocations(status: "active") @include(if: $wRefs)
     me { id role effectivePermissions }
   }
 `;
@@ -155,8 +165,17 @@ function hasPendingPoRate(po: any) {
 function isPendingPoLineRate(line: any) {
   return !["complete", "captured"].includes(String(line?.costStatus || "")) || Number(line?.unitCost || 0) <= 0 || Number(line?.netUnitCost || 0) <= 0;
 }
+function statusTone(status: string): "success" | "info" | "danger" | "warning" {
+  return status === "received" || status === "allocated" || status === "closed"
+    ? "success"
+    : status === "partial_received"
+      ? "info"
+      : status === "cancelled"
+        ? "danger"
+        : "warning";
+}
 function statusClass(status: string) {
-  return status === "received" || status === "allocated"
+  return status === "received" || status === "allocated" || status === "closed"
     ? "bg-emerald-50 text-emerald-700"
     : status === "partial_received"
       ? "bg-blue-50 text-blue-700"
@@ -216,6 +235,11 @@ export default function ProcurementSuitePage() {
   const [demandCosts, setDemandCosts] = useState<Record<string, string>>({});
   const [demandRateUoms, setDemandRateUoms] = useState<Record<string, string>>({});
   const [receipt, setReceipt] = useState<any>(emptyReceipt);
+  // The manual (no PO) inward keeps its own supplier and receipt header so it never wipes the PO or PO receipt forms.
+  const [manualCommercial, setManualCommercial] = useState<any>(emptyCommercial);
+  const [manualReceipt, setManualReceipt] = useState<any>(emptyReceipt);
+  const [demandRowCache, setDemandRowCache] = useState<Record<string, any>>({});
+  const { isBusy, run: runBusy } = useBusyAction();
   const [receiveRows, setReceiveRows] = useState<Record<string, any>>({});
   const [receiptKey, setReceiptKey] = useState(uuid());
   const [manualLines, setManualLines] = useState<any[]>([]);
@@ -264,13 +288,20 @@ export default function ProcurementSuitePage() {
     gSkip: gPage * 25,
     gDateFrom: gDateFrom || undefined,
     gDateTo: gDateTo || undefined,
+    // Only load what the open tab shows, so typing in one list does not reload all five.
+    wDemand: tab === "demand",
+    wOrders: tab === "orders" || tab === "receiving",
+    wHistPo: tab === "history" && historyView === "po",
+    wGrn: tab === "history" && historyView === "grn",
+    wRefs: tab !== "overview",
   };
-  const { data, loading, error, refetch } = useQuery(DATA, {
+  const { data: liveData, previousData, loading, error, refetch } = useQuery(DATA, {
     variables,
     fetchPolicy: "cache-and-network",
     pollInterval: 120000,
     skipPollAttempt: () => typeof document !== "undefined" && document.hidden,
   });
+  const data = liveData ?? previousData;
   const { data: searchData, error: searchError } = useQuery(SEARCH_PRODUCTS, {
     variables: { query: productSearch },
     skip: productSearch.trim().length < 2,
@@ -293,14 +324,27 @@ export default function ProcurementSuitePage() {
   const products = searchData?.globalSearch?.products || [];
   const summary = data?.procurementSummary || {};
   const activePo = orders.find((po: any) => po.id === activePoId);
-  const chosenDemands = demands.filter((row: any) =>
-    selectedDemand.includes(row.id),
-  );
+  // Rows picked on earlier pages stay available, so rates typed there are still sent.
+  const chosenDemands = selectedDemand
+    .map((id) => demands.find((row: any) => row.id === id) || demandRowCache[id])
+    .filter(Boolean);
+  useEffect(() => {
+    if (!selectedDemand.length || !demands.length) return;
+    setDemandRowCache((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const row of demands as any[]) {
+        if (selectedDemand.includes(row.id) && next[row.id] !== row) {
+          next[row.id] = row;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [demands, selectedDemand]);
   useEffect(() => {
     if (commercial.vendorId || !selectedDemand.length) return;
-    const selectedRowsOnPage = demands.filter((row: any) =>
-      selectedDemand.includes(row.id),
-    );
+    const selectedRowsOnPage = chosenDemands;
     const preferredVendorIds = selectedRowsOnPage
       .map((row: any) => row.preferredVendorId)
       .filter(Boolean);
@@ -314,7 +358,8 @@ export default function ProcurementSuitePage() {
         vendorId: preferredVendorIds[0],
       }));
     }
-  }, [commercial.vendorId, demands, selectedDemand]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commercial.vendorId, demands, selectedDemand, demandRowCache]);
   const canCancel = ["owner", "admin"].includes(data?.me?.role);
   const canCorrectGrn = ["owner", "admin"].includes(data?.me?.role);
   const canViewCost = ["owner", "admin"].includes(data?.me?.role);
@@ -323,7 +368,8 @@ export default function ProcurementSuitePage() {
   const canEnterReceiptRate = canEnterManualRate;
   const actionableDemandIds = demands
     .filter((row: any) =>
-      ["open", "ordered", "partial_received"].includes(row.status),
+      // A demand already on an open purchase order cannot go on a second one.
+      ["open", "partial_received"].includes(row.status),
     )
     .map((row: any) => row.id);
   const directLinesReady =
@@ -337,6 +383,18 @@ export default function ProcurementSuitePage() {
     (line: any) => receivedBaseQuantity(line, receiveRows[line.id] || {}) > 0,
   );
   const receiptLinesReady = Boolean(selectedReceiptLines.length);
+  const poDirty = Boolean(
+    selectedDemand.length ||
+      directLines.length ||
+      manualLines.length ||
+      Object.keys(demandCosts).length ||
+      Object.keys(receiveRows).length ||
+      commercial.vendorId ||
+      commercial.notes ||
+      manualCommercial.vendorId ||
+      manualCommercial.vendorName,
+  );
+  useUnsavedChanges(poDirty, "You have a purchase order or receipt in progress. Leave without saving?");
   const errors = [
     error,
     searchError,
@@ -353,6 +411,7 @@ export default function ProcurementSuitePage() {
     setSelectedDemand([]);
     setDemandCosts({});
     setDemandRateUoms({});
+    setDemandRowCache({});
     setProductSearch("");
   }
   function beginNewPo() {
@@ -429,6 +488,9 @@ export default function ProcurementSuitePage() {
         };
   }
   async function submitPo(mode: "demand" | "direct") {
+    await runBusy("submitPo", () => submitPoInner(mode));
+  }
+  async function submitPoInner(mode: "demand" | "direct") {
     const lines =
       mode === "demand"
         ? chosenDemands.map((row: any) => ({
@@ -470,6 +532,9 @@ export default function ProcurementSuitePage() {
     await refetch();
   }
   async function submitReceipt() {
+    await runBusy("submitReceipt", submitReceiptInner);
+  }
+  async function submitReceiptInner() {
     if (!activePo) return;
     const lines = (activePo.lines || [])
       .map((line: any) => {
@@ -533,18 +598,21 @@ export default function ProcurementSuitePage() {
     await refetch();
   }
   async function submitManual() {
-    if (!manualLines.length || (!commercial.vendorId && !commercial.vendorName))
+    await runBusy("submitManual", submitManualInner);
+  }
+  async function submitManualInner() {
+    if (!manualLines.length || (!manualCommercial.vendorId && !manualCommercial.vendorName))
       return;
     const response = await manualGrn({
       variables: {
         input: {
-          vendorId: commercial.vendorId || undefined,
+          vendorId: manualCommercial.vendorId || undefined,
           vendorName:
-            commercial.vendorName ||
-            vendors.find((v: any) => v.id === commercial.vendorId)?.name,
-          ...receipt,
-          receivedDate: inwardDateIso(receipt.receivedDate),
-          locationId: receipt.locationId || undefined,
+            manualCommercial.vendorName ||
+            vendors.find((v: any) => v.id === manualCommercial.vendorId)?.name,
+          ...manualReceipt,
+          receivedDate: inwardDateIso(manualReceipt.receivedDate),
+          locationId: manualReceipt.locationId || undefined,
           reason: manualReason,
           lines: JSON.stringify(manualLines.map((line: any) => linePayload(line, canEnterManualRate))),
           idempotencyKey: manualKey,
@@ -555,8 +623,8 @@ export default function ProcurementSuitePage() {
       `${response.data?.createManualGoodsReceipt?.grnNumber || "Manual GRN"} posted. The form is blank and ready for the next inward.`,
     );
     setManualLines([]);
-    setCommercial(emptyCommercial);
-    setReceipt(emptyReceipt);
+    setManualCommercial(emptyCommercial);
+    setManualReceipt(emptyReceipt);
     setManualReason("Supplier delivery received without a prior PO");
     setManualKey(uuid());
     setProductSearch("");
@@ -567,9 +635,11 @@ export default function ProcurementSuitePage() {
       `Cancellation reason for ${po.poNumber}. History and receipts remain preserved.`,
     );
     if (!reason?.trim()) return;
-    await cancelPo({ variables: { id: po.id, reason: reason.trim() } });
-    setNotice(`${po.poNumber} cancelled with audit history preserved.`);
-    await refetch();
+    await runBusy(`cancel:${po.id}`, async () => {
+      await cancelPo({ variables: { id: po.id, reason: reason.trim() } });
+      setNotice(`${po.poNumber} cancelled with audit history preserved.`);
+      await refetch();
+    });
   }
   function beginGrnCorrection(grn: any) {
     setGrnCorrection({
@@ -587,6 +657,9 @@ export default function ProcurementSuitePage() {
     });
   }
   async function submitGrnCorrection() {
+    await runBusy("grnCorrection", submitGrnCorrectionInner);
+  }
+  async function submitGrnCorrectionInner() {
     if (!grnCorrection) return;
     const response = await correctGrn({ variables: { input: {
       goodsReceiptNoteId: grnCorrection.id,
@@ -609,31 +682,23 @@ export default function ProcurementSuitePage() {
       {errors.map((item: any, index) => (
         <QueryErrorBanner key={index} error={item} />
       ))}
-      <header className="relative overflow-hidden rounded-[1.4rem] bg-[linear-gradient(128deg,#241f1e_0%,#3e2826_54%,#9b2f2a_100%)] px-5 py-6 text-white shadow-[0_22px_60px_-32px_rgba(87,30,26,.65)] sm:px-7 sm:py-8">
-        <div
-          aria-hidden="true"
-          className="absolute -right-14 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl"
-        />
-        <div
-          aria-hidden="true"
-          className="absolute -bottom-28 left-1/3 h-56 w-56 rounded-full bg-amber-300/10 blur-3xl"
-        />
-        <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[.2em] text-rose-100/80">
+      <header className="mp-page-header">
+        <div className="contents">
+          <div className="min-w-0">
+            <p className="mp-eyebrow">
               Procurement command workspace
             </p>
-            <h1 className="mt-2 max-w-3xl font-display text-3xl font-bold leading-[1.08] text-white sm:text-4xl">
-              Buy, receive and trace—without losing the queue.
+            <h1 className="mp-page-title">
+              Buy, receive and trace without losing the queue.
             </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-rose-50/75">
+            <p className="mp-page-sub">
               One governed daily workspace from demand and supplier commitment
               through GRN, lot creation and stock allocation.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="mp-page-actions">
             {canViewCost ? (
-              <Button asChild className="border border-white/25 bg-white/10 text-white hover:bg-white/20">
+              <Button asChild variant="outline">
                 <Link href="/dashboard/procurement/cost-readiness">
                   <CircleDollarSign className="mr-2 h-4 w-4" />
                   Complete legacy PO rates
@@ -642,14 +707,13 @@ export default function ProcurementSuitePage() {
             ) : null}
             <Button
               onClick={beginNewPo}
-              className="border border-white/15 bg-rose-50 text-[#612421] hover:bg-rose-100"
             >
               <Plus className="mr-2 h-4 w-4" />
               New purchase order
             </Button>
             <Button
+              variant="outline"
               onClick={() => setTab("receiving")}
-              className="border border-white/25 bg-white/10 text-white hover:bg-white/20"
             >
               <PackageCheck className="mr-2 h-4 w-4" />
               Receive goods
@@ -723,7 +787,15 @@ export default function ProcurementSuitePage() {
         </div>
       ) : null}
 
-      {tab === "overview" ? (
+      {tab === "overview" && loading && !data?.procurementSummary ? (
+        <div className="space-y-4" aria-busy="true" aria-label="Loading procurement overview">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24 w-full" />)}
+          </div>
+          <Skeleton className="h-64 w-full" />
+        </div>
+      ) : null}
+      {tab === "overview" && !(loading && !data?.procurementSummary) ? (
         <ProcurementOverview
           summary={summary}
           loading={loading}
@@ -748,11 +820,14 @@ export default function ProcurementSuitePage() {
               sort={dSort}
               setSort={setDSort}
               statuses={[
-                ["all", "All"],
+                ["all", "All waiting on supplier"],
                 ["open", "Open"],
                 ["ordered", "Ordered"],
                 ["partial_received", "Partial"],
-                ["received", "Received"],
+                ["received", "Received, waiting to dispatch"],
+                ["allocated", "Stock set aside, waiting to dispatch"],
+                ["closed", "Closed (delivered)"],
+                ["cancelled", "Cancelled"],
               ]}
               sorts={[
                 ["priority", "Priority"],
@@ -855,7 +930,7 @@ export default function ProcurementSuitePage() {
                     />
                   </Field>
                   <Button
-                    disabled={createState.loading || !commercial.vendorId || !demandLinesReady || !canEnterPoRate}
+                    disabled={createState.loading || isBusy("submitPo") || !commercial.vendorId || !demandLinesReady || !canEnterPoRate}
                     onClick={() => submitPo("demand")}
                     className="min-w-44"
                   >
@@ -879,12 +954,12 @@ export default function ProcurementSuitePage() {
                 ) : null}
               </div>
             ) : null}
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-left text-sm">
+            <ScrollTable label="Purchase demand table">
+              <table className="mp-table-skin w-full min-w-[920px] text-left text-sm">
                 <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wider text-[var(--ink-4)]">
                   <tr>
                     <th className="p-3">Select</th>
-                    <th>SKU / item</th>
+                    <th scope="col">SKU / item</th>
                     <th>Customer / order</th>
                     <th>Required</th>
                     <th>Status / ETA</th>
@@ -897,8 +972,9 @@ export default function ProcurementSuitePage() {
                       <td className="p-3">
                         <input
                           type="checkbox"
+                          aria-label={`Select ${row.sku}`}
                           disabled={
-                            !["open", "ordered", "partial_received"].includes(
+                            !["open", "partial_received"].includes(
                               row.status,
                             )
                           }
@@ -924,18 +1000,16 @@ export default function ProcurementSuitePage() {
                           {row.salesOrder?.orderNumber || row.sourceLineKey}
                         </p>
                       </td>
-                      <td>
+                      <td className="tabular-nums">
                         {row.quantity} {row.unit}
                         <p className="text-xs text-[var(--ink-4)]">
                           Received {row.receivedQuantity || 0}
                         </p>
                       </td>
                       <td>
-                        <span
-                          className={`rounded px-2 py-1 text-xs font-semibold ${statusClass(row.status)}`}
-                        >
+                        <StatusPill tone={statusTone(row.status)}>
                           {row.status.replaceAll("_", " ")}
-                        </span>
+                        </StatusPill>
                         <p className="mt-1 text-xs">
                           {row.expectedDate
                             ? new Date(row.expectedDate).toLocaleDateString(
@@ -951,6 +1025,7 @@ export default function ProcurementSuitePage() {
                             type="number"
                             min="0.0001"
                             step="0.01"
+                            aria-label={`Supplier rate for ${row.sku}`}
                             value={demandCosts[row.id] || ""}
                             onChange={(e) =>
                               setDemandCosts({ ...demandCosts, [row.id]: e.target.value })
@@ -974,6 +1049,11 @@ export default function ProcurementSuitePage() {
                       </td> : null}
                     </tr>
                   ))}
+                  {loading && !demands.length ? (
+                    <tr>
+                      <td colSpan={6} className="p-4"><Skeleton className="h-12 w-full" /></td>
+                    </tr>
+                  ) : null}
                   {!loading && !demands.length ? (
                     <tr>
                       <td colSpan={6}>
@@ -983,7 +1063,7 @@ export default function ProcurementSuitePage() {
                   ) : null}
                 </tbody>
               </table>
-            </div>
+            </ScrollTable>
             <Pager
               page={dPage}
               hasNext={Boolean(data?.purchaseDemandPage?.hasNext)}
@@ -1050,7 +1130,7 @@ export default function ProcurementSuitePage() {
               vendors={vendors}
               onSubmit={() => submitPo("direct")}
               disabled={
-                createState.loading || !commercial.vendorId || !directLinesReady || !canEnterPoRate
+                createState.loading || isBusy("submitPo") || !commercial.vendorId || !directLinesReady || !canEnterPoRate
               }
               title="Supplier and commercial terms"
             />
@@ -1125,11 +1205,9 @@ export default function ProcurementSuitePage() {
                   </p>
                 </div>
                 <div>
-                  <span
-                    className={`rounded px-2 py-1 text-xs font-semibold ${statusClass(po.status)}`}
-                  >
+                  <StatusPill tone={statusTone(po.status)}>
                     {po.status.replaceAll("_", " ")}
-                  </span>
+                  </StatusPill>
                   <p className="mt-1 text-xs">
                     ETA{" "}
                     {po.expectedDate
@@ -1172,7 +1250,7 @@ export default function ProcurementSuitePage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={cancelState.loading}
+                      disabled={cancelState.loading || isBusy(`cancel:${po.id}`)}
                       onClick={() => cancel(po)}
                     >
                       Cancel
@@ -1288,7 +1366,7 @@ export default function ProcurementSuitePage() {
               <Button
                 className="mt-4 w-full"
                 disabled={
-                  !activePo || !receiptLinesReady || receiveState.loading || !canEnterReceiptRate
+                  !activePo || !receiptLinesReady || receiveState.loading || isBusy("submitReceipt") || !canEnterReceiptRate
                 }
                 onClick={submitReceipt}
               >
@@ -1324,15 +1402,15 @@ export default function ProcurementSuitePage() {
               />
               <div className="mt-4">
                 <PoCommercial
-                  form={commercial}
-                  setForm={setCommercial}
+                  form={manualCommercial}
+                  setForm={setManualCommercial}
                   vendors={vendors}
                   compact
                   title="Supplier"
                 />
                 <ReceiptHeader
-                  form={receipt}
-                  setForm={setReceipt}
+                  form={manualReceipt}
+                  setForm={setManualReceipt}
                   locations={locations}
                 />
                 <label className="mt-3 block text-xs font-semibold text-[var(--ink-4)]">
@@ -1349,7 +1427,8 @@ export default function ProcurementSuitePage() {
                     !manualLinesReady ||
                     manualState.loading ||
                     !manualReason.trim() ||
-                    !commercial.vendorId ||
+                    !manualCommercial.vendorId ||
+                    isBusy("submitManual") ||
                     !canEnterManualRate
                   }
                   onClick={submitManual}
@@ -1358,7 +1437,7 @@ export default function ProcurementSuitePage() {
                     ? "Posting…"
                     : "Post manual GRN and clear"}
                 </Button>
-                {!commercial.vendorId && manualLines.length ? (
+                {!manualCommercial.vendorId && manualLines.length ? (
                   <p className="mt-2 text-xs font-semibold text-amber-700">
                     Select the supplier before posting.
                   </p>
@@ -1449,9 +1528,7 @@ export default function ProcurementSuitePage() {
                   ) : null}
                 </div>
                 <div className="flex items-center gap-2 self-start">
-                  <span className="rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-                    {grn.status}
-                  </span>
+<StatusPill tone="success">{grn.status}</StatusPill>
                   <Button asChild size="sm" variant="outline">
                     <Link href={`/dashboard/inventory/labels?grn=${grn.id}`}>
                       <Printer className="mr-2 h-3.5 w-3.5" />
@@ -1543,8 +1620,9 @@ export default function ProcurementSuitePage() {
                   </div>
                 </div>
               ) : null}
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[880px] text-left text-xs">
+              <div className="mt-3">
+              <ScrollTable label="Goods receipt lines" maxHeight="60vh">
+                <table className="mp-table-skin w-full min-w-[880px] text-left text-xs">
                   <thead className="text-[var(--ink-4)]">
                     <tr>
                       <th>SKU / item</th>
@@ -1604,6 +1682,7 @@ export default function ProcurementSuitePage() {
                     })}
                   </tbody>
                 </table>
+              </ScrollTable>
               </div>
             </article>
           ))}
@@ -1799,7 +1878,7 @@ function ProcurementOverview({ summary, loading, onTab }: any) {
     <section className="space-y-5 animate-in fade-in slide-in-from-bottom-1 duration-300">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[.18em] text-[#a2322e]">
+          <p className="text-xs font-bold uppercase tracking-[.18em] text-[#a2322e] dark:text-[var(--brand-700)]">
             Live operating overview
           </p>
           <h2 className="mt-1 font-display text-2xl font-bold">
@@ -1923,8 +2002,8 @@ function ProcurementOverview({ summary, loading, onTab }: any) {
             Open receiving
           </Button>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] text-left text-sm">
+        <ScrollTable label="Expected receipts">
+          <table className="mp-table-skin w-full min-w-[820px] text-left text-sm">
             <thead className="bg-[var(--bg-soft)] text-xs font-bold uppercase tracking-[.13em] text-[var(--ink-4)]">
               <tr>
                 <th className="px-5 py-3">Due</th>
@@ -1975,7 +2054,7 @@ function ProcurementOverview({ summary, loading, onTab }: any) {
               ) : null}
             </tbody>
           </table>
-        </div>
+        </ScrollTable>
       </div>
       <div className="grid gap-3 rounded-2xl border border-rose-100 bg-[linear-gradient(100deg,#fff8f5,#fffdf8)] p-4 text-xs text-[var(--ink-3)] sm:grid-cols-3">
         <p>
@@ -2091,6 +2170,7 @@ function ListToolbar({
         <Search className="absolute left-3 top-3 h-4 w-4 text-[var(--ink-4)]" />
         <Input
           className="pl-9"
+          aria-label="Search this list"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search code, supplier, SKU or document"
@@ -2166,11 +2246,9 @@ function PurchaseOrderRow({
         </p>
       </div>
       <div>
-        <span
-          className={`rounded px-2 py-1 text-xs font-semibold ${statusClass(po.status)}`}
-        >
+        <StatusPill tone={statusTone(po.status)}>
           {String(po.status || "unknown").replaceAll("_", " ")}
-        </span>
+        </StatusPill>
         <p className="mt-1 text-xs">
           ETA{" "}
           {po.expectedDate
@@ -2223,6 +2301,7 @@ function Pager({ page, hasNext, onPage }: any) {
         <Button
           size="icon"
           variant="outline"
+          aria-label="Previous page"
           disabled={!page}
           onClick={() => onPage(page - 1)}
         >
@@ -2231,6 +2310,7 @@ function Pager({ page, hasNext, onPage }: any) {
         <Button
           size="icon"
           variant="outline"
+          aria-label="Next page"
           disabled={!hasNext}
           onClick={() => onPage(page + 1)}
         >
@@ -2275,6 +2355,7 @@ function ProductPicker({ value, setValue, products, onAdd, inputRef }: any) {
             setValue("");
           }
         }}
+        aria-label="Search products to add"
         aria-expanded={value.trim().length >= 2}
         aria-controls="procurement-product-results"
         placeholder="Search SKU, design, alias or product"

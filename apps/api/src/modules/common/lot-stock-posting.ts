@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { ulid } from 'ulid';
-import { applyStockPostingTx, wholeDelta } from './stock-posting';
+import { applyStockPostingTx, lockStockRowTx, wholeDelta } from './stock-posting';
 
 type Tx = any;
 
@@ -62,6 +62,7 @@ export async function applyLotStockPostingTx(tx: Tx, input: LotStockPostingInput
   if (lot.status !== 'active') throw new BadRequestException('Selected inventory lot is not active');
   if (!location || location.status !== 'active') throw new BadRequestException('Selected stock location is not active');
 
+  await lockStockRowTx(tx, 'InventoryLotBalance', { lotId, locationId });
   const current = await tx.inventoryLotBalance.findUnique({ where: { lotId_locationId: { lotId, locationId } } }).catch(() => null);
   const before = {
     onHand: Number(current?.onHand || 0),
@@ -70,7 +71,12 @@ export async function applyLotStockPostingTx(tx: Tx, input: LotStockPostingInput
     hold: Number(current?.hold || 0),
     available: Number(current?.available || 0),
   };
-  if (input.requireAvailable && quantity > before.available) throw new BadRequestException('Cannot post more than the available lot quantity');
+  // At a location flagged "exclude from available stock" every free unit is held, so the
+  // stored available is 0 at lot, location and product level alike. Moving that stock out
+  // (transfer back, write-off) may still use its free quantity.
+  const heldLocation = holdsAllFreeStock(location);
+  const free = heldLocation ? Math.max(0, before.onHand - before.reserved - before.damaged) : before.available;
+  if (input.requireAvailable && quantity > free) throw new BadRequestException('Cannot post more than the available lot quantity');
   if (input.requireReserved && quantity > before.reserved) throw new BadRequestException('Cannot post more than the reserved lot quantity');
   if (input.requireOnHand && quantity > before.onHand) throw new BadRequestException('Cannot post more than the on-hand lot quantity');
 
@@ -86,6 +92,12 @@ export async function applyLotStockPostingTx(tx: Tx, input: LotStockPostingInput
     damaged: before.damaged + deltas.damaged,
     hold: before.hold + deltas.hold,
   };
+  let excludedLocationHold = 0;
+  if (heldLocation) {
+    excludedLocationHold = Math.max(0, next.onHand - next.reserved - next.damaged) - next.hold;
+    deltas.hold += excludedLocationHold;
+    next.hold += excludedLocationHold;
+  }
   if (Object.values(next).some((value) => value < 0)) throw new BadRequestException('Physical stock posting would create a negative lot bucket');
   if (next.reserved + next.damaged + next.hold > next.onHand) {
     throw new BadRequestException('Lot reserved, damaged and held stock cannot exceed lot on-hand stock');
@@ -118,8 +130,9 @@ export async function applyLotStockPostingTx(tx: Tx, input: LotStockPostingInput
     relatedQuoteId: input.relatedQuoteId || null,
     relatedChallanId: input.relatedChallanId || null,
     unitCost: input.unitCost ?? Number(lot.unitCost || 0),
-    metadata: { lotId, ...input.metadata },
-    requireAvailable: input.requireAvailable,
+    metadata: { lotId, ...input.metadata, ...(excludedLocationHold ? { excludedLocationHold } : {}) },
+    // The lot check above already covered a held location; the product's own available is 0 for it.
+    requireAvailable: heldLocation ? false : input.requireAvailable,
     requireReserved: input.requireReserved,
     requireOnHand: input.requireOnHand,
     effectiveAt: input.effectiveAt,
@@ -155,11 +168,75 @@ export async function applyLotStockPostingTx(tx: Tx, input: LotStockPostingInput
       unitCost: Number(input.unitCost ?? lot.unitCost ?? 0),
       reason: input.reason,
       createdBy: input.createdBy,
-      metadata: input.metadata || {},
+      metadata: { ...(input.metadata || {}), ...(excludedLocationHold ? { excludedLocationHold } : {}) },
+      // Business date when the posting carries one, so a period close counts it in its own period.
+      effectiveAt: input.effectiveAt ? new Date(input.effectiveAt) : null,
     },
   });
 
   return { idempotent: false, balance, ledger };
+}
+
+/**
+ * A location flagged `excludeFromAvailableStock` (other than the in-transit location,
+ * whose transfers post their own hold): everything there that is not reserved or
+ * damaged is kept on hold, so it never counts as available anywhere.
+ */
+export function holdsAllFreeStock(location: any) {
+  if (!location) return false;
+  if (String(location.type || '').toLowerCase() === 'transit') return false;
+  if (String(location.code || '').toUpperCase() === 'IN-TRANSIT') return false;
+  const metadata = location.metadata && typeof location.metadata === 'object' ? location.metadata : {};
+  return metadata.excludeFromAvailableStock === true;
+}
+
+/**
+ * Bring the holds at one location in line with its flag, lot by lot, through the normal
+ * posting (so lot, location and product books move together). Flag on: hold the free
+ * stock. Flag off: release the holds the flag put on (quality holds are left alone).
+ * Used when a location's flag changes and by scripts/backfill-excluded-location-holds.mjs.
+ */
+export async function syncExcludedLocationHoldsTx(tx: Tx, locationId: string, actorUserId: string, keyPrefix: string) {
+  const location = await tx.stockLocation.findUnique({ where: { id: locationId } });
+  if (!location) return [];
+  const held = holdsAllFreeStock(location);
+  const balances = await tx.inventoryLotBalance.findMany({ where: { locationId }, include: { lot: true } });
+  const changes: Array<{ lotId: string; productId: string; holdDelta: number }> = [];
+  for (const balance of balances as any[]) {
+    let holdDelta = 0;
+    if (held) {
+      holdDelta = Math.max(0, Number(balance.onHand) - Number(balance.reserved) - Number(balance.damaged) - Number(balance.hold));
+    } else {
+      const rows = await tx.$queryRaw`
+        SELECT COALESCE(SUM((metadata->>'excludedLocationHold')::int), 0)::int AS held
+        FROM "InventoryLotLedgerEntry" WHERE "lotId" = ${balance.lotId} AND "locationId" = ${locationId}`;
+      const flagHeld = Number((rows as any[])[0]?.held || 0);
+      holdDelta = -Math.min(Math.max(0, flagHeld), Number(balance.hold));
+    }
+    if (!holdDelta || balance.lot?.status !== 'active') continue;
+    changes.push({ lotId: balance.lotId, productId: balance.lot.productId, holdDelta });
+  }
+  if (!changes.length || location.status !== 'active') return changes;
+  for (const change of changes) {
+    await applyLotStockPostingTx(tx, {
+      productId: change.productId,
+      lotId: change.lotId,
+      locationId,
+      idempotencyKey: `${keyPrefix}:${locationId}:${change.lotId}`,
+      type: held ? 'excluded_location_hold' : 'excluded_location_release',
+      direction: held ? 'hold' : 'hold_release',
+      quantity: Math.abs(change.holdDelta),
+      // Flag on: the posting's own rule adds the hold (and records it as the flag's hold).
+      holdDelta: held ? 0 : change.holdDelta,
+      reason: held ? `${location.name} is excluded from available stock` : `${location.name} counts in available stock again`,
+      createdBy: actorUserId,
+      referenceType: 'StockLocation',
+      referenceId: locationId,
+      // On release the ledger records it as a negative flag hold so a later switch-on/off sums correctly.
+      metadata: held ? {} : { excludedLocationHold: change.holdDelta },
+    });
+  }
+  return changes;
 }
 
 function inferDirection(deltas: { onHand: number; reserved: number; damaged: number; hold: number }) {

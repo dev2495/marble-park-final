@@ -168,20 +168,39 @@ export function pricingQuantityFor(line: any) {
 
 export type PricedRow = ReturnType<typeof priceLines>['rows'][number];
 
+/** GST % of a line: an empty box is the standard 18%, never 0%. A typed 0 stays 0 (same rule as the server). */
+export function gstRateOf(line: any) {
+  const raw = line?.taxRate;
+  return raw === undefined || raw === null || String(raw).trim() === '' ? 18 : draftNumber(raw);
+}
+
+/** Line rates when a quote goes from "Without GST" back to a GST bill: each line gets its own GST rate back. */
+export function restoreGstRates(lines: Line[]): Line[] {
+  return lines.map((line) => (draftNumber(line.taxRate) > 0 ? line : { ...line, taxRate: line.gstTaxRate != null && draftNumber(line.gstTaxRate) > 0 ? draftNumber(line.gstTaxRate) : 18 }));
+}
+
 export function priceLines(lines: Line[], taxMode: TaxMode, discountType: DiscountMode, discountValue: unknown) {
   const raw = lines.map((line) => {
     const pricingQuantity = pricingQuantityFor(line);
-    const taxRate = taxMode === 'non_gst' ? 0 : draftNumber(line.taxRate ?? 18);
+    const taxRate = taxMode === 'non_gst' ? 0 : gstRateOf(line);
     return { _k: line._k, line, pricingQuantity, taxRate, ...retailLadder(line, pricingQuantity, taxRate) };
   });
   const draft = priceQuoteDraft(raw, discountType, discountValue);
+  // The pricing library refuses an entry (special rate above NRP, % above 100). The line keeps what was
+  // typed and shows the reason beside the field; MRP stays the product's own MRP, never zero.
+  const rejectionByKey = new Map<string, any>(raw.filter((entry: any) => entry.pricingError).map((entry: any) => [entry._k, entry.pricingError]));
+  const lineByKey = new Map(lines.map((line) => [line._k, line]));
   const rows = draft.rows.map((row: any) => {
+    const rejection = rejectionByKey.get(row._k) || null;
+    const ownMrp = draftNumber(lineByKey.get(row._k)?.mrpInclusive);
     const finalUnitPayable = row.pricingQuantity > 0 ? Number(row.grossAfterQuoteDiscount || 0) / row.pricingQuantity : 0;
-    const mrpMissing = !Number.isFinite(Number(row.mrpInclusive)) || Number(row.mrpInclusive) <= 0;
+    const mrpMissing = rejection ? ownMrp <= 0 : !Number.isFinite(Number(row.mrpInclusive)) || Number(row.mrpInclusive) <= 0;
     const mrpUnit = mrpUom(row.line);
-    const discountOnMrp = !mrpMissing && row.pricingQuantity > 0 ? (1 - finalUnitPayable / Number(row.mrpInclusive)) * 100 : 0;
+    const discountOnMrp = !mrpMissing && !rejection && row.pricingQuantity > 0 ? (1 - finalUnitPayable / Number(row.mrpInclusive)) * 100 : 0;
     return {
       ...row,
+      mrpInclusive: rejection ? ownMrp : row.mrpInclusive,
+      inputRejection: rejection as { code: string; field: string; message: string } | null,
       taxableValue: Number(row.taxableValue || 0),
       taxAmount: Number(row.taxAmount || 0),
       total: Number(row.grossLineTotal || 0),
@@ -189,7 +208,7 @@ export function priceLines(lines: Line[], taxMode: TaxMode, discountType: Discou
       mrpMissing,
       mrpUnit,
       discountOnMrp,
-      grossMrp: !mrpMissing ? row.pricingQuantity * Number(row.mrpInclusive) : 0,
+      grossMrp: !mrpMissing && !rejection ? row.pricingQuantity * Number(row.mrpInclusive) : 0,
     };
   });
   return { rows, discountError: draft.discountError };
@@ -197,24 +216,46 @@ export function priceLines(lines: Line[], taxMode: TaxMode, discountType: Discou
 
 export type LineIssue = { key: string; message: string; blocking: boolean };
 
+// Plain-English reason for a rejected entry, tied to the field that holds it.
+export function rejectionIssue(rejection: { code?: string; field?: string; message?: string }): LineIssue {
+  const field = String(rejection.field || '');
+  if (rejection.code === 'SPECIAL_ABOVE_NRP') return { key: 'special', message: 'Special rate is above NRP. Lower the special rate.', blocking: true };
+  if (field === 'specialInput' || field === 'specialMode') return { key: 'special', message: rejection.code === 'PERCENT_INVALID' ? 'Special discount must be 0 to 100%' : 'Check the special rate', blocking: true };
+  if (field === 'nrpInput' || field === 'nrpMode') return { key: 'nrpInput', message: rejection.code === 'PERCENT_INVALID' ? 'Discount must be 0 to 100%' : 'Check the NRP. It cannot be above the MRP.', blocking: true };
+  return { key: 'pricing', message: 'This price entry is not accepted. Check the NRP and special rate.', blocking: true };
+}
+
+/** Plain word for a unit code, for "counted in whole pieces" messages. */
+export function wholeUnitWord(unit: unknown) {
+  const code = String(unit || '').trim().toUpperCase();
+  const words: Record<string, string> = { PC: 'pieces', PCS: 'pieces', NOS: 'pieces', BOX: 'boxes', PACK: 'boxes', BAG: 'bags', KG: 'kg', SET: 'sets', PAIR: 'pairs', ROLL: 'rolls' };
+  return words[code] || (code ? code.toLowerCase() : 'pieces');
+}
+
 export function lineIssues(line: Line, row: any, quoteType: QuoteType): LineIssue[] {
   const issues: LineIssue[] = [];
   if (quoteTypeForProduct(line) !== quoteType) issues.push({ key: 'family', message: quoteType === 'tile' ? 'Belongs in a CP & Sanitary quote' : 'Belongs in a Tile & Chemical quote', blocking: true });
   const tileArea = isTileLine(line) && pricingBasis(line) === 'AREA';
   if (tileArea && Number(line.coveragePerPack || 0) <= 0) issues.push({ key: 'coverage', message: 'Box coverage missing in Tile Master', blocking: true });
   if (draftNumber(line.qty ?? line.quantity) <= 0) issues.push({ key: 'qty', message: tileArea ? 'Enter area' : isTileLine(line) && pricingBasis(line) === 'PIECE' ? 'Enter pieces' : 'Enter quantity', blocking: true });
+  // Quantities are stored whole; the server refuses a fraction, so say it here first (gaps lane).
+  else if (!tileArea && !Number.isInteger(draftNumber(isTileLine(line) && pricingBasis(line) === 'PIECE' && line.requestedPieces ? line.requestedPieces : line.qty ?? line.quantity))) {
+    issues.push({ key: 'qty', message: `Whole numbers only. This item is counted in whole ${wholeUnitWord(isTileLine(line) && pricingBasis(line) === 'PIECE' ? 'PC' : line.inventoryUom || line.unit)}.`, blocking: true });
+  }
+  const rejection = row?.inputRejection;
   if (row?.mrpMissing) issues.push({ key: 'mrp', message: 'MRP missing', blocking: true });
-  else if (row && Number(row.nrpInclusive || 0) <= 0 && draftNumber(line.qty ?? line.quantity) > 0) issues.push({ key: 'nrp', message: 'NRP missing', blocking: true });
+  else if (!rejection && row && Number(row.nrpInclusive || 0) <= 0 && draftNumber(line.qty ?? line.quantity) > 0) issues.push({ key: 'nrp', message: 'NRP missing', blocking: true });
+  if (rejection && !row?.mrpMissing && rejection.code !== 'QUANTITY_REQUIRED') issues.push(rejectionIssue(rejection));
   const nrpValue = Number(line.nrpInput || 0);
   const specialValue = Number(line.specialInput || 0);
   if (nrpValue < 0 || (line.nrpMode === 'PERCENT_OFF_MRP' && nrpValue > 100)) issues.push({ key: 'nrpInput', message: 'Discount must be 0 to 100%', blocking: true });
   if (specialValue < 0 || (line.specialMode === 'PERCENT_OFF_NRP' && specialValue > 100)) issues.push({ key: 'special', message: 'Special discount must be 0 to 100%', blocking: true });
-  if (line.specialMode === 'FIXED_SPECIAL_RATE' && row && specialValue > Number(row.nrpInclusive || 0)) issues.push({ key: 'special', message: 'Special rate is above NRP', blocking: true });
+  if (line.specialMode === 'FIXED_SPECIAL_RATE' && row && !rejection && specialValue > Number(row.nrpInclusive || 0)) issues.push({ key: 'special', message: 'Special rate is above NRP', blocking: true });
   if (line.specialMode === 'FIXED_SPECIAL_RATE' && specialValue <= 0) issues.push({ key: 'special', message: 'Enter the special rate', blocking: true });
   if (row && Number(line.floorPriceInclusive || 0) > 0 && Number(row.finalUnitPayable || 0) > 0 && Number(row.finalUnitPayable) + 0.005 < Number(line.floorPriceInclusive)) {
     issues.push({ key: 'floor', message: `Below floor ${money(line.floorPriceInclusive)} · owner approval`, blocking: false });
   }
-  return issues;
+  return issues.filter((issue, index) => issues.findIndex((other) => other.key === issue.key) === index);
 }
 
 // Payload sent to createQuote / updateQuote. The server re-prices every line
@@ -232,7 +273,9 @@ export function serializeLines(lines: Line[], rows: Map<string, any>, taxMode: T
       requestedArea: draftNumber(persisted.requestedArea),
       requestedPieces: draftNumber(persisted.requestedPieces),
       pricingVersion: 'unified_retail_v1',
-      taxRate: taxMode === 'non_gst' ? 0 : Number(line.taxRate ?? 18),
+      taxRate: taxMode === 'non_gst' ? 0 : gstRateOf(line),
+      // Remembered so switching a "Without GST" quote back to GST restores each line's own rate.
+      gstTaxRate: taxMode === 'non_gst' ? (line.gstTaxRate ?? (draftNumber(line.taxRate) > 0 ? draftNumber(line.taxRate) : 18)) : gstRateOf(line),
       priceRateBasis: pricingBasis(line),
       pricingUom: line.pricingUom,
       mrpInclusive: row.mrpInclusive,
@@ -266,7 +309,7 @@ export function commercialFingerprint(lines: Line[], taxMode: TaxMode, discountT
     discount: [discountType, draftNumber(discountValue)],
     lines: lines.filter((line) => !line._removed).map((line) => [
       line.productId, String(line.area || DEFAULT_AREA).trim(), draftNumber(line.qty ?? line.quantity), draftNumber(line.requestedArea), draftNumber(line.requestedPieces),
-      line.nrpMode || 'PERCENT_OFF_MRP', draftNumber(line.nrpInput), line.specialMode || 'NONE', draftNumber(line.specialInput), taxMode === 'non_gst' ? 0 : draftNumber(line.taxRate ?? 18),
+      line.nrpMode || 'PERCENT_OFF_MRP', draftNumber(line.nrpInput), line.specialMode || 'NONE', draftNumber(line.specialInput), taxMode === 'non_gst' ? 0 : gstRateOf(line),
     ]),
   });
 }

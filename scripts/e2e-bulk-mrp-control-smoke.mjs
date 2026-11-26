@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import ExcelJS from 'exceljs';
 import { PrismaClient } from '@prisma/client';
 import { ulid } from 'ulid';
+import { createApiClient } from './lib/api-client.mjs';
 
 if (process.env.ALLOW_MUTATING_ACCEPTANCE !== 'true' || !/acceptance/i.test(String(process.env.DATABASE_URL || ''))) {
   throw new Error('Run only against an isolated acceptance database with ALLOW_MUTATING_ACCEPTANCE=true.');
@@ -13,18 +14,7 @@ const stamp = Date.now().toString(36).toUpperCase();
 const cleanup = { productIds: [], userIds: [], batchIds: [] };
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
-async function gql(query, variables = {}, token, expectError = false) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const payload = await response.json();
-  const message = payload.errors?.map((row) => row.message).join('; ') || '';
-  if (expectError) return message;
-  if (!response.ok || message) throw new Error(message || `GraphQL ${response.status}`);
-  return payload.data;
-}
+const { gql } = createApiClient(API);
 
 async function login(email, password) {
   return (await gql('mutation($input:LoginInput!){login(input:$input){token}}', { input: { email, password } })).login.token;

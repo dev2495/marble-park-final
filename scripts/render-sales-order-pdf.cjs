@@ -1,6 +1,7 @@
 /* eslint-disable */
 const React = require('react');
 const { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } = require('@react-pdf/renderer');
+const { formatSellingQuantity } = require('../packages/pricing-contract/box-quantity');
 
 // Long codes have no spaces; a hair-space break point after each separator
 // (and inside very long runs) lets them wrap inside their column.
@@ -267,6 +268,15 @@ async function fetchOrder(id, apiUrl) {
     quote = null;
   }
 
+  // Real quantities sent per order line (selling units), for the "Sent" and "Bal" columns.
+  let dispatched = [];
+  try {
+    const sentData = await graphqlRequest(apiUrl, `query SalesOrderPdfDispatched($id: ID!) { salesOrderDispatchedQuantities(salesOrderId: $id) }`, { id }, token);
+    dispatched = Array.isArray(sentData?.salesOrderDispatchedQuantities) ? sentData.salesOrderDispatchedQuantities : [];
+  } catch {
+    dispatched = [];
+  }
+
   return {
     order,
     quote,
@@ -277,12 +287,42 @@ async function fetchOrder(id, apiUrl) {
     // Stock held for this order per product: quantity reserved against quantity still on backorder.
     reservations: Array.isArray(order.reservations) ? order.reservations : null,
     challans: [],
+    dispatched,
   };
 }
 
 function buildDocument(payload, requestUrl) {
   const e = React.createElement;
-  const { order, quote, customer, owner, settings, products, reservations, challans, logoData } = payload;
+  const { order, quote, customer, owner, settings, products, reservations, challans, dispatched: sentRows, logoData } = payload;
+  // Sent per order line (by line key), and per product as a fallback for older lines without a key.
+  const sentByLineKey = new Map();
+  const sentByProduct = new Map();
+  for (const sent of sentRows || []) {
+    const quantity = Number(sent.sentQuantity || 0);
+    if (sent.lineKey) sentByLineKey.set(String(sent.lineKey), (sentByLineKey.get(String(sent.lineKey)) || 0) + quantity);
+    const productKey = sent.productId || sent.sku;
+    if (productKey) sentByProduct.set(productKey, (sentByProduct.get(productKey) || 0) + quantity);
+  }
+  // Pieces per box per order line, as the API counts stock (boxed tiles only; else 1).
+  const factorByLineKey = new Map();
+  const factorByProduct = new Map();
+  // Tiles sold by the piece (factor 1) still read in boxes of piecesPerBox.
+  const readingByLineKey = new Map();
+  const readingByProduct = new Map();
+  for (const sent of sentRows || []) {
+    if (sent.soldBy) {
+      const reading = { piecesPerBox: sent.piecesPerBox, soldBy: sent.soldBy };
+      if (sent.lineKey) readingByLineKey.set(String(sent.lineKey), reading);
+      if (sent.productId) readingByProduct.set(sent.productId, reading);
+    }
+    const factor = Number(sent.piecesPerUnit || 0);
+    if (!(factor > 1)) continue;
+    if (sent.lineKey) factorByLineKey.set(String(sent.lineKey), factor);
+    if (sent.productId) factorByProduct.set(sent.productId, factor);
+  }
+  for (const reservation of reservations || []) {
+    if (Number(reservation.factor || 0) > 1 && reservation.productId) factorByProduct.set(reservation.productId, Number(reservation.factor));
+  }
   const productMap = new Map((products || []).map((product) => [product.id, product]));
   const reservationMap = new Map();
   for (const reservation of reservations || []) {
@@ -316,15 +356,24 @@ function buildDocument(payload, requestUrl) {
     const key = line.productId || line.sku || line.name;
     const qty = qtyOf(line);
     const pricing = linePricing(line);
-    const dispatched = dispatchedMap.get(key) || 0;
+    const lineKey = line.lineKey || line.key;
+    const dispatched = (lineKey && sentByLineKey.has(String(lineKey)) ? sentByLineKey.get(String(lineKey))
+      : sentByProduct.get(line.productId || line.sku) ?? dispatchedMap.get(key)) || 0;
     const remaining = Math.max(0, qty - dispatched);
+    // Boxed tiles: whole boxes, a broken box as "+ N pc"; everything else as before.
+    const unitInfo = { piecesPerUnit: (lineKey && factorByLineKey.get(String(lineKey))) || factorByProduct.get(line.productId) || 1, orderUnit: line.unit, unit: line.unit || 'PC', ...((lineKey && readingByLineKey.get(String(lineKey))) || readingByProduct.get(line.productId) || {}) };
+    const boxedQty = (value) => {
+      const formatted = formatSellingQuantity(value, unitInfo);
+      return formatted.isBoxed ? `${formatted.boxes}${formatted.loosePieces ? ` + ${formatted.loosePieces} pc` : ''}` : String(Number(Number(value || 0).toFixed(2)));
+    };
+    const boxInfo = formatSellingQuantity(qty, unitInfo);
     const stock = line.productId ? reservationMap.get(line.productId) : null;
     // Without reservation data (older API) nothing is claimed as reserved.
     const stockLabel = !line.productId ? 'Ready'
       : remaining <= 0 && dispatched > 0 ? 'Dispatched'
       : !stock ? 'Pending'
       : stock.waiting <= 0 && stock.reserved > 0 ? 'Reserved'
-      : stock.reserved > 0 ? `Part: ${Number(stock.reserved.toFixed(2))} held`
+      : stock.reserved > 0 ? `Part: ${boxedQty(stock.reserved)} held`
       : 'Awaiting stock';
     const ready = stockLabel === 'Reserved' || stockLabel === 'Ready' || stockLabel === 'Dispatched';
     const src = imageSrc(line, product, requestUrl);
@@ -333,17 +382,17 @@ function buildDocument(payload, requestUrl) {
       e(View, { style: styles.descCol },
         e(Text, { style: { ...styles.td, fontWeight: 900 } }, line.name || product?.name || 'Item'),
         e(Text, { style: styles.sku, hyphenationCallback: codeBreaks }, breakable(line.sku || product?.sku || '')),
-        e(Text, { style: styles.meta }, [line.finish || product?.finish, line.dimensions || product?.dimensions, line.unit || product?.unit].filter(Boolean).join(' | ')),
+        e(Text, { style: styles.meta }, [line.finish || product?.finish, line.dimensions || product?.dimensions, boxInfo.isBoxed ? `${boxInfo.unitLabel} (${boxInfo.piecesPerBox} pc/box, ${boxInfo.piecesLabel})` : line.unit || product?.unit].filter(Boolean).join(' | ')),
         pricing.modern && pricing.unit !== String(line.unit || '').toUpperCase() ? e(Text, { style: styles.meta }, `Billed: ${quantityText(pricing.billed)} ${pricing.unit}`) : null,
       ),
-      e(Text, { style: [styles.td, styles.qtyCol] }, String(qty)),
+      e(Text, { style: [styles.td, styles.qtyCol] }, boxInfo.isBoxed ? boxedQty(qty) : String(qty)),
       e(Text, { style: [styles.td, styles.moneyCol] }, pricing.modern
         ? `${pricing.mrp == null ? '-' : money(pricing.mrp, true)}\n${money(pricing.rate, true)}\n/${pricing.unit}`
         : `${pricing.mrp == null ? '-' : money(pricing.mrp)}\n${money(pricing.rate)}`),
       e(Text, { style: [styles.td, styles.moneyCol] }, money(pricing.amount, pricing.modern)),
       e(Text, { style: [styles.td, styles.statusCol, ready ? styles.statusReady : styles.statusBackorder] }, stockLabel),
-      e(Text, { style: [styles.td, styles.qtyCol] }, String(dispatched)),
-      e(Text, { style: [styles.td, styles.qtyCol] }, String(remaining)),
+      e(Text, { style: [styles.td, styles.qtyCol] }, boxInfo.isBoxed ? boxedQty(dispatched) : String(dispatched)),
+      e(Text, { style: [styles.td, styles.qtyCol] }, boxInfo.isBoxed ? boxedQty(remaining) : String(remaining)),
     );
   };
 

@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { stockStatus, stockThreshold } from '../common/stock-status';
+import { mrpPerBaseUnit } from '../common/stock-units';
+import { isQuoteConfirmed, isQuoteDraft, isQuoteSent, quoteValue } from './quote-value';
+import { receivablePosition } from '../receivables/receivable-position';
 
 export type ReportFilters = { preset?: string; from?: string; to?: string; brand?: string; category?: string; ownerId?: string; locationId?: string; tab?: string; days?: string };
 type Viewer = { id: string; role: string; canCost: boolean };
@@ -89,12 +92,7 @@ export class OwnerReportsService {
     const category = String(filters.category || '').toLowerCase();
     return rows.map((quote) => {
       const lines: any[] = Array.isArray(quote.lines) ? quote.lines : [];
-      let taxable = 0; let gst = 0; let mrpValue = 0; let maxDisc = 0;
-      lines.forEach((line) => {
-        const value = n(line.taxableValue); taxable += value; gst += n(line.taxAmount);
-        const mrp = n(line.mrpValueInclusive);
-        if (mrp > 0) { mrpValue += mrp; maxDisc = Math.max(maxDisc, 1 - value / mrp); }
-      });
+      const { taxable, gst, mrpValue, maxDisc } = quoteValue(quote);
       const when: Date = quote.sentAt || quote.createdAt;
       return {
         id: quote.id, number: quote.quoteNumber, when, date: dateLabel(when), customer: quote.customer?.name || '', arch: quote.architect?.name || quote.architectName || '', architectId: quote.architectId,
@@ -106,9 +104,9 @@ export class OwnerReportsService {
     }).filter((quote) => (!brand || quote.lines.some((line) => String(line.brand || '').toLowerCase() === brand)) && (!category || quote.lines.some((line) => String(line.category || '').toLowerCase() === category)));
   }
 
-  private isConfirmed(quote: any) { return ['confirmed', 'won', 'ordered', 'partially_ordered', 'closed'].includes(quote.status) || Boolean(quote.confirmedAt); }
-  private isDraft(quote: any) { return ['draft', 'incomplete_pricing'].includes(quote.status); }
-  private isSent(quote: any) { return !this.isDraft(quote) && !['cancelled', 'superseded'].includes(quote.status); }
+  private isConfirmed(quote: any) { return isQuoteConfirmed(quote); }
+  private isDraft(quote: any) { return isQuoteDraft(quote); }
+  private isSent(quote: any) { return isQuoteSent(quote); }
 
   private salesAgg(quotes: any[]) {
     const sent = quotes.filter((quote) => this.isSent(quote));
@@ -141,7 +139,7 @@ export class OwnerReportsService {
   // ---- Stock ----
   private async loadStock(filters: ReportFilters, viewer: Viewer) {
     const [products, balances, lotRows, ledger, policies, samples]: any[] = await Promise.all([
-      this.prisma.product.findMany({ where: { status: 'active' }, select: { id: true, sku: true, internalCode: true, name: true, brand: true, category: true, finish: true, dimensions: true, defaultMrpInclusive: true, media: true, tileDesignMaster: { select: { name: true } }, baseUom: true } }),
+      this.prisma.product.findMany({ where: { status: 'active' }, select: { id: true, sku: true, internalCode: true, name: true, brand: true, category: true, finish: true, dimensions: true, defaultMrpInclusive: true, media: true, tileDesignMaster: { select: { name: true } }, baseUom: true, unit: true, salesUom: true, priceUom: true, piecesPerPack: true, coveragePerPack: true } }),
       this.prisma.inventoryBalance.findMany({ select: { productId: true, lowStockThreshold: true, reorderPoint: true } }),
       (this.prisma as any).inventoryLotBalance.findMany({ where: { lot: { status: 'active' }, ...(filters.locationId ? { locationId: filters.locationId } : {}) }, include: { lot: { select: { id: true, productId: true, lotNumber: true, unitCost: true, receivedAt: true, sourceType: true } }, location: { select: { id: true, name: true, code: true } } } }),
       (this.prisma as any).inventoryLotLedgerEntry.findMany({ where: { direction: 'out', createdAt: { gte: new Date(Date.now() - 400 * DAY) } }, select: { productId: true, quantity: true, createdAt: true, type: true }, take: 50000 }),
@@ -153,7 +151,8 @@ export class OwnerReportsService {
     const sampleSet = new Set<string>(samples.map((row: any) => row.productId));
     const stock = new Map<string, any>();
     products.forEach((product: any) => stock.set(product.id, {
-      ...product, code: product.internalCode || product.sku, mrp: n(product.defaultMrpInclusive), onHand: 0, available: 0, reserved: 0, hold: 0, damaged: 0, valueCost: 0, costedUnits: 0, missingCost: 0, firstReceived: null, lastReceived: null, lots: [], everStocked: false, out30: 0, lastOut: null,
+      // Stock is counted in base units (pieces for boxed tiles); MRP is per price unit (box, sq ft...). Value per stock unit, GST included.
+      ...product, code: product.internalCode || product.sku, mrp: round(mrpPerBaseUnit(product) * 10000) / 10000, onHand: 0, available: 0, reserved: 0, hold: 0, damaged: 0, valueCost: 0, costedUnits: 0, missingCost: 0, firstReceived: null, lastReceived: null, lots: [], everStocked: false, out30: 0, lastOut: null,
     }));
     lotRows.forEach((row: any) => {
       const item = stock.get(row.lot.productId); if (!item) return;
@@ -389,8 +388,10 @@ export class OwnerReportsService {
       this.prisma.customerPayment.findMany({ where: { receivedAt: where, voidedAt: null }, select: { amount: true, receivedAt: true } } as any),
       (this.prisma as any).goodsReceiptNote.findMany({ where: { createdAt: where }, select: { id: true, grnNumber: true, vendorName: true, createdAt: true, lines: { select: { acceptedQuantity: true, unitCost: true } } } }).catch(() => []),
       this.loadQuotes(range.from, range.to, filters, viewer),
-      this.prisma.salesInvoice.aggregate({ where: { voidedAt: null }, _sum: { openAmount: true } } as any),
+      receivablePosition(this.prisma),
     ]);
+    const refunds = await (this.prisma as any).customerLedgerEntry.aggregate({ where: { sourceType: { in: ['CreditNoteRefund', 'AdvanceRefund'] }, effectiveAt: where }, _sum: { debit: true }, _count: { _all: true } });
+    const refunded = n(refunds._sum?.debit);
     const sum = (rows: any[], key: string) => rows.reduce((t, r) => t + n(r[key]), 0);
     const a = this.salesAgg(confirmed);
     const received = viewer.canCost ? grns.reduce((t: number, grn: any) => t + (grn.lines || []).reduce((x: number, line: any) => x + n(line.acceptedQuantity) * n(line.unitCost), 0), 0) : null;
@@ -401,8 +402,8 @@ export class OwnerReportsService {
       notices: !orders.length && !invoices.length ? [{ level: 'info', text: 'No orders or invoices are recorded in the system yet, so confirmed quotes are the best view of sales for now. These figures fill in as soon as orders and invoices are created here.' }] : [],
       kpis: [
         { key: 'conf', label: 'Confirmed quotes', value: a.conf, format: 'inr', sub: `${a.confN} quotes`, href: '/dashboard/reports/sales-quotes' }, { key: 'orders', label: 'Orders booked', value: sum(orders, 'totalAmount'), format: 'inr', sub: `${orders.length} orders` },
-        { key: 'inv', label: 'Invoiced', value: sum(invoices, 'totalAmount'), format: 'inr', sub: `${invoices.length} invoices` }, { key: 'paid', label: 'Payments received', value: sum(payments, 'amount'), format: 'inr', sub: `${payments.length} receipts` },
-        { key: 'due', label: 'Still to collect', value: n(openInvoices._sum?.openAmount), format: 'inr', sub: 'open on invoices' }, ...(received == null ? [] : [{ key: 'grn', label: 'Purchases received', value: received, format: 'inr', sub: `${grns.length} GRNs at cost` }]),
+        { key: 'inv', label: 'Invoiced', value: sum(invoices, 'totalAmount'), format: 'inr', sub: `${invoices.length} invoices` }, { key: 'paid', label: 'Payments received', value: round(sum(payments, 'amount') - refunded), format: 'inr', sub: refunded > 0 ? `${payments.length} receipts, less ${inr(refunded)} refunded in cash` : `${payments.length} receipts` },
+        { key: 'due', label: 'Still to collect', value: openInvoices.receivable, format: 'inr', sub: 'open on invoices, less customer credit' }, ...(received == null ? [] : [{ key: 'grn', label: 'Purchases received', value: received, format: 'inr', sub: `${grns.length} GRNs at cost` }]),
       ],
       charts: [
         { key: 'flow', type: 'bars', span: 2, title: 'Sales flow, by day', sub: 'Confirmed quotes, orders and invoices', kind: 'inr', cats: buckets.map((b) => b.label), series: [{ name: 'Confirmed quotes', color: 'c4', data: buckets.map((b) => round(confirmed.filter((q: any) => this.isConfirmed(q) && inB(b, q.when)).reduce((t: number, q: any) => t + q.taxable, 0))) }, { name: 'Orders', color: 'c1', data: buckets.map((b) => round(orders.filter((o: any) => inB(b, o.createdAt)).reduce((t: number, o: any) => t + n(o.totalAmount), 0))) }, { name: 'Invoiced', color: 'c2', data: buckets.map((b) => round(invoices.filter((i: any) => inB(b, i.issueDate)).reduce((t: number, i: any) => t + n(i.totalAmount), 0))) }] },
@@ -451,10 +452,10 @@ export class OwnerReportsService {
       let cumulative = 0;
       const rows = top([...stocked].sort((a: any, b: any) => b.valueMrp - a.valueMrp), 100).map((item: any) => { cumulative += item.valueMrp; return { id: item.id, sku: item.code, name: String(item.name || '').trim() || item.code, brand: item.brand, cat: item.category, onHand: item.onHand, mrp: item.mrp, valueMrp: round(item.valueMrp), cost: item.valueCost, cum: t.mrp ? cumulative / t.mrp : 0, href: `/dashboard/products?product=${item.id}` }; });
       charts = [{ key: 'top', type: 'hbar', span: 'full', title: 'Top 15 items by value at MRP', kind: 'inr', rowH: 30, rows: top(rows, 15).map((r) => ({ label: r.name, v: r.valueMrp })) }];
-      table = { title: 'Top 100 items', exportName: 'top-items-by-value', columns: [{ key: 'sku', label: 'Code', mono: true }, { key: 'name', label: 'Product', sub: 'brand' }, { key: 'cat', label: 'Category' }, { key: 'onHand', label: 'On hand', kind: 'num' }, { key: 'mrp', label: 'MRP', kind: 'inr' }, { key: 'valueMrp', label: 'Value at MRP', kind: 'inr' }, ...(viewer.canCost ? [{ key: 'cost', label: 'At cost', kind: 'inr' }] : []), { key: 'cum', label: 'Cumulative', kind: 'pct' }], rows };
+      table = { title: 'Top 100 items', exportName: 'top-items-by-value', columns: [{ key: 'sku', label: 'Code', mono: true }, { key: 'name', label: 'Product', sub: 'brand' }, { key: 'cat', label: 'Category' }, { key: 'onHand', label: 'On hand', kind: 'num' }, { key: 'mrp', label: 'MRP per stock unit', kind: 'inr' }, { key: 'valueMrp', label: 'Value at MRP', kind: 'inr' }, ...(viewer.canCost ? [{ key: 'cost', label: 'At cost', kind: 'inr' }] : []), { key: 'cum', label: 'Cumulative', kind: 'pct' }], rows };
     } else if (tab === 'hold') {
       const rows = stocked.filter((item: any) => item.hold + item.damaged > 0).map((item: any) => ({ id: item.id, sku: item.code, name: item.name || item.code, brand: item.brand, hold: item.hold, damaged: item.damaged, mrp: item.mrp, tied: round((item.hold + item.damaged) * item.mrp), href: `/dashboard/products?product=${item.id}` }));
-      table = { title: 'Held and damaged', exportName: 'hold-damaged', empty: 'Nothing is on hold or damaged.', columns: [{ key: 'sku', label: 'Code', mono: true }, { key: 'name', label: 'Product', sub: 'brand' }, { key: 'hold', label: 'On hold', kind: 'num' }, { key: 'damaged', label: 'Damaged', kind: 'num' }, { key: 'mrp', label: 'MRP', kind: 'inr' }, { key: 'tied', label: 'Value tied up', kind: 'inr' }], rows };
+      table = { title: 'Held and damaged', exportName: 'hold-damaged', empty: 'Nothing is on hold or damaged.', columns: [{ key: 'sku', label: 'Code', mono: true }, { key: 'name', label: 'Product', sub: 'brand' }, { key: 'hold', label: 'On hold', kind: 'num' }, { key: 'damaged', label: 'Damaged', kind: 'num' }, { key: 'mrp', label: 'MRP per stock unit', kind: 'inr' }, { key: 'tied', label: 'Value tied up', kind: 'inr' }], rows };
     } else if (tab === 'source') {
       const lots = stocked.flatMap((item: any) => item.lots.filter((lot: any) => lot.qty > 0).map((lot: any) => ({ source: lot.sourceType === 'opening_stock' ? 'Opening stock' : lot.sourceType === 'manual_grn' ? 'Manual GRN' : 'GRN', units: lot.qty, mrp: lot.qty * item.mrp })));
       const rows = ['Opening stock', 'GRN', 'Manual GRN'].map((name) => { const list = lots.filter((lot: any) => lot.source === name); return { name, lots: list.length, units: list.reduce((s: number, l: any) => s + l.units, 0), mrp: round(list.reduce((s: number, l: any) => s + l.mrp, 0)) }; });
@@ -469,7 +470,7 @@ export class OwnerReportsService {
       tabs, tab, notices: this.costNotice(t),
       empty: stocked.length ? null : { title: 'No stock posted yet', body: 'Post opening stock or receive a GRN and values appear here.', href: '/dashboard/inventory/opening-stock', action: 'Open Opening Stock' },
       kpis: [
-        { key: 'units', label: 'Units on hand', value: t.units, format: 'num', sub: `${units(t.skus)} items in stock` }, { key: 'mrp', label: 'Stock at MRP', value: t.mrp, format: 'inr', sub: t.noMrpItems ? `before GST · ${units(t.noMrpItems)} items have no MRP` : 'before GST' },
+        { key: 'units', label: 'Units on hand', value: t.units, format: 'num', sub: `${units(t.skus)} items in stock` }, { key: 'mrp', label: 'Stock at MRP', value: t.mrp, format: 'inr', sub: t.noMrpItems ? `GST included · ${units(t.noMrpItems)} items have no MRP` : 'GST included' },
         ...(viewer.canCost ? [{ key: 'cost', label: 'Stock at cost', value: t.cost, format: 'inr', sub: `Costs entered for ${pct(t.coverage)} of units`, warn: t.missingUnits > 0 }] : []),
         { key: 'cat', label: 'Catalogue only', value: items.filter((item: any) => item.status === 'Catalogue only').length, format: 'num', sub: 'never stocked · no alerts' }, { key: 'held', label: 'Held / damaged', value: t.held, format: 'num', sub: 'units not saleable' },
       ],
@@ -578,7 +579,7 @@ export class OwnerReportsService {
       empty: rows.length ? null : { title: `Everything in stock was asked for in the last ${days} days`, body: 'Try a shorter period, or check again later.' },
       kpis: [
         { key: 'n', label: `Not asked in ${days} days`, value: rows.length, format: 'num', sub: `${units(rows.reduce((sum: number, row: any) => sum + row.onHand, 0))} units in stock` },
-        { key: 'mrp', label: 'Value at MRP', value, format: 'inr', sub: 'tied up, before GST' },
+        { key: 'mrp', label: 'Value at MRP', value, format: 'inr', sub: 'tied up, GST included' },
         ...(viewer.canCost ? [{ key: 'cost', label: 'At cost', value: rows.reduce((sum: number, row: any) => sum + n(row.cost), 0), format: 'inr', sub: `Costs entered for ${pct(total.coverage)} of units`, warn: total.missingUnits > 0 }] : []),
         { key: 'share', label: 'Share of stock', value: total.mrp ? value / total.mrp : null, format: 'pct', sub: 'by value at MRP' },
         { key: 'never', label: 'Never asked', value: never.length, format: 'num', sub: 'no request on record' },

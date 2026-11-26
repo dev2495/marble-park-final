@@ -5,6 +5,7 @@ import { ulid } from 'ulid';
 import { nextDocumentNumber } from '../common/sequence';
 import { StoredImageService } from '../assets/stored-image.service';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
+import { fillBackordersTx } from '../common/backorder-fill';
 import { tilePricingChoice } from '../common/tile-pricing-unit';
 
 export interface CreateProductInput {
@@ -1156,7 +1157,8 @@ export class ProductsService {
         summary: `Registered display ${internalCode}`, metadata: { productId: product.id, sampleNumber, sourceLotId: input.sourceLotId || null, issuedQuantity } } });
       await tx.displaySampleEvent.create({ data: { id: ulid(), displaySampleId: sample.id, action: issuedQuantity > 0 ? 'issue_to_display' : 'register', toStatus: 'active', quantity: issuedQuantity, reason: issuedQuantity > 0 ? 'Stock issued to showroom display' : 'Non-stock display asset registered', createdBy: actorUserId, metadata: { sourceLotId: input.sourceLotId || null } } });
       return tx.displaySample.findUnique({ where: { id: sample.id }, include: { product: true } });
-    });
+      // Strict mode like every other stock posting (stock lane, B3).
+    }, { isolationLevel: 'Serializable', timeout: 20000 });
   }
 
   async updateDisplaySample(id: string, input: any, actorUserId: string) {
@@ -1241,8 +1243,11 @@ export class ProductsService {
       });
       await tx.displaySampleEvent.create({ data: { id: ulid(), displaySampleId: id, action, fromStatus: existing.status, toStatus, quantity: action === 'return_to_stock' ? returnQuantity : 0, reason, createdBy: actorUserId, metadata: { condition: sample.condition, sourceLotId: existing.sourceLotId } } });
       await tx.auditEvent.create({ data: { id: ulid(), actorUserId, action: `display_sample.${action}`, entityType: 'DisplaySample', entityId: id, summary: `${action.replaceAll('_', ' ')} for display ${existing.internalCode}`, metadata: { reason, fromStatus: existing.status, toStatus, returnQuantity } } });
+      // A display piece back in stock goes to waiting orders first (stock lane, B9).
+      if (action === 'return_to_stock') await fillBackordersTx(tx, existing.productId, { actorUserId, source: 'display_return' });
       return sample;
-    });
+      // Strict mode like every other stock posting (stock lane, B3).
+    }, { isolationLevel: 'Serializable', timeout: 20000 });
   }
 
   private async assertCodeAvailable(normalizedCode: string, productId: string, displaySampleId?: string) {

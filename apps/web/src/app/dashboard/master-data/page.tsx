@@ -19,10 +19,12 @@ const modules = [
 export default function MasterDataIndex() {
   return (
     <div className="space-y-7 pb-10">
-      <section className="mp-card rounded-r6 border border-[var(--line)] p-6">
-        <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--ink-4)]">Master data modules</p>
-        <h1 className="mt-3 font-display text-4xl font-bold tracking-[-0.04em] text-[var(--ink)]">Every reusable list has one clean control room.</h1>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">Product creation, Excel imports, vendors, customers, tile rules and settings are separated so role permissions stay clean and sales users only see quote-ready data.</p>
+      <section className="mp-page-header">
+        <div className="min-w-0">
+        <p className="mp-eyebrow">Master data modules</p>
+        <h1 className="mp-page-title">Every reusable list has one clean control room.</h1>
+        <p className="mp-page-sub">Product creation, Excel imports, vendors, customers, tile rules and settings are separated so role permissions stay clean and sales users only see quote-ready data.</p>
+        </div>
       </section>
       <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {modules.map(([title, body, href, Icon]: any) => (

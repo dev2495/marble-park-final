@@ -10,6 +10,10 @@ import { CheckCircle2, ExternalLink, ImagePlus, Loader2, Search } from 'lucide-r
 import { QueryErrorBanner } from '@/components/query-state';
 import { MasterQuickAdd, QuickSkuButton, inputClass, primaryButton, secondaryButton } from '@/components/quick-add/quick-add';
 import { describeApolloError } from '@/lib/apollo-errors';
+import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 const QUEUE = gql`query FollowUpQueue { followUpQueue me { id effectivePermissions } }`;
@@ -89,6 +93,10 @@ export default function FollowUpsPage() {
 
   const fields = selected ? (FIELDS[selected.entityType] || []) : [];
   const changed = selected ? Object.fromEntries(Object.entries(values).filter(([key, value]) => String(value ?? '') !== String(selected.values?.[key] ?? ''))) : {};
+  // Typed details are not lost by a link, a closed tab, or picking another record without asking first.
+  useUnsavedChanges(Object.keys(changed).length > 0, 'You typed details that are not saved yet. Leave and lose them?');
+  const [pendingKey, setPendingKey] = useState('');
+  const chooseRecord = (key: string) => { if (selected && key !== keyOf(selected) && Object.keys(changed).length) setPendingKey(key); else setSelectedKey(key); };
   const emptyRequired = fields.filter((field) => !OPTIONAL.has(field.key) && !(field.pricing && !canPrice) && String(values[field.key] ?? '').trim() === '');
 
   const save = async (markComplete: boolean) => {
@@ -119,11 +127,11 @@ export default function FollowUpsPage() {
 
   return (
     <div className="space-y-4 pb-10">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-4)]">People & data</p>
-          <h1 className="mt-1 font-display text-3xl font-bold text-[var(--ink)]">Follow-ups</h1>
-          <p className="mt-1 max-w-2xl text-sm text-[var(--ink-3)]">Everything added in a hurry at the counter, with what it still misses. Pick a record, fill the highlighted fields, and mark it complete.</p>
+      <header className="mp-page-header">
+        <div className="min-w-0">
+          <p className="mp-eyebrow">People & data</p>
+          <h1 className="mp-page-title">Follow-ups</h1>
+          <p className="mp-page-sub">Everything added in a hurry at the counter, with what it still misses. Pick a record, fill the highlighted fields, and mark it complete.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <QuickSkuButton onDone={() => refetch()} />
@@ -149,13 +157,9 @@ export default function FollowUpsPage() {
         <select aria-label="Sort" value={sort} onChange={(event) => setSort(event.target.value as any)} className={cn(inputClass, 'h-9 w-auto')}><option value="oldest">Oldest first</option><option value="newest">Newest first</option><option value="most">Most missing</option></select>
       </div>
 
-      {loading && !items.length ? <p className="flex items-center gap-2 text-sm text-[var(--ink-4)]"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p> : null}
-      {!loading && !items.length ? (
-        <div className="rounded-r5 border border-dashed border-[var(--line-strong)] bg-[var(--surface)] px-6 py-14 text-center">
-          <CheckCircle2 className="mx-auto h-8 w-8 text-[var(--success)]" />
-          <h2 className="mt-3 font-display text-xl font-bold text-[var(--ink)]">Nothing waiting</h2>
-          <p className="mt-1 text-sm text-[var(--ink-3)]">Customers, SKUs and masters added with Quick add will appear here until their details are complete.</p>
-        </div>
+      {loading && !items.length ? <div role="status" aria-label="Loading follow-ups" className="grid gap-4 lg:grid-cols-[minmax(18rem,26rem)_minmax(0,1fr)]"><div className="space-y-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div><Skeleton className="h-72 w-full" /></div> : null}
+      {!loading && !error && !items.length ? (
+        <EmptyState icon={CheckCircle2} className="rounded-r5 border border-dashed border-[var(--line-strong)] bg-[var(--surface)]" title="Nothing waiting" description="Customers, SKUs and masters added with Quick add will appear here until their details are complete." />
       ) : null}
 
       {items.length ? (
@@ -165,7 +169,7 @@ export default function FollowUpsPage() {
               const active = selected && keyOf(item) === keyOf(selected);
               return (
                 <li key={keyOf(item)}>
-                  <button type="button" onClick={() => setSelectedKey(keyOf(item))} aria-current={active} className={cn('w-full rounded-r4 border px-3 py-2.5 text-left transition', active ? 'border-[var(--brand-500)] bg-[var(--surface)] shadow-sm-soft' : 'border-[var(--line)] bg-[var(--surface)] hover:border-[var(--line-strong)]')}>
+                  <button type="button" onClick={() => chooseRecord(keyOf(item))} aria-current={active} className={cn('w-full rounded-r4 border px-3 py-2.5 text-left transition', active ? 'border-[var(--brand-500)] bg-[var(--surface)] shadow-sm-soft' : 'border-[var(--line)] bg-[var(--surface)] hover:border-[var(--line-strong)]')}>
                     <div className="flex items-center gap-2">
                       <span className="rounded bg-[var(--bg-soft)] px-1.5 py-0.5 text-[10.5px] font-semibold text-[var(--ink-3)]">{item.label}</span>
                       <b className="min-w-0 flex-1 truncate text-sm text-[var(--ink)]">{item.name}</b>
@@ -202,7 +206,7 @@ export default function FollowUpsPage() {
                       {field.type === 'image' ? (
                         <div className="flex items-center gap-3">
                           <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--bg-soft)]">{value ? <img src={value} alt="" className="h-full w-full object-contain" /> : <ImagePlus className="h-5 w-5 text-[var(--ink-4)]" />}</div>
-                          <span className={cn(secondaryButton, 'h-9 cursor-pointer')}>{uploading === field.key ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}{value ? 'Replace' : 'Upload'}<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => onImage(field.key, event.target.files?.[0] || null)} /></span>
+                          <span className={cn(secondaryButton, 'h-9 cursor-pointer')}>{uploading === field.key ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}{value ? 'Replace' : 'Upload'}<input type="file" aria-label={`${field.label} file`} accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => onImage(field.key, event.target.files?.[0] || null)} /></span>
                         </div>
                       ) : field.type === 'textarea' ? (
                         <textarea value={value} onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))} className={cn(inputClass, 'h-20 py-2', highlight && 'border-[var(--warning)] bg-[var(--warning-bg)]')} />
@@ -228,6 +232,16 @@ export default function FollowUpsPage() {
           ) : null}
         </div>
       ) : null}
+      <ConfirmDialog
+        open={Boolean(pendingKey)}
+        onOpenChange={(open) => { if (!open) setPendingKey(''); }}
+        title="Leave this record without saving?"
+        description={`The details you typed for ${selected?.name || 'this record'} are not saved yet. If you open another record they are lost.`}
+        confirmLabel="Open the other record"
+        cancelLabel="Keep editing"
+        tone="danger"
+        onConfirm={() => { setSelectedKey(pendingKey); setPendingKey(''); }}
+      />
     </div>
   );
 }

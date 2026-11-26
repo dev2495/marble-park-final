@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import ExcelJS from 'exceljs';
 import { PrismaClient } from '@prisma/client';
 import { ulid } from 'ulid';
+import { createApiClient } from './lib/api-client.mjs';
 
 if (process.env.ALLOW_MUTATING_ACCEPTANCE !== 'true') {
   throw new Error('Refusing to mutate data. Run only against an isolated acceptance database with ALLOW_MUTATING_ACCEPTANCE=true.');
@@ -11,18 +12,7 @@ const API = process.env.API_URL || 'http://127.0.0.1:4100/graphql';
 const prisma = new PrismaClient();
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
-async function gql(query, variables = {}, token, expectError = false) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const json = await response.json();
-  const error = json.errors?.map((row) => row.message).join('; ') || '';
-  if (expectError) return error;
-  if (!response.ok || error) throw new Error(error || `GraphQL request failed (${response.status})`);
-  return json.data;
-}
+const { gql } = createApiClient(API);
 
 async function main() {
   const suffix = Date.now().toString(36).toUpperCase();

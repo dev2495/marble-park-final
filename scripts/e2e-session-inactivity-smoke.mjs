@@ -1,12 +1,10 @@
+import { assert } from './lib/api-client.mjs';
 const API_URL = process.env.API_URL || 'http://127.0.0.1:4011/graphql';
 const APP_ORIGIN = process.env.APP_ORIGIN || 'http://127.0.0.1:3011';
 const EMAIL = process.env.TEST_LOGIN_EMAIL || '';
 const PASSWORD = process.env.TEST_LOGIN_PASSWORD || '';
 const EXPECTED_TIMEOUT_SECONDS = Number(process.env.EXPECTED_TIMEOUT_SECONDS || 6);
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

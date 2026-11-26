@@ -1,11 +1,9 @@
+import { assert } from './lib/api-client.mjs';
 const API_URL = process.env.API_URL || 'http://127.0.0.1:4012/graphql';
 const APP_ORIGIN = process.env.APP_ORIGIN || 'http://127.0.0.1:3011';
 const EMAIL = process.env.TEST_LOGIN_EMAIL || '';
 const PASSWORD = process.env.TEST_LOGIN_PASSWORD || '';
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 async function request(query, variables = {}, { cookie = '', origin = APP_ORIGIN } = {}) {
   const controller = new AbortController();

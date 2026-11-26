@@ -3,6 +3,7 @@ import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { GraphqlRequestContext, requirePermission, requireSession, sessionToken } from '../auth/session-context';
 import { GraphQLJSON } from 'graphql-scalars';
+import { OptionalEmail, OptionalPhone, TextLimit } from '../common/input-rules';
 import { IMPLIED_PERMISSIONS, PERMISSION_CATALOG, PERMISSION_GROUPS, ROLE_PERMISSIONS, effectivePermissionsForUser, roleDefaultPermissions } from '../auth/rbac';
 
 @ObjectType()
@@ -47,9 +48,11 @@ export class UserOutput {
 @InputType()
 export class CreateUserInput {
   @Field()
+  @TextLimit(120)
   name!: string;
 
   @Field()
+  @OptionalEmail()
   email!: string;
 
   @Field()
@@ -59,12 +62,14 @@ export class CreateUserInput {
   role!: string;
 
   @Field()
+  @OptionalPhone()
   phone!: string;
 
   @Field({ nullable: true, description: '/catalogue-images/manual/<file>.png from /api/upload, or null to remove' })
   avatarUrl?: string;
 
   @Field({ nullable: true })
+  @TextLimit(280)
   bio?: string;
 
   @Field(() => GraphQLJSON, { nullable: true })
@@ -74,12 +79,15 @@ export class CreateUserInput {
 @InputType()
 export class UpdateUserInput {
   @Field({ nullable: true })
+  @TextLimit(120)
   name?: string;
 
   @Field({ nullable: true })
+  @OptionalEmail()
   email?: string;
 
   @Field({ nullable: true })
+  @OptionalPhone()
   phone?: string;
 
   @Field({ nullable: true })
@@ -95,6 +103,7 @@ export class UpdateUserInput {
   avatarUrl?: string;
 
   @Field({ nullable: true })
+  @TextLimit(280)
   bio?: string;
 
   @Field(() => GraphQLJSON, { nullable: true })
@@ -104,19 +113,26 @@ export class UpdateUserInput {
 @InputType()
 export class UpdateMyProfileInput {
   @Field({ nullable: true })
+  @TextLimit(120)
   name?: string;
 
   @Field({ nullable: true })
+  @OptionalEmail()
   email?: string;
 
   @Field({ nullable: true })
+  @OptionalPhone()
   phone?: string;
 
   @Field({ nullable: true, description: '/catalogue-images/manual/<file>.png from /api/upload, or null to remove' })
   avatarUrl?: string;
 
   @Field({ nullable: true })
+  @TextLimit(280)
   bio?: string;
+
+  @Field({ nullable: true, description: 'Needed when the login email changes.' })
+  currentPassword?: string;
 }
 
 @InputType()
@@ -190,8 +206,8 @@ export class UsersResolver {
     @Args('input') input: CreateUserInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requirePermission(this.prisma, ctx, 'users.manage');
-    return this.users.create(input);
+    const actor = await requirePermission(this.prisma, ctx, 'users.manage');
+    return this.users.create(input, actor.id);
   }
 
   @Mutation(() => UserOutput)
@@ -200,8 +216,8 @@ export class UsersResolver {
     @Args('input') input: UpdateUserInput,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requirePermission(this.prisma, ctx, 'users.manage');
-    return this.users.update(id, input);
+    const actor = await requirePermission(this.prisma, ctx, 'users.manage');
+    return this.users.update(id, input, actor.id);
   }
 
   @Mutation(() => UserOutput)
@@ -209,8 +225,8 @@ export class UsersResolver {
     @Args('id', { type: () => ID }) id: string,
     @Context() ctx: GraphqlRequestContext,
   ) {
-    await requirePermission(this.prisma, ctx, 'users.manage');
-    return this.users.delete(id);
+    const actor = await requirePermission(this.prisma, ctx, 'users.manage');
+    return this.users.delete(id, actor.id);
   }
 
   /** Self-service profile update. Any signed-in user can edit their own row. */

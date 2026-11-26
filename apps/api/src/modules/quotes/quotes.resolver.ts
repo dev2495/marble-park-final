@@ -1,7 +1,7 @@
 import { Resolver, Query, Mutation, Args, ID, InputType, Field, ObjectType, Context, ResolveField, Parent } from '@nestjs/graphql';
 import { QuotesService } from './quotes.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { GraphqlRequestContext, isPrivileged, requirePermission, requireRoles, requireSession, type SessionUser } from '../auth/session-context';
+import { GraphqlRequestContext, isPrivileged, requirePermission, requireRoles, requireRolesOrExplicitPermission, requireSession, type SessionUser } from '../auth/session-context';
 import { GraphQLJSON } from 'graphql-scalars';
 import { loadOrNull } from '../common/dataloaders';
 
@@ -55,6 +55,9 @@ export class QuoteOutput {
 
   @Field(() => Date, { nullable: true })
   sentAt?: Date;
+
+  @Field(() => Date, { nullable: true })
+  updatedAt?: Date;
 
   @Field(() => Date, { nullable: true })
   confirmedAt?: Date;
@@ -207,6 +210,9 @@ export class UpdateQuoteInput {
 
   @Field(() => Boolean, { nullable: true, description: 'Keep incomplete pricing as a draft. Commercial actions still require valid MRP.' })
   saveAsDraft?: boolean;
+
+  @Field(() => Date, { nullable: true, description: 'updatedAt of the quote as the screen loaded it. A save after someone else saved is refused.' })
+  expectedUpdatedAt?: Date;
 }
 
 @InputType()
@@ -249,6 +255,9 @@ export class CreateSalesOrderInput {
 
   @Field(() => String, { nullable: true })
   paymentTerms?: string;
+
+  @Field(() => String, { nullable: true, description: 'How the advance was paid: cash (default), upi, neft, rtgs, card, cheque, bank_transfer, other.' })
+  advancePaymentMode?: string;
 }
 
 @InputType()
@@ -263,6 +272,7 @@ export class CreateDirectSalesOrderInput {
   @Field({ description: 'JSON array of fully priced order lines' }) lines!: string;
   @Field({ nullable: true }) idempotencyKey?: string;
   @Field({ nullable: true, description: 'gst (default) or non_gst, as on a quote' }) taxMode?: string;
+  @Field({ nullable: true, description: 'How the advance was paid: cash (default), upi, neft, rtgs, card, cheque, bank_transfer, other.' }) advancePaymentMode?: string;
 }
 
 @Resolver(() => QuoteOutput)
@@ -380,7 +390,8 @@ export class QuotesResolver {
     const user = await requireSession(this.prisma, ctx);
     const quote = await this.quotes.findById(id);
     if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
-    return quote;
+    // An open offer past its valid-until date shows as expired, so it is not sent or ordered by mistake.
+    return this.quotes.expireIfPastValidity(quote);
   }
 
   @Mutation(() => Boolean)
@@ -478,11 +489,12 @@ export class QuotesResolver {
     @Args('id', { type: () => ID }) id: string,
     @Args('status') status: string,
     @Context() ctx: GraphqlRequestContext,
+    @Args('reason', { nullable: true }) reason?: string,
   ) {
     const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(id);
     if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
-    return this.quotes.updateStatus(id, status);
+    return this.quotes.updateStatus(id, status, user.id, reason);
   }
 
   @Mutation(() => QuoteOutput)
@@ -490,7 +502,7 @@ export class QuotesResolver {
     const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
     const quote = await this.quotes.findById(id);
     if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
-    return this.quotes.sendQuote(id);
+    return this.quotes.sendQuote(id, user.id);
   }
 
   @Mutation(() => QuoteOutput)
@@ -507,8 +519,45 @@ export class QuotesResolver {
     @Context() ctx: GraphqlRequestContext,
     @Args('note', { nullable: true }) note?: string,
   ) {
-    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner']);
+    const user = await requireRolesOrExplicitPermission(this.prisma, ctx, 'approvals.manage', ['admin', 'owner']);
     return this.quotes.approveQuote(id, user.id, note);
+  }
+
+  @Mutation(() => QuoteOutput, { description: 'Owner turns down a below-floor price. A note for the sales person is required. Same roles as approveQuote.' })
+  async rejectQuote(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('note') note: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRolesOrExplicitPermission(this.prisma, ctx, 'approvals.manage', ['admin', 'owner']);
+    return this.quotes.rejectQuote(id, user.id, note);
+  }
+
+  @Mutation(() => QuoteOutput, { description: 'The customer did not go ahead. A reason is required. Same roles as the other quote actions.' })
+  async markQuoteLost(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requirePermission(this.prisma, ctx, 'quotes.manage', QUOTE_ROLES);
+    const quote = await this.quotes.findById(id);
+    if (!canManageQuotes(user) && quote.ownerId !== user.id) throw new Error('This quote is restricted');
+    return this.quotes.markQuoteLost(id, reason, user.id);
+  }
+
+  @Mutation(() => GraphQLJSON, { description: 'Cancel one sales order (from a quote or direct). Same roles as cancelQuote. Returns what was released and any advance held.' })
+  async cancelSalesOrder(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('reason') reason: string,
+    @Context() ctx: GraphqlRequestContext,
+  ) {
+    const user = await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager']);
+    return this.quotes.cancelSalesOrder(id, reason, user.id);
+  }
+
+  @Query(() => GraphQLJSON, { description: 'Public: is this share link usable, and may it be downloaded. Does not count as a view.' })
+  async publicQuoteShareStatus(@Args('token') token: string) {
+    return this.quotes.publicQuoteShareStatus(token);
   }
 
   @Mutation(() => GraphQLJSON)

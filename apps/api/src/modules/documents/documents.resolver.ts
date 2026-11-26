@@ -1,6 +1,6 @@
 import { Resolver, Mutation, Query, Args, ID, InputType, Field, ObjectType, Context } from '@nestjs/graphql';
 import { DocumentsService } from './documents.service';
-import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireSession } from '../auth/session-context';
 import { PrismaService } from '../prisma/prisma.service';
 import { GraphQLJSON } from 'graphql-scalars';
 
@@ -53,11 +53,8 @@ export class DocumentsResolver {
     return this.documents.generateQuotePdf(quoteId);
   }
 
-  @Mutation(() => DocumentOutput)
-  async sendQuoteEmail(@Args('input') input: SendEmailInput, @Context() ctx: GraphqlRequestContext) {
-    await requireRoles(this.prisma, ctx, ['admin', 'owner', 'sales_manager', 'sales']);
-    return this.documents.sendQuoteEmail(input);
-  }
+  // sendQuoteEmail was removed from the API: no screen used it, it sent an empty mail to any
+  // address and marked any quote sent without an ownership check. Quotes are shared by link or PDF.
 
   @Query(() => [GraphQLJSON])
   async vaultAssets(

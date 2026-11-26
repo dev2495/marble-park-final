@@ -2,6 +2,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
+import { assert, createApiClient } from './lib/api-client.mjs';
 
 const API = process.env.API_URL || 'http://localhost:4000/graphql';
 const WEB = process.env.WEB_URL || 'http://localhost:3000';
@@ -12,22 +13,8 @@ const OUTPUT_DIR = resolve(process.env.PDF_OUTPUT_DIR || '/tmp/marble-park-relea
 const prisma = new PrismaClient();
 const state = { productId: '', customerId: '', quoteId: '', leadId: '', poId: '', grnId: '', managedImage: '', previousSettings: null };
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
-async function gql(query, variables = {}, token) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const payload = await response.json();
-  if (!response.ok || payload.errors?.length) {
-    throw new Error(payload.errors?.map((error) => error.message).join('; ') || `GraphQL request failed (${response.status})`);
-  }
-  return payload.data;
-}
+const { gql } = createApiClient(API);
 
 function asLines(value) {
   if (Array.isArray(value)) return value;

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ulid } from 'ulid';
 import * as fs from 'fs';
@@ -113,6 +113,7 @@ const MAX_EMBEDDED_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024;
 
 @Injectable()
 export class ImportsService {
+  private readonly logger = new Logger(ImportsService.name);
   constructor(private prisma: PrismaService, private storedImages: StoredImageService) {}
 
   async productImportReadiness() {
@@ -1272,6 +1273,6 @@ export class ImportsService {
         summary,
         metadata,
       },
-    }).catch(() => null);
+    }).catch((error) => { this.logger.error(`AUDIT_WRITE_FAILED action=${action} entity=${entityType}:${entityId}: ${error?.message}`); return null; });
   }
 }

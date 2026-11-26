@@ -5,6 +5,18 @@ import { Clock3, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { isSessionAuthenticationError } from '@/lib/session-errors';
+import { useFocusTrap } from '@/hooks/use-focus-trap';
+
+// Screen readers hear the time left only at these marks, not every second.
+const ANNOUNCE_AT_SECONDS = [120, 60, 30, 10];
+
+function spokenTimeLeft(seconds: number) {
+  if (seconds >= 60) {
+    const minutes = Math.round(seconds / 60);
+    return `${minutes} minute${minutes === 1 ? '' : 's'} left before you are signed out.`;
+  }
+  return `${seconds} seconds left before you are signed out.`;
+}
 
 const SESSION_STATUS = gql`
   query SessionStatus {
@@ -174,20 +186,53 @@ export function SessionTimeoutGuard() {
     return () => window.clearInterval(timer);
   }, [expiresAt, finishSession]);
 
-  if (remainingMs === null || remainingMs <= 0 || remainingMs > warningMs) return null;
+  const warningVisible = remainingMs !== null && remainingMs > 0 && remainingMs <= warningMs;
+  const warningRef = useRef<HTMLDivElement>(null);
+  const stayRef = useRef<HTMLButtonElement>(null);
+  const [announcement, setAnnouncement] = useState('');
+  const lastMarkRef = useRef<number | null>(null);
+  // Escape means "stay signed in"; focus starts on that button.
+  useFocusTrap(warningRef, warningVisible, {
+    initialFocus: stayRef,
+    onEscape: () => void refreshFromMeaningfulActivity(),
+  });
+  const secondsLeft = remainingMs === null ? null : Math.max(0, Math.ceil(remainingMs / 1_000));
+  useEffect(() => {
+    if (!warningVisible || secondsLeft === null) {
+      lastMarkRef.current = null;
+      setAnnouncement('');
+      return;
+    }
+    // Speak once when the warning opens, then only when a mark is crossed.
+    // lastMarkRef holds the seconds left at the last announcement.
+    const last = lastMarkRef.current;
+    if (last === null) {
+      lastMarkRef.current = secondsLeft;
+      setAnnouncement(spokenTimeLeft(secondsLeft));
+      return;
+    }
+    if (ANNOUNCE_AT_SECONDS.some((m) => secondsLeft <= m && last > m)) {
+      lastMarkRef.current = secondsLeft;
+      setAnnouncement(spokenTimeLeft(secondsLeft));
+    }
+  }, [warningVisible, secondsLeft]);
+
+  if (!warningVisible || remainingMs === null) return null;
   const seconds = Math.max(0, Math.ceil(remainingMs / 1_000));
   const minutesPart = Math.floor(seconds / 60);
   const secondsPart = String(seconds % 60).padStart(2, '0');
 
   return (
-    <div className="fixed inset-0 z-[100] grid place-items-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="session-warning-title" aria-describedby="session-warning-description">
-      <div className="w-full max-w-md rounded-xl border border-[var(--line)] bg-[var(--surface)] p-6 shadow-[0_30px_80px_-35px_rgba(0,0,0,0.55)] sm:p-7">
+    <div className="fixed inset-0 z-[100] grid place-items-center p-4" >
+      <div aria-hidden="true" className="mp-overlay absolute inset-0 bg-[rgba(15,16,22,0.5)] backdrop-blur-sm" />
+      <div ref={warningRef} role="alertdialog" aria-modal="true" aria-labelledby="session-warning-title" aria-describedby="session-warning-description" className="mp-dialog-panel relative w-full max-w-md rounded-r6 border border-[var(--line)] bg-[var(--surface)] p-6 shadow-[var(--sh-xl)] sm:p-7">
+        <p className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
         <div className="flex items-start gap-4">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-700 ring-1 ring-amber-200">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-[var(--warning-bg)] text-[var(--warning-fg)] ring-1 ring-[color-mix(in_srgb,var(--warning-border)_35%,transparent)]">
             <Clock3 className="h-5 w-5" aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-amber-700">Security timeout</p>
+            <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--warning-fg)]">Security timeout</p>
             <h2 id="session-warning-title" className="mt-1 text-xl font-bold text-[var(--ink)]">Your session is about to end</h2>
             <p id="session-warning-description" className="mt-2 text-sm leading-6 text-[var(--ink-3)]">
               For account safety, Marble Park signs you out after 15 minutes without activity. Unsaved form entries may be lost.
@@ -195,12 +240,12 @@ export function SessionTimeoutGuard() {
           </div>
         </div>
         <div className="mt-5 flex items-center justify-between rounded-lg bg-[var(--bg-soft)] px-4 py-3">
-          <span className="flex items-center gap-2 text-xs font-semibold text-[var(--ink-3)]"><ShieldCheck className="h-4 w-4" /> Time remaining</span>
-          <span className="font-mono text-lg font-bold tabular-nums text-[var(--ink)]" aria-live="polite">{minutesPart}:{secondsPart}</span>
+          <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ink-3)]"><ShieldCheck className="h-4 w-4" aria-hidden="true" /> Time remaining</span>
+          <span className="font-mono text-lg font-bold tabular-nums text-[var(--ink)]" aria-hidden="true">{minutesPart}:{secondsPart}</span>
         </div>
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="outline" onClick={() => void finishSession('user')}>Sign out now</Button>
-          <Button type="button" onClick={() => void refreshFromMeaningfulActivity()}>Stay signed in</Button>
+          <Button ref={stayRef} type="button" onClick={() => void refreshFromMeaningfulActivity()}>Stay signed in</Button>
         </div>
       </div>
     </div>

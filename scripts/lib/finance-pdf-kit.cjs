@@ -26,7 +26,7 @@ const styles = StyleSheet.create({
 });
 
 function money(value) { return `Rs. ${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
-function date(value) { const valueDate = value ? new Date(value) : null; return valueDate && !Number.isNaN(valueDate.getTime()) ? valueDate.toLocaleDateString('en-IN') : '-'; }
+function date(value) { const valueDate = value ? new Date(value) : null; return valueDate && !Number.isNaN(valueDate.getTime()) ? valueDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : '-'; }
 function absolute(raw, base) { if (!raw) return null; try { return new URL(String(raw), base).href; } catch { return null; } }
 async function embeddedImage(raw, requestUrl, apiUrl) {
   const url = absolute(raw, requestUrl); if (!url || url.startsWith('data:')) return url;

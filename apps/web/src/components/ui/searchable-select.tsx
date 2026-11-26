@@ -44,6 +44,7 @@ export function SearchableSelect({
   const [query, setQuery] = React.useState("");
   const [active, setActive] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const listId = `${React.useId()}-options`;
   const selected = options.find((option) => option.value === value);
   const filtered = React.useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -94,15 +95,16 @@ export function SearchableSelect({
           aria-haspopup="listbox"
           aria-expanded={open}
           className={cn(
-            "flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-left text-sm text-[var(--ink)] shadow-[0_1px_2px_rgba(30,20,18,.04)] outline-none transition",
-            "hover:border-[#d7aaa0] hover:bg-[#fffaf8] focus-visible:border-[#a3312d] focus-visible:ring-2 focus-visible:ring-[#a3312d]/20 disabled:cursor-not-allowed disabled:opacity-50",
+            "mp-control flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-[var(--input-border)] bg-[var(--surface)] px-3 text-left text-sm text-[var(--ink)] shadow-sm-soft outline-none transition-[border-color,box-shadow,background-color] duration-150",
+            "hover:bg-[var(--surface-2)] focus-visible:border-[var(--brand-500)] focus-visible:ring-[3px] focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:bg-[var(--bg-soft)] disabled:opacity-60",
+            open && "border-[var(--brand-500)] ring-[3px] ring-[var(--ring)]",
             className,
           )}
         >
-          <span className={cn("min-w-0 flex-1 truncate", !selected && "text-[var(--ink-4)]")}>
+          <span className={cn("min-w-0 flex-1 truncate", !selected && "text-[var(--ink-5)]")}>
             {selected?.label || placeholder}
           </span>
-          <ChevronDown className={cn("h-4 w-4 shrink-0 text-[var(--ink-4)] transition", open && "rotate-180")} />
+          <ChevronDown aria-hidden="true" className={cn("h-4 w-4 shrink-0 text-[var(--ink-4)] transition-transform duration-200", open && "rotate-180")} />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
@@ -110,11 +112,11 @@ export function SearchableSelect({
           align="start"
           sideOffset={6}
           collisionPadding={12}
-          className="z-[90] w-[var(--radix-popover-trigger-width)] min-w-[17rem] overflow-hidden rounded-xl border border-[#ead8d2] bg-white shadow-[0_24px_70px_-22px_rgba(64,31,27,.42)] animate-in fade-in zoom-in-95"
+          className="mp-pop z-[90] w-[var(--radix-popover-trigger-width)] min-w-[17rem] overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-[var(--sh-pop)]"
         >
-          <div className="sticky top-0 border-b border-[#eee3df] bg-white p-2.5">
+          <div className="sticky top-0 border-b border-[var(--line)] bg-[var(--surface)] p-2.5">
             <label className="relative block">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[#8f817c]" />
+              <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-4)]" />
               <input
                 ref={inputRef}
                 value={query}
@@ -143,14 +145,18 @@ export function SearchableSelect({
                 }}
                 placeholder={searchPlaceholder}
                 aria-label={searchPlaceholder}
-                aria-controls="searchable-select-options"
-                className="h-9 w-full rounded-lg border border-[#e6d8d3] bg-[#fffaf8] pl-9 pr-3 text-sm outline-none focus:border-[#a3312d] focus:ring-2 focus:ring-[#a3312d]/15"
+                role="combobox"
+                aria-expanded={open}
+                aria-autocomplete="list"
+                aria-controls={listId}
+                aria-activedescendant={filtered[active] ? `${listId}-${active}` : undefined}
+                className="h-9 w-full rounded-lg border border-[var(--input-border)] bg-[var(--surface-2)] pl-9 pr-3 text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-5)] focus:border-[var(--brand-500)] focus:ring-[3px] focus:ring-[var(--ring)]"
               />
             </label>
           </div>
-          <div id="searchable-select-options" role="listbox" aria-busy={loading} className="max-h-72 overflow-y-auto overscroll-contain p-1.5">
+          <div id={listId} role="listbox" aria-label={ariaLabel || placeholder} aria-busy={loading} className="max-h-72 overflow-y-auto overscroll-contain p-1.5">
             {loading ? (
-              <div className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-[#7c706c]">
+              <div role="status" className="flex items-center gap-2 px-3 py-2 text-[13px] font-medium text-[var(--ink-4)]">
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                 Searching the full registry…
               </div>
@@ -161,28 +167,30 @@ export function SearchableSelect({
                 role="option"
                 aria-selected={option.value === value}
                 disabled={option.disabled}
+                id={`${listId}-${index}`}
                 key={`${option.value}-${index}`}
+                tabIndex={-1}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => choose(option)}
                 className={cn(
-                  "flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm outline-none transition",
-                  index === active ? "bg-[#fff0eb] text-[#6f211e]" : "hover:bg-[#fff7f4]",
+                  "flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm outline-none transition-colors",
+                  index === active ? "bg-[var(--brand-50)] text-[var(--brand-800)] dark:text-[var(--ink)]" : "text-[var(--ink-2)] hover:bg-[var(--bg-soft)]",
                   option.disabled && "cursor-not-allowed opacity-40",
                 )}
               >
                 <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                  {option.value === value ? <Check className="h-4 w-4 text-[#a3312d]" /> : null}
+                  {option.value === value ? <Check aria-hidden="true" className="h-4 w-4 text-[var(--brand-600)]" /> : null}
                 </span>
                 <span className="min-w-0 flex-1">
                   <b className="block truncate font-semibold">{option.label}</b>
                   {option.description ? (
-                    <small className="mt-0.5 block truncate text-[11px] text-[#7c706c]">{option.description}</small>
+                    <small className="mt-0.5 block truncate text-xs text-[var(--ink-4)]">{option.description}</small>
                   ) : null}
                 </span>
               </button>
             ))}
             {!loading && !filtered.length ? (
-              <div className="px-4 py-8 text-center text-sm text-[#7c706c]">{emptyText}</div>
+              <div className="px-4 py-8 text-center text-sm text-[var(--ink-4)]">{emptyText}</div>
             ) : null}
           </div>
         </Popover.Content>

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { cleanupE2eRecords } from './lib/cleanup-e2e-records.mjs';
+import { createApiClient } from './lib/api-client.mjs';
 
 // This suite creates commercial records. Keep both the API and the Prisma
 // connection pinned to the disposable local database before any mutation.
@@ -30,18 +31,7 @@ const near = (actual, expected, message, tolerance = 0.02) => assert.ok(
   `${message}: expected ${expected}, received ${actual}`,
 );
 
-async function gql(query, variables = {}, token, expectError = false) {
-  const response = await fetch(API, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ query, variables }),
-  });
-  const payload = await response.json();
-  const error = payload.errors?.map((row) => row.message).join('; ') || '';
-  if (expectError) return error;
-  if (!response.ok || error) throw new Error(error || `GraphQL ${response.status}`);
-  return payload.data;
-}
+const { gql } = createApiClient(API);
 
 async function main() {
   const dbOwner = await prisma.user.findFirst({ where: { email: EMAIL }, select: { id: true } });

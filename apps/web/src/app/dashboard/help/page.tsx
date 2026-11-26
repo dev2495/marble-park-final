@@ -35,9 +35,9 @@ export default function HelpCenterPage() {
     <section className="border-b border-[var(--line)] pb-7 pt-2">
       <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
         <div className="max-w-3xl">
-          <p className="text-xs font-semibold uppercase text-[var(--brand-700)]">Marble Park learning center</p>
-          <h1 className="mt-2 font-display text-3xl font-bold text-[var(--ink)]">Complete operating guide</h1>
-          <p className="mt-3 text-sm leading-6 text-[var(--ink-3)]">Task-by-task instructions for showroom sales, quotation, purchasing, physical stock, dispatch, returns, finance and control. Use the help icon on any page to open the matching guide.</p>
+          <p className="mp-eyebrow">Marble Park learning center</p>
+          <h1 className="mp-page-title">Complete operating guide</h1>
+          <p className="mp-page-sub">Task-by-task instructions for showroom sales, quotation, purchasing, physical stock, dispatch, returns, finance and control. Use the help icon on any page to open the matching guide.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <a href="/help/Marble-Park-Purchasing-Pricing-Cost-Guide.pdf" target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-md bg-[var(--brand-700)] px-4 text-sm font-semibold text-white"><Download className="mr-2 h-4 w-4"/>Purchasing &amp; cost guide</a>

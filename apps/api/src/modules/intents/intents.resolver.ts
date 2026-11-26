@@ -2,7 +2,7 @@ import { Args, Context, Field, ID, InputType, Mutation, Query, Resolver } from '
 import { GraphQLJSON } from 'graphql-scalars';
 import { IntentsService } from './intents.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { GraphqlRequestContext, requirePermission, requireRoles, requireSession } from '../auth/session-context';
+import { GraphqlRequestContext, requirePermission, requireRoles } from '../auth/session-context';
 
 @InputType()
 export class CreateIntentInputDto {
