@@ -9,6 +9,7 @@ import { nextDocumentNumber } from '../common/sequence';
 import { applyLotStockPostingTx } from '../common/lot-stock-posting';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReceivablesService } from '../receivables/receivables.service';
+import { stockFactor } from '../common/stock-units';
 
 function labelTilePriceUom(product: any) {
   const unit = String(product?.priceUom || (product?.priceRateBasis === 'PIECE' ? 'PC' : 'SQFT')).trim().toUpperCase();
@@ -993,7 +994,10 @@ export class OperationsService {
           ? await tx.salesInvoiceLine.findUnique({ where: { dispatchLineId: dispatchLine.id } })
           : null;
         const sourceCommercialLine = invoiceLine || commercialLine;
-        const sourceCommercialQuantity = Math.max(1, Number(invoiceLine?.quantity || commercialLine?.orderedQuantity || 1));
+        // Returns count base units like the dispatch; an order line counts selling units (boxes).
+        const returnProduct = productId ? await tx.product.findUnique({ where: { id: productId } }).catch(() => null) : null;
+        const returnFactor = stockFactor(returnProduct);
+        const sourceCommercialQuantity = Math.max(1, Number(invoiceLine?.quantity || Number(commercialLine?.orderedQuantity || 0) * returnFactor || 1));
         if (sourceCommercialLine) {
           maximumRefundAmount += Number(sourceCommercialLine.grossLineTotal || commercialLine?.lineTotal || 0) * quantity / sourceCommercialQuantity;
         }
@@ -1059,7 +1063,7 @@ export class OperationsService {
               salesOrderLineId: row.salesOrderLineId || dispatchLine?.salesOrderLineId || null,
               productId: productId || null, lotId: posting.lotId, locationId: returnLocation.id,
               sku: row.sku || dispatchLine?.sku || productId || 'RETURN', name: row.name || dispatchLine?.name || row.sku || 'Returned item',
-              unit: sourceCommercialLine?.unit || row.unit || 'PC',
+              unit: returnFactor > 1 ? String(returnProduct?.baseUom || 'PC').toUpperCase() : (sourceCommercialLine?.unit || row.unit || 'PC'),
               quantity: posting.quantity, acceptedQuantity: input.receive ? posting.quantity : 0,
               resellQuantity: input.receive ? resellQuantity : 0, damagedQuantity: input.receive ? damagedQuantity : 0,
               supplierReturnQuantity: input.receive ? supplierReturnQuantity : 0, disposition,
@@ -1099,9 +1103,16 @@ export class OperationsService {
             where: { id: dispatchLine.id }, data: { returnedQuantity: Number(dispatchLine.returnedQuantity || 0) + quantity, updatedAt: new Date() },
           });
           if (dispatchLine.salesOrderLineId) {
-            await tx.salesOrderLine.update({
-              where: { id: dispatchLine.salesOrderLineId }, data: { returnedQuantity: { increment: quantity }, updatedAt: new Date() },
-            });
+            if (returnFactor > 1) {
+              const back = await tx.dispatchLine.aggregate({ where: { salesOrderLineId: dispatchLine.salesOrderLineId }, _sum: { returnedQuantity: true } });
+              await tx.salesOrderLine.update({
+                where: { id: dispatchLine.salesOrderLineId }, data: { returnedQuantity: Math.floor(Number(back._sum?.returnedQuantity || 0) / returnFactor + 1e-9), updatedAt: new Date() },
+              });
+            } else {
+              await tx.salesOrderLine.update({
+                where: { id: dispatchLine.salesOrderLineId }, data: { returnedQuantity: { increment: quantity }, updatedAt: new Date() },
+              });
+            }
           }
         }
       }
@@ -1192,8 +1203,10 @@ export class OperationsService {
       const expectedAvailable = Math.max(0, aggregate.onHand - aggregate.reserved - aggregate.damaged - aggregate.hold);
       const reservationReserved = Number(reservedByProduct.get(balance.productId) || 0);
       const reservationBackordered = Number(backorderedByProduct.get(balance.productId) || 0);
-      const salesOrderReserved = Number(orderReservedByProduct.get(balance.productId) || 0);
-      const salesOrderBackordered = Number(orderBackorderedByProduct.get(balance.productId) || 0);
+      // Order lines count in selling units (boxes); stock and reservations in base units (pieces).
+      const unitFactor = stockFactor(balance.product);
+      const salesOrderReserved = Number(orderReservedByProduct.get(balance.productId) || 0) * unitFactor;
+      const salesOrderBackordered = Number(orderBackorderedByProduct.get(balance.productId) || 0) * unitFactor;
       const ledgerEntries = Number(ledgerCountByProduct.get(balance.productId) || 0);
       const lotLedgerEntries = Number(lotLedgerCountByProduct.get(balance.productId) || 0);
       const issues: any[] = [];
@@ -1231,7 +1244,8 @@ export class OperationsService {
       if (salesOrderReserved > aggregate.reserved) {
         addIssue('sales_order_reserved_ahead_of_stock', 'warning', `Sales-order rows show ${salesOrderReserved} reserved against ${aggregate.reserved} stock reserved.`);
       }
-      if (reservationBackordered !== salesOrderBackordered) {
+      // Order lines round to whole boxes, so allow up to one box of difference.
+      if (Math.abs(reservationBackordered - salesOrderBackordered) >= unitFactor) {
         addIssue('backorder_tracking_mismatch', 'warning', `Backorder reservations ${reservationBackordered}, sales-order backorders ${salesOrderBackordered}.`);
       }
       if (!ledgerEntries && (aggregate.onHand || aggregate.reserved || aggregate.damaged || aggregate.hold)) {

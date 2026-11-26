@@ -21,7 +21,7 @@ import {
 
 const SETUP = gql`query DirectOrderSetup { me { id role } salesAssignees }`;
 const SEARCH_PRODUCTS = gql`query DirectOrderProducts($query: String!) { globalSearch(query: $query) { products } }`;
-const PRODUCTS_BY_IDS = gql`query DirectOrderProductsByIds($ids: [ID!]!) { productsByIds(ids: $ids) { id sku internalCode name category brand finish dimensions unit purchaseUom salesUom piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive floorPriceInclusive priceRateBasis priceUom mrpSource media status } }`;
+const PRODUCTS_BY_IDS = gql`query DirectOrderProductsByIds($ids: [ID!]!) { productsByIds(ids: $ids) { id sku internalCode name category brand finish dimensions unit baseUom purchaseUom salesUom piecesPerPack coveragePerPack defaultMrpInclusive defaultNrpInclusive floorPriceInclusive priceRateBasis priceUom mrpSource media status } }`;
 const STOCK = gql`query DirectOrderStock($productId: String) { inventoryBalances(productId: $productId, take: 1) { id available onHand reserved } }`;
 const CREDIT = gql`query DirectOrderCredit($customerId: ID!) { directOrderCustomerCredit(customerId: $customerId) }`;
 const ORDER_STOCK = gql`query DirectOrderCreated($id: ID!) { salesOrder(id: $id) }`;
@@ -94,7 +94,7 @@ export default function DirectSalesOrderPage() {
     try {
       const result = await loadProducts({ variables: { ids: [product.id] } });
       const full = result.data?.productsByIds?.[0] || product;
-      setLines((current) => [...current, lineFromProduct(full, DEFAULT_AREA)]);
+      setLines((current) => [...current, { ...lineFromProduct(full, DEFAULT_AREA), baseUom: full.baseUom || 'PC', stockUnit: full.unit || full.purchaseUom || 'PC' }]);
       setQuery('');
     } finally {
       setAdding('');
@@ -242,7 +242,10 @@ function OrderLine({ line, row, issues, canPassFloor, withGst, onChange, onRemov
   const tileUnit = tile ? tilePriceUom(line.pricingUom) : '';
   const stockUnit = unitLabel(line.inventoryUom || line.unit);
   const qty = Number(line.qty || 0);
-  const available = balance ? Math.max(0, Number(balance.available || 0)) : null;
+  // Stock is counted in base units (pieces for a tile sold by the box); the order in selling units.
+  const perUnit = String(line.baseUom || 'PC').toUpperCase() === 'PC' && ['BOX', 'PACK', 'CARTON'].includes(String(line.stockUnit || stockUnit).toUpperCase())
+    ? Math.max(1, Math.trunc(Number(line.piecesPerPack || 1))) : 1;
+  const available = balance ? Math.floor(Math.max(0, Number(balance.available || 0)) / perUnit) : null;
   const short = available != null && qty > available ? qty - available : 0;
   const mrp = Number(row?.mrpInclusive || line.mrpInclusive || 0);
   const shown = issues.filter((issue) => issue.key !== 'family');
@@ -303,8 +306,9 @@ function CreatedOrder({ order }: { order: any }) {
   const held = new Map<string, { reserved: number; waiting: number }>();
   for (const reservation of full?.reservations || []) {
     const entry = held.get(reservation.productId) || { reserved: 0, waiting: 0 };
-    if (reservation.status === 'reserved') entry.reserved += Number(reservation.quantity || 0);
-    else entry.waiting += Number(reservation.quantity || 0);
+    const quantity = Number(reservation.sellingQuantity ?? reservation.quantity ?? 0);
+    if (reservation.status === 'reserved') entry.reserved += quantity;
+    else entry.waiting += quantity;
     held.set(reservation.productId, entry);
   }
   const waitingTotal = Array.from(held.values()).reduce((sum, entry) => sum + entry.waiting, 0);
@@ -326,8 +330,8 @@ function CreatedOrder({ order }: { order: any }) {
           return <tr key={`${line.lineKey || index}`} className="border-t border-emerald-100">
             <td className="px-3 py-2"><b className="font-semibold">{line.name}</b><span className="block text-xs text-emerald-900/70">{line.internalCode || line.sku}</span></td>
             <td className="px-3 py-2 text-right tabular-nums">{Number(line.qty || line.quantity || 0)} {unit}</td>
-            <td className="px-3 py-2 text-right tabular-nums">{entry.reserved} {unit}</td>
-            <td className={`px-3 py-2 text-right tabular-nums ${entry.waiting ? 'font-semibold text-amber-800' : ''}`}>{entry.waiting} {unit}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{Number(entry.reserved.toFixed(2))} {unit}</td>
+            <td className={`px-3 py-2 text-right tabular-nums ${entry.waiting ? 'font-semibold text-amber-800' : ''}`}>{Number(entry.waiting.toFixed(2))} {unit}</td>
           </tr>;
         })}</tbody>
       </table>

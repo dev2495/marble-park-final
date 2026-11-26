@@ -287,8 +287,9 @@ function buildDocument(payload, requestUrl) {
   const reservationMap = new Map();
   for (const reservation of reservations || []) {
     const entry = reservationMap.get(reservation.productId) || { reserved: 0, waiting: 0 };
-    if (reservation.status === 'reserved') entry.reserved += Number(reservation.quantity || 0);
-    else entry.waiting += Number(reservation.quantity || 0);
+    const quantity = Number(reservation.sellingQuantity ?? reservation.quantity ?? 0);
+    if (reservation.status === 'reserved') entry.reserved += quantity;
+    else entry.waiting += quantity;
     reservationMap.set(reservation.productId, entry);
   }
   const dispatchedMap = aggregateChallanQty(challans);
@@ -323,7 +324,7 @@ function buildDocument(payload, requestUrl) {
       : remaining <= 0 && dispatched > 0 ? 'Dispatched'
       : !stock ? 'Pending'
       : stock.waiting <= 0 && stock.reserved > 0 ? 'Reserved'
-      : stock.reserved > 0 ? `Part: ${stock.reserved} held`
+      : stock.reserved > 0 ? `Part: ${Number(stock.reserved.toFixed(2))} held`
       : 'Awaiting stock';
     const ready = stockLabel === 'Reserved' || stockLabel === 'Ready' || stockLabel === 'Dispatched';
     const src = imageSrc(line, product, requestUrl);

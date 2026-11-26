@@ -6,6 +6,7 @@ import { syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { consumeExactReservedLotTx, consumeReservedLotsTx } from '../common/lot-allocation';
 import { inventoryTruthByProduct, zeroInventoryTruth } from '../common/inventory-truth';
 import { ulid } from 'ulid';
+import { stockFactor } from '../common/stock-units';
 
 export interface CreateDispatchJobInput {
   quoteId?: string;
@@ -95,6 +96,13 @@ export class DispatchService {
     ]);
 
     const inventoryTruth = await inventoryTruthByProduct(this.prisma, productIds);
+    // Stock, reservations and challans count base units (pieces); order lines count selling units (boxes).
+    const unitFactor = await this.unitFactors([
+      ...productIds,
+      ...(reservations as any[]).map((row) => row.productId),
+      ...(orders as any[]).flatMap((order) => (this.normalizeLines(order.lines) || []).map((line: any) => line.productId)),
+    ]);
+    const toSelling = (productId: string, base: number) => Number((Number(base || 0) / (unitFactor.get(productId) || 1)).toFixed(2));
     const balanceMap = new Map((balances as any[]).map((balance) => [
       balance.productId,
       { ...balance, ...(inventoryTruth.get(balance.productId) || zeroInventoryTruth(balance.productId)) },
@@ -162,16 +170,16 @@ export class DispatchService {
                   : 'invalid_product',
           };
         }
-        const committedQty = Number(challanQtyByJobProduct.get(`${job.id}:${productId}`) || 0);
+        const committedQty = toSelling(productId, Number(challanQtyByJobProduct.get(`${job.id}:${productId}`) || 0));
         const remainingQty = Math.max(0, orderedQty - committedQty);
         const reservationScope = salesOrder?.id || `legacy:${job.quoteId}`;
         const reservationRows = reservationsByOrderProduct.get(`${reservationScope}:${productId}`) || [];
-        const reservedQty = reservationRows
+        const reservedQty = toSelling(productId, reservationRows
           .filter((reservation: any) => reservation.status === 'reserved')
-          .reduce((sum: number, reservation: any) => sum + Number(reservation.quantity || 0), 0);
-        const backorderedQty = reservationRows
+          .reduce((sum: number, reservation: any) => sum + Number(reservation.quantity || 0), 0));
+        const backorderedQty = toSelling(productId, reservationRows
           .filter((reservation: any) => reservation.status === 'backordered')
-          .reduce((sum: number, reservation: any) => sum + Number(reservation.quantity || 0), 0);
+          .reduce((sum: number, reservation: any) => sum + Number(reservation.quantity || 0), 0));
         const balance = balanceMap.get(productId) as any;
         const dispatchableQty = Math.max(0, Math.min(remainingQty, reservedQty));
         const blockedQty = Math.max(0, remainingQty - dispatchableQty);
@@ -192,8 +200,9 @@ export class DispatchService {
           backorderedQty,
           dispatchableQty,
           blockedQty,
-          onHand: Number(balance?.onHand || 0),
-          available: Number(balance?.available || 0),
+          onHand: toSelling(productId, Number(balance?.onHand || 0)),
+          available: toSelling(productId, Number(balance?.available || 0)),
+          piecesPerUnit: unitFactor.get(productId) || 1,
           status,
         };
       });
@@ -409,6 +418,8 @@ export class DispatchService {
         order: order ? { id: order.id, orderNumber: order.orderNumber, status: order.status, paymentMode: order.paymentMode, paymentStatus: order.paymentStatus, totalAmount: order.totalAmount } : null,
         customer: order ? customerMap.get(order.customerId) || null : null,
         product: productMap.get(line.productId) || null,
+        // Reservations, lot allocations and pick lines below count base units (pieces per box for boxed tiles).
+        piecesPerUnit: stockFactor(productMap.get(line.productId)),
         purchaseDemand: demand,
         reservations: lineReservations,
         lotAllocations: lineAllocations,
@@ -729,7 +740,10 @@ export class DispatchService {
         category: line.product.category,
         brand: line.product.brand,
         finish: line.product.finish,
-        unit: line.salesOrderLine.unit,
+        // Pick lines count base units (pieces for a boxed tile); keep the order's unit for reading.
+        unit: String(line.product.baseUom || line.salesOrderLine.unit || 'PC').toUpperCase(),
+        orderUnit: line.salesOrderLine.unit,
+        piecesPerUnit: stockFactor(line.product),
         dispatchQty,
       };
     }).filter((line: any) => line.dispatchQty > 0);
@@ -1062,20 +1076,33 @@ export class DispatchService {
           },
           orderBy: { lineNo: 'asc' },
         }).catch(() => null);
+        // One challan line per pick line (one lot): update only its own dispatch line, or a second
+        // lot of the same item would overwrite the first lot's quantity.
+        await tx.dispatchLine.updateMany({
+          where: line.pickLineId
+            ? { challanId: challan.id, pickLineId: String(line.pickLineId) }
+            : orderLine ? { challanId: challan.id, salesOrderLineId: orderLine.id } : { challanId: challan.id, productId },
+          data: { dispatchedQuantity: quantity, status: 'dispatched', updatedAt: new Date() },
+        });
         if (orderLine) {
+          // The challan counts base units; the order line counts selling units (whole boxes sent).
+          const product = await tx.product.findUnique({ where: { id: productId } }).catch(() => null);
+          const factor = stockFactor(product);
+          let nextDispatched = Number(orderLine.dispatchedQuantity || 0) + quantity;
+          if (factor > 1) {
+            const sent = await tx.dispatchLine.aggregate({ where: { salesOrderLineId: orderLine.id, status: { in: ['dispatched', 'delivered'] } }, _sum: { dispatchedQuantity: true } });
+            nextDispatched = Math.floor(Number(sent._sum?.dispatchedQuantity || 0) / factor + 1e-9);
+          }
+          nextDispatched = Math.min(Number(orderLine.orderedQuantity || 0), nextDispatched);
           await tx.salesOrderLine.update({
             where: { id: orderLine.id },
             data: {
-              dispatchedQuantity: Math.min(Number(orderLine.orderedQuantity || 0), Number(orderLine.dispatchedQuantity || 0) + quantity),
-              status: Number(orderLine.dispatchedQuantity || 0) + quantity >= Number(orderLine.orderedQuantity || 0) ? 'dispatched' : 'partial_dispatched',
+              dispatchedQuantity: nextDispatched,
+              status: nextDispatched >= Number(orderLine.orderedQuantity || 0) ? 'dispatched' : 'partial_dispatched',
               updatedAt: new Date(),
             },
           });
         }
-        await tx.dispatchLine.updateMany({
-          where: orderLine ? { challanId: challan.id, salesOrderLineId: orderLine.id } : { challanId: challan.id, productId },
-          data: { dispatchedQuantity: quantity, status: 'dispatched', updatedAt: new Date() },
-        });
       }
 
       if (line.pickLineId && line.lotId && line.locationId && orderLine) {
@@ -1222,7 +1249,14 @@ export class DispatchService {
       if (line.salesOrderLineId) {
         const orderLine = await tx.salesOrderLine.findUnique({ where: { id: line.salesOrderLineId } });
         if (orderLine) {
-          const nextDelivered = Math.min(Number(orderLine.orderedQuantity || 0), Number(orderLine.deliveredQuantity || 0) + delivered);
+          // Dispatch lines count base units; the order line counts whole selling units delivered.
+          const factor = stockFactor(line.productId ? await tx.product.findUnique({ where: { id: line.productId } }).catch(() => null) : null);
+          let deliveredSelling = Number(orderLine.deliveredQuantity || 0) + delivered;
+          if (factor > 1) {
+            const done = await tx.dispatchLine.aggregate({ where: { salesOrderLineId: line.salesOrderLineId, status: 'delivered' }, _sum: { deliveredQuantity: true } });
+            deliveredSelling = Math.floor(Number(done._sum?.deliveredQuantity || 0) / factor + 1e-9);
+          }
+          const nextDelivered = Math.min(Number(orderLine.orderedQuantity || 0), deliveredSelling);
           await tx.salesOrderLine.update({
             where: { id: line.salesOrderLineId },
             data: {
@@ -1247,10 +1281,12 @@ export class DispatchService {
     const quoteLines = this.normalizeLines(salesOrder.lines) || [];
     const quoteQtyByProduct = new Map<string, number>();
     const tileQtyByKey = new Map<string, number>();
+    // Challans, reservations and stock count base units, so the ordered boxes are counted as pieces here.
+    const orderFactors = await this.unitFactors(quoteLines.map((line: any) => line.productId));
     for (const line of quoteLines) {
       const productId = String(line.productId || '').trim();
       if (productId) {
-        quoteQtyByProduct.set(productId, (quoteQtyByProduct.get(productId) || 0) + Number(line.qty || line.quantity || 0));
+        quoteQtyByProduct.set(productId, (quoteQtyByProduct.get(productId) || 0) + Number(line.qty || line.quantity || 0) * (orderFactors.get(productId) || 1));
       }
     }
     quoteLines.forEach((line: any, index: number) => {
@@ -1321,6 +1357,14 @@ export class DispatchService {
         throw new BadRequestException(`${line.name || line.sku || 'Line item'} is not ready to dispatch. Requested ${quantity}, ready ${dispatchable}, pending inward ${Math.max(0, remainingOrderQty - dispatchable)}`);
       }
     }
+  }
+
+  /** Base units per selling unit for each product (pieces per box for boxed tiles, else 1). */
+  private async unitFactors(ids: any[]) {
+    const productIds = Array.from(new Set((ids || []).map((id) => String(id || '').trim()).filter(Boolean)));
+    if (!productIds.length) return new Map<string, number>();
+    const products = await this.prisma.product.findMany({ where: { id: { in: productIds } } });
+    return new Map(products.map((product: any) => [product.id, stockFactor(product)]));
   }
 
   private groupByOrderProduct(reservations: any[]) {

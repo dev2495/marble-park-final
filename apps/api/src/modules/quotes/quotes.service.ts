@@ -6,6 +6,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { applyStockPostingTx, syncSalesOrderLinesForQuoteTx } from '../common/stock-posting';
 import { releaseReservedLotsTx, reserveAvailableLotsTx } from '../common/lot-allocation';
+import { stockFactor, toBaseQty, toSellingQtyFloor } from '../common/stock-units';
 import { commercialTotalsFromLines, priceQuoteLines, RETAIL_LADDER_VERSION } from '../common/pricing';
 import { ProductsService } from '../products/products.service';
 import { ulid } from 'ulid';
@@ -1821,9 +1822,19 @@ export class QuotesService {
       }),
     ]);
     // Real stock position per line, so documents never claim stock is reserved when it is on backorder.
-    const reservations = await this.prisma.reservation.findMany({
+    const rawReservations = await this.prisma.reservation.findMany({
       where: { salesOrderId: id, status: { not: 'released' } },
       select: { productId: true, salesOrderLineId: true, quantity: true, status: true },
+    });
+    const reservedProducts = await this.prisma.product.findMany({
+      where: { id: { in: Array.from(new Set(rawReservations.map((row: any) => row.productId))) } },
+      select: { id: true, unit: true, baseUom: true, salesUom: true, purchaseUom: true, piecesPerPack: true },
+    });
+    const factorById = new Map(reservedProducts.map((product: any) => [product.id, stockFactor(product)]));
+    // quantity stays in base units (pieces); sellingQuantity is the same in the order's unit (boxes).
+    const reservations = rawReservations.map((row: any) => {
+      const factor = factorById.get(row.productId) || 1;
+      return { ...row, factor, sellingQuantity: Number(row.quantity || 0) / factor };
     });
     return { ...order, customer, owner, reservations };
   }
@@ -2740,11 +2751,18 @@ export class QuotesService {
     const { quote, salesOrder, lines, salesOrderLines } = args;
     const existing = await tx.reservation.count({ where: { salesOrderId: salesOrder.id } });
     if (existing > 0) return;
+    const normalizedLines = this.normalizeLines(lines);
+    const lineProductIds = Array.from(new Set(normalizedLines.map((line: any) => line.productId).filter(Boolean))) as string[];
+    const lineProducts = lineProductIds.length ? await tx.product.findMany({ where: { id: { in: lineProductIds } } }) : [];
+    const productById = new Map(lineProducts.map((product: any) => [product.id, product]));
 
-    for (const [index, line] of this.normalizeLines(lines).entries()) {
+    for (const [index, line] of normalizedLines.entries()) {
       const productId = line.productId;
-      const quantity = Number(line.qty || line.quantity || 0);
-      if (!productId || quantity <= 0) continue;
+      const orderedQty = Number(line.qty || line.quantity || 0);
+      if (!productId || orderedQty <= 0) continue;
+      // Stock is counted in base units (pieces for a boxed tile); the order line in selling units.
+      const product = productById.get(productId);
+      const quantity = toBaseQty(product, orderedQty);
       const lineKey = String(line.lineKey || this.quoteLineKey(line, index));
       // Match on the quote line when there is one; a direct order has none, so match on the line key.
       const salesOrderLine = salesOrderLines.find((row: any) => (line.quoteLineId && row.quoteLineId === line.quoteLineId) || row.lineKey === lineKey);
@@ -2796,12 +2814,14 @@ export class QuotesService {
         });
       }
       if (salesOrderLine) {
+        const reservedSelling = Math.min(orderedQty, toSellingQtyFloor(product, reserveQty));
+        const backorderedSelling = Math.max(0, orderedQty - reservedSelling);
         await tx.salesOrderLine.update({
           where: { id: salesOrderLine.id },
           data: {
-            reservedQuantity: reserveQty,
-            backorderedQuantity: backorderQty,
-            status: backorderQty > 0 ? (reserveQty > 0 ? 'partial_ready' : 'backordered') : 'reserved',
+            reservedQuantity: reservedSelling,
+            backorderedQuantity: backorderedSelling,
+            status: backorderedSelling > 0 ? (reservedSelling > 0 ? 'partial_ready' : 'backordered') : 'reserved',
             updatedAt: new Date(),
           },
         });
@@ -2838,7 +2858,7 @@ export class QuotesService {
         category: product.category,
         brand: product.brand,
         finish: product.finish,
-        unit: product.unit || 'PC',
+        unit: String(product.baseUom || 'PC').toUpperCase(),
         quantity: Number(reservation.quantity || 0),
         status: 'open',
         vendorName: product.brand || null,

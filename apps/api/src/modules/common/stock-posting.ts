@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { ulid } from 'ulid';
 import { evaluateStockAlertTransitionsTx } from '../inventory/stock-alerts';
+import { stockFactor } from './stock-units';
 
 type Tx = any;
 
@@ -370,6 +371,12 @@ export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
   ]);
   if (!quote || !salesOrders.length) return;
 
+  // Reservations are in base units (pieces); order lines in selling units (boxes).
+  const reservationProductIds = Array.from(new Set((reservations as any[]).map((row) => row.productId).filter(Boolean)));
+  const reservationProducts = reservationProductIds.length
+    ? await tx.product.findMany({ where: { id: { in: reservationProductIds } } }).catch(() => [])
+    : [];
+  const factorByProduct = new Map((reservationProducts as any[]).map((product) => [product.id, stockFactor(product)]));
   const quoteLineMap = new Map((quoteLines as any[]).map((row) => [row.lineKey, row]));
   const quoteLineById = new Map((quoteLines as any[]).map((row) => [row.id, row]));
   for (const salesOrder of salesOrders as any[]) {
@@ -399,8 +406,13 @@ export async function syncSalesOrderLinesForQuoteTx(tx: Tx, quoteId: string) {
         where: { salesOrderId_lineKey: { salesOrderId: salesOrder.id, lineKey: key } },
       }).catch(() => null);
 
-      const reservedQuantity = productId ? takeFromBucket(reservedByProduct, productId, orderedQuantity) : Number(existing?.reservedQuantity || 0);
-      const backorderedQuantity = productId ? takeFromBucket(backorderedByProduct, productId, Math.max(0, orderedQuantity - reservedQuantity)) : Number(existing?.backorderedQuantity ?? orderedQuantity);
+      const factor = productId ? (factorByProduct.get(productId) || 1) : 1;
+      const reservedBase = productId ? takeFromBucket(reservedByProduct, productId, orderedQuantity * factor) : 0;
+      const reservedQuantity = productId ? Math.min(orderedQuantity, Math.floor(reservedBase / factor + 1e-9)) : Number(existing?.reservedQuantity || 0);
+      const backorderedBase = productId ? takeFromBucket(backorderedByProduct, productId, Math.max(0, orderedQuantity * factor - reservedBase)) : 0;
+      const backorderedQuantity = productId
+        ? Math.min(Math.max(0, orderedQuantity - reservedQuantity), Math.ceil(backorderedBase / factor - 1e-9))
+        : Number(existing?.backorderedQuantity ?? orderedQuantity);
       const allocatedQuantity = Number(existing?.allocatedQuantity || 0);
       const dispatchedQuantity = Number(existing?.dispatchedQuantity || 0);
       const deliveredQuantity = Number(existing?.deliveredQuantity || 0);

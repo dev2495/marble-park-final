@@ -3,6 +3,7 @@ import { ulid } from 'ulid';
 import { AuditService } from '../audit/audit.service';
 import { nextDocumentNumber } from '../common/sequence';
 import { PrismaService } from '../prisma/prisma.service';
+import { stockFactor } from '../common/stock-units';
 
 type InvoiceInput = {
   salesOrderId: string;
@@ -266,11 +267,18 @@ export class ReceivablesService {
       const orderLines = orderLineIds.length ? await tx.salesOrderLine.findMany({ where: { id: { in: orderLineIds } } }) : [];
       const orderLineById = new Map((orderLines as any[]).map((row) => [row.id, row]));
       const orderJsonLines: any[] = Array.isArray(order.lines) ? (order.lines as any[]) : [];
+      // Dispatch lines count base units (pieces for a boxed tile); order lines count selling units (boxes).
+      const invoiceProductIds = Array.from(new Set(dispatchLines.map((row: any) => row.productId).filter(Boolean))) as string[];
+      const invoiceProducts = invoiceProductIds.length ? await tx.product.findMany({ where: { id: { in: invoiceProductIds } } }) : [];
+      const factorByProduct = new Map((invoiceProducts as any[]).map((product) => [product.id, stockFactor(product)]));
+      const productById = new Map((invoiceProducts as any[]).map((product) => [product.id, product]));
       const computed = dispatchLines.map((dispatchLine: any) => {
         const orderLine = orderLineById.get(dispatchLine.salesOrderLineId);
         const fallback: any = orderJsonLines.find((row: any) => String(row.lineKey || row.sku || '') === String(dispatchLine.dispatchKey || dispatchLine.sku || ''))
           || orderJsonLines.find((row: any) => String(row.sku || '') === String(dispatchLine.sku || '')) || {};
-        const orderedQuantity = Math.max(1, Number(orderLine?.orderedQuantity || fallback.qty || fallback.quantity || dispatchLine.orderedQuantity || 1));
+        const factor = factorByProduct.get(dispatchLine.productId) || 1;
+        const orderedSelling = Number(orderLine?.orderedQuantity || fallback.qty || fallback.quantity || 0);
+        const orderedQuantity = Math.max(1, orderedSelling > 0 ? orderedSelling * factor : Number(dispatchLine.orderedQuantity || 1));
         const quantity = Math.max(1, Number(dispatchLine.dispatchedQuantity || dispatchLine.packedQuantity || 0));
         const taxableValue = roundMoney(Number(orderLine?.taxableValue ?? fallback.taxableValue ?? 0) * quantity / orderedQuantity);
         const taxAmount = roundMoney(Number(orderLine?.taxAmount ?? fallback.taxAmount ?? 0) * quantity / orderedQuantity);
@@ -281,7 +289,7 @@ export class ReceivablesService {
         return {
           dispatchLineId: dispatchLine.id, salesOrderLineId: dispatchLine.salesOrderLineId || null, productId: dispatchLine.productId || orderLine?.productId || fallback.productId || null,
           sku: dispatchLine.sku, name: dispatchLine.name, brand: orderLine?.brand || fallback.brand || '', finish: orderLine?.finish || fallback.finish || null,
-          unit: orderLine?.unit || fallback.unit || 'PC', quantity,
+          unit: factor > 1 ? String(productById.get(dispatchLine.productId)?.baseUom || 'PC').toUpperCase() : (orderLine?.unit || fallback.unit || 'PC'), quantity,
           unitPrice: roundMoney(grossLineTotal / quantity), taxRate: Number(orderLine?.taxRate ?? fallback.taxRate ?? 0), taxableValue, taxAmount, grossLineTotal,
           pricingVersion: orderLine?.pricingVersion || 'unified_retail_v1',
           priceRateBasis: orderLine?.priceRateBasis || orderLine?.mrpRateBasis || fallback.priceRateBasis || fallback.rateBasis || null,

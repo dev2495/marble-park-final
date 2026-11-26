@@ -25,6 +25,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QueryErrorBanner } from "@/components/query-state";
 
+// Pick lines count stock in base units: pieces for a tile sold by the box.
+function stockQtyLabel(quantity: unknown, product: any) {
+  const qty = Number(quantity || 0);
+  const base = String(product?.baseUom || "PC").toUpperCase();
+  const selling = String(product?.unit || base).toUpperCase();
+  const perBox = Math.max(1, Math.trunc(Number(product?.piecesPerPack || 1)));
+  if (base !== "PC" || !["BOX", "PACK", "CARTON"].includes(selling) || perBox <= 1) return `${qty} ${base.toLowerCase()}`;
+  const boxes = Math.floor(qty / perBox);
+  const loose = qty - boxes * perBox;
+  return `${qty} pc (${boxes} ${selling.toLowerCase()}${loose ? ` + ${loose} pc` : ""})`;
+}
+
 const DATA = gql`
   query DispatchWorkbench($search: String, $status: String, $brand: String, $category: String, $locationId: String, $sort: String, $cursor: String, $take: Float) {
     dispatchQueue
@@ -549,9 +561,9 @@ export default function DispatchPage() {
                               · {line.lot?.lotNumber}
                             </p>
                             <p className="text-xs text-[var(--ink-4)]">
-                              Requested {line.requestedQuantity} · picked{" "}
-                              {line.pickedQuantity} · packed{" "}
-                              {line.packedQuantity}
+                              Requested {stockQtyLabel(line.requestedQuantity, line.product)} · picked{" "}
+                              {stockQtyLabel(line.pickedQuantity, line.product)} · packed{" "}
+                              {stockQtyLabel(line.packedQuantity, line.product)}
                             </p>
                           </div>
                           {pick.status === "picked" ? (

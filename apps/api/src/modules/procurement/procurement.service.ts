@@ -7,6 +7,7 @@ import { reserveAvailableLotsTx } from '../common/lot-allocation';
 import { pricePoLines } from '../common/po-pricing';
 import { PrismaService } from '../prisma/prisma.service';
 import { indiaDay, reportRange } from '../reporting/reporting-time';
+import { stockFactor, toSellingQtyCeil, toSellingQtyFloor } from '../common/stock-units';
 
 export interface CreatePurchaseOrderInput {
   demandIds?: string[];
@@ -606,7 +607,8 @@ export class ProcurementService {
               category: demand.category,
               brand: demand.brand,
               finish: demand.finish || null,
-              unit: demand.unit || 'PC',
+              // Demand quantities are in the product's base unit (pieces for a boxed tile).
+              unit: String(draft.product?.baseUom || demand.unit || 'PC').toUpperCase(),
               orderedQuantity: commercial.orderedQuantity,
               enteredUnitCost: draft.enteredUnitCost,
               rateUom: draft.rateUom,
@@ -1521,7 +1523,7 @@ export class ProcurementService {
         category: product.category,
         brand: product.brand,
         finish: product.finish,
-        unit: product.unit || 'PC',
+        unit: String(product.baseUom || 'PC').toUpperCase(),
         quantity: Math.max(1, Number(reservation.quantity || 0)),
         status: 'open',
         vendorName: product.brand || null,
@@ -1812,12 +1814,17 @@ export class ProcurementService {
           where: { salesOrderLineId: reservation.salesOrderLineId },
           select: { quantity: true, status: true },
         });
-        const reservedQuantity = siblingReservations
+        // Reservations are in base units (pieces); the order line counts selling units (boxes).
+        const reservedBase = siblingReservations
           .filter((row: any) => row.status === 'reserved')
           .reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
-        const backorderedQuantity = siblingReservations
+        const backorderedBase = siblingReservations
           .filter((row: any) => row.status === 'backordered')
           .reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
+        const orderLine = await tx.salesOrderLine.findUnique({ where: { id: reservation.salesOrderLineId }, select: { orderedQuantity: true } });
+        const ordered = Number(orderLine?.orderedQuantity || 0);
+        const reservedQuantity = Math.min(ordered, toSellingQtyFloor(balance.product, reservedBase));
+        const backorderedQuantity = Math.min(Math.max(0, ordered - reservedQuantity), toSellingQtyCeil(balance.product, backorderedBase));
         await tx.salesOrderLine.update({
           where: { id: reservation.salesOrderLineId },
           data: {
@@ -1956,17 +1963,19 @@ export class ProcurementService {
   private baseQuantity(row: any, product: any, label: string) {
     const hasPackInput = row?.boxes !== undefined || row?.packs !== undefined || row?.loosePieces !== undefined;
     if (!hasPackInput) return this.whole(row?.receivedQuantity ?? row?.quantity ?? row?.orderedQuantity, label);
-    const piecesPerPack = Math.max(1, Math.trunc(Number(product?.piecesPerPack || row?.piecesPerPack || 1)));
+    // Boxes become base units: pieces for a boxed tile, one each when the base unit is the box itself.
+    const piecesPerPack = product ? stockFactor(product) : Math.max(1, Math.trunc(Number(row?.piecesPerPack || 1)));
     const boxes = Math.max(0, Math.trunc(Number(row?.boxes ?? row?.packs ?? 0)));
     const loosePieces = Math.max(0, Math.trunc(Number(row?.loosePieces || 0)));
     if (loosePieces > 0 && product && product.allowLoose === false) throw new BadRequestException(`${product.sku} does not allow loose-piece inward`);
+    if (loosePieces > 0 && product && piecesPerPack <= 1 && String(product.baseUom || 'PC').toUpperCase() !== 'PC') throw new BadRequestException(`${product.sku} is stocked by the ${String(product.baseUom).toUpperCase()}; enter whole boxes`);
     const quantity = boxes * piecesPerPack + loosePieces;
     if (quantity <= 0) throw new BadRequestException(`${label} must be greater than zero`);
     return quantity;
   }
 
   private uomSnapshot(row: any, product: any) {
-    const piecesPerPack = Math.max(1, Math.trunc(Number(product?.piecesPerPack || row?.piecesPerPack || 1)));
+    const piecesPerPack = product ? stockFactor(product) : Math.max(1, Math.trunc(Number(row?.piecesPerPack || 1)));
     const boxes = row?.boxes === undefined && row?.packs === undefined ? null : Math.max(0, Math.trunc(Number(row?.boxes ?? row?.packs ?? 0)));
     const loosePieces = row?.loosePieces === undefined ? null : Math.max(0, Math.trunc(Number(row?.loosePieces || 0)));
     const baseQuantity = boxes === null && loosePieces === null
