@@ -1,6 +1,492 @@
 {
-  "generatedAt": "2026-08-21",
+  "generatedAt": "2026-11-26",
   "guides": [
+    {
+      "id": "whats-new-2026-11-26",
+      "title": "What’s new, 26 November 2026",
+      "duration": "6 min",
+      "href": "/dashboard/orders",
+      "roles": [
+        "Sales",
+        "Office",
+        "Inventory",
+        "Dispatch",
+        "Owner"
+      ],
+      "summary": "Orders can be cancelled, quotes can be revised after an order, tiles read in boxes, challans carry transport details, and three new settings wait for your accountant. Prices, discounts and who can see what are unchanged.",
+      "flow": [
+        "Orders and quotes",
+        "Tiles and dispatch",
+        "Stock and Pending Inward",
+        "Money",
+        "Settings and access",
+        "Screens"
+      ],
+      "steps": [
+        "Orders: a single order can now be cancelled with a reason, including a direct order. Held stock is freed, and an advance can be paid back or moved to the customer’s account. See “Cancel an order and deal with its advance”.",
+        "Quotes: revising a quote that already has an order now orders only the difference. The owner can turn down a price with a note. “Customer said no” records a lost quote with a reason. See “Quote decisions: turn down, customer said no, revise after an order”.",
+        "Quote screen: your typed work is kept on the device, you are warned before losing it, items show as stacked cards on a phone or tablet, a refused special rate shows its reason beside the field, and an advance records how it was paid. See “Quote screen: saved drafts, phone layout and entry checks”.",
+        "Tiles: stock is counted in pieces, but slips, screens and documents read in boxes. See “How tiles read in boxes and pieces”.",
+        "Dispatch: a challan now needs vehicle, driver and phone, or Customer pickup. You can cancel a challan, report a failed delivery, and delivering the last challan closes the order. See “Challans: transport, cancel, failed delivery and closing the order”.",
+        "Stock: any stock that comes in fills waiting orders, oldest first. Stock in transit is not available. A stock count can be rejected, and a closed month can be reopened by the owner. See “Stock rules: waiting orders, locations, counts and period close”.",
+        "Pending Inward: “All active” now means still waiting on a supplier, and delivered orders drop off. See “Read the Pending Inward queue”.",
+        "Money: a credit note reduces its invoice, an advance stays with its order, an invoice or receipt can be voided by the owner or admin, and the customer statement takes dates. See “Credit notes, advances, voids and statements”.",
+        "Settings: three new switches, all off. See “Three new settings, all off until you turn them on”.",
+        "Accounts and access: changing your login email needs your current password, the last owner cannot be disabled, and the owner is told when backups are not leaving the server. See “Account safety, access messages and backups”.",
+        "Screens: the side menu opens by click, tap or keyboard, dark mode is easier to read and browser tabs carry page names. See “Menu, dark mode, page titles and status words”."
+      ],
+      "checks": [
+        "Prices, discount rules, approval limits and default access are unchanged.",
+        "The three new settings are off until the owner turns them on.",
+        "Documents made before today keep their numbers and layout."
+      ],
+      "related": [
+        "cancel-order",
+        "quote-decisions",
+        "quote-screen-drafts",
+        "tile-boxes",
+        "challans-transport",
+        "stock-rules",
+        "pending-inward",
+        "money-corrections",
+        "settings-switches",
+        "account-access",
+        "screen-basics"
+      ]
+    },
+    {
+      "id": "cancel-order",
+      "title": "Cancel an order and deal with its advance",
+      "duration": "5 min",
+      "href": "/dashboard/orders",
+      "roles": [
+        "Owner",
+        "Sales"
+      ],
+      "summary": "Cancel a single order with a reason, see what it frees, and decide what happens to money the customer already paid. Direct orders can be cancelled the same way.",
+      "flow": [
+        "Orders",
+        "Cancel order",
+        "Reason",
+        "Stock freed",
+        "Advance: move or refund"
+      ],
+      "steps": [
+        "Open Orders and find the order. Only the owner, admins and sales managers see the Cancel order button on an order card.",
+        "Press Cancel order, type why the order is cancelled (required) and press Cancel order again. Press Keep order to go back without changing anything.",
+        "What it frees: held stock goes back on the shelf, waiting quantities and purchase needs not yet ordered are closed, and the pick list and pending challans are cancelled. Items already on a purchase order stay on it and arrive as free stock.",
+        "If another order was waiting for the same item, it is filled straight away from the stock that was freed.",
+        "On an order that came from a quote, the quantity goes back onto the quote so it can be ordered again.",
+        "The cancel is refused while goods are out. If anything was dispatched or delivered and not returned, receive the return first. It is also refused while the order has an invoice that is not void. The message names the item or invoice.",
+        "If the customer paid an advance, it stays posted. A green message says so and shows Open customer account. You can also open Customer Accounts, then the customer.",
+        "In the customer’s account, the amber section Advance on cancelled order lists each receipt. Press Move to account to put the money on the customer’s account: it pays their oldest open bill and any rest is used on the next bill.",
+        "Press Refund (owner and admin only) when the money goes back to the customer. Choose Paid back by, type a reason and press Record refund. It shows as money going out this month.",
+        "To cancel a whole quote, use Cancel quote on the quote. It cancels the quote’s orders under the same rules. It is refused while an advance is still posted on one of its orders: cancel the order first, then refund or move the advance, then cancel the quote."
+      ],
+      "checks": [
+        "A reason is required every time.",
+        "An order cannot be cancelled once goods have left and not come back.",
+        "An advance is never lost: it is refunded or moved to the customer’s account, and each action asks for a reason.",
+        "Sales staff who are not managers do not see Cancel order."
+      ],
+      "related": [
+        "quote-decisions",
+        "money-corrections",
+        "partial-order"
+      ]
+    },
+    {
+      "id": "quote-decisions",
+      "title": "Quote decisions: turn down, customer said no, revise after an order",
+      "duration": "7 min",
+      "href": "/dashboard/quotes",
+      "roles": [
+        "Sales",
+        "Owner",
+        "Office"
+      ],
+      "summary": "Revise a quote that already has an order, let the owner turn down a price with a note, and record why a customer did not go ahead.",
+      "flow": [
+        "Quote",
+        "Revise or approve",
+        "Order remaining",
+        "Customer said no or cancel"
+      ],
+      "steps": [
+        "Revise after an order: open the quote and press Revise. The blue bar says which letter you are preparing, for example Rakesh-0412a. Change the items you need, then press Save as Rakesh-0412a. The orders already made are not touched.",
+        "An item that is already ordered shows how many are ordered. You cannot remove it, move it to another room or lower it below what was ordered. Raise it, or add new items, instead.",
+        "Press Order remaining. Only the difference is ordered: if 40 were ordered and the revision says 45, the order drawer offers 5. Press Cancel revision to throw the changes away.",
+        "Turn down a price: the owner opens Approvals and presses Turn down price on a quote waiting for approval, then types a note saying what price is acceptable (required). The quote goes back to its sales person as a draft with that note. When a new price is saved it comes back to Approvals if it is still below the floor rate.",
+        "A sales manager sees Approvals but the quote says Waiting for the owner to decide. Only the owner, admins and people given the approval right see Approve quote and Turn down price.",
+        "Customer said no: on the quote press Customer said no, type why the customer did not go ahead and press Mark as lost. Press Keep quote open to go back. Stock the quote still held is freed.",
+        "A quote that has a live order cannot be marked lost. Cancel the order first, or press Close remainder in the order drawer for what was not ordered.",
+        "Cancel quote asks for a reason and cancels the quote’s orders too. It is refused while an advance is still posted on an order. Cancel the order, refund or move the advance, then cancel the quote.",
+        "If the owner turns on the quote expiry switch in Settings, a quote past its Valid until date shows as expired and cannot be sent, shared or ordered. Save a new date to bring it back. Quotes that have an order never expire."
+      ],
+      "checks": [
+        "A reason or note is required for turning down, lost and cancel.",
+        "Two people saving the same quote at once: the second save is refused with a message to reload.",
+        "A cancelled, lost, closed or replaced quote cannot be edited.",
+        "Prices and discount rules are unchanged."
+      ],
+      "related": [
+        "cancel-order",
+        "quote-screen-drafts",
+        "settings-switches",
+        "partial-order"
+      ]
+    },
+    {
+      "id": "quote-screen-drafts",
+      "title": "Quote screen: saved drafts, phone layout and entry checks",
+      "duration": "6 min",
+      "href": "/dashboard/quotes/new",
+      "roles": [
+        "Sales",
+        "Office",
+        "Owner"
+      ],
+      "summary": "Work you type is kept on your device, leaving with unsaved work asks first, the quote works on a phone or tablet, and entry mistakes show their reason where they happen.",
+      "flow": [
+        "Type",
+        "Kept on this device",
+        "Restore or Discard it",
+        "Save draft or confirm"
+      ],
+      "steps": [
+        "While you type a new quote, your work is kept on this device. If the page closes or reloads, the next visit shows a blue bar: An unsaved quote was found on this device. Press Restore to carry on or Discard it to start fresh. Nothing is saved to the quote until you save.",
+        "The same bar appears on Direct sales order with Restore and Discard it. Press Save draft on a quote to clear the kept copy.",
+        "If you close the tab, press the browser back button or click a menu link while there are unsaved changes, the screen asks before you lose them.",
+        "On a phone or tablet the items show as stacked cards, one per item, and the total and the save buttons sit in a bar at the bottom of the screen. On a wide screen you still see the table with the rooms on the left.",
+        "Type a special rate that is refused, for example above the NRP. What you typed stays in the box and the reason shows right beside the field, for example Special rate is above NRP. Lower the special rate. The MRP stays visible and the field stays editable.",
+        "Items counted in whole pieces, boxes or bags refuse a fraction. The line says Whole numbers only. This item is counted in whole boxes. Tile area can still have decimals; the boxes are worked out and rounded up.",
+        "When you press Convert to order or Order remaining and enter an advance, choose How the advance was paid: Paid in cash, Paid by UPI, Paid by card, Bank transfer, NEFT, RTGS, Cheque or Other. The receipt records that mode. The same choice is on Direct sales order.",
+        "Press Create order only once. A double tap or a retry after a slow connection makes one order, not two. If the stock check fails you see Could not check stock with Try again."
+      ],
+      "checks": [
+        "A kept copy is never applied by itself: you must press Restore.",
+        "Restoring an older copy of a quote that was saved again since puts your older edits on screen, so check them before saving.",
+        "GST: an empty GST box means 18%, a typed 0 stays 0."
+      ],
+      "related": [
+        "tile-pricing",
+        "quote-decisions",
+        "partial-order"
+      ]
+    },
+    {
+      "id": "tile-boxes",
+      "title": "How tiles read in boxes and pieces",
+      "duration": "5 min",
+      "href": "/dashboard/dispatch",
+      "roles": [
+        "Sales",
+        "Dispatch",
+        "Inventory",
+        "Office"
+      ],
+      "summary": "Tile stock is counted in pieces behind the scenes. Slips, screens and documents read in boxes, in a way that depends on whether the tile is sold by the box or by the piece.",
+      "flow": [
+        "Stock in pieces",
+        "Sold by box or by piece",
+        "Documents read in boxes"
+      ],
+      "examples": [
+        "Training example: a tile has 9 pieces in a box and 344 pieces are on the order. If it is sold by the box it reads 39 Box (344 pc), always rounded up to whole boxes. If it is sold by the piece it reads 38 Box + 2 pc."
+      ],
+      "steps": [
+        "A tile sold by the box (its selling unit is a box, pack or carton) always reads in whole boxes, rounded up. 344 pieces at 9 per box read 39 Box, with 344 pc shown beside it.",
+        "A tile sold by the piece reads as boxes plus loose pieces, for example 38 Box + 2 pc. Under one box it reads 5 pc.",
+        "On the dispatch screen, pick lines read for example 38 Box (342 pc). When you pack, the box still takes pieces, and a live line beside it shows the box equivalent, for example 37 Box + 5 pc.",
+        "If you type a part box for a tile sold by the box, it is refused with: This tile is sold in full boxes of 9 pieces. The quantity the system offers (reserved, picked or packed) is always accepted as it is.",
+        "The dispatch slip shows Qty and Unit in boxes, with the pieces and pieces per box in small print under it, and a Total row. A challan on the dispatch screen lists each item as for example SKU 38 Box (342 pc).",
+        "Orders: the order book detail shows ordered, reserved, pending, dispatched and left in boxes. The table after a direct order reads for example 38 Box + 2 pc.",
+        "The sales order PDF shows Qty, Sent and Bal in boxes. The invoice PDF shows for example 38 BOX / 342 pc, with the rate per piece. The invoice amount is the same as before.",
+        "On the quote screen and the quote drawer a box-sold tile shows 38 Box in bold with the pieces beside it, and the order drawer says for example ordered 0 Box of 38 Box (342 pc). The quote PDF reads 38 BOX / 342 pc.",
+        "Pending Inward and Procurement still count in pieces. Other products read exactly as before."
+      ],
+      "checks": [
+        "Only the way quantities read has changed. Stock, prices, rates, GST and totals are the same.",
+        "A part box is refused on dispatch entry only for tiles sold by the box.",
+        "A tile sold by the piece on the quote screen and quote PDF still reads in pieces."
+      ],
+      "related": [
+        "challans-transport",
+        "tile-pricing",
+        "partial-order"
+      ]
+    },
+    {
+      "id": "challans-transport",
+      "title": "Challans: transport, cancel, failed delivery and closing the order",
+      "duration": "9 min",
+      "href": "/dashboard/dispatch",
+      "roles": [
+        "Dispatch",
+        "Office",
+        "Owner"
+      ],
+      "summary": "Enter real transport details on every challan, cancel a challan that has not left, report a failed delivery, and see the order close itself when the last challan is delivered.",
+      "flow": [
+        "Create pick list",
+        "Create challan",
+        "Transport details",
+        "Dispatch",
+        "Delivered or failed"
+      ],
+      "steps": [
+        "On Dispatch, open the order card. Pick from location now starts on the location that holds the most reserved stock not yet picked. You can still change it. If you choose a place with none, the message names where the order’s stock is.",
+        "Press Create pick list, then pick and pack as before.",
+        "Press Create challan. The form asks how the goods go. Our or a hired vehicle needs Vehicle number, Driver name and Driver phone, and can take Transporter and Notes. Customer pickup asks only for Collected by and Notes, both optional. Stand-ins such as PENDING or a phone of zeros are refused.",
+        "The challan row on the screen shows the transport in one line. While the challan is pending you can press Transport details, correct anything and press Save transport. Once it is dispatched, the details are fixed.",
+        "Challans made before this release show Transport not entered, and the slip prints Not entered. They are not blocked. Press Transport details while they are pending to fill them in.",
+        "Cancel a pending challan: press Cancel challan, give a reason and press Cancel challan. Nothing has left the store, so the items go back to the pick and a new challan can be made.",
+        "Delivery fails: on a dispatched challan press Delivery failed, type why and press Mark delivery failed. The challan stays open. Press Send again to try later.",
+        "When the goods are back in the store, press Goods back, cancel, then Cancel and take stock back. The goods go back into stock and are held again for the same order so they can be picked again. If the order was cancelled meanwhile, they simply become free stock.",
+        "A challan that is already on an invoice cannot be cancelled. Void that invoice first in Customer Accounts, then cancel the challan. A challan that has been dispatched cannot be cancelled directly: report Delivery failed first.",
+        "Confirm delivery with the OTP as before. When the last challan of an order is delivered, the order is marked delivered and leaves every queue: Dispatch, the order book’s Left to dispatch, its dispatch task in the work inbox, and Pending Inward. Payment is not touched.",
+        "An order sent in two challans stays under Left to dispatch after the first one is delivered.",
+        "Dispatch shows 10 orders at a time. Press Show more orders for the rest."
+      ],
+      "checks": [
+        "A reason is required for cancel and for a failed delivery.",
+        "A part box typed by hand is refused for tiles sold by the box.",
+        "Delivered orders are not listed on Dispatch."
+      ],
+      "related": [
+        "dispatch-return",
+        "tile-boxes",
+        "pending-inward"
+      ]
+    },
+    {
+      "id": "stock-rules",
+      "title": "Stock rules: waiting orders, locations, counts and period close",
+      "duration": "7 min",
+      "href": "/dashboard/inventory/control",
+      "roles": [
+        "Inventory",
+        "Owner"
+      ],
+      "summary": "How incoming stock reaches waiting orders, which stock counts as available, what to do with a stale stock count, and how to close or reopen a month.",
+      "flow": [
+        "Stock comes in",
+        "Waiting orders filled",
+        "Count or transfer",
+        "Close or reopen period"
+      ],
+      "steps": [
+        "Stock that comes in fills waiting orders on its own, oldest order first. This happens for a goods receipt, a stock count that finds more, approved opening stock, a customer return put back for resale, an approved increase, a received transfer, a display item returned to stock, and goods back from a failed delivery.",
+        "An order is filled whole or it keeps waiting. If the oldest waiting order needs more than is free, it is skipped and the next one is looked at. Cancelled, closed and delivered orders are never filled.",
+        "Stock in transit is not available. When a transfer is dispatched, the quantity leaves available stock at once and shows under hold. When the transfer is received it becomes available again and waiting orders are filled.",
+        "A stock location marked exclude from available stock never counts as available, and nothing can be reserved there.",
+        "Physical stock count: if stock moved after you counted, the system refuses to approve. Open the count, press Reject count, type a reason of at least 5 characters and count again. Nothing is posted by a rejected count.",
+        "Period close: open Stock Control and use the close desk. Choose Monthly or Financial year. Only periods that have ended can close, and the month shown by default is last month. The current month is refused.",
+        "After a period is closed, a goods receipt dated inside it is refused, and so is moving a receipt date in or out of it.",
+        "To correct a closed period, the owner or an admin presses Reopen on that period, types a reason and presses Reopen period. Post what you need, then close it again. A stock count dated in the period is included when you close again.",
+        "Items counted in whole pieces refuse a fraction in receipts, counts, transfers, opening stock and pick, pack and challan quantities. Enter a whole number."
+      ],
+      "checks": [
+        "Reopening a period is recorded with the person and the reason.",
+        "A rejected count never changes stock.",
+        "Only the owner or an admin can reopen a period."
+      ],
+      "related": [
+        "inventory-control",
+        "pending-inward",
+        "challans-transport"
+      ]
+    },
+    {
+      "id": "pending-inward",
+      "title": "Read the Pending Inward queue",
+      "duration": "3 min",
+      "href": "/dashboard/pending-inward",
+      "roles": [
+        "Inventory",
+        "Office",
+        "Owner",
+        "Sales"
+      ],
+      "summary": "Pending Inward lists what customers are waiting for. The default view shows only what is still waiting on a supplier, and orders drop off once they are delivered.",
+      "flow": [
+        "Order short of stock",
+        "Ordered from supplier",
+        "Received",
+        "Dispatched and delivered",
+        "Closed"
+      ],
+      "steps": [
+        "Open Pending Inward. The status filter starts on All active (waiting on supplier). That means items not yet ordered, ordered but not here, or part received. It no longer lists everything ever raised.",
+        "Not ordered yet: the shortage is known but no purchase order exists.",
+        "PO ordered: a purchase order exists and the goods have not arrived.",
+        "Part received: some of the quantity has come in.",
+        "Received, waiting to dispatch: the goods are in, the order is not yet dispatched.",
+        "Stock set aside, waiting to dispatch: the goods are held for that order.",
+        "Closed (delivered): the order was delivered, so its need is closed. Delivered orders drop off the default view and show here and under the filter.",
+        "Cancelled: the need was cancelled. Choose a status to see its rows, and sort by Priority, Oldest first, SKU A–Z, Quantity high–low or ETA soonest.",
+        "Items are counted in pieces here, as in Procurement."
+      ],
+      "checks": [
+        "All active never includes received, allocated, closed or cancelled rows.",
+        "Receiving goods for an already delivered order does not bring it back.",
+        "The same status words appear on the Procurement demand tab."
+      ],
+      "related": [
+        "procurement-inward",
+        "stock-rules",
+        "challans-transport"
+      ]
+    },
+    {
+      "id": "money-corrections",
+      "title": "Credit notes, advances, voids and statements",
+      "duration": "8 min",
+      "href": "/dashboard/payments",
+      "roles": [
+        "Owner",
+        "Office",
+        "Sales"
+      ],
+      "summary": "How a return reduces an invoice, where an advance sits, how the owner voids an invoice or a receipt, and how to print a statement for a date range.",
+      "flow": [
+        "Return",
+        "Credit note",
+        "Invoice reduced",
+        "Void if wrong",
+        "Statement"
+      ],
+      "steps": [
+        "Returns: on Receive return choose the refund option. No refund now records the goods only. Store credit and Adjust customer balance make a credit note. Cash refund paid now records money going out.",
+        "A credit note reduces the invoice the returned goods were billed on, up to what is still open on it. Any rest stays as customer credit and is used on the next bill. A cash refund leaves the invoice as it was and is recorded as money out.",
+        "A credit or refund cannot be more than the invoiced value of the returned goods. Goods not yet invoiced cannot carry a credit note: choose No refund now. When you invoice later, the bill is for delivered less returned.",
+        "An advance stays with its order. Money received against an order with no invoice yet waits on that order. When the order is invoiced, its own advance is used first, then money on the customer’s account, then credit notes. It does not pay another order’s invoice.",
+        "A receipt recorded with no order goes to the customer’s oldest open invoice.",
+        "Void an invoice (owner and admin only): in Customer Accounts open the customer, find the invoice and press Void invoice, type a reason and press Void invoice. It stays on record marked void, payments applied to it become unused credit, and the dispatched goods can be invoiced again. The invoice PDF reads VOID TAX INVOICE.",
+        "A void is refused when a credit note is applied to the invoice or goods were returned against it.",
+        "Void a receipt (owner and admin only): press Void receipt on the receipt, type a reason and confirm. The money comes off the customer’s account and off any invoice it paid, which become due again.",
+        "Customer statement: in the customer’s account open Statement. Pick From and To dates, or leave them empty for the whole account. It shows the opening balance, each entry with a running balance and the closing balance, 50 entries to a page. Statement PDF uses the same dates.",
+        "Customer Accounts shows 25 customers to a page. Use the search box Find customer, mobile or city, and the Next and Previous buttons. The totals at the top do not change with the search or the page.",
+        "Collected this month is receipts less cash refunds, including advance refunds."
+      ],
+      "checks": [
+        "Every void and refund needs a reason of at least 3 characters.",
+        "A void cannot be undone.",
+        "Sales and office staff without the payments right see the access message on Customer Accounts. The owner can give the right in Users."
+      ],
+      "related": [
+        "cancel-order",
+        "payments-documents",
+        "dispatch-return"
+      ]
+    },
+    {
+      "id": "settings-switches",
+      "title": "Three new settings, all off until you turn them on",
+      "duration": "3 min",
+      "href": "/dashboard/settings",
+      "roles": [
+        "Owner"
+      ],
+      "summary": "Financial year numbering, the GST split on invoices and quote expiry are built and ready. Check each with your accountant before turning it on.",
+      "flow": [
+        "Settings",
+        "Invoices and numbering",
+        "Choose",
+        "Save settings"
+      ],
+      "steps": [
+        "Open Settings and find Invoices and numbering. Documents already made keep their numbers and layout whatever you choose.",
+        "Document numbers restart: Every 1 January is how it works today, with numbers like INV/2026/0001. Every 1 April follows the Indian financial year, with numbers like INV/2026-27/0001.",
+        "Show GST split on invoices: when on, an invoice shows CGST and SGST for a customer in our state, IGST for other states, the HSN code on each line and the place of supply. An order without GST prints as a Bill of Supply instead of a Tax Invoice. Off means invoices print as they do today.",
+        "Expire quotes after their valid-until date: when on, an open quote past its Valid until date is marked expired and cannot be sent, shared or ordered until a new date is saved. Quotes that already have an order never expire. Off means quotes stay open.",
+        "Press Save settings."
+      ],
+      "checks": [
+        "All three are off by default.",
+        "Turning one off again returns to the old behaviour for new documents."
+      ],
+      "related": [
+        "users-settings",
+        "quote-decisions",
+        "money-corrections"
+      ]
+    },
+    {
+      "id": "account-access",
+      "title": "Account safety, access messages and backups",
+      "duration": "4 min",
+      "href": "/dashboard/profile",
+      "roles": [
+        "Owner",
+        "Sales",
+        "Office",
+        "Inventory",
+        "Dispatch"
+      ],
+      "summary": "Changing your login email needs your password, the last owner cannot be locked out, a calm message shows when a screen is not yours, and the owner is warned when backups stay on the server.",
+      "flow": [
+        "My Profile",
+        "Current password",
+        "Access message",
+        "Backup notice"
+      ],
+      "steps": [
+        "To change your login email, open My Profile, type the new email and also type Your current password (needed to change your login email). A wrong or missing password refuses the change.",
+        "The last active owner or admin cannot be disabled, deleted or moved to another role. The message says: This is the last active owner or admin. Make someone else an owner or admin first.",
+        "If you open a screen your role is not allowed to use, you see a calm message: You do not have access to, followed by the screen name, and Ask the owner if you need it. It is not a fault. The owner can give the right in Users.",
+        "Too many wrong passwords for one email from the same place blocks that email there for 15 minutes. Other staff can still sign in.",
+        "Owner: if the work inbox shows a high priority item called Backups are not leaving the server, backups exist only on the server’s own disk. If that disk is lost, every backup is lost with it. Ask your IT person to set the off-server backup address. The notice repeats once a day until it is fixed."
+      ],
+      "checks": [
+        "Your password is never shown on screen.",
+        "Every email change is recorded in the audit.",
+        "Menu entries are shown to a role only when its screens are allowed."
+      ],
+      "related": [
+        "account-security",
+        "users-settings",
+        "work-inbox"
+      ]
+    },
+    {
+      "id": "screen-basics",
+      "title": "Menu, dark mode, page titles and status words",
+      "duration": "3 min",
+      "href": "/dashboard",
+      "roles": [
+        "Sales",
+        "Office",
+        "Inventory",
+        "Dispatch",
+        "Owner"
+      ],
+      "summary": "The side menu works by click, tap or keyboard, dark mode is readable on every screen, and each browser tab names its page.",
+      "flow": [
+        "Menu",
+        "Theme",
+        "Tab title",
+        "Status words"
+      ],
+      "steps": [
+        "At the top of the side menu press Expand menu to open it and keep it open. Press Collapse menu to shrink it. Your choice is remembered on this device.",
+        "With a mouse, resting on the narrow menu shows the names for a moment. With the keyboard, press Tab to move into the menu and the names show while you are inside it. Press Escape to close it and return to the page.",
+        "On a phone, the menu button opens the menu. Escape or choosing a page closes it.",
+        "The first Tab on any page offers Skip to main content.",
+        "Dark mode: use the Colour theme button in the top bar and choose Light, Dark or System. System follows your device. Text and boxes are readable in both.",
+        "Each browser tab now shows the page name, for example Quotes | Marble Park, and a quote or order page can show its number.",
+        "Status words such as Paid, Pending or Delivered use the same plain labels everywhere, with colours that are easier to read.",
+        "Forms warn you before you leave with half-filled work. Buttons are larger on touch screens. Printing a page leaves out the menu and top bar."
+      ],
+      "checks": [
+        "The menu never hides a page you are allowed to use.",
+        "Moving animations are switched off if your device asks for reduced motion."
+      ],
+      "related": [
+        "account-access",
+        "users-settings"
+      ]
+    },
     {
       "id": "work-inbox",
       "title": "Use your work inbox and team alerts",
@@ -37,7 +523,8 @@
         "Open business work cannot be archived or marked complete directly from the inbox.",
         "A failed load shows Retry and does not mean the queue is empty.",
         "Cost reminders do not block valid inward without supplier rates.",
-        "Notifications are in-app; no WhatsApp, email or device push is configured by this feature."
+        "Notifications are in-app; no WhatsApp, email or device push is configured by this feature.",
+        "Owner: a high priority item Backups are not leaving the server means backups are only on the server’s own disk. Ask your IT person to set the off-server backup address."
       ],
       "related": [
         "crm-quote",
@@ -73,7 +560,7 @@
         "Create brand, category, finish, UOM, tax and tile-size masters first.",
         "In Tile Workspace, create the design once with only permanent code, design name, a Brand Master dropdown value and images.",
         "Use Design Excel sample for bulk creation. Download it fresh so its Brand dropdown reflects live Brand Master, preview every row, then confirm the all-or-nothing import.",
-        "Create each sellable design × size × finish variant; choose finish from Finish Master, enter its mandatory MRP per SQFT, then review pieces per box, stock UOM, loose-piece policy and the permanent warehouse SKU.",
+        "Create each sellable design × size × finish variant; choose finish from Finish Master, choose a rate unit (PC, SQM or SQFT) and enter its mandatory MRP per that unit, then review pieces per box, stock UOM, loose-piece policy and the permanent warehouse SKU.",
         "For every generic SKU, enter its mandatory MRP and pricing unit in Product Master. Owner/admin users can use MRP Control Desk for governed bulk updates or its Missing MRP tab for older products.",
         "Floor price is optional and routes any lower negotiated price for approval. Actual cost is not entered on a quote; owner/admin users see the weighted received-lot cost where it exists.",
         "Add supplier, legacy, barcode or showroom codes as aliases instead of renaming the warehouse SKU.",
@@ -84,7 +571,7 @@
         "Design and size are reusable catalogue masters; Product-backed variant is the only stock identity.",
         "Warehouse SKU and design code are immutable after creation.",
         "A new SKU cannot be saved without a positive MRP.",
-        "Tile MRP is always governed per SQFT even when stock is received and fulfilled in boxes or pieces.",
+        "Tile MRP is governed per the saved PC, SQM or SQFT rate unit while stock is received and fulfilled in boxes or pieces.",
         "An imported variant starts with zero stock.",
         "Display stock changes only through issue-to-display or return-to-lot actions.",
         "Stock exists only after a posted opening session or GRN."
@@ -105,7 +592,7 @@
         "Owner",
         "Office"
       ],
-      "summary": "Use the Product Master MRP, then apply the retail ladder in the correct order: NRP discount, optional special discount and optional whole-quote discount. Tiles are always priced per SQFT.",
+      "summary": "Use the Product Master MRP, then apply the retail ladder in the correct order: NRP discount, optional special discount and optional whole-quote discount. Tiles use their saved PC, SQM or SQFT rate unit.",
       "video": "/help/videos/02-tile-pricing-and-quotes.mp4",
       "image": "/help/images/quote-editor-tile-and-sanitaryware.png",
       "flow": [
@@ -121,7 +608,7 @@
       ],
       "steps": [
         "Search or scan the internal showroom code or SKU in Quote Studio.",
-        "For a tile, enter required area and wastage. Pricing remains fixed to SQFT while the system derives the physical boxes and pieces needed for fulfilment.",
+        "For a tile, enter the requested area or number of pieces; add wastage to an area request when needed. The saved tile rate may be per PC, SQM or SQFT; the system derives physical boxes or pieces needed for fulfilment.",
         "Review MRP. It is read-only and comes from Product or Tile Variant Master; use the Missing MRP tab in MRP Control Desk if it is missing, or update the master if it is wrong.",
         "Enter the NRP/base discount as % or ₹. Percent is the default and always applies to MRP.",
         "If authorised, enter the special discount as % or ₹. It applies to NRP, not back to MRP.",
@@ -130,10 +617,11 @@
         "Review the billed quantity, physical boxes, read-only MRP, final selling price, GST and final quote value before saving."
       ],
       "checks": [
-        "MRP is required in Product Master and must be at least the final tax-inclusive unit payable.",
-        "NRP discount cannot exceed MRP; special discount cannot exceed NRP; quote discount cannot exceed the line-net total.",
-        "Tile pricing always needs positive SQFT coverage per box and pieces per box.",
-        "A final rate below optional floor price routes for approval.",
+        "MRP is required in Product Master. It is an entered reference price, not a ceiling: NRP and the final rate may be above it.",
+        "GST is added on top after MRP → NRP → special → quote discount. Special discount cannot exceed NRP; quote discount cannot exceed the line-net total before GST.",
+        "Area-priced tiles need positive governed SQFT coverage per stock unit; piece-priced tiles need a valid pieces-per-unit factor.",
+        "A final rate below optional floor price routes for approval. The owner can turn the price down with a note; see Quote decisions.",
+        "Items counted in whole pieces, boxes or bags refuse a fraction. Tile area may have decimals and the boxes are rounded up. Tiles read in boxes on slips and documents; see How tiles read in boxes and pieces.",
         "The customer PDF shows only MRP, final selling price and total; it never shows NRP, floor, cost or savings.",
         "The Quote Register, PDF and Sales Order conversion must show the same governed total.",
         "Orders, reservations and dispatch always use the physical inventory quantity shown."
@@ -141,7 +629,9 @@
       "related": [
         "crm-quote",
         "partial-order",
-        "setup-master-data"
+        "setup-master-data",
+        "quote-decisions",
+        "tile-boxes"
       ]
     },
     {
@@ -178,12 +668,15 @@
       "checks": [
         "Every line must reference an active Product Master SKU.",
         "Below-floor negotiated rates require approval.",
-        "Commercial lines freeze after an order; use a revision for a new agreement."
+        "Commercial lines freeze after an order. Press Revise to prepare the next letter and use Order remaining to order only the difference; see Quote decisions.",
+        "If the customer does not go ahead, press Customer said no and give the reason. A quote with a live order cannot be marked lost until that order is cancelled."
       ],
       "related": [
         "tile-pricing",
         "partial-order",
-        "payments-documents"
+        "payments-documents",
+        "quote-decisions",
+        "quote-screen-drafts"
       ]
     },
     {
@@ -235,6 +728,49 @@
       ]
     },
     {
+      "id": "customer-product-pages",
+      "title": "Let customers view products on their own phone",
+      "duration": "5 min",
+      "href": "/dashboard/products",
+      "roles": [
+        "Sales",
+        "Sales Manager",
+        "Owner"
+      ],
+      "summary": "Customers can see photos, sizes, specs and similar designs without a login. Printed shelf stickers stay exactly as they are: customers scan one showroom poster, then any existing sticker.",
+      "flow": [
+        "Print the showroom scan poster once",
+        "Customer scans the poster",
+        "Customer scans any shelf sticker",
+        "Product page with similar designs",
+        "Staff send hand-picked links on WhatsApp"
+      ],
+      "examples": [
+        "A customer likes a 1200 x 600 tile on the wall. They scan the poster at the entrance, tap Start scanning, point at the tile sticker and see the design in every active size and finish. Later the salesperson taps + on six products in the Catalogue and sends one link titled \"Master bathroom options\"."
+      ],
+      "steps": [
+        "Owner: in Settings -> Customer product pages, keep pages on and choose the price customers see: MRP only, Showroom price (NRP with MRP struck through) or No price.",
+        "Owner: open Print the showroom scan poster, print it on A4 and place it at the entrance and in each display area.",
+        "Customer: scan the poster with the phone camera, tap Start scanning, then point at the QR on any product sticker. The product page opens. Without a camera, type the code printed under the QR, for example LB/2026/1600-0001.",
+        "Staff, in front of a customer: open a product in the Catalogue and tap Customer QR and link. The customer scans the QR from your screen, or you copy the link or send it on WhatsApp.",
+        "Staff, to send a set: tap + on products in the Catalogue (up to 60), then Create customer link. Add a title and note, choose 7, 30 or 90 days, and send it on WhatsApp.",
+        "Catalogue -> Customer links shows every link, how many times it was opened and when, and lets you stop a link immediately."
+      ],
+      "checks": [
+        "Customer pages never show cost, floor price, stock, lots, suppliers or internal ids.",
+        "Printed stickers are not changed or reprinted; staff scanning works exactly as before.",
+        "Links use random codes, so customers cannot guess other links.",
+        "Turning customer pages off in Settings pauses every link at once.",
+        "An expired or stopped link tells the customer to ask for a fresh one.",
+        "Prices shown are the Product Master values; GST and the final price are confirmed on the quotation."
+      ],
+      "related": [
+        "showroom-scan-intent",
+        "labels-lots",
+        "tile-pricing"
+      ]
+    },
+    {
       "id": "partial-order",
       "title": "Convert a quote in partial sales orders",
       "duration": "11 min",
@@ -257,20 +793,26 @@
       "steps": [
         "Open the accepted quote and review Fulfilment.",
         "Enter the quantity confirmed now for each line.",
-        "Choose cash or credit and record advance or terms.",
+        "Choose cash or credit and record advance or terms. When you enter an advance, choose How the advance was paid (Paid in cash, Paid by UPI, Paid by card, Bank transfer, NEFT, RTGS, Cheque or Other).",
+        "Quantities must be whole numbers for items counted in whole pieces or boxes; a fraction is refused.",
         "Create the sales order; remaining quote quantities stay available.",
         "Review reserved and backordered quantities.",
-        "Close the remainder only when the customer cancels it, with a reason."
+        "Close the remainder only when the customer cancels it, with a reason.",
+        "To cancel one order, open Orders and press Cancel order. See Cancel an order and deal with its advance."
       ],
       "checks": [
         "Selections cannot exceed remaining quote quantity.",
         "Each conversion is idempotent and creates its own dispatch job.",
-        "Shortages automatically create purchase demand."
+        "Shortages automatically create purchase demand.",
+        "If you revise a quote after ordering, only the difference is ordered.",
+        "Cancelling an order frees its stock; any advance is refunded or moved to the customer’s account, never lost."
       ],
       "related": [
         "procurement-inward",
         "dispatch-return",
-        "payments-documents"
+        "payments-documents",
+        "cancel-order",
+        "quote-decisions"
       ]
     },
     {
@@ -306,7 +848,8 @@
         "The owner/admin Delayed Cost queue is permanent. It includes both not-yet-received and already-received missing-cost lines, accepts whichever verified rates are available today, and posts a zero-quantity audit-ledger event when a received lot cost is finalized.",
         "Use the searchable selectors with typing, Arrow keys and Enter; Escape closes the list. High-volume PO and GRN registers remain server-paged.",
         "After posting, open History and use Create labels on the GRN. It hands the exact accepted lines and lots to the Physical Identity Desk without reposting stock.",
-        "Review exact lots, Pending Inward allocation and stock reconciliation. The form clears after success."
+        "Review exact lots, Pending Inward and stock reconciliation. The form clears after success. Stock you receive fills waiting orders on its own, oldest first, so a customer who was waiting is reserved the moment the goods are posted.",
+        "Pending Inward starts on All active (waiting on supplier): items not yet ordered, ordered and not here, or part received. Delivered orders drop off. A goods receipt dated in a closed month is refused until the owner reopens that month."
       ],
       "checks": [
         "Never add live stock directly to balances.",
@@ -317,12 +860,15 @@
         "Received quantity cannot exceed the remaining PO base quantity.",
         "Boxes and loose pieces convert to base pieces with an immutable snapshot.",
         "Damaged quantity is isolated from available stock.",
-        "Every inward retains supplier, PO/manual reason, GRN, variant, lot, location, actor and source links."
+        "Every inward retains supplier, PO/manual reason, GRN, variant, lot, location, actor and source links.",
+        "Quantities are whole numbers; a fraction is refused."
       ],
       "related": [
         "labels-lots",
         "partial-order",
-        "inventory-control"
+        "inventory-control",
+        "pending-inward",
+        "stock-rules"
       ]
     },
     {
@@ -361,7 +907,7 @@
       ],
       "checks": [
         "Creating or printing labels never posts stock; only a GRN, opening session or governed movement changes inventory.",
-        "Every label shows the governed Brand Master code and Product Master MRP; tile labels always show MRP per SQFT.",
+        "Every label shows the governed Brand Master code and Product Master MRP; tile labels always print the current Tile Master MRP in its own rate unit (PC, SQM or SQFT), including reprints.",
         "Printing is blocked when the selected product has no positive MRP, with a linkable correction path through the Missing MRP tab in MRP Control Desk.",
         "Every QR encodes MP-LABEL:<unique label code>; the MP centre mark is branding and the human-readable code remains the fallback.",
         "Reprints retain the same physical identity and add print audit history.",
@@ -439,22 +985,27 @@
         "Return / balance"
       ],
       "steps": [
-        "Open the order’s dispatch job and review ready, backordered and already dispatched quantities.",
-        "Select the exact lot and quantity to pick.",
-        "Confirm pack quantities and create the delivery challan.",
+        "Open the order’s dispatch job and review ready, backordered and already dispatched quantities. Tiles read in boxes, for example 38 Box (342 pc).",
+        "Choose Pick from location. It starts on the location holding the most reserved stock not yet picked. Select the exact lot and quantity to pick, then press Create pick list.",
+        "Confirm pack quantities and press Create challan. Enter Vehicle number, Driver name and Driver phone, or choose Customer pickup. A part box typed by hand is refused for a tile sold by the box.",
+        "Until the challan is dispatched you can press Transport details to correct it, or Cancel challan if nothing has left the store.",
         "Repeat later for remaining items; do not create another sales order.",
-        "Send and verify delivery OTP to close the challan.",
+        "Send and verify delivery OTP to close the challan. If the delivery fails, press Delivery failed, then Send again or Goods back, cancel. See Challans: transport, cancel, failed delivery and closing the order.",
+        "When the last challan is delivered, the order closes and leaves every queue.",
         "For a return, select the original dispatch line, reason, disposition and received quantity."
       ],
       "checks": [
         "Cannot pick more than available or ordered balance.",
         "Every challan is partial-safe.",
-        "A return must reference the original dispatch line and restores the correct lot when saleable."
+        "A return must reference the original dispatch line and restores the correct lot when saleable.",
+        "A challan on an open invoice cannot be cancelled until the invoice is voided."
       ],
       "related": [
         "partial-order",
         "labels-lots",
-        "inventory-control"
+        "inventory-control",
+        "challans-transport",
+        "tile-boxes"
       ]
     },
     {
@@ -477,10 +1028,13 @@
       ],
       "steps": [
         "Choose payment mode during order conversion.",
-        "For cash, enter the received advance; for credit, confirm terms and due date.",
+        "For cash, enter the received advance and choose How the advance was paid; for credit, confirm terms and due date.",
+        "An advance stays with its order. When that order is invoiced, its advance is used first.",
         "Post later receipts against the sales order.",
         "Review payment status and remaining balance.",
-        "Open Document Center for quote PDF, sales order PDF and generated records."
+        "Open Document Center for quote PDF, sales order PDF and generated records.",
+        "In Customer Accounts, search with Find customer, mobile or city and move between pages of 25. Open a customer and use Statement with From and To dates for a statement.",
+        "The owner or an admin can press Void invoice or Void receipt with a reason. A credit note from a return reduces its invoice. See Credit notes, advances, voids and statements."
       ],
       "checks": [
         "Receipt posting is idempotent.",
@@ -490,7 +1044,9 @@
       "related": [
         "partial-order",
         "reports-audit",
-        "crm-quote"
+        "crm-quote",
+        "money-corrections",
+        "cancel-order"
       ]
     },
     {
@@ -557,8 +1113,10 @@
         "Create a stock count session for a location or scope.",
         "Enter counted quantities by scanned lot.",
         "Submit the count and review variance.",
+        "If stock moved since you counted, approval is refused. Press Reject count, give a reason and count again.",
         "Approve and post the adjustment with reason.",
-        "Open Reconciliation to confirm lot, location, ledger and aggregate balances agree."
+        "Open Reconciliation to confirm lot, location, ledger and aggregate balances agree.",
+        "Close a finished month or financial year in Stock Control. The owner or an admin can Reopen it with a reason."
       ],
       "checks": [
         "Only posted sessions affect stock.",
@@ -568,7 +1126,8 @@
       "related": [
         "labels-lots",
         "reports-audit",
-        "procurement-inward"
+        "procurement-inward",
+        "stock-rules"
       ]
     },
     {
@@ -631,7 +1190,7 @@
         "For Targets, select the governed metric and month, enter the approved amount and retain an approval or planning note.",
         "Saving the same metric and month creates a new version and supersedes the old one; use Void only with a clear reason.",
         "For brand price revisions, open Master Data -> MRP Control Desk. Filter and select Product Master SKUs, download the governed Excel packet, fill only New MRP, upload and preview it, enter the effective date and business reason, then explicitly confirm the atomic update.",
-        "Use the Missing MRP tab for individual legacy products; enter a positive MRP, confirm the pricing unit, and optionally enter the floor price. Tile prices are always per SQFT.",
+        "Use the Missing MRP tab for individual legacy products; enter a positive MRP, confirm the pricing unit, and optionally enter the floor price. Tile prices use the saved PC, SQM or SQFT rate unit.",
         "For other product and tile exceptions, correct the authoritative category, brand, finish, UOM, HSN, size and pack in Product, Tile or Size Master.",
         "Record actual cost only through an owner/admin-authorized PO, GRN, opening-stock exception or lot correction. Quotes never invent cost; invoices snapshot the exact dispatched lot cost.",
         "Treat purchase orders and GRNs as commitments and receipts—not supplier bills or payments.",
@@ -682,7 +1241,8 @@
         "When the warning appears, choose Stay signed in only if you are still at the device, or Sign out now before leaving.",
         "Signing out in one browser tab signs out the other open Marble Park tabs too.",
         "After an inactivity sign-out, sign in again and use the safe return link to reopen the protected page.",
-        "Change a suspected or exposed password immediately from Profile; administrators can issue a temporary reset and all older sessions are revoked."
+        "Change a suspected or exposed password immediately from Profile; administrators can issue a temporary reset and all older sessions are revoked.",
+        "To change your login email in My Profile you must also type your current password."
       ],
       "checks": [
         "Do not leave unsaved form entries during the expiry warning.",
@@ -692,7 +1252,8 @@
       ],
       "related": [
         "users-settings",
-        "reports-audit"
+        "reports-audit",
+        "account-access"
       ]
     },
     {
@@ -719,7 +1280,8 @@
         "Assign Sales, Office, Inventory, Dispatch, Manager or Owner role.",
         "Apply an override only when the standard role needs a documented exception.",
         "Test the user’s navigation and one allowed action.",
-        "Deactivate departed users instead of reusing accounts; deactivation revokes their active sessions."
+        "Deactivate departed users instead of reusing accounts; deactivation revokes their active sessions. The last active owner or admin cannot be disabled, deleted or changed to another role.",
+        "In Settings, Invoices and numbering holds three switches that are off until you turn them on. See Three new settings, all off until you turn them on."
       ],
       "checks": [
         "Never share the owner login.",
@@ -731,7 +1293,9 @@
         "account-security",
         "reports-audit",
         "crm-quote",
-        "dispatch-return"
+        "dispatch-return",
+        "settings-switches",
+        "account-access"
       ]
     }
   ]

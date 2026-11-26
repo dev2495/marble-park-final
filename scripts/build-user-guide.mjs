@@ -22,7 +22,7 @@ function escape(value) {
 }
 
 const guides = loadHelpContent();
-const generatedAt = '2026-08-21';
+const generatedAt = '2026-11-26';
 const uniqueVideos = guides.filter((guide, index) => guide.video && guides.findIndex((item) => item.video === guide.video) === index);
 function renderGuide(guide, index) {
   return `

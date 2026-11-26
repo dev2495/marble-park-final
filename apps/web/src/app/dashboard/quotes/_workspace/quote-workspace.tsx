@@ -1547,7 +1547,7 @@ function OwnerDialog({ open, onClose, busy, current, assignees, onConfirm }: { o
 function CancelDialog({ open, onClose, busy, onConfirm }: { open: boolean; onClose: () => void; busy?: boolean; onConfirm: (reason: string) => void }) {
   const [reason, setReason] = useState('');
   return (
-    <Modal open={open} onClose={onClose} title="Cancel quote" subtitle="Its orders are cancelled too, while nothing has left the warehouse and no invoice is open. Held and waiting stock is freed; an advance stays on the customer's account."
+    <Modal open={open} onClose={onClose} title="Cancel quote" subtitle="Its orders are cancelled too, while nothing has left the warehouse and no invoice is open. Held and waiting stock is freed. If an advance was taken, cancel the order and refund or move the advance first."
       footer={<><button type="button" onClick={onClose} disabled={busy} className={secondaryButton}>Keep quote</button><button type="button" disabled={!reason.trim() || busy} onClick={() => onConfirm(reason.trim())} className={cn(primaryButton, 'bg-[var(--danger)] hover:bg-[var(--danger)]')}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{busy ? 'Cancelling…' : 'Cancel quote'}</button></>}>
       <Field label="Reason for cancelling" hint="Required. It is kept on the quote history."><input value={reason} onChange={(event) => setReason(event.target.value)} className={inputClass} placeholder="Why is this quote cancelled?" /></Field>
     </Modal>

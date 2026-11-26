@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, BookOpen, CheckCircle2, Download, ExternalLink, FileText, Grid3X3, PackageCheck, PlayCircle, ScanLine, Search, ShieldCheck, Store } from 'lucide-react';
-import { HELP_GUIDES } from '@/lib/help-content';
+import { HELP_GUIDES, WHATS_NEW } from '@/lib/help-content';
 
 const ROLES = ['All', 'Sales', 'Office', 'Inventory', 'Dispatch', 'Owner'];
 const TODAY_WORKFLOWS = [
@@ -46,6 +46,11 @@ export default function HelpCenterPage() {
           <a href="/help/user-guide.html" target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-md border border-[var(--line)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--ink)]"><ExternalLink className="mr-2 h-4 w-4"/>Offline HTML</a>
         </div>
       </div>
+    </section>
+
+    <section aria-labelledby="whats-new-title" className="rounded-md border border-[var(--brand-200)] bg-[var(--brand-50)] p-5">
+      <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-semibold text-[var(--brand-700)]">Latest release</p><h2 id="whats-new-title" className="mt-1 text-xl font-semibold text-[var(--ink)]">What&apos;s new, {WHATS_NEW.date}</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--ink-3)]">Prices, discounts and who can see what are unchanged. Pick a topic for the steps.</p></div><a href="#whats-new-2026-11-26" className="inline-flex h-9 items-center rounded-md bg-[var(--brand-700)] px-3 text-xs font-semibold text-white">Read the full summary</a></div>
+      <ul className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{WHATS_NEW.items.map((item) => <li key={item.guideId}><a href={`#${item.guideId}`} className="block h-full rounded-md border border-[var(--line)] bg-[var(--surface)] p-3 hover:border-[var(--brand-300)]"><span className="block text-sm font-semibold text-[var(--ink)]">{item.title}</span><span className="mt-1 block text-xs leading-5 text-[var(--ink-3)]">{item.text}</span></a></li>)}</ul>
     </section>
 
     <section aria-labelledby="today-workflows-title">
